@@ -25,16 +25,18 @@ use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
 pub(crate) use model_selector::*;
+pub use prompts::PromptBuilder;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
     active_command, default_command, diagnostics_command, docs_command, fetch_command,
     file_command, now_command, project_command, prompt_command, search_command, symbols_command,
-    tabs_command, term_command,
+    tabs_command, term_command, workflow_command,
 };
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
+use util::ResultExt;
 
 actions!(
     assistant,
@@ -162,7 +164,7 @@ impl Assistant {
     }
 }
 
-pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
+pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) -> Arc<PromptBuilder> {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
 
@@ -195,10 +197,25 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     prompt_library::init(cx);
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);
-    register_slash_commands(cx);
     assistant_panel::init(cx);
-    inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
-    terminal_inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
+
+    let prompt_builder = prompts::PromptBuilder::new(Some((fs.clone(), cx)))
+        .log_err()
+        .map(Arc::new)
+        .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
+    register_slash_commands(Some(prompt_builder.clone()), cx);
+    inline_assistant::init(
+        fs.clone(),
+        prompt_builder.clone(),
+        client.telemetry().clone(),
+        cx,
+    );
+    terminal_inline_assistant::init(
+        fs.clone(),
+        prompt_builder.clone(),
+        client.telemetry().clone(),
+        cx,
+    );
     IndexedDocsRegistry::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
@@ -216,6 +233,8 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
         });
     })
     .detach();
+
+    prompt_builder
 }
 
 fn init_language_model_settings(cx: &mut AppContext) {
@@ -246,7 +265,7 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
     });
 }
 
-fn register_slash_commands(cx: &mut AppContext) {
+fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
     slash_command_registry.register_command(active_command::ActiveSlashCommand, true);
@@ -260,6 +279,12 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(now_command::NowSlashCommand, true);
     slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
     slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
+    if let Some(prompt_builder) = prompt_builder {
+        slash_command_registry.register_command(
+            workflow_command::WorkflowSlashCommand::new(prompt_builder),
+            true,
+        );
+    }
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 }
 

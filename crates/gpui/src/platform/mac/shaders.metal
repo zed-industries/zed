@@ -657,9 +657,9 @@ float gaussian(float x, float sigma) {
 float2 erf(float2 x) {
   float2 s = sign(x);
   float2 a = abs(x);
-  x = 1. + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
-  x *= x;
-  return s - s / (x * x);
+  float2 r1 = 1. + (0.278393 + (0.230389 + (0.000972 + 0.078108 * a) * a) * a) * a;
+  float2 r2 = r1 * r1;
+  return s - s / (r2 * r2);
 }
 
 float blur_along_x(float x, float y, float sigma, float corner,

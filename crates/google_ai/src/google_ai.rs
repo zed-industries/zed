@@ -1,7 +1,11 @@
+mod supported_countries;
+
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::HttpClient;
 use serde::{Deserialize, Serialize};
+
+pub use supported_countries::*;
 
 pub const API_URL: &str = "https://generativelanguage.googleapis.com";
 

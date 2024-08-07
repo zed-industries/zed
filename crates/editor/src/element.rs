@@ -301,6 +301,12 @@ impl EditorElement {
             editor.go_to_definition_split(a, cx).detach_and_log_err(cx);
         });
         register_action(view, cx, |editor, a, cx| {
+            editor.go_to_declaration(a, cx).detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
+            editor.go_to_declaration_split(a, cx).detach_and_log_err(cx);
+        });
+        register_action(view, cx, |editor, a, cx| {
             editor.go_to_implementation(a, cx).detach_and_log_err(cx);
         });
         register_action(view, cx, |editor, a, cx| {
@@ -2478,9 +2484,12 @@ impl EditorElement {
         };
 
         if let BlockId::Custom(custom_block_id) = block_id {
-            let element_height_in_lines = ((final_size.height / line_height).ceil() as u32).max(1);
-            if element_height_in_lines != block.height() {
-                resized_blocks.insert(custom_block_id, element_height_in_lines);
+            if block.height() > 0 {
+                let element_height_in_lines =
+                    ((final_size.height / line_height).ceil() as u32).max(1);
+                if element_height_in_lines != block.height() {
+                    resized_blocks.insert(custom_block_id, element_height_in_lines);
+                }
             }
         }
 

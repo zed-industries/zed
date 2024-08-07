@@ -1548,6 +1548,7 @@ pub(crate) struct NavigationData {
 
 enum GotoDefinitionKind {
     Symbol,
+    Declaration,
     Type,
     Implementation,
 }
@@ -9063,6 +9064,22 @@ impl Editor {
         self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx)
     }
 
+    pub fn go_to_declaration(
+        &mut self,
+        _: &GoToDeclaration,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<bool>> {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Declaration, false, cx)
+    }
+
+    pub fn go_to_declaration_split(
+        &mut self,
+        _: &GoToDeclaration,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<bool>> {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Declaration, true, cx)
+    }
+
     pub fn go_to_implementation(
         &mut self,
         _: &GoToImplementation,
@@ -9123,6 +9140,7 @@ impl Editor {
         let project = workspace.read(cx).project().clone();
         let definitions = project.update(cx, |project, cx| match kind {
             GotoDefinitionKind::Symbol => project.definition(&buffer, head, cx),
+            GotoDefinitionKind::Declaration => project.declaration(&buffer, head, cx),
             GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
             GotoDefinitionKind::Implementation => project.implementation(&buffer, head, cx),
         });

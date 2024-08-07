@@ -3,6 +3,7 @@ use rpc::proto;
 use sea_orm::{entity::prelude::*, DbErr};
 use serde::{Deserialize, Serialize};
 
+#[macro_export]
 macro_rules! id_type {
     ($name:ident) => {
         #[derive(

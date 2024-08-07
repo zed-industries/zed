@@ -150,7 +150,7 @@ fn gaussian(x: f32, sigma: f32) -> f32{
 fn erf(v: vec2<f32>) -> vec2<f32> {
     let s = sign(v);
     let a = abs(v);
-    let r1 = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+    let r1 = 1.0 + (0.278393 + (0.230389 + (0.000972 + 0.078108 * a) * a) * a) * a;
     let r2 = r1 * r1;
     return s - s / (r2 * r2);
 }

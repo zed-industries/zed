@@ -391,6 +391,7 @@ dependencies = [
  "futures 0.3.30",
  "fuzzy",
  "gpui",
+ "handlebars",
  "heed",
  "html_to_markdown 0.1.0",
  "http_client",
@@ -420,9 +421,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "similar",
  "smol",
- "strsim 0.11.1",
  "telemetry_events",
  "terminal",
  "terminal_view",
@@ -1614,9 +1613,9 @@ dependencies = [
 
 [[package]]
 name = "bitstream-io"
-version = "2.4.2"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "415f8399438eb5e4b2f73ed3152a3448b98149dda642a957ee704e1daa5cf1d8"
+checksum = "7c12d1856e42f0d817a835fe55853957c85c8c8a470114029143d3f12671446e"
 
 [[package]]
 name = "bitvec"
@@ -1633,7 +1632,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/blade?rev=7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e#7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e"
+source = "git+https://github.com/kvark/blade?rev=ac25c77ed8d86c386a541c935ffe0a0f6024e701#ac25c77ed8d86c386a541c935ffe0a0f6024e701"
 dependencies = [
  "ash",
  "ash-window",
@@ -1663,7 +1662,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/zed-industries/blade?rev=7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e#7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e"
+source = "git+https://github.com/kvark/blade?rev=ac25c77ed8d86c386a541c935ffe0a0f6024e701#ac25c77ed8d86c386a541c935ffe0a0f6024e701"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1673,7 +1672,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/blade?rev=7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e#7e497c534d5d4a30c18d9eb182cf39eaf0aaa25e"
+source = "git+https://github.com/kvark/blade?rev=ac25c77ed8d86c386a541c935ffe0a0f6024e701#ac25c77ed8d86c386a541c935ffe0a0f6024e701"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -2466,7 +2465,9 @@ dependencies = [
  "headless",
  "hex",
  "http_client",
+ "hyper",
  "indoc",
+ "jsonwebtoken",
  "language",
  "language_model",
  "live_kit_client",
@@ -2503,11 +2504,13 @@ dependencies = [
  "settings",
  "sha2",
  "sqlx",
+ "strum",
  "subtle",
  "supermaven_api",
  "telemetry_events",
  "text",
  "theme",
+ "thiserror",
  "time",
  "tokio",
  "toml 0.8.16",
@@ -5006,6 +5009,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "handlebars"
+version = "4.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "faa67bab9ff362228eb3d00bd024a4965d8231bbb7921167f0cfa66c6626b225"
+dependencies = [
+ "log",
+ "pest",
+ "pest_derive",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6000,6 +6017,7 @@ dependencies = [
  "similar",
  "smallvec",
  "smol",
+ "strsim 0.11.1",
  "sum_tree",
  "task",
  "text",
@@ -6042,6 +6060,7 @@ dependencies = [
  "menu",
  "ollama",
  "open_ai",
+ "parking_lot",
  "project",
  "proto",
  "rand 0.8.5",
@@ -7639,6 +7658,51 @@ name = "percent-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
+
+[[package]]
+name = "pest"
+version = "2.7.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd53dff83f26735fdc1ca837098ccf133605d794cdae66acfc2bfac3ec809d95"
+dependencies = [
+ "memchr",
+ "thiserror",
+ "ucd-trie",
+]
+
+[[package]]
+name = "pest_derive"
+version = "2.7.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a548d2beca6773b1c244554d36fcf8548a8a58e74156968211567250e48e49a"
+dependencies = [
+ "pest",
+ "pest_generator",
+]
+
+[[package]]
+name = "pest_generator"
+version = "2.7.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c93a82e8d145725dcbaf44e5ea887c8a869efdcc28706df2d08c69e17077183"
+dependencies = [
+ "pest",
+ "pest_meta",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.59",
+]
+
+[[package]]
+name = "pest_meta"
+version = "2.7.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a941429fea7e08bedec25e4f6785b6ffaacc6b755da98df5ef3e7dcf4a124c4f"
+dependencies = [
+ "once_cell",
+ "pest",
+ "sha2",
+]
 
 [[package]]
 name = "petgraph"
@@ -11839,6 +11903,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42ff0bf0c66b8238c6f3b578df37d0b7848e55df8577b3f74f92a69acceeb825"
 
 [[package]]
+name = "ucd-trie"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed646292ffc8188ef8ea4d1e0e0150fb15a5c2e12ad9b8fc191ae7a8a7f3c4b9"
+
+[[package]]
 name = "uds_windows"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13756,7 +13826,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.148.0"
+version = "0.149.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -13905,7 +13975,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -13975,7 +14045,7 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -13996,7 +14066,7 @@ dependencies = [
 
 [[package]]
 name = "zed_php"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -14017,7 +14087,7 @@ dependencies = [
 
 [[package]]
 name = "zed_ruby"
-version = "0.0.8"
+version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
