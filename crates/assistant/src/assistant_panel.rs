@@ -1333,6 +1333,7 @@ struct ScrollPosition {
 struct StepAssists {
     assist_ids: Vec<InlineAssistId>,
     editor: WeakView<Editor>,
+    preview_edit_count: usize,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -2046,11 +2047,15 @@ impl ContextEditor {
             if let Some((editor, assist_ids)) =
                 self.suggest_edits(title.clone(), edit_suggestions.clone(), cx)
             {
+                let preview_edit_count = editor.update(cx, |editor, cx| {
+                    editor.buffer().read(cx).read(cx).edit_count()
+                });
                 self.assists_by_step.insert(
                     step.range.clone(),
                     StepAssists {
                         assist_ids,
                         editor: editor.downgrade(),
+                        preview_edit_count,
                     },
                 );
             }
@@ -2156,6 +2161,26 @@ impl ContextEditor {
                 ));
             }
         }
+
+        let preview_edit_count = editor.update(cx, |editor, cx| {
+            editor.buffer().read(cx).read(cx).edit_count()
+        });
+
+        if let Some(range) = self
+            .active_workflow_step
+            .as_ref()
+            .map(|step| step.range.clone())
+        {
+            self.assists_by_step.insert(
+                range,
+                StepAssists {
+                    assist_ids: assist_ids.clone(),
+                    editor: editor.downgrade(),
+                    preview_edit_count,
+                },
+            );
+        }
+
         Some((editor, assist_ids))
     }
 
