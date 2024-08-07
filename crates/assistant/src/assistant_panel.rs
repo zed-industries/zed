@@ -9,12 +9,12 @@ use crate::{
         SlashCommandCompletionProvider, SlashCommandRegistry,
     },
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, CodegenStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
-    CycleMessageRole, DebugEditSteps, DeployHistory, DeployPromptLibrary, EditSuggestionGroup,
-    InlineAssist, InlineAssistId, InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector,
-    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    ResolvedWorkflowStepEditSuggestions, SavedContextMetadata, Split, ToggleFocus,
-    ToggleModelSelector, WorkflowStepEditSuggestions,
+    Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
+    DebugEditSteps, DeployHistory, DeployPromptLibrary, EditSuggestionGroup, InlineAssist,
+    InlineAssistId, InlineAssistStatus, InlineAssistant, InsertIntoEditor, MessageStatus,
+    ModelSelector, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    RemoteContextMetadata, ResolvedWorkflowStepEditSuggestions, SavedContextMetadata, Split,
+    ToggleFocus, ToggleModelSelector, WorkflowStepEditSuggestions,
 };
 use crate::{ContextStoreEvent, ShowConfiguration};
 use anyhow::{anyhow, Result};
@@ -1960,20 +1960,21 @@ impl ContextEditor {
             return;
         };
 
-        InlineAssistant::update_global(cx, |assistant, cx| {
-            step_assists.assist_ids.retain(|assist_id| {
-                match assistant.status_for_assist(*assist_id, cx) {
-                    Some(CodegenStatus::Idle) | None => {
-                        assistant.finish_assist(*assist_id, true, cx);
-                        false
-                    }
-                    _ => true,
-                }
-            });
+        let can_cancel = step_assists.assist_ids.iter().all(|assist_id| {
+            matches!(
+                InlineAssistant::global(cx).assist_status(*assist_id, cx),
+                InlineAssistStatus::Idle | InlineAssistStatus::Canceled
+            )
         });
 
-        if step_assists.assist_ids.is_empty() {
-            self.assists_by_step.remove(&step_range);
+        if can_cancel {
+            let assist_ids = self.assists_by_step.remove(&step_range).unwrap().assist_ids;
+            InlineAssistant::update_global(cx, |assistant, cx| {
+                for assist_id in assist_ids {
+                    assistant.finish_assist(assist_id, true, cx)
+                }
+            });
+
             self.workspace
                 .update(cx, |workspace, cx| {
                     if let Some(pane) = workspace.pane_for(&editor) {
@@ -1991,11 +1992,13 @@ impl ContextEditor {
     }
 
     fn activate_workflow_step(&mut self, step: ActiveWorkflowStep, cx: &mut ViewContext<Self>) {
+        let mut suggest_edits = true;
         if let Some(step_assists) = self.assists_by_step.get(&step.range) {
             if let Some(editor) = step_assists.editor.upgrade() {
                 for assist_id in &step_assists.assist_ids {
-                    match InlineAssistant::global(cx).status_for_assist(*assist_id, cx) {
-                        Some(CodegenStatus::Idle) | None => {}
+                    match InlineAssistant::global(cx).assist_status(*assist_id, cx) {
+                        InlineAssistStatus::Idle | InlineAssistStatus::Canceled => {}
+                        InlineAssistStatus::Confirmed => suggest_edits = false,
                         _ => {
                             self.workspace
                                 .update(cx, |workspace, cx| {
@@ -2005,28 +2008,31 @@ impl ContextEditor {
                             InlineAssistant::update_global(cx, |assistant, cx| {
                                 assistant.scroll_to_assist(*assist_id, cx)
                             });
-                            return;
+                            suggest_edits = false;
+                            break;
                         }
                     }
                 }
             }
         }
 
-        if let Some(ResolvedWorkflowStepEditSuggestions {
-            title,
-            edit_suggestions,
-        }) = step.suggestions.as_ref()
-        {
-            if let Some((editor, assist_ids)) =
-                self.suggest_edits(title.clone(), edit_suggestions.clone(), cx)
+        if suggest_edits {
+            if let Some(ResolvedWorkflowStepEditSuggestions {
+                title,
+                edit_suggestions,
+            }) = step.suggestions.as_ref()
             {
-                self.assists_by_step.insert(
-                    step.range.clone(),
-                    StepAssists {
-                        assist_ids,
-                        editor: editor.downgrade(),
-                    },
-                );
+                if let Some((editor, assist_ids)) =
+                    self.suggest_edits(title.clone(), edit_suggestions.clone(), cx)
+                {
+                    self.assists_by_step.insert(
+                        step.range.clone(),
+                        StepAssists {
+                            assist_ids,
+                            editor: editor.downgrade(),
+                        },
+                    );
+                }
             }
         }
 

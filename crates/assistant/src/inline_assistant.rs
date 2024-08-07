@@ -68,6 +68,7 @@ pub struct InlineAssistant {
     assists: HashMap<InlineAssistId, InlineAssist>,
     assists_by_editor: HashMap<WeakView<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
+    confirmed_assists: HashSet<InlineAssistId>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Option<Arc<Telemetry>>,
@@ -88,6 +89,7 @@ impl InlineAssistant {
             assists: HashMap::default(),
             assists_by_editor: HashMap::default(),
             assist_groups: HashMap::default(),
+            confirmed_assists: HashSet::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
             telemetry: Some(telemetry),
@@ -654,6 +656,8 @@ impl InlineAssistant {
 
             if undo {
                 assist.codegen.update(cx, |codegen, cx| codegen.undo(cx));
+            } else {
+                self.confirmed_assists.insert(assist_id);
             }
         }
     }
@@ -866,17 +870,22 @@ impl InlineAssistant {
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
     }
 
-    pub fn status_for_assist(
+    pub fn assist_status(
         &self,
         assist_id: InlineAssistId,
         cx: &WindowContext,
-    ) -> Option<CodegenStatus> {
-        let assist = self.assists.get(&assist_id)?;
-        match &assist.codegen.read(cx).status {
-            CodegenStatus::Idle => Some(CodegenStatus::Idle),
-            CodegenStatus::Pending => Some(CodegenStatus::Pending),
-            CodegenStatus::Done => Some(CodegenStatus::Done),
-            CodegenStatus::Error(error) => Some(CodegenStatus::Error(anyhow!("{:?}", error))),
+    ) -> InlineAssistStatus {
+        if let Some(assist) = self.assists.get(&assist_id) {
+            match &assist.codegen.read(cx).status {
+                CodegenStatus::Idle => InlineAssistStatus::Idle,
+                CodegenStatus::Pending => InlineAssistStatus::Pending,
+                CodegenStatus::Done => InlineAssistStatus::Done,
+                CodegenStatus::Error(error) => InlineAssistStatus::Error(anyhow!("{:?}", error)),
+            }
+        } else if self.confirmed_assists.contains(&assist_id) {
+            InlineAssistStatus::Confirmed
+        } else {
+            InlineAssistStatus::Canceled
         }
     }
 
@@ -1060,6 +1069,15 @@ impl InlineAssistant {
                 .collect();
         })
     }
+}
+
+pub enum InlineAssistStatus {
+    Idle,
+    Pending,
+    Done,
+    Error(anyhow::Error),
+    Confirmed,
+    Canceled,
 }
 
 struct EditorInlineAssists {
@@ -2037,7 +2055,7 @@ pub struct Codegen {
     builder: Arc<PromptBuilder>,
 }
 
-pub enum CodegenStatus {
+enum CodegenStatus {
     Idle,
     Pending,
     Done,
