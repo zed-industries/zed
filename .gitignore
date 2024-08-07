@@ -29,3 +29,6 @@ DerivedData/
 .vscode
 .wrangler
 .flatpak-builder
+
+# Don't commit any secrets to the repo.
+.env.secret.toml

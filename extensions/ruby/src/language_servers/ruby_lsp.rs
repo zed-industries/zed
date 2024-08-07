@@ -1,8 +1,14 @@
-use zed::{
+use zed_extension_api::{
+    self as zed,
     lsp::{Completion, CompletionKind, Symbol, SymbolKind},
-    CodeLabel, CodeLabelSpan,
+    settings::LspSettings,
+    CodeLabel, CodeLabelSpan, LanguageServerId, Result,
 };
-use zed_extension_api::{self as zed, Result};
+
+pub struct RubyLspBinary {
+    pub path: String,
+    pub args: Option<Vec<String>>,
+}
 
 pub struct RubyLsp {}
 
@@ -13,13 +19,50 @@ impl RubyLsp {
         Self {}
     }
 
-    pub fn server_script_path(&mut self, worktree: &zed::Worktree) -> Result<String> {
-        let path = worktree.which("ruby-lsp").ok_or_else(|| {
-            "ruby-lsp must be installed manually. Install it with `gem install ruby-lsp`."
-                .to_string()
-        })?;
+    pub fn language_server_command(
+        &mut self,
+        language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<zed::Command> {
+        let binary = self.language_server_binary(language_server_id, worktree)?;
 
-        Ok(path)
+        Ok(zed::Command {
+            command: binary.path,
+            args: binary.args.unwrap_or_default(),
+            env: worktree.shell_env(),
+        })
+    }
+
+    fn language_server_binary(
+        &self,
+        _language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<RubyLspBinary> {
+        let binary_settings = LspSettings::for_worktree("ruby-lsp", worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.binary);
+        let binary_args = binary_settings
+            .as_ref()
+            .and_then(|binary_settings| binary_settings.arguments.clone());
+
+        if let Some(path) = binary_settings.and_then(|binary_settings| binary_settings.path) {
+            return Ok(RubyLspBinary {
+                path,
+                args: binary_args,
+            });
+        }
+
+        if let Some(path) = worktree.which("ruby-lsp") {
+            return Ok(RubyLspBinary {
+                path,
+                args: binary_args,
+            });
+        }
+
+        Err(
+            "ruby-lsp must be installed manually. Install it with `gem install ruby-lsp`."
+                .to_string(),
+        )
     }
 
     pub fn label_for_completion(&self, completion: Completion) -> Option<CodeLabel> {

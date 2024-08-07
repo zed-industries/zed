@@ -11,6 +11,7 @@ use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
+use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
@@ -18,7 +19,7 @@ use gpui::{
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
-use rpc::proto::DevServerStatus;
+use rpc::proto::{self, DevServerStatus};
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -507,16 +508,32 @@ impl TitleBar {
     }
 
     pub fn render_user_menu_button(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
-        if let Some(user) = self.user_store.read(cx).current_user() {
+        let user_store = self.user_store.read(cx);
+        if let Some(user) = user_store.current_user() {
+            let plan = user_store.current_plan();
             PopoverMenu::new("user-menu")
-                .menu(|cx| {
-                    ContextMenu::build(cx, |menu, _| {
-                        menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
-                            .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
-                            .action("Themes…", theme_selector::Toggle::default().boxed_clone())
-                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                .menu(move |cx| {
+                    ContextMenu::build(cx, |menu, cx| {
+                        menu.when(cx.has_flag::<ZedPro>(), |menu| {
+                            menu.action(
+                                format!(
+                                    "Current Plan: {}",
+                                    match plan {
+                                        None => "",
+                                        Some(proto::Plan::Free) => "Free",
+                                        Some(proto::Plan::ZedPro) => "Pro",
+                                    }
+                                ),
+                                zed_actions::OpenAccountSettings.boxed_clone(),
+                            )
                             .separator()
-                            .action("Sign Out", client::SignOut.boxed_clone())
+                        })
+                        .action("Settings", zed_actions::OpenSettings.boxed_clone())
+                        .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                        .action("Themes…", theme_selector::Toggle::default().boxed_clone())
+                        .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                        .separator()
+                        .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
                 })

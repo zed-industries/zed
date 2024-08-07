@@ -333,7 +333,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -341,7 +341,7 @@ mod tests {
                 three
             "},
             vec!["completion_a", "completion_b"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -375,7 +375,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -383,7 +383,7 @@ mod tests {
                 three
             "},
             vec![],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -408,7 +408,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -416,7 +416,7 @@ mod tests {
                 three
             "},
             vec!["completion_a", "completion_b"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -590,7 +590,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -598,7 +598,7 @@ mod tests {
                 three
             "},
             vec![],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -632,7 +632,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -640,7 +640,7 @@ mod tests {
                 three
             "},
             vec![],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -889,7 +889,7 @@ mod tests {
                 three
             "});
 
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one
@@ -897,7 +897,7 @@ mod tests {
                 three
             "},
             vec!["completion_a", "completion_b"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -917,7 +917,7 @@ mod tests {
         });
 
         cx.simulate_keystroke("o");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one
@@ -925,7 +925,7 @@ mod tests {
                 three
             "},
             vec!["completion_a_2", "completion_b_2"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -944,7 +944,7 @@ mod tests {
         });
 
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one
@@ -952,7 +952,7 @@ mod tests {
                 three
             "},
             vec!["something_else()"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {

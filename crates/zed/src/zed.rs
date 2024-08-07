@@ -5,8 +5,6 @@ pub(crate) mod linux_prompts;
 #[cfg(not(target_os = "linux"))]
 pub(crate) mod only_instance;
 mod open_listener;
-pub(crate) mod session;
-mod ssh_connection_modal;
 
 pub use app_menus::*;
 use breadcrumbs::Breadcrumbs;
@@ -37,6 +35,7 @@ use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
+use workspace::CloseIntent;
 
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use terminal_view::terminal_panel::{self, TerminalPanel};
@@ -49,7 +48,7 @@ use workspace::{
     open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
 };
 use workspace::{notifications::DetachAndPromptErr, Pane};
-use zed_actions::{OpenBrowser, OpenSettings, OpenZedUrl, Quit};
+use zed_actions::{OpenAccountSettings, OpenBrowser, OpenSettings, OpenZedUrl, Quit};
 
 actions!(
     zed,
@@ -171,9 +170,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 For troubleshooting see: https://zed.dev/docs/linux
                 "#}, specs.device_name);
             let prompt = cx.prompt(PromptLevel::Critical, "Unsupported GPU", Some(&message),
-                &["Troubleshoot and Quit"]);
+                &["Skip", "Troubleshoot and Quit"]);
             cx.spawn(|_, mut cx| async move {
-                if prompt.await == Ok(0) {
+                if prompt.await == Ok(1) {
                     cx.update(|cx| {
                         cx.open_url("https://zed.dev/docs/linux#zed-fails-to-open-windows");
                         cx.quit();
@@ -425,6 +424,12 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 },
             )
             .register_action(
+                |_: &mut Workspace, _: &OpenAccountSettings, cx: &mut ViewContext<Workspace>| {
+                    let server_url = &client::ClientSettings::get_global(cx).server_url;
+                    cx.open_url(&format!("{server_url}/account"));
+                },
+            )
+            .register_action(
                 move |_: &mut Workspace, _: &OpenTasks, cx: &mut ViewContext<Workspace>| {
                     open_settings_file(
                         paths::tasks_file(),
@@ -617,7 +622,7 @@ fn quit(_: &Quit, cx: &mut AppContext) {
         for window in workspace_windows {
             if let Some(should_close) = window
                 .update(&mut cx, |workspace, cx| {
-                    workspace.prepare_to_close(true, cx)
+                    workspace.prepare_to_close(CloseIntent::Quit, cx)
                 })
                 .log_err()
             {
@@ -3326,6 +3331,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_bundled_languages(cx: &mut TestAppContext) {
+        env_logger::builder().is_test(true).try_init().ok();
         let settings = cx.update(|cx| SettingsStore::test(cx));
         cx.set_global(settings);
         let languages = LanguageRegistry::test(cx.executor());
@@ -3457,9 +3463,23 @@ mod tests {
             project_panel::init((), cx);
             outline_panel::init((), cx);
             terminal_view::init(cx);
-            language_model::init(app_state.client.clone(), cx);
+            copilot::copilot_chat::init(
+                app_state.fs.clone(),
+                app_state.client.http_client().clone(),
+                cx,
+            );
+            language_model::init(
+                app_state.user_store.clone(),
+                app_state.client.clone(),
+                app_state.fs.clone(),
+                cx,
+            );
             assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
-            repl::init(app_state.fs.clone(), cx);
+            repl::init(
+                app_state.fs.clone(),
+                app_state.client.telemetry().clone(),
+                cx,
+            );
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), cx);
             app_state
@@ -3490,7 +3510,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_markdown::language()),
+            Some(tree_sitter_md::language()),
         ))
     }
 

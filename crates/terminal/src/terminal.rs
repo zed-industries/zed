@@ -142,7 +142,7 @@ enum InternalEvent {
 
 ///A translation struct for Alacritty to communicate with us from their event loop
 #[derive(Clone)]
-pub struct ZedListener(UnboundedSender<AlacTermEvent>);
+pub struct ZedListener(pub UnboundedSender<AlacTermEvent>);
 
 impl EventListener for ZedListener {
     fn send_event(&self, event: AlacTermEvent) {

@@ -120,7 +120,7 @@ pub fn match_fixed_path_set(
             worktree_id,
             positions: Vec::new(),
             path: Arc::from(candidate.path),
-            path_prefix: Arc::from(""),
+            path_prefix: Arc::default(),
             distance_to_relative_ancestor: usize::MAX,
         },
     );

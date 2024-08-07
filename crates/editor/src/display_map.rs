@@ -109,6 +109,7 @@ pub struct DisplayMap {
     crease_map: CreaseMap,
     fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
+    pub(crate) masked: bool,
 }
 
 impl DisplayMap {
@@ -119,9 +120,9 @@ impl DisplayMap {
         font_size: Pixels,
         wrap_width: Option<Pixels>,
         show_excerpt_controls: bool,
-        buffer_header_height: u8,
-        excerpt_header_height: u8,
-        excerpt_footer_height: u8,
+        buffer_header_height: u32,
+        excerpt_header_height: u32,
+        excerpt_footer_height: u32,
         fold_placeholder: FoldPlaceholder,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -156,6 +157,7 @@ impl DisplayMap {
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
             clip_at_line_ends: false,
+            masked: false,
         }
     }
 
@@ -182,6 +184,7 @@ impl DisplayMap {
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
+            masked: self.masked,
             fold_placeholder: self.fold_placeholder.clone(),
         }
     }
@@ -283,44 +286,11 @@ impl DisplayMap {
         block_map.insert(blocks)
     }
 
-    pub fn replace_blocks(
+    pub fn resize_blocks(
         &mut self,
-        heights_and_renderers: HashMap<CustomBlockId, (Option<u8>, RenderBlock)>,
+        heights: HashMap<CustomBlockId, u32>,
         cx: &mut ModelContext<Self>,
     ) {
-        //
-        // Note: previous implementation of `replace_blocks` simply called
-        // `self.block_map.replace(styles)` which just modified the render by replacing
-        // the `RenderBlock` with the new one.
-        //
-        // ```rust
-        //  for block in &self.blocks {
-        //           if let Some(render) = renderers.remove(&block.id) {
-        //               *block.render.lock() = render;
-        //           }
-        //       }
-        // ```
-        //
-        // If height changes however, we need to update the tree. There's a performance
-        // cost to this, so we'll split the replace blocks into handling the old behavior
-        // directly and the new behavior separately.
-        //
-        //
-        let mut only_renderers = HashMap::<CustomBlockId, RenderBlock>::default();
-        let mut full_replace = HashMap::<CustomBlockId, (u8, RenderBlock)>::default();
-        for (id, (height, render)) in heights_and_renderers {
-            if let Some(height) = height {
-                full_replace.insert(id, (height, render));
-            } else {
-                only_renderers.insert(id, render);
-            }
-        }
-        self.block_map.replace_renderers(only_renderers);
-
-        if full_replace.is_empty() {
-            return;
-        }
-
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
@@ -331,7 +301,11 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
-        block_map.replace(full_replace);
+        block_map.resize(heights);
+    }
+
+    pub fn replace_blocks(&mut self, renderers: HashMap<CustomBlockId, RenderBlock>) {
+        self.block_map.replace_blocks(renderers);
     }
 
     pub fn remove_blocks(&mut self, ids: HashSet<CustomBlockId>, cx: &mut ModelContext<Self>) {
@@ -499,6 +473,7 @@ pub struct DisplaySnapshot {
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
     clip_at_line_ends: bool,
+    masked: bool,
     pub(crate) fold_placeholder: FoldPlaceholder,
 }
 
@@ -561,7 +536,7 @@ impl DisplaySnapshot {
         }
     }
 
-    // used by line_mode selections and tries to match vim behaviour
+    // used by line_mode selections and tries to match vim behavior
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
         let new_start = if range.start.row == 0 {
             MultiBufferPoint::new(0, 0)
@@ -650,6 +625,7 @@ impl DisplaySnapshot {
             .chunks(
                 display_row.0..self.max_point().row().next_row().0,
                 false,
+                self.masked,
                 Highlights::default(),
             )
             .map(|h| h.text)
@@ -657,9 +633,9 @@ impl DisplaySnapshot {
 
     /// Returns text chunks starting at the end of the given display row in reverse until the start of the file
     pub fn reverse_text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
-        (0..=display_row.0).rev().flat_map(|row| {
+        (0..=display_row.0).rev().flat_map(move |row| {
             self.block_snapshot
-                .chunks(row..row + 1, false, Highlights::default())
+                .chunks(row..row + 1, false, self.masked, Highlights::default())
                 .map(|h| h.text)
                 .collect::<Vec<_>>()
                 .into_iter()
@@ -676,6 +652,7 @@ impl DisplaySnapshot {
         self.block_snapshot.chunks(
             display_rows.start.0..display_rows.end.0,
             language_aware,
+            self.masked,
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
@@ -1044,6 +1021,18 @@ impl DisplaySnapshot {
     ) -> Option<&TreeMap<InlayId, (HighlightStyle, InlayHighlight)>> {
         let type_id = TypeId::of::<Tag>();
         self.inlay_highlights.get(&type_id)
+    }
+
+    pub fn buffer_header_height(&self) -> u32 {
+        self.block_snapshot.buffer_header_height
+    }
+
+    pub fn excerpt_footer_height(&self) -> u32 {
+        self.block_snapshot.excerpt_footer_height
+    }
+
+    pub fn excerpt_header_height(&self) -> u32 {
+        self.block_snapshot.excerpt_header_height
     }
 }
 

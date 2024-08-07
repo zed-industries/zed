@@ -185,7 +185,7 @@ async fn download_extension(
         .clone()
         .zip(app.config.blob_store_bucket.clone())
     else {
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
             "not supported".into(),
         ))?
@@ -202,7 +202,7 @@ async fn download_extension(
         .await?;
 
     if !version_exists {
-        Err(Error::Http(
+        Err(Error::http(
             StatusCode::NOT_FOUND,
             "unknown extension version".into(),
         ))?;

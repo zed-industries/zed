@@ -65,6 +65,7 @@ pub enum Event {
     Extension(ExtensionEvent),
     Edit(EditEvent),
     Action(ActionEvent),
+    Repl(ReplEvent),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -146,6 +147,13 @@ pub struct ExtensionEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AppEvent {
     pub operation: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ReplEvent {
+    pub kernel_language: String,
+    pub kernel_status: String,
+    pub repl_session_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

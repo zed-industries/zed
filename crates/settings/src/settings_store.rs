@@ -17,6 +17,8 @@ use std::{
 };
 use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
 
+use crate::SettingsJsonSchemaParams;
+
 /// A value that can be defined as a user setting.
 ///
 /// Settings can be loaded from a combination of multiple JSON files.
@@ -25,6 +27,14 @@ pub trait Settings: 'static + Send + Sync {
     /// be deserialized. If this is `None`, then the setting will be deserialized
     /// from the root object.
     const KEY: Option<&'static str>;
+
+    /// The name of the keys in the [`FileContent`] that should always be written to
+    /// a settings file, even if their value matches the default value.
+    ///
+    /// This is useful for tagged [`FileContent`]s where the tag is a "version" field
+    /// that should always be persisted, even if the current user settings match the
+    /// current version of the settings.
+    const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
 
     /// The type that is stored in an individual JSON file.
     type FileContent: Clone + Default + Serialize + DeserializeOwned + JsonSchema;
@@ -144,12 +154,6 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
 pub struct SettingsLocation<'a> {
     pub worktree_id: usize,
     pub path: &'a Path,
-}
-
-pub struct SettingsJsonSchemaParams<'a> {
-    pub staff_mode: bool,
-    pub language_names: &'a [String],
-    pub font_names: &'a [String],
 }
 
 /// A set of strongly-typed setting values defined via multiple JSON files.
@@ -411,6 +415,8 @@ impl SettingsStore {
     ) -> Vec<(Range<usize>, String)> {
         let setting_type_id = TypeId::of::<T>();
 
+        let preserved_keys = T::PRESERVED_KEYS.unwrap_or_default();
+
         let setting = self
             .setting_values
             .get(&setting_type_id)
@@ -440,6 +446,7 @@ impl SettingsStore {
             tab_size,
             &old_value,
             &new_value,
+            preserved_keys,
             &mut edits,
         );
         edits
@@ -878,6 +885,7 @@ fn update_value_in_json_text<'a>(
     tab_size: usize,
     old_value: &'a serde_json::Value,
     new_value: &'a serde_json::Value,
+    preserved_keys: &[&str],
     edits: &mut Vec<(Range<usize>, String)>,
 ) {
     // If the old and new values are both objects, then compare them key by key,
@@ -895,6 +903,7 @@ fn update_value_in_json_text<'a>(
                 tab_size,
                 old_sub_value,
                 new_sub_value,
+                preserved_keys,
                 edits,
             );
             key_path.pop();
@@ -908,12 +917,17 @@ fn update_value_in_json_text<'a>(
                     tab_size,
                     &serde_json::Value::Null,
                     new_sub_value,
+                    preserved_keys,
                     edits,
                 );
             }
             key_path.pop();
         }
-    } else if old_value != new_value {
+    } else if key_path
+        .last()
+        .map_or(false, |key| preserved_keys.contains(&key))
+        || old_value != new_value
+    {
         let mut new_value = new_value.clone();
         if let Some(new_object) = new_value.as_object_mut() {
             new_object.retain(|_, v| !v.is_null());

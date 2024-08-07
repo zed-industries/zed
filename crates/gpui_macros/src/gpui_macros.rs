@@ -96,7 +96,7 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 /// In addition to passing a TestAppContext, you can also ask for a `StdRnd` instance.
 /// this will be seeded with the `SEED` environment variable and is used internally by
 /// the ForegroundExecutor and BackgroundExecutor to run tasks deterministically in tests.
-/// Using the same `StdRng` for behaviour in your test will allow you to exercise a wide
+/// Using the same `StdRng` for behavior in your test will allow you to exercise a wide
 /// variety of scenarios and interleavings just by changing the seed.
 ///
 /// #[gpui::test] also takes three different arguments:

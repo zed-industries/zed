@@ -1,7 +1,7 @@
 id = "terraform"
 name = "Terraform"
 description = "Terraform support."
-version = "0.0.3"
+version = "0.0.4"
 schema_version = 1
 authors = ["Caius Durling <dev@caius.name>", "Daniel Banck <dbanck@users.noreply.github.com>"]
 repository = "https://github.com/zed-industries/zed"

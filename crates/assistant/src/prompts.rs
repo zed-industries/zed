@@ -6,8 +6,7 @@ pub fn generate_content_prompt(
     language_name: Option<&str>,
     buffer: BufferSnapshot,
     range: Range<usize>,
-    _project_name: Option<String>,
-) -> anyhow::Result<String> {
+) -> String {
     let mut prompt = String::new();
 
     let content_type = match language_name {
@@ -15,14 +14,16 @@ pub fn generate_content_prompt(
             writeln!(
                 prompt,
                 "Here's a file of text that I'm going to ask you to make an edit to."
-            )?;
+            )
+            .unwrap();
             "text"
         }
         Some(language_name) => {
             writeln!(
                 prompt,
                 "Here's a file of {language_name} that I'm going to ask you to make an edit to."
-            )?;
+            )
+            .unwrap();
             "code"
         }
     };
@@ -70,7 +71,7 @@ pub fn generate_content_prompt(
     write!(prompt, "</document>\n\n").unwrap();
 
     if is_truncated {
-        writeln!(prompt, "The context around the relevant section has been truncated (possibly in the middle of a line) for brevity.\n")?;
+        writeln!(prompt, "The context around the relevant section has been truncated (possibly in the middle of a line) for brevity.\n").unwrap();
     }
 
     if range.is_empty() {
@@ -107,18 +108,26 @@ pub fn generate_content_prompt(
         prompt.push_str("\n\nImmediately start with the following format with no remarks:\n\n```\n{{REWRITTEN_CODE}}\n```");
     }
 
-    Ok(prompt)
+    prompt
 }
 
 pub fn generate_terminal_assistant_prompt(
     user_prompt: &str,
     shell: Option<&str>,
     working_directory: Option<&str>,
+    latest_output: &[String],
 ) -> String {
     let mut prompt = String::new();
     writeln!(&mut prompt, "You are an expert terminal user.").unwrap();
     writeln!(&mut prompt, "You will be given a description of a command and you need to respond with a command that matches the description.").unwrap();
     writeln!(&mut prompt, "Do not include markdown blocks or any other text formatting in your response, always respond with a single command that can be executed in the given shell.").unwrap();
+    writeln!(
+        &mut prompt,
+        "Current OS name is '{}', architecture is '{}'.",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )
+    .unwrap();
     if let Some(shell) = shell {
         writeln!(&mut prompt, "Current shell is '{shell}'.").unwrap();
     }
@@ -126,6 +135,15 @@ pub fn generate_terminal_assistant_prompt(
         writeln!(
             &mut prompt,
             "Current working directory is '{working_directory}'."
+        )
+        .unwrap();
+    }
+    if !latest_output.is_empty() {
+        writeln!(
+            &mut prompt,
+            "Latest non-empty {} lines of the terminal output: {:?}",
+            latest_output.len(),
+            latest_output
         )
         .unwrap();
     }

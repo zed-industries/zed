@@ -5,17 +5,17 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenTerminal, OpenVisible, SplitDirection,
-    ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    CloseWindow, CopyPath, CopyRelativePath, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
+    OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
-    AppContext, AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId,
-    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
-    MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
+    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, DismissEvent, Div, DragMoveEvent,
+    EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext,
+    Model, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
     WindowContext,
 };
@@ -169,7 +169,8 @@ pub enum Event {
     AddItem { item: Box<dyn ItemHandle> },
     ActivateItem { local: bool },
     Remove,
-    RemoveItem { item_id: EntityId },
+    RemoveItem { idx: usize },
+    RemovedItem { item_id: EntityId },
     Split(SplitDirection),
     ChangeItemTitle,
     Focus,
@@ -189,8 +190,9 @@ impl fmt::Debug for Event {
                 .field("local", local)
                 .finish(),
             Event::Remove => f.write_str("Remove"),
-            Event::RemoveItem { item_id } => f
-                .debug_struct("RemoveItem")
+            Event::RemoveItem { idx } => f.debug_struct("RemoveItem").field("idx", idx).finish(),
+            Event::RemovedItem { item_id } => f
+                .debug_struct("RemovedItem")
                 .field("item_id", item_id)
                 .finish(),
             Event::Split(direction) => f
@@ -227,7 +229,6 @@ pub struct Pane {
     toolbar: View<Toolbar>,
     pub new_item_menu: Option<View<ContextMenu>>,
     split_item_menu: Option<View<ContextMenu>>,
-    //     tab_context_menu: View<ContextMenu>,
     pub(crate) workspace: WeakView<Workspace>,
     project: Model<Project>,
     drag_split_direction: Option<SplitDirection>,
@@ -236,7 +237,7 @@ pub struct Pane {
         Option<Arc<dyn Fn(&mut Pane, &dyn Any, &mut ViewContext<Pane>) -> ControlFlow<(), ()>>>,
     can_split: bool,
     should_display_tab_bar: Rc<dyn Fn(&ViewContext<Pane>) -> bool>,
-    render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement>,
+    render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> Option<AnyElement>>,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
     /// Is None if navigation buttons are permanently turned off (and should not react to setting changes).
@@ -355,6 +356,9 @@ impl Pane {
             can_split: true,
             should_display_tab_bar: Rc::new(|cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
+                if !pane.has_focus(cx) {
+                    return None;
+                }
                 // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
                 // `end_slot`, but due to needing a view here that isn't possible.
                 h_flex()
@@ -437,6 +441,7 @@ impl Pane {
                         el.child(Self::render_menu_overlay(split_item_menu))
                     })
                     .into_any_element()
+                    .into()
             }),
             display_nav_history_buttons: Some(
                 TabBarSettings::get_global(cx).show_nav_history_buttons,
@@ -482,10 +487,10 @@ impl Pane {
 
     pub fn has_focus(&self, cx: &WindowContext) -> bool {
         // We not only check whether our focus handle contains focus, but also
-        // whether the active_item might have focus, because we might have just activated an item
-        // but that hasn't rendered yet.
-        // So before the next render, we might have transferred focus
-        // to the item and `focus_handle.contains_focus` returns false because the `active_item`
+        // whether the active item might have focus, because we might have just activated an item
+        // that hasn't rendered yet.
+        // Before the next render, we might transfer focus
+        // to the item, and `focus_handle.contains_focus` returns false because the `active_item`
         // is not hooked up to us in the dispatch tree.
         self.focus_handle.contains_focused(cx)
             || self
@@ -581,7 +586,7 @@ impl Pane {
 
     pub fn set_render_tab_bar_buttons<F>(&mut self, cx: &mut ViewContext<Self>, render: F)
     where
-        F: 'static + Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement,
+        F: 'static + Fn(&mut Pane, &mut ViewContext<Pane>) -> Option<AnyElement>,
     {
         self.render_tab_bar_buttons = Rc::new(render);
         cx.notify();
@@ -1303,9 +1308,11 @@ impl Pane {
             }
         }
 
+        cx.emit(Event::RemoveItem { idx: item_index });
+
         let item = self.items.remove(item_index);
 
-        cx.emit(Event::RemoveItem {
+        cx.emit(Event::RemovedItem {
             item_id: item.item_id(),
         });
         if self.items.is_empty() {
@@ -1568,10 +1575,39 @@ impl Pane {
         });
     }
 
+    fn entry_abs_path(&self, entry: ProjectEntryId, cx: &WindowContext) -> Option<PathBuf> {
+        let worktree = self
+            .workspace
+            .upgrade()?
+            .read(cx)
+            .project()
+            .read(cx)
+            .worktree_for_entry(entry, cx)?
+            .read(cx);
+        let entry = worktree.entry_for_id(entry)?;
+        let abs_path = worktree.absolutize(&entry.path).ok()?;
+        if entry.is_symlink {
+            abs_path.canonicalize().ok()
+        } else {
+            Some(abs_path)
+        }
+    }
+
+    fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
+        if let Some(clipboard_text) = self
+            .active_item()
+            .as_ref()
+            .and_then(|entry| entry.project_path(cx))
+            .map(|p| p.path.to_string_lossy().to_string())
+        {
+            cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
+        }
+    }
+
     fn render_tab(
         &self,
         ix: usize,
-        item: &Box<dyn ItemHandle>,
+        item: &dyn ItemHandle,
         detail: usize,
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
@@ -1761,30 +1797,32 @@ impl Pane {
                         );
 
                     if let Some(entry) = single_entry_to_resolve {
-                        let parent_abs_path = pane
-                            .update(cx, |pane, cx| {
-                                pane.workspace.update(cx, |workspace, cx| {
-                                    let project = workspace.project().read(cx);
-                                    project.worktree_for_entry(entry, cx).and_then(|worktree| {
-                                        let worktree = worktree.read(cx);
-                                        let entry = worktree.entry_for_id(entry)?;
-                                        let abs_path = worktree.absolutize(&entry.path).ok()?;
-                                        let parent = if entry.is_symlink {
-                                            abs_path.canonicalize().ok()?
-                                        } else {
-                                            abs_path
-                                        }
-                                        .parent()?
-                                        .to_path_buf();
-                                        Some(parent)
-                                    })
-                                })
-                            })
-                            .ok()
-                            .flatten();
+                        let entry_abs_path = pane.read(cx).entry_abs_path(entry, cx);
+                        let parent_abs_path = entry_abs_path
+                            .as_deref()
+                            .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
 
                         let entry_id = entry.to_proto();
                         menu = menu
+                            .separator()
+                            .when_some(entry_abs_path, |menu, abs_path| {
+                                menu.entry(
+                                    "Copy Path",
+                                    Some(Box::new(CopyPath)),
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new(
+                                            abs_path.to_string_lossy().to_string(),
+                                        ));
+                                    }),
+                                )
+                            })
+                            .entry(
+                                "Copy Relative Path",
+                                Some(Box::new(CopyRelativePath)),
+                                cx.handler_for(&pane, move |pane, cx| {
+                                    pane.copy_relative_path(&CopyRelativePath, cx);
+                                }),
+                            )
                             .separator()
                             .entry(
                                 "Reveal In Project Panel",
@@ -1799,14 +1837,14 @@ impl Pane {
                                     });
                                 }),
                             )
-                            .when_some(parent_abs_path, |menu, abs_path| {
+                            .when_some(parent_abs_path, |menu, parent_abs_path| {
                                 menu.entry(
                                     "Open in Terminal",
                                     Some(Box::new(OpenInTerminal)),
                                     cx.handler_for(&pane, move |_, cx| {
                                         cx.dispatch_action(
                                             OpenTerminal {
-                                                working_directory: abs_path.clone(),
+                                                working_directory: parent_abs_path.clone(),
                                             }
                                             .boxed_clone(),
                                         );
@@ -1852,18 +1890,20 @@ impl Pane {
                         .start_child(navigate_forward)
                 },
             )
-            .when(self.has_focus(cx), |tab_bar| {
-                tab_bar.end_child({
-                    let render_tab_buttons = self.render_tab_bar_buttons.clone();
-                    render_tab_buttons(self, cx)
-                })
+            .map(|tab_bar| {
+                let render_tab_buttons = self.render_tab_bar_buttons.clone();
+                if let Some(buttons) = render_tab_buttons(self, cx) {
+                    tab_bar.end_child(buttons)
+                } else {
+                    tab_bar
+                }
             })
             .children(
                 self.items
                     .iter()
                     .enumerate()
                     .zip(tab_details(&self.items, cx))
-                    .map(|((ix, item), detail)| self.render_tab(ix, item, detail, cx)),
+                    .map(|((ix, item), detail)| self.render_tab(ix, &**item, detail, cx)),
             )
             .child(
                 div()

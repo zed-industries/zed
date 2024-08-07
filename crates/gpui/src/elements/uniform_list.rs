@@ -325,7 +325,9 @@ impl UniformList {
 
         let item_ix = cmp::min(self.item_to_measure_index, self.item_count - 1);
         let mut items = (self.render_items)(item_ix..item_ix + 1, cx);
-        let mut item_to_measure = items.pop().unwrap();
+        let Some(mut item_to_measure) = items.pop() else {
+            return Size::default();
+        };
         let available_space = size(
             list_width.map_or(AvailableSpace::MinContent, |width| {
                 AvailableSpace::Definite(width)

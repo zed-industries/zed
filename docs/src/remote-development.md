@@ -14,14 +14,14 @@ Currently the two instances connect via Zed's servers, but we intend to build pe
 
 1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview).
 1. Open the remote projects dialogue with `cmd-shift-p remote`.
-2. Click "New Server".
-3. Choose whether to setup via SSH, or to follow the manual setup.
+1. Click "New Server".
+1. Choose whether to setup via SSH, or to follow the manual setup.
    > **Note:** With both options your laptop and the remote machine will communicate
-     via https://collab.zed.dev/, so you will need outbound internet access on the remote machine.
-6. On your laptop you can now open folders on the remote machine.
+   > via https://collab.zed.dev/, so you will need outbound internet access on the remote machine.
+1. On your laptop you can now open folders on the remote machine.
    > **Note:** Zed does not currently handle opening very large directories (for example, `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
 
-## Toubleshooting
+## Troubleshooting
 
 ### UI is not showing up
 
@@ -35,17 +35,9 @@ Once a connection is established, Zed will be downloaded and installed to `~/.lo
 If you don't see any output from the Zed command, it is likely that Zed is crashing
 on startup. You can troubleshoot this by switching to manual mode and passing the `--foreground` flag. Please [file a bug](https://github.com/zed-industries/zed) so we can debug it together.
 
-### SSH-like connections
+If you are trying to connect to a platform like GitHub Codespaces or Google Cloud, you may want to first make sure that your SSH configuration is set up correctly. Once you can `ssh X` to connect to the machine, then Zed will be able to connect.
 
-Zed intercepts `ssh` in a way that should make it possible to intercept connections made by most "ssh wrappers". For example you
-can specify:
-
-- `user@host` will assume you meant `ssh user@host`
-- `ssh -J jump target` to connect via a jump-host
-- `gh cs ssh -c example-codespace` to connect to a GitHub codespace
-- `doctl compute ssh example-droplet` to connect to a DigitalOcean Droplet
-- `gcloud compute ssh` for a Google Cloud instance
-- `ssh -i path_to_key_file user@host` to connect to a host using a key file or certificate
+> **Note:** In an earlier version of remoting, we supported typing in `gh cs ssh` or `gcloud compute ssh` directly. This is no longer supported. Instead you should make sure your SSH configuration is up to date with `gcloud compute ssh --config` or `gh cs ssh --config`, or use Manual setup mode if you cannot ssh directly to the machine.
 
 ### zed --dev-server-token isn't connecting
 
@@ -89,4 +81,26 @@ If you'd like to install language-server extensions, you can add them to the lis
 
 ## Feedback
 
-Please join the #remoting-feedback channel in the [Zed Discord](https://discord.gg/qSDQ8VWc7k).
+Please join the #remoting-feedback channel in the [Zed Discord](https://discord.gg/zed-community).
+
+# Direct SSH Connections
+
+The current alpha release of Zed always connects via our servers. This was to get experience building the feature on top of our existing collaboration support. We plan to move to direct SSH connections for any machine that can be SSH'd into.
+
+We are working on a direct SSH connection feature, which you can try out if you'd like.
+
+> **Note:** Direct SSH support does not support most features yet! You cannot use project search, language servers, or basically do anything except edit files...
+
+To try this out you can either from the command line run:
+
+```
+zed ssh://user@host:port/path/to/project
+```
+
+Or you can (in your settings file) add:
+
+```
+"ssh_connections": []
+```
+
+And then from the command palette choose `projects: Open Remote` and configure an SSH connection from there.

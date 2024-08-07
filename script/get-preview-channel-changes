@@ -59,7 +59,7 @@ async function main() {
     const releaseNotesHeader = /^\s*Release Notes:(.+)/ims;
 
     let releaseNotes = pullRequest.body || "";
-    let contributor = pullRequest.user.login || "";
+    let contributor = pullRequest.user?.login ?? "Unable to identify";
     const captures = releaseNotesHeader.exec(releaseNotes);
     const notes = captures ? captures[1] : "MISSING";
     const skippableNoteRegex = /^\s*-?\s*n\/?a\s*/ims;

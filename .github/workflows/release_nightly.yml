@@ -23,7 +23,7 @@ jobs:
       - test
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
           fetch-depth: 0
@@ -44,7 +44,7 @@ jobs:
     needs: style
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
 
@@ -69,12 +69,12 @@ jobs:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4
         with:
           node-version: "18"
 
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
 
@@ -108,7 +108,7 @@ jobs:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
 
@@ -141,12 +141,12 @@ jobs:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
 
       - name: "Setup jq"
-        uses: dcarbone/install-jq-action@v2
+        uses: dcarbone/install-jq-action@8867ddb4788346d7c22b72ea2e2ffe4d514c7bcb # v2
 
       - name: Set up Clang
         run: |
@@ -154,7 +154,7 @@ jobs:
           sudo apt-get install -y llvm-10 clang-10 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libsqlite3-dev libzstd-dev libvulkan1 libgit2-dev
           echo "/usr/lib/llvm-10/bin" >> $GITHUB_PATH
 
-      - uses: rui314/setup-mold@v1
+      - uses: rui314/setup-mold@2e332a0b602c2fc65d2d3995941b1b29a5f554a0 # v1
         with:
           mold-version: 2.32.0
 

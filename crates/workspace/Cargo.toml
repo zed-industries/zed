@@ -74,3 +74,4 @@ project = { workspace = true, features = ["test-support"] }
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 http_client =  { workspace = true, features = ["test-support"] }
+tempfile.workspace = true

@@ -31,9 +31,6 @@ pub(crate) struct WindowsDispatcher {
     main_thread_id: ThreadId,
 }
 
-unsafe impl Send for WindowsDispatcher {}
-unsafe impl Sync for WindowsDispatcher {}
-
 impl WindowsDispatcher {
     pub(crate) fn new() -> Self {
         let controller = unsafe {

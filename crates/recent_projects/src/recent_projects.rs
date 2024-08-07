@@ -1,5 +1,8 @@
 mod dev_servers;
 pub mod disconnected_overlay;
+mod ssh_connections;
+mod ssh_remotes;
+pub use ssh_connections::open_ssh_project;
 
 use client::{DevServerProjectId, ProjectId};
 use dev_servers::reconnect_to_dev_server_project;
@@ -17,6 +20,8 @@ use picker::{
 };
 use rpc::proto::DevServerStatus;
 use serde::Deserialize;
+use settings::Settings;
+use ssh_connections::SshSettings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -27,7 +32,8 @@ use ui::{
 };
 use util::{paths::PathExt, ResultExt};
 use workspace::{
-    AppState, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId, WORKSPACE_DB,
+    AppState, CloseIntent, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId,
+    WORKSPACE_DB,
 };
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -44,6 +50,7 @@ gpui::impl_actions!(projects, [OpenRecent]);
 gpui::actions!(projects, [OpenRemote]);
 
 pub fn init(cx: &mut AppContext) {
+    SshSettings::register(cx);
     cx.observe_new_views(RecentProjects::register).detach();
     cx.observe_new_views(DevServerProjects::register).detach();
     cx.observe_new_views(DisconnectedOverlay::register).detach();
@@ -305,7 +312,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     cx.spawn(move |workspace, mut cx| async move {
                                         let continue_replacing = workspace
                                             .update(&mut cx, |workspace, cx| {
-                                                workspace.prepare_to_close(true, cx)
+                                                workspace.prepare_to_close(CloseIntent::ReplaceWindow, cx)
                                             })?
                                             .await?;
                                         if continue_replacing {
@@ -564,7 +571,7 @@ fn open_dev_server_project(
             cx.spawn(move |workspace, mut cx| async move {
                 let continue_replacing = workspace
                     .update(&mut cx, |workspace, cx| {
-                        workspace.prepare_to_close(true, cx)
+                        workspace.prepare_to_close(CloseIntent::ReplaceWindow, cx)
                     })?
                     .await?;
                 if continue_replacing {

@@ -26,6 +26,9 @@
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Plex Mono",
+  // Set the buffer text's font fallbacks, this will be merged with
+  // the platform's default fallbacks.
+  "buffer_font_fallbacks": [],
   // The OpenType features to enable for text in the editor.
   "buffer_font_features": {
     // Disable ligatures:
@@ -47,8 +50,11 @@
   //         },
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
-  // (On macOS) You can set this to ".SystemUIFont" to use the system font
+  // You can set this to ".SystemUIFont" to use the system font
   "ui_font_family": "Zed Plex Sans",
+  // Set the UI's font fallbacks, this will be merged with the platform's
+  // default font fallbacks.
+  "ui_font_fallbacks": [],
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:
@@ -312,7 +318,7 @@
     "auto_reveal_entries": true,
     // Whether to fold directories automatically and show compact folders
     // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
-    "auto_fold_dirs": false,
+    "auto_fold_dirs": true,
     /// Scrollbar-related settings
     "scrollbar": {
       /// When to show the scrollbar in the project panel.
@@ -629,7 +635,7 @@
     //         "option_to_meta": false,
     //  2. Make the option keys behave as a 'meta' key, e.g. for emacs
     //         "option_to_meta": true,
-    "option_as_meta": false,
+    "option_as_meta": true,
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
@@ -675,6 +681,10 @@
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
     // "font_family": "Zed Plex Mono",
+    // Set the terminal's font fallbacks. If this option is not included,
+    // the terminal will default to matching the buffer's font fallbacks.
+    // This will be merged with the platform's default font fallbacks
+    // "font_fallbacks": ["FiraCode Nerd Fonts"],
     // Sets the maximum number of lines in the terminal's scrollback buffer.
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
@@ -853,7 +863,22 @@
     }
   },
   // Different settings for specific language models.
-  "language_models": {},
+  "language_models": {
+    "anthropic": {
+      "version": "1",
+      "api_url": "https://api.anthropic.com"
+    },
+    "google": {
+      "api_url": "https://generativelanguage.googleapis.com"
+    },
+    "ollama": {
+      "api_url": "http://localhost:11434"
+    },
+    "openai": {
+      "version": "1",
+      "api_url": "https://api.openai.com/v1"
+    }
+  },
   // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier
   // and configure default Prettier, used when no project-level Prettier installation is found.
@@ -899,7 +924,8 @@
   "vim": {
     "use_system_clipboard": "always",
     "use_multiline_find": false,
-    "use_smartcase_find": false
+    "use_smartcase_find": false,
+    "custom_digraphs": {}
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
@@ -955,5 +981,21 @@
   // {
   //   "W": "workspace::Save"
   // }
-  "command_aliases": {}
+  "command_aliases": {},
+  // ssh_connections is an array of ssh connections.
+  // By default this setting is null, which disables the direct ssh connection support.
+  // You can configure these from `project: Open Remote` in the command palette.
+  // Zed's ssh support will pull configuration from your ~/.ssh too.
+  // Examples:
+  // [
+  //   {
+  //     "host": "example-box",
+  //     "projects": [
+  //       {
+  //         "paths": ["/home/user/code/zed"]
+  //       }
+  //     ]
+  //   }
+  // ]
+  "ssh_connections": null
 }

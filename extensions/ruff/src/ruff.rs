@@ -2,18 +2,49 @@ use std::fs;
 use zed::LanguageServerId;
 use zed_extension_api::{self as zed, settings::LspSettings, Result};
 
+struct RuffBinary {
+    path: String,
+    args: Option<Vec<String>>,
+}
+
 struct RuffExtension {
     cached_binary_path: Option<String>,
 }
 
 impl RuffExtension {
-    fn language_server_binary_path(
+    fn language_server_binary(
         &mut self,
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
-    ) -> Result<String> {
+    ) -> Result<RuffBinary> {
+        let binary_settings = LspSettings::for_worktree("ruff", worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.binary);
+        let binary_args = binary_settings
+            .as_ref()
+            .and_then(|binary_settings| binary_settings.arguments.clone());
+
+        if let Some(path) = binary_settings.and_then(|binary_settings| binary_settings.path) {
+            return Ok(RuffBinary {
+                path,
+                args: binary_args,
+            });
+        }
+
         if let Some(path) = worktree.which("ruff") {
-            return Ok(path);
+            return Ok(RuffBinary {
+                path,
+                args: binary_args,
+            });
+        }
+
+        if let Some(path) = &self.cached_binary_path {
+            if fs::metadata(&path).map_or(false, |stat| stat.is_file()) {
+                return Ok(RuffBinary {
+                    path: path.clone(),
+                    args: binary_args,
+                });
+            }
         }
 
         zed::set_language_server_installation_status(
@@ -83,7 +114,10 @@ impl RuffExtension {
         }
 
         self.cached_binary_path = Some(binary_path.clone());
-        Ok(binary_path)
+        Ok(RuffBinary {
+            path: binary_path,
+            args: binary_args,
+        })
     }
 }
 
@@ -96,31 +130,13 @@ impl zed::Extension for RuffExtension {
 
     fn language_server_command(
         &mut self,
-        server_id: &LanguageServerId,
+        language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let mut binary = None;
-        let mut args = None;
-        if let Some(binary_settings) = LspSettings::for_worktree(server_id.as_ref(), worktree)
-            .ok()
-            .and_then(|lsp_settings| lsp_settings.binary)
-        {
-            if let Some(bin_path) = binary_settings.path {
-                binary = Some(bin_path);
-            }
-            if let Some(bin_args) = binary_settings.arguments {
-                args = Some(bin_args);
-            }
-        }
-        let command = if let Some(binary) = binary {
-            binary
-        } else {
-            self.language_server_binary_path(server_id, worktree)?
-        };
-        let args = args.unwrap_or_else(|| vec!["server".into()]);
+        let ruff_binary = self.language_server_binary(language_server_id, worktree)?;
         Ok(zed::Command {
-            command,
-            args,
+            command: ruff_binary.path,
+            args: ruff_binary.args.unwrap_or_else(|| vec!["server".into()]),
             env: vec![],
         })
     }

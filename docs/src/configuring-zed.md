@@ -10,7 +10,7 @@ Your settings file can be opened with `cmd-,` (on macOS) or `ctrl-,` (on Linux).
 
 This configuration is merged with any local configuration inside your projects. You can open the project settings by running `zed: Open Local Settings` from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
 
-Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behaviour of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
+Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
 
 The syntax for configuration files is a super-set of JSON that allows `//` comments.
 
@@ -602,6 +602,7 @@ To override settings for a language, add an entry for that language server's nam
 ```
 
 4. Or to use multiple formatters consecutively, use an array of formatters:
+
 ```json
 {
   "formatter": [
@@ -613,6 +614,7 @@ To override settings for a language, add an entry for that language server's nam
   ]
 }
 ```
+
 Here `rust-analyzer` will be used first to format the code, followed by a call of sed.
 If any of the formatters fails, the subsequent ones will still be executed.
 
@@ -1250,7 +1252,7 @@ List of `integer` column numbers
   "font_family": null,
   "font_features": null,
   "font_size": null,
-  "option_as_meta": false,
+  "option_as_meta": true,
   "button": false,
   "shell": {},
   "toolbar": {
@@ -1562,17 +1564,27 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ## Project Panel
 
-- Description: Customise project panel
+- Description: Customize project panel
 - Setting: `project_panel`
 - Default:
 
 ```json
-"project_panel": {
-  "button": true,
-  "dock": "left",
-  "git_status": true,
-  "default_width": "N/A - width in pixels"
-},
+{
+  "project_panel": {
+    "button": true,
+    "default_width": 240,
+    "dock": "left",
+    "file_icons": true,
+    "folder_icons": true,
+    "git_status": true,
+    "indent_size": 20,
+    "auto_reveal_entries": true,
+    "auto_fold_dirs": true,
+    "scrollbar": {
+      "show": "always"
+    }
+  }
+}
 ```
 
 ### Dock
@@ -1605,6 +1617,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Setting: `git_status`
 - Default: `true`
 
+**Options**
+
 1. Default enable git status
 
 ```json
@@ -1623,7 +1637,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ### Default Width
 
-- Description: Customise default width taken by project panel
+- Description: Customize default width taken by project panel
 - Setting: `default_width`
 - Default: N/A width in pixels (eg: 420)
 
@@ -1631,9 +1645,135 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 `boolean` values
 
+### Auto Reveal Entries
+
+- Description: Whether to reveal it in the project panel automatically, when a corresponding project entry becomes active. Gitignored entries are never auto revealed.
+- Setting: `auto_reveal_entries`
+- Default: `true`
+
+**Options**
+
+1. Enable auto reveal entries
+
+```json
+{
+  "auto_reveal_entries": true
+}
+```
+
+2. Disable auto reveal entries
+
+```json
+{
+  "auto_reveal_entries": false
+}
+```
+
+### Auto Fold Dirs
+
+- Description: Whether to fold directories automatically when directory has only one directory inside.
+- Setting: `auto_fold_dirs`
+- Default: `false`
+
+**Options**
+
+1. Enable auto fold dirs
+
+```json
+{
+  "auto_fold_dirs": true
+}
+```
+
+2. Disable auto fold dirs
+
+```json
+{
+  "auto_fold_dirs": false
+}
+```
+
+### Indent Size
+
+- Description: Amount of indentation (in pixels) for nested items.
+- Setting: `indent_size`
+- Default: `20`
+
+### Scrollbar
+
+- Description: Scrollbar related settings. Possible values: "always", "never".
+- Setting: `scrollbar`
+- Default:
+
+```json
+"scrollbar": {
+    "show": "always"
+}
+```
+
+**Options**
+
+1. Show scrollbar in project panel
+
+```json
+{
+  "scrollbar": {
+    "show": "always"
+  }
+}
+```
+
+2. Hide scrollbar in project panel
+
+```json
+{
+  "scrollbar": {
+    "show": "never"
+  }
+}
+```
+
+## Assistant Panel
+
+- Description: Customize assistant panel
+- Setting: `assistant`
+- Default:
+
+```json
+"assistant": {
+  "enabled": true,
+  "button": true,
+  "dock": "right",
+  "default_width": 640,
+  "default_height": 320,
+  "provider": "openai",
+  "version": "1",
+},
+```
+
+## Outline Panel
+
+- Description: Customize outline Panel
+- Setting: `outline_panel`
+- Default:
+
+```json
+"outline_panel": {
+  "button": true,
+  "default_width": 240,
+  "dock": "left",
+  "file_icons": true,
+  "folder_icons": true,
+  "git_status": true,
+  "indent_size": 20,
+  "auto_reveal_entries": true,
+  "auto_fold_dirs": true,
+}
+```
+
 ## Calls
 
-- Description: Customise behaviour when participating in a call
+- Description: Customize behavior when participating in a call
 - Setting: `calls`
 - Default:
 

@@ -24,7 +24,7 @@ test-support = [
 ]
 
 [dependencies]
-aho-corasick = "1.1"
+aho-corasick.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 client.workspace = true

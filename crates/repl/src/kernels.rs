@@ -19,6 +19,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct KernelSpecification {
@@ -222,15 +223,24 @@ impl RunningKernel {
 
             let process = cmd
                 .current_dir(&working_directory)
-                // .stdout(Stdio::null())
-                // .stderr(Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .stdin(std::process::Stdio::piped())
                 .kill_on_drop(true)
                 .spawn()
                 .context("failed to start the kernel process")?;
 
-            let mut iopub_socket = connection_info.create_client_iopub_connection("").await?;
-            let mut shell_socket = connection_info.create_client_shell_connection().await?;
-            let mut control_socket = connection_info.create_client_control_connection().await?;
+            let session_id = Uuid::new_v4().to_string();
+
+            let mut iopub_socket = connection_info
+                .create_client_iopub_connection("", &session_id)
+                .await?;
+            let mut shell_socket = connection_info
+                .create_client_shell_connection(&session_id)
+                .await?;
+            let mut control_socket = connection_info
+                .create_client_control_connection(&session_id)
+                .await?;
 
             let (mut iopub, iosub) = futures::channel::mpsc::channel(100);
 
@@ -320,8 +330,8 @@ impl RunningKernel {
 impl Drop for RunningKernel {
     fn drop(&mut self) {
         std::fs::remove_file(&self.connection_path).ok();
-
         self.request_tx.close_channel();
+        self.process.kill().ok();
     }
 }
 

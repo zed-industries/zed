@@ -21,6 +21,6 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 simplelog.workspace= true
-strum = { version = "0.25.0", features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
 vscode_theme = "0.2.0"

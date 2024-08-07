@@ -24,13 +24,14 @@ pub use crate::repl_sessions_ui::{
 };
 use crate::repl_store::ReplStore;
 pub use crate::session::Session;
+use client::telemetry::Telemetry;
 
-pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+pub fn init(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut AppContext) {
     set_dispatcher(zed_dispatcher(cx));
     JupyterSettings::register(cx);
     ::editor::init_settings(cx);
     repl_sessions_ui::init(cx);
-    ReplStore::init(fs, cx);
+    ReplStore::init(fs, telemetry, cx);
 }
 
 fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {

@@ -36,7 +36,7 @@ use gpui::{
     EventEmitter, Flatten, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke,
     ManagedView, Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
     ResizeEdge, Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds,
-    WindowHandle, WindowOptions,
+    WindowHandle, WindowId, WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -58,7 +58,7 @@ pub use persistence::{
 use postage::stream::Stream;
 use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
-use session::Session;
+use session::AppSession;
 use settings::Settings;
 use shared_screen::SharedScreen;
 use sqlez::{
@@ -92,7 +92,7 @@ use ui::{
 use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
 };
 
 use crate::notifications::NotificationId;
@@ -124,6 +124,8 @@ actions!(
         ClearAllNotifications,
         CloseAllDocks,
         CloseWindow,
+        CopyPath,
+        CopyRelativePath,
         Feedback,
         FollowNextCollaborator,
         NewCenterTerminal,
@@ -221,6 +223,16 @@ impl_actions!(
         SendKeystrokes,
     ]
 );
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum CloseIntent {
+    /// Quit the program entirely.
+    Quit,
+    /// Close a window.
+    CloseWindow,
+    /// Replace the workspace in an existing window.
+    ReplaceWindow,
+}
 
 #[derive(Clone)]
 pub struct Toast {
@@ -537,7 +549,7 @@ pub struct AppState {
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options: fn(Option<Uuid>, &mut AppContext) -> WindowOptions,
     pub node_runtime: Arc<dyn NodeRuntime>,
-    pub session: Session,
+    pub session: Model<AppSession>,
 }
 
 struct GlobalAppState(Weak<AppState>);
@@ -585,7 +597,7 @@ impl AppState {
         let clock = Arc::new(clock::FakeSystemClock::default());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
-        let session = Session::test();
+        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
@@ -915,7 +927,7 @@ impl Workspace {
 
         let modal_layer = cx.new_view(|_| ModalLayer::new());
 
-        let session_id = app_state.session.id().to_owned();
+        let session_id = app_state.session.read(cx).id().to_owned();
 
         let mut active_call = None;
         if let Some(call) = ActiveCall::try_global(cx) {
@@ -1610,8 +1622,8 @@ impl Workspace {
     }
 
     pub fn close_window(&mut self, _: &CloseWindow, cx: &mut ViewContext<Self>) {
+        let prepare = self.prepare_to_close(CloseIntent::CloseWindow, cx);
         let window = cx.window_handle();
-        let prepare = self.prepare_to_close(false, cx);
         cx.spawn(|_, mut cx| async move {
             if prepare.await? {
                 window.update(&mut cx, |_, cx| {
@@ -1625,11 +1637,16 @@ impl Workspace {
 
     pub fn prepare_to_close(
         &mut self,
-        quitting: bool,
+        close_intent: CloseIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
         let active_call = self.active_call().cloned();
         let window = cx.window_handle();
+
+        // On Linux and Windows, closing the last window should restore the last workspace.
+        let save_last_workspace = cfg!(not(target_os = "macos"))
+            && close_intent != CloseIntent::ReplaceWindow
+            && cx.windows().len() == 1;
 
         cx.spawn(|this, mut cx| async move {
             let workspace_count = (*cx).update(|cx| {
@@ -1640,7 +1657,7 @@ impl Workspace {
             })?;
 
             if let Some(active_call) = active_call {
-                if !quitting
+                if close_intent != CloseIntent::Quit
                     && workspace_count == 1
                     && active_call.read_with(&cx, |call, _| call.room().is_some())?
                 {
@@ -1672,7 +1689,10 @@ impl Workspace {
 
             // If we're not quitting, but closing, we remove the workspace from
             // the current session.
-            if !quitting && save_result.as_ref().map_or(false, |&res| res) {
+            if close_intent != CloseIntent::Quit
+                && !save_last_workspace
+                && save_result.as_ref().map_or(false, |&res| res)
+            {
                 this.update(&mut cx, |this, cx| this.remove_from_session(cx))?
                     .await;
             }
@@ -2901,7 +2921,8 @@ impl Workspace {
                 }
                 self.update_window_edited(cx);
             }
-            pane::Event::RemoveItem { item_id } => {
+            pane::Event::RemoveItem { .. } => {}
+            pane::Event::RemovedItem { item_id } => {
                 cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(cx);
                 if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
@@ -4030,6 +4051,7 @@ impl Workspace {
                 docks,
                 centered_layout: self.centered_layout,
                 session_id: self.session_id.clone(),
+                window_id: Some(cx.window_handle().window_id().as_u64()),
             };
             return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
         }
@@ -4289,6 +4311,7 @@ impl Workspace {
         let user_store = project.read(cx).user_store();
 
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
         cx.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
@@ -4298,7 +4321,7 @@ impl Workspace {
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
-            session: Session::test(),
+            session,
         });
         let workspace = Self::new(Default::default(), project, app_state, cx);
         workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));
@@ -4900,8 +4923,11 @@ pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
     DB.last_workspace().await.log_err().flatten()
 }
 
-pub fn last_session_workspace_locations(last_session_id: &str) -> Option<Vec<LocalPaths>> {
-    DB.last_session_workspace_locations(last_session_id)
+pub fn last_session_workspace_locations(
+    last_session_id: &str,
+    last_session_window_stack: Option<Vec<WindowId>>,
+) -> Option<Vec<LocalPaths>> {
+    DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
 }
 
@@ -5564,7 +5590,7 @@ pub fn reload(reload: &Reload, cx: &mut AppContext) {
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
             if let Ok(should_close) = window.update(&mut cx, |workspace, cx| {
-                workspace.prepare_to_close(true, cx)
+                workspace.prepare_to_close(CloseIntent::Quit, cx)
             }) {
                 if !should_close.await? {
                     return Ok(());
@@ -5768,7 +5794,7 @@ mod tests {
         workspace.update(cx, |w, cx| {
             w.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx)
         });
-        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(CloseIntent::CloseWindow, cx));
         assert!(task.await.unwrap());
 
         // When there are dirty untitled items, prompt to save each one. If the user
@@ -5783,7 +5809,7 @@ mod tests {
             w.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
             w.add_item_to_active_pane(Box::new(item3.clone()), None, true, cx);
         });
-        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(CloseIntent::CloseWindow, cx));
         cx.executor().run_until_parked();
         cx.simulate_prompt_answer(2); // cancel save all
         cx.executor().run_until_parked();
@@ -5824,7 +5850,7 @@ mod tests {
             w.add_item_to_active_pane(Box::new(item1.clone()), None, true, cx);
             w.add_item_to_active_pane(Box::new(item2.clone()), None, true, cx);
         });
-        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(CloseIntent::CloseWindow, cx));
         assert!(task.await.unwrap());
     }
 

@@ -13,7 +13,7 @@
             [((identifier) @_attribute)
                 (scoped_identifier (identifier) @_attribute)
                 ])
-            (#eq? @_attribute "test")
+            (#match? @_attribute "test")
         ) @start
         .
         (attribute_item) *

@@ -76,7 +76,7 @@ pub(crate) fn one_dark() -> Theme {
                 icon_accent: blue,
                 status_bar_background: bg,
                 title_bar_background: bg,
-                title_bar_inactive_background: SystemColors::default().transparent,
+                title_bar_inactive_background: bg,
                 toolbar_background: editor,
                 tab_bar_background: bg,
                 tab_inactive_background: bg,

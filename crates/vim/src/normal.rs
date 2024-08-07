@@ -157,10 +157,13 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(|_: &mut Workspace, _: &Indent, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
+            let count = vim.take_count(cx).unwrap_or(1);
             vim.update_active_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, cx| {
                     let mut original_positions = save_selection_starts(editor, cx);
-                    editor.indent(&Default::default(), cx);
+                    for _ in 0..count {
+                        editor.indent(&Default::default(), cx);
+                    }
                     restore_selection_cursors(editor, cx, &mut original_positions);
                 });
             });
@@ -173,10 +176,13 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(|_: &mut Workspace, _: &Outdent, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
+            let count = vim.take_count(cx).unwrap_or(1);
             vim.update_active_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, cx| {
                     let mut original_positions = save_selection_starts(editor, cx);
-                    editor.outdent(&Default::default(), cx);
+                    for _ in 0..count {
+                        editor.outdent(&Default::default(), cx);
+                    }
                     restore_selection_cursors(editor, cx, &mut original_positions);
                 });
             });

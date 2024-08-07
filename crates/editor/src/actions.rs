@@ -210,6 +210,8 @@ gpui::actions!(
         Format,
         GoToDefinition,
         GoToDefinitionSplit,
+        GoToDeclaration,
+        GoToDeclarationSplit,
         GoToDiagnostic,
         GoToHunk,
         GoToImplementation,

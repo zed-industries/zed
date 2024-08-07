@@ -55,7 +55,7 @@ impl SlashCommand for PromptSlashCommand {
         self: Arc<Self>,
         title: Option<&str>,
         _workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let Some(title) = title else {

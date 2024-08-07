@@ -63,6 +63,10 @@ impl LinuxClient for HeadlessClient {
         None
     }
 
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        None
+    }
+
     fn open_window(
         &self,
         _handle: AnyWindowHandle,

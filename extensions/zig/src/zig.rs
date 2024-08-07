@@ -19,7 +19,12 @@ impl ZigExtension {
         worktree: &zed::Worktree,
     ) -> Result<ZlsBinary> {
         let mut args: Option<Vec<String>> = None;
-        let environment = Some(worktree.shell_env());
+
+        let (platform, arch) = zed::current_platform();
+        let environment = match platform {
+            zed::Os::Mac | zed::Os::Linux => Some(worktree.shell_env()),
+            zed::Os::Windows => None,
+        };
 
         if let Ok(lsp_settings) = LspSettings::for_worktree("zls", worktree) {
             if let Some(binary) = lsp_settings.binary {
@@ -72,7 +77,6 @@ impl ZigExtension {
             },
         )?;
 
-        let (platform, arch) = zed::current_platform();
         let asset_name = format!(
             "zls-{arch}-{os}.{extension}",
             arch = match arch {
@@ -98,7 +102,10 @@ impl ZigExtension {
             .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
 
         let version_dir = format!("zls-{}", release.version);
-        let binary_path = format!("{version_dir}/bin/zls");
+        let binary_path = match platform {
+            zed::Os::Mac | zed::Os::Linux => format!("{version_dir}/bin/zls"),
+            zed::Os::Windows => format!("{version_dir}/zls.exe"),
+        };
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(

@@ -14,23 +14,24 @@ use gpui::{
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
 use ui::{
-    prelude::*, ButtonSize, ButtonStyle, ContextMenu, IconButton, IconName, IconSize, Tooltip,
+    prelude::*, ButtonStyle, ContextMenu, IconButton, IconButtonShape, IconName, IconSize, Tooltip,
 };
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 mod repl_menu;
+mod toggle_markdown_preview;
 
 pub struct QuickActionBar {
+    _inlay_hints_enabled_subscription: Option<Subscription>,
+    active_item: Option<Box<dyn ItemHandle>>,
     buffer_search_bar: View<BufferSearchBar>,
     repl_menu: Option<View<ContextMenu>>,
-    toggle_settings_menu: Option<View<ContextMenu>>,
-    toggle_selections_menu: Option<View<ContextMenu>>,
-    active_item: Option<Box<dyn ItemHandle>>,
-    _inlay_hints_enabled_subscription: Option<Subscription>,
-    workspace: WeakView<Workspace>,
     show: bool,
+    toggle_selections_menu: Option<View<ContextMenu>>,
+    toggle_settings_menu: Option<View<ContextMenu>>,
+    workspace: WeakView<Workspace>,
 }
 
 impl QuickActionBar {
@@ -40,14 +41,14 @@ impl QuickActionBar {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let mut this = Self {
-            buffer_search_bar,
-            toggle_settings_menu: None,
-            toggle_selections_menu: None,
-            repl_menu: None,
-            active_item: None,
             _inlay_hints_enabled_subscription: None,
-            workspace: workspace.weak_handle(),
+            active_item: None,
+            buffer_search_bar,
+            repl_menu: None,
             show: true,
+            toggle_selections_menu: None,
+            toggle_settings_menu: None,
+            workspace: workspace.weak_handle(),
         };
         this.apply_settings(cx);
         cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx))
@@ -158,7 +159,7 @@ impl Render for QuickActionBar {
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
             IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
-                .size(ButtonSize::Compact)
+                .shape(IconButtonShape::Square)
                 .icon_size(IconSize::Small)
                 .style(ButtonStyle::Subtle)
                 .selected(self.toggle_selections_menu.is_some())
@@ -207,7 +208,7 @@ impl Render for QuickActionBar {
 
         let editor_settings_dropdown =
             IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
-                .size(ButtonSize::Compact)
+                .shape(IconButtonShape::Square)
                 .icon_size(IconSize::Small)
                 .style(ButtonStyle::Subtle)
                 .selected(self.toggle_settings_menu.is_some())
@@ -300,28 +301,17 @@ impl Render for QuickActionBar {
 
         h_flex()
             .id("quick action bar")
-            .gap(Spacing::XLarge.rems(cx))
-            .child(
-                h_flex()
-                    .gap(Spacing::Medium.rems(cx))
-                    .children(self.render_repl_menu(cx))
-                    .when(
-                        AssistantSettings::get_global(cx).enabled
-                            && AssistantSettings::get_global(cx).button,
-                        |bar| bar.child(assistant_button),
-                    ),
+            .gap(Spacing::Medium.rems(cx))
+            .children(self.render_repl_menu(cx))
+            .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
+            .children(search_button)
+            .when(
+                AssistantSettings::get_global(cx).enabled
+                    && AssistantSettings::get_global(cx).button,
+                |bar| bar.child(assistant_button),
             )
-            .child(
-                h_flex()
-                    .gap(Spacing::Medium.rems(cx))
-                    .children(search_button),
-            )
-            .child(
-                h_flex()
-                    .gap(Spacing::Medium.rems(cx))
-                    .children(editor_selections_dropdown)
-                    .child(editor_settings_dropdown),
-            )
+            .children(editor_selections_dropdown)
+            .child(editor_settings_dropdown)
             .when_some(self.repl_menu.as_ref(), |el, repl_menu| {
                 el.child(Self::render_menu_overlay(repl_menu))
             })
@@ -378,7 +368,7 @@ impl RenderOnce for QuickActionBarButton {
         let action = self.action.boxed_clone();
 
         IconButton::new(self.id.clone(), self.icon)
-            .size(ButtonSize::Compact)
+            .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .selected(self.toggled)

@@ -4,9 +4,6 @@
 mod app_menu;
 mod keystroke;
 
-#[cfg(not(target_os = "macos"))]
-mod cosmic_text;
-
 #[cfg(target_os = "linux")]
 mod linux;
 
@@ -51,8 +48,6 @@ use uuid::Uuid;
 pub use app_menu::*;
 pub use keystroke::*;
 
-#[cfg(not(target_os = "macos"))]
-pub(crate) use cosmic_text::*;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
@@ -105,7 +100,6 @@ pub fn guess_compositor() -> &'static str {
     }
 }
 
-// todo("windows")
 #[cfg(target_os = "windows")]
 pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
     Rc::new(WindowsPlatform::new())
@@ -127,6 +121,9 @@ pub(crate) trait Platform: 'static {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        None
+    }
 
     fn open_window(
         &self,
@@ -261,7 +258,7 @@ pub enum Decorations {
 }
 
 /// What window controls this platform supports
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct WindowControls {
     /// Whether this platform supports fullscreen
     pub fullscreen: bool,
@@ -271,6 +268,18 @@ pub struct WindowControls {
     pub minimize: bool,
     /// Whether this platform supports a window menu
     pub window_menu: bool,
+}
+
+impl Default for WindowControls {
+    fn default() -> Self {
+        // Assume that we can do anything, unless told otherwise
+        Self {
+            fullscreen: true,
+            maximize: true,
+            minimize: true,
+            window_menu: true,
+        }
+    }
 }
 
 /// A type to describe which sides of the window are currently tiled in some way
@@ -361,12 +370,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn set_app_id(&mut self, _app_id: &str) {}
     fn window_controls(&self) -> WindowControls {
-        WindowControls {
-            fullscreen: true,
-            maximize: true,
-            minimize: true,
-            window_menu: false,
-        }
+        WindowControls::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GPUSpecs>;
@@ -413,8 +417,6 @@ pub(crate) trait PlatformTextSystem: Send + Sync {
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
-    #[cfg(target_os = "windows")]
-    fn destroy(&self);
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]
@@ -714,7 +716,6 @@ pub(crate) struct WindowParams {
 
     pub display_id: Option<DisplayId>,
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub window_min_size: Option<Size<Pixels>>,
 }
 

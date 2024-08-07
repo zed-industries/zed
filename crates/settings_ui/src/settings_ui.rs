@@ -1,11 +1,16 @@
+mod appearance_settings_controls;
+
 use std::any::TypeId;
 
 use command_palette_hooks::CommandPaletteFilter;
+use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, View};
 use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
+
+use crate::appearance_settings_controls::AppearanceSettingsControls;
 
 pub struct SettingsUiFeatureFlag;
 
@@ -95,13 +100,25 @@ impl Item for SettingsPage {
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .p_4()
             .size_full()
+            .gap_4()
             .child(Label::new("Settings").size(LabelSize::Large))
-            .child(Label::new(
-                "Nothing to see here yet. Feature-flagged for staff.",
-            ))
+            .child(
+                v_flex().gap_1().child(Label::new("Appearance")).child(
+                    v_flex()
+                        .elevation_2(cx)
+                        .child(AppearanceSettingsControls::new()),
+                ),
+            )
+            .child(
+                v_flex().gap_1().child(Label::new("Editor")).child(
+                    v_flex()
+                        .elevation_2(cx)
+                        .child(EditorSettingsControls::new()),
+                ),
+            )
     }
 }

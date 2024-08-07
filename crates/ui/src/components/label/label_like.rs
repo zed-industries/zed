@@ -1,5 +1,7 @@
 use gpui::{relative, AnyElement, FontWeight, StyleRefinement, Styled};
+use settings::Settings;
 use smallvec::SmallVec;
+use theme::ThemeSettings;
 
 use crate::prelude::*;
 
@@ -45,7 +47,7 @@ pub trait LabelCommon {
 pub struct LabelLike {
     pub(super) base: Div,
     size: LabelSize,
-    weight: FontWeight,
+    weight: Option<FontWeight>,
     line_height_style: LineHeightStyle,
     pub(crate) color: Color,
     strikethrough: bool,
@@ -58,7 +60,7 @@ impl LabelLike {
         Self {
             base: div(),
             size: LabelSize::Default,
-            weight: FontWeight::default(),
+            weight: None,
             line_height_style: LineHeightStyle::default(),
             color: Color::Default,
             strikethrough: false,
@@ -86,7 +88,7 @@ impl LabelCommon for LabelLike {
     }
 
     fn weight(mut self, weight: FontWeight) -> Self {
-        self.weight = weight;
+        self.weight = Some(weight);
         self
     }
 
@@ -119,6 +121,8 @@ impl ParentElement for LabelLike {
 
 impl RenderOnce for LabelLike {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+
         self.base
             .when(self.strikethrough, |this| {
                 this.relative().child(
@@ -141,7 +145,7 @@ impl RenderOnce for LabelLike {
             })
             .when(self.italic, |this| this.italic())
             .text_color(self.color.color(cx))
-            .font_weight(self.weight)
+            .font_weight(self.weight.unwrap_or(settings.ui_font.weight))
             .children(self.children)
     }
 }

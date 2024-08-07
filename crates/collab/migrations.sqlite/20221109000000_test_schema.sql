@@ -416,3 +416,34 @@ CREATE TABLE dev_server_projects (
     dev_server_id INTEGER NOT NULL REFERENCES dev_servers(id),
     paths TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS billing_customers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    stripe_customer_id TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX "uix_billing_customers_on_user_id" ON billing_customers (user_id);
+CREATE UNIQUE INDEX "uix_billing_customers_on_stripe_customer_id" ON billing_customers (stripe_customer_id);
+
+CREATE TABLE IF NOT EXISTS billing_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    billing_customer_id INTEGER NOT NULL REFERENCES billing_customers(id),
+    stripe_subscription_id TEXT NOT NULL,
+    stripe_subscription_status TEXT NOT NULL,
+    stripe_cancel_at TIMESTAMP
+);
+
+CREATE INDEX "ix_billing_subscriptions_on_billing_customer_id" ON billing_subscriptions (billing_customer_id);
+CREATE UNIQUE INDEX "uix_billing_subscriptions_on_stripe_subscription_id" ON billing_subscriptions (stripe_subscription_id);
+
+CREATE TABLE IF NOT EXISTS processed_stripe_events (
+    stripe_event_id TEXT PRIMARY KEY,
+    stripe_event_type TEXT NOT NULL,
+    stripe_event_created_timestamp INTEGER NOT NULL,
+    processed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX "ix_processed_stripe_events_on_stripe_event_created_timestamp" ON processed_stripe_events (stripe_event_created_timestamp);

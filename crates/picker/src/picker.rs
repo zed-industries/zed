@@ -22,15 +22,6 @@ enum ElementContainer {
 
 actions!(picker, [ConfirmCompletion]);
 
-// How long to give the command palette to return if a user
-// types j<enter> quickly.
-// Longer in debug builds to reduce flaky test on linux.
-#[cfg(debug_assertions)]
-static FINALIZE_TIMEOUT: Duration = Duration::from_millis(32);
-
-#[cfg(not(debug_assertions))]
-static FINALIZE_TIMEOUT: Duration = Duration::from_millis(16);
-
 /// ConfirmInput is an alternative editor action which - instead of selecting active picker entry - treats pickers editor input literally,
 /// performing some kind of action on it.
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -333,7 +324,7 @@ impl<D: PickerDelegate> Picker<D> {
         if self.pending_update_matches.is_some()
             && !self
                 .delegate
-                .finalize_update_matches(self.query(cx), FINALIZE_TIMEOUT, cx)
+                .finalize_update_matches(self.query(cx), Duration::from_millis(16), cx)
         {
             self.confirm_on_update = Some(false)
         } else {
@@ -346,7 +337,7 @@ impl<D: PickerDelegate> Picker<D> {
         if self.pending_update_matches.is_some()
             && !self
                 .delegate
-                .finalize_update_matches(self.query(cx), FINALIZE_TIMEOUT, cx)
+                .finalize_update_matches(self.query(cx), Duration::from_millis(16), cx)
         {
             self.confirm_on_update = Some(true)
         } else {

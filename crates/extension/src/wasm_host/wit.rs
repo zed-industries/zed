@@ -29,7 +29,7 @@ pub fn new_linker(
     f: impl Fn(&mut Linker<WasmState>, fn(&mut WasmState) -> &mut WasmState) -> Result<()>,
 ) -> Linker<WasmState> {
     let mut linker = Linker::new(&wasm_engine());
-    wasmtime_wasi::command::add_to_linker(&mut linker).unwrap();
+    wasmtime_wasi::add_to_linker_async(&mut linker).unwrap();
     f(&mut linker, wasi_view).unwrap();
     linker
 }
@@ -277,7 +277,7 @@ impl Extension {
         store: &mut Store<WasmState>,
         command: &SlashCommand,
         argument: Option<&str>,
-        resource: Resource<Arc<dyn LspAdapterDelegate>>,
+        resource: Option<Resource<Arc<dyn LspAdapterDelegate>>>,
     ) -> Result<Result<SlashCommandOutput, String>> {
         match self {
             Extension::V007(ext) => {

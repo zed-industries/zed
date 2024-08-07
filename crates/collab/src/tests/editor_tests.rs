@@ -43,7 +43,7 @@ use std::{
     },
 };
 use text::Point;
-use workspace::Workspace;
+use workspace::{CloseIntent, Workspace};
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -134,7 +134,9 @@ async fn test_host_disconnect(
 
     // Ensure client B is not prompted to save edits when closing window after disconnecting.
     let can_close = workspace_b
-        .update(cx_b, |workspace, cx| workspace.prepare_to_close(true, cx))
+        .update(cx_b, |workspace, cx| {
+            workspace.prepare_to_close(CloseIntent::Quit, cx)
+        })
         .unwrap()
         .await
         .unwrap();

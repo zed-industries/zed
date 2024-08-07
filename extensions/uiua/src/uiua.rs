@@ -9,7 +9,7 @@ impl zed::Extension for UiuaExtension {
 
     fn language_server_command(
         &mut self,
-        _config: zed::LanguageServerConfig,
+        _language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let path = worktree

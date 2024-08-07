@@ -136,7 +136,6 @@ where
 
 pub trait AnchorRangeExt {
     fn cmp(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> Ordering;
-    fn intersects(&self, other: &Range<Anchor>, buffer: &BufferSnapshot) -> bool;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
@@ -145,9 +144,5 @@ impl AnchorRangeExt for Range<Anchor> {
             Ordering::Equal => other.end.cmp(&self.end, buffer),
             ord => ord,
         }
-    }
-
-    fn intersects(&self, other: &Range<Anchor>, buffer: &BufferSnapshot) -> bool {
-        self.start.cmp(&other.end, buffer).is_lt() && other.start.cmp(&self.end, buffer).is_lt()
     }
 }

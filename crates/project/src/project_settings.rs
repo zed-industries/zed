@@ -38,7 +38,7 @@ pub enum DirenvSettings {
     ShellHook,
     /// Load direnv configuration directly using `direnv export json`
     ///
-    /// Warning: This option is experimental and might cause some inconsistent behaviour compared to using the shell hook.
+    /// Warning: This option is experimental and might cause some inconsistent behavior compared to using the shell hook.
     /// If it does, please report it to GitHub
     Direct,
 }

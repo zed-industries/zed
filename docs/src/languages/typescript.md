@@ -44,4 +44,5 @@ to override these settings.
 See https://github.com/typescript-language-server/typescript-language-server?tab=readme-ov-file#inlay-hints-textdocumentinlayhint for more information.
 
 ## Yarn integration
+
 See [Yarn documentation](./yarn.md) for a walkthrough of configuring your project to use Yarn.

@@ -3,7 +3,7 @@
 // For information on binding keys, see the Zed
 // documentation: https://zed.dev/docs/key-bindings
 //
-// To see the default key bindings run `zed: Open Default Keymap`
+// To see the default key bindings run `zed: open default keymap`
 // from the command palette.
 [
   {

@@ -96,7 +96,15 @@ impl WorktreeStore {
     pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
         self.worktrees.retain(|worktree| {
             if let Some(worktree) = worktree.upgrade() {
-                worktree.read(cx).id() != id_to_remove
+                if worktree.read(cx).id() == id_to_remove {
+                    cx.emit(WorktreeStoreEvent::WorktreeRemoved(
+                        worktree.entity_id(),
+                        id_to_remove,
+                    ));
+                    false
+                } else {
+                    true
+                }
             } else {
                 false
             }

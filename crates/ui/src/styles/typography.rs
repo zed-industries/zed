@@ -8,6 +8,22 @@ use crate::{rems_from_px, Color};
 
 /// Extends [`gpui::Styled`] with typography-related styling methods.
 pub trait StyledTypography: Styled + Sized {
+    /// Sets the font family to the buffer font.
+    fn font_buffer(self, cx: &WindowContext) -> Self {
+        let settings = ThemeSettings::get_global(cx);
+        let buffer_font_family = settings.buffer_font.family.clone();
+
+        self.font_family(buffer_font_family)
+    }
+
+    /// Sets the font family to the UI font.
+    fn font_ui(self, cx: &WindowContext) -> Self {
+        let settings = ThemeSettings::get_global(cx);
+        let ui_font_family = settings.ui_font.family.clone();
+
+        self.font_family(ui_font_family)
+    }
+
     /// Sets the text size using a [`UiTextSize`].
     fn text_ui_size(self, size: TextSize, cx: &WindowContext) -> Self {
         self.text_size(size.rems(cx))
@@ -102,7 +118,7 @@ pub enum TextSize {
     XSmall,
 
     /// The `ui_font_size` set by the user.
-    UI,
+    Ui,
     /// The `buffer_font_size` set by the user.
     Editor,
     // TODO: The terminal settings will need to be passed to
@@ -120,7 +136,7 @@ impl TextSize {
             Self::Default => rems_from_px(14.),
             Self::Small => rems_from_px(12.),
             Self::XSmall => rems_from_px(10.),
-            Self::UI => rems_from_px(theme_settings.ui_font_size.into()),
+            Self::Ui => rems_from_px(theme_settings.ui_font_size.into()),
             Self::Editor => rems_from_px(theme_settings.buffer_font_size.into()),
         }
     }

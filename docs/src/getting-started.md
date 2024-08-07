@@ -52,7 +52,7 @@ The Command Palette allows you to access pretty much any functionality that's av
 
 Try it! Open the Command Palette and type in `new file`. You should see the list of commands being filtered down to `workspace: new file`. Hit return and you end up with a new buffer!
 
-Any time you see instructions that include commands of the form `zed: ...`  or `editor: ...`  and so on that means you need to execute them in the Command Palette.
+Any time you see instructions that include commands of the form `zed: ...` or `editor: ...` and so on that means you need to execute them in the Command Palette.
 
 ## Configure Zed
 
@@ -66,4 +66,4 @@ On Linux, you can access the default configuration via the Command Palette. Open
 
 On macOS, you can access the default key binding set using the `Zed > Settings > Open Default Key Bindings` menu item. Use `⌘` + `K`, `⌘` + `S` to open your custom keymap to add your key bindings. See Key Bindings for more info.
 
-On Linux, you can access the default key bindings via the Command Palette.  Open it with `ctrl-shift-p` and type in `zed: open default keymap` and then hit return.
+On Linux, you can access the default key bindings via the Command Palette. Open it with `ctrl-shift-p` and type in `zed: open default keymap` and then hit return.

@@ -61,8 +61,8 @@ impl AutoscrollStrategy {
 }
 
 impl Editor {
-    pub fn autoscroll_requested(&self) -> bool {
-        self.scroll_manager.autoscroll_requested()
+    pub fn autoscroll_request(&self) -> Option<Autoscroll> {
+        self.scroll_manager.autoscroll_request()
     }
 
     pub fn autoscroll_vertically(

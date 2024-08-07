@@ -244,7 +244,9 @@ impl ExtensionStore {
             installed_dir,
             index_path,
             builder: Arc::new(ExtensionBuilder::new(
-                ::http_client::client(http_client.proxy().cloned()),
+                // Construct a real HTTP client for the extension builder, as we
+                // don't want to use a fake one in the tests.
+                ::http_client::client(None, http_client.proxy().cloned()),
                 build_dir,
             )),
             outstanding_operations: Default::default(),

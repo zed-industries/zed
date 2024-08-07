@@ -15,7 +15,6 @@ use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
-use completion::LanguageModelCompletionProvider;
 pub use context::*;
 pub use context_store::*;
 use fs::Fs;
@@ -23,7 +22,7 @@ use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 use language_model::{
-    LanguageModelId, LanguageModelProviderName, LanguageModelRegistry, LanguageModelResponseMessage,
+    LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
 pub(crate) use model_selector::*;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
@@ -32,7 +31,7 @@ use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
     active_command, default_command, diagnostics_command, docs_command, fetch_command,
     file_command, now_command, project_command, prompt_command, search_command, symbols_command,
-    tabs_command, term_command,
+    tabs_command, term_command, workflow_command,
 };
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
@@ -46,8 +45,8 @@ actions!(
         QuoteSelection,
         InsertIntoEditor,
         ToggleFocus,
-        ResetKey,
         InsertActivePrompt,
+        ShowConfiguration,
         DeployHistory,
         DeployPromptLibrary,
         ConfirmCommand,
@@ -55,6 +54,8 @@ actions!(
         DebugEditSteps
     ]
 );
+
+const DEFAULT_CONTEXT_LINES: usize = 20;
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct InlineAssist {
@@ -192,7 +193,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
 
     context_store::init(&client);
     prompt_library::init(cx);
-    init_completion_provider(cx);
+    init_language_model_settings(cx);
     assistant_slash_command::init(cx);
     register_slash_commands(cx);
     assistant_panel::init(cx);
@@ -217,36 +218,32 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     .detach();
 }
 
-fn init_completion_provider(cx: &mut AppContext) {
-    completion::init(cx);
+fn init_language_model_settings(cx: &mut AppContext) {
     update_active_language_model_from_settings(cx);
 
     cx.observe_global::<SettingsStore>(update_active_language_model_from_settings)
         .detach();
-    cx.observe(&LanguageModelRegistry::global(cx), |_, cx| {
-        update_active_language_model_from_settings(cx)
-    })
+    cx.subscribe(
+        &LanguageModelRegistry::global(cx),
+        |_, event: &language_model::Event, cx| match event {
+            language_model::Event::ProviderStateChanged
+            | language_model::Event::AddedProvider(_)
+            | language_model::Event::RemovedProvider(_) => {
+                update_active_language_model_from_settings(cx);
+            }
+            _ => {}
+        },
+    )
     .detach();
 }
 
 fn update_active_language_model_from_settings(cx: &mut AppContext) {
     let settings = AssistantSettings::get_global(cx);
-    let provider_name = LanguageModelProviderName::from(settings.default_model.provider.clone());
+    let provider_name = LanguageModelProviderId::from(settings.default_model.provider.clone());
     let model_id = LanguageModelId::from(settings.default_model.model.clone());
-
-    let Some(provider) = LanguageModelRegistry::global(cx)
-        .read(cx)
-        .provider(&provider_name)
-    else {
-        return;
-    };
-
-    let models = provider.provided_models(cx);
-    if let Some(model) = models.iter().find(|model| model.id() == model_id).cloned() {
-        LanguageModelCompletionProvider::global(cx).update(cx, |completion_provider, cx| {
-            completion_provider.set_active_model(model, cx);
-        });
-    }
+    LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+        registry.select_active_model(&provider_name, &model_id, cx);
+    });
 }
 
 fn register_slash_commands(cx: &mut AppContext) {
@@ -263,6 +260,7 @@ fn register_slash_commands(cx: &mut AppContext) {
     slash_command_registry.register_command(now_command::NowSlashCommand, true);
     slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
     slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
+    slash_command_registry.register_command(workflow_command::WorkflowSlashCommand, true);
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 }
 

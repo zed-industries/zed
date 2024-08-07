@@ -219,7 +219,7 @@ impl SlashCommand for DocsSlashCommand {
                     if index {
                         // We don't need to hold onto this task, as the `IndexedDocsStore` will hold it
                         // until it completes.
-                        let _ = store.clone().index(package.as_str().into());
+                        drop(store.clone().index(package.as_str().into()));
                     }
 
                     let items = store.search(package).await;
@@ -242,7 +242,7 @@ impl SlashCommand for DocsSlashCommand {
         self: Arc<Self>,
         argument: Option<&str>,
         _workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let Some(argument) = argument else {

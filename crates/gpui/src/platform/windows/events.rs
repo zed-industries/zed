@@ -76,6 +76,7 @@ pub(crate) fn handle_msg(
         WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_SYSKEYDOWN => handle_syskeydown_msg(wparam, lparam, state_ptr),
         WM_SYSKEYUP => handle_syskeyup_msg(wparam, state_ptr),
+        WM_SYSCOMMAND => handle_system_command(wparam, state_ptr),
         WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
         WM_KEYUP => handle_keyup_msg(wparam, state_ptr),
         WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
@@ -216,7 +217,13 @@ fn handle_destroy_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Opt
         callback();
     }
     unsafe {
-        PostMessageW(None, CLOSE_ONE_WINDOW, None, LPARAM(handle.0)).log_err();
+        PostMessageW(
+            None,
+            CLOSE_ONE_WINDOW,
+            WPARAM(state_ptr.validation_number),
+            LPARAM(handle.0 as isize),
+        )
+        .log_err();
     }
     Some(0)
 }
@@ -273,7 +280,8 @@ fn handle_syskeydown_msg(
         keystroke,
         is_held: lparam.0 & (0x1 << 30) > 0,
     };
-    let result = if func(PlatformInput::KeyDown(event)).default_prevented {
+    let result = if !func(PlatformInput::KeyDown(event)).propagate {
+        state_ptr.state.borrow_mut().system_key_handled = true;
         Some(0)
     } else {
         None
@@ -489,13 +497,17 @@ fn handle_mouse_wheel_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    let modifiers = current_modifiers();
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
-        let wheel_scroll_lines = lock.system_settings.mouse_wheel_settings.wheel_scroll_lines;
+        let wheel_scroll_amount = match modifiers.shift {
+            true => lock.system_settings.mouse_wheel_settings.wheel_scroll_chars,
+            false => lock.system_settings.mouse_wheel_settings.wheel_scroll_lines,
+        };
         drop(lock);
         let wheel_distance =
-            (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_lines as f32;
+            (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_amount as f32;
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
@@ -503,9 +515,15 @@ fn handle_mouse_wheel_msg(
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = ScrollWheelEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            delta: ScrollDelta::Lines(Point {
-                x: 0.0,
-                y: wheel_distance,
+            delta: ScrollDelta::Lines(match modifiers.shift {
+                true => Point {
+                    x: wheel_distance,
+                    y: 0.0,
+                },
+                false => Point {
+                    y: wheel_distance,
+                    x: 0.0,
+                },
             }),
             modifiers: current_modifiers(),
             touch_phase: TouchPhase::Moved,
@@ -662,8 +680,14 @@ fn handle_calc_client_size(
     if state_ptr.state.borrow().is_maximized() {
         requested_client_rect[0].top += frame_y + padding;
     } else {
-        // Magic number that calculates the width of the border
-        requested_client_rect[0].top += frame_y - 3;
+        match state_ptr.windows_version {
+            WindowsVersion::Win10 => {}
+            WindowsVersion::Win11 => {
+                // Magic number that calculates the width of the border
+                let border = (dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32).round() as i32;
+                requested_client_rect[0].top += border;
+            }
+        }
     }
 
     Some(0)
@@ -1038,7 +1062,7 @@ fn handle_nc_mouse_up_msg(
 }
 
 fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    state_ptr.state.borrow_mut().current_cursor = HCURSOR(lparam.0);
+    state_ptr.state.borrow_mut().current_cursor = HCURSOR(lparam.0 as _);
     Some(0)
 }
 
@@ -1065,6 +1089,17 @@ fn handle_system_settings_changed(
     // window border offset
     lock.border_offset.udpate(handle).log_err();
     Some(0)
+}
+
+fn handle_system_command(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    if wparam.0 == SC_KEYMENU as usize {
+        let mut lock = state_ptr.state.borrow_mut();
+        if lock.system_key_handled {
+            lock.system_key_handled = false;
+            return Some(0);
+        }
+    }
+    None
 }
 
 fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {

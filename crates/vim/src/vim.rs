@@ -5,6 +5,7 @@ mod test;
 
 mod change_list;
 mod command;
+mod digraph;
 mod editor_events;
 mod insert;
 mod mode_indicator;
@@ -188,24 +189,13 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
         return;
     }
 
-    Vim::update(cx, |vim, cx| match vim.active_operator() {
-        Some(
-            Operator::FindForward { .. }
-            | Operator::FindBackward { .. }
-            | Operator::Replace
-            | Operator::AddSurrounds { .. }
-            | Operator::ChangeSurrounds { .. }
-            | Operator::DeleteSurrounds
-            | Operator::Mark
-            | Operator::Jump { .. }
-            | Operator::Register
-            | Operator::RecordRegister
-            | Operator::ReplayRegister,
-        ) => {}
-        Some(_) => {
-            vim.clear_operator(cx);
+    Vim::update(cx, |vim, cx| {
+        if let Some(operator) = vim.active_operator() {
+            if !operator.is_waiting(vim.state().mode) {
+                vim.clear_operator(cx);
+                vim.stop_recording_immediately(Box::new(ClearOperators))
+            }
         }
-        _ => {}
     });
 }
 
@@ -392,7 +382,7 @@ impl Vim {
     }
 
     // When handling an action, you must create visual marks if you will switch to normal
-    // mode without the default selection behaviour.
+    // mode without the default selection behavior.
     fn store_visual_marks(&mut self, cx: &mut WindowContext) {
         let mode = self.state().mode;
         if mode.is_visual() {
@@ -491,11 +481,25 @@ impl Vim {
     fn push_count_digit(&mut self, number: usize, cx: &mut WindowContext) {
         if self.active_operator().is_some() {
             self.update_state(|state| {
-                state.post_count = Some(state.post_count.unwrap_or(0) * 10 + number)
+                let post_count = state.post_count.unwrap_or(0);
+
+                state.post_count = Some(
+                    post_count
+                        .checked_mul(10)
+                        .and_then(|post_count| post_count.checked_add(number))
+                        .unwrap_or(post_count),
+                )
             })
         } else {
             self.update_state(|state| {
-                state.pre_count = Some(state.pre_count.unwrap_or(0) * 10 + number)
+                let pre_count = state.pre_count.unwrap_or(0);
+
+                state.pre_count = Some(
+                    pre_count
+                        .checked_mul(10)
+                        .and_then(|pre_count| pre_count.checked_add(number))
+                        .unwrap_or(pre_count),
+                )
             })
         }
         // update the keymap so that 0 works
@@ -862,6 +866,19 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
+            Some(Operator::Digraph { first_char }) => {
+                if let Some(first_char) = first_char {
+                    if let Some(second_char) = text.chars().next() {
+                        digraph::insert_digraph(first_char, second_char, cx);
+                    }
+                } else {
+                    let first_char = text.chars().next();
+                    Vim::update(cx, |vim, cx| {
+                        vim.pop_operator(cx);
+                        vim.push_operator(Operator::Digraph { first_char }, cx);
+                    });
+                }
+            }
             Some(Operator::AddSurrounds { target }) => match Vim::read(cx).state().mode {
                 Mode::Normal => {
                     if let Some(target) = target {
@@ -1043,12 +1060,10 @@ pub enum UseSystemClipboard {
 
 #[derive(Deserialize)]
 struct VimSettings {
-    // all vim uses vim clipboard
-    // vim always uses system cliupbaord
-    // some magic where yy is system and dd is not.
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
+    pub custom_digraphs: HashMap<String, Arc<str>>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1056,6 +1071,7 @@ struct VimSettingsContent {
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,
+    pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
 }
 
 impl Settings for VimSettings {

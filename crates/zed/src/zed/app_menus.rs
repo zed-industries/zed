@@ -145,6 +145,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Go to Line/Column...", editor::actions::ToggleGoToLine),
                 MenuItem::separator(),
                 MenuItem::action("Go to Definition", editor::actions::GoToDefinition),
+                MenuItem::action("Go to Declaration", editor::actions::GoToDeclaration),
                 MenuItem::action("Go to Type Definition", editor::actions::GoToTypeDefinition),
                 MenuItem::action("Find All References", editor::actions::FindAllReferences),
                 MenuItem::separator(),

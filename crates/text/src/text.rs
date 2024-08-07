@@ -542,6 +542,35 @@ pub struct LineIndent {
 }
 
 impl LineIndent {
+    pub fn from_chunks(chunks: &mut Chunks) -> Self {
+        let mut tabs = 0;
+        let mut spaces = 0;
+        let mut line_blank = true;
+
+        'outer: while let Some(chunk) = chunks.peek() {
+            for ch in chunk.chars() {
+                if ch == '\t' {
+                    tabs += 1;
+                } else if ch == ' ' {
+                    spaces += 1;
+                } else {
+                    if ch != '\n' {
+                        line_blank = false;
+                    }
+                    break 'outer;
+                }
+            }
+
+            chunks.next();
+        }
+
+        Self {
+            tabs,
+            spaces,
+            line_blank,
+        }
+    }
+
     /// Constructs a new `LineIndent` which only contains spaces.
     pub fn spaces(spaces: u32) -> Self {
         Self {
@@ -1983,39 +2012,64 @@ impl BufferSnapshot {
         row_range: Range<u32>,
     ) -> impl Iterator<Item = (u32, LineIndent)> + '_ {
         let start = Point::new(row_range.start, 0).to_offset(self);
-        let end = Point::new(row_range.end, 0).to_offset(self);
+        let end = Point::new(row_range.end - 1, self.line_len(row_range.end - 1)).to_offset(self);
 
-        let mut lines = self.as_rope().chunks_in_range(start..end).lines();
+        let mut chunks = self.as_rope().chunks_in_range(start..end);
         let mut row = row_range.start;
+        let mut done = start == end;
         std::iter::from_fn(move || {
-            if let Some(line) = lines.next() {
-                let indent = LineIndent::from(line);
-                row += 1;
-                Some((row - 1, indent))
-            } else {
+            if done {
                 None
+            } else {
+                let indent = (row, LineIndent::from_chunks(&mut chunks));
+                done = !chunks.next_line();
+                row += 1;
+                Some(indent)
             }
         })
     }
 
+    /// Returns the line indents in the given row range, exclusive of end row, in reversed order.
     pub fn reversed_line_indents_in_row_range(
         &self,
         row_range: Range<u32>,
     ) -> impl Iterator<Item = (u32, LineIndent)> + '_ {
         let start = Point::new(row_range.start, 0).to_offset(self);
-        let end = Point::new(row_range.end, 0)
-            .to_offset(self)
-            .saturating_sub(1);
 
-        let mut lines = self.as_rope().reversed_chunks_in_range(start..end).lines();
-        let mut row = row_range.end;
+        let end_point;
+        let end;
+        if row_range.end > row_range.start {
+            end_point = Point::new(row_range.end - 1, self.line_len(row_range.end - 1));
+            end = end_point.to_offset(self);
+        } else {
+            end_point = Point::new(row_range.start, 0);
+            end = start;
+        };
+
+        let mut chunks = self.as_rope().chunks_in_range(start..end);
+        // Move the cursor to the start of the last line if it's not empty.
+        chunks.seek(end);
+        if end_point.column > 0 {
+            chunks.prev_line();
+        }
+
+        let mut row = end_point.row;
+        let mut done = start == end;
         std::iter::from_fn(move || {
-            if let Some(line) = lines.next() {
-                let indent = LineIndent::from(line);
-                row = row.saturating_sub(1);
-                Some((row, indent))
-            } else {
+            if done {
                 None
+            } else {
+                let initial_offset = chunks.offset();
+                let indent = (row, LineIndent::from_chunks(&mut chunks));
+                if chunks.offset() > initial_offset {
+                    chunks.prev_line();
+                }
+                done = !chunks.prev_line();
+                if !done {
+                    row -= 1;
+                }
+
+                Some(indent)
             }
         })
     }

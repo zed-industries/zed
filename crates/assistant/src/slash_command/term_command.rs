@@ -9,7 +9,9 @@ use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::prelude::*;
-use workspace::Workspace;
+use workspace::{dock::Panel, Workspace};
+
+use crate::DEFAULT_CONTEXT_LINES;
 
 use super::create_label_for_command;
 
@@ -56,7 +58,7 @@ impl SlashCommand for TermSlashCommand {
         self: Arc<Self>,
         argument: Option<&str>,
         workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let Some(workspace) = workspace.upgrade() else {
@@ -65,17 +67,17 @@ impl SlashCommand for TermSlashCommand {
         let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
             return Task::ready(Err(anyhow::anyhow!("no terminal panel open")));
         };
-        let Some(active_terminal) = terminal_panel
-            .read(cx)
-            .pane()
-            .read(cx)
-            .active_item()
-            .and_then(|t| t.downcast::<TerminalView>())
-        else {
+        let Some(active_terminal) = terminal_panel.read(cx).pane().and_then(|pane| {
+            pane.read(cx)
+                .active_item()
+                .and_then(|t| t.downcast::<TerminalView>())
+        }) else {
             return Task::ready(Err(anyhow::anyhow!("no active terminal")));
         };
 
-        let line_count = argument.and_then(|a| parse_argument(a)).unwrap_or(20);
+        let line_count = argument
+            .and_then(|a| parse_argument(a))
+            .unwrap_or(DEFAULT_CONTEXT_LINES);
 
         let lines = active_terminal
             .read(cx)

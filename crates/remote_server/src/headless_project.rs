@@ -12,6 +12,7 @@ use rpc::{
     TypedEnvelope,
 };
 use settings::{Settings as _, SettingsStore};
+use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
@@ -40,14 +41,19 @@ impl HeadlessProject {
         let this = cx.weak_model();
 
         let worktree_store = cx.new_model(|_| WorktreeStore::new(true));
-        let buffer_store = cx.new_model(|cx| BufferStore::new(worktree_store.clone(), true, cx));
+        let buffer_store =
+            cx.new_model(|cx| BufferStore::new(worktree_store.clone(), Some(PROJECT_ID), cx));
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
             .detach();
 
+        session.add_request_handler(this.clone(), Self::handle_list_remote_directory);
         session.add_request_handler(this.clone(), Self::handle_add_worktree);
         session.add_request_handler(this.clone(), Self::handle_open_buffer_by_path);
-        session.add_request_handler(this.clone(), Self::handle_update_buffer);
-        session.add_request_handler(this.clone(), Self::handle_save_buffer);
+
+        session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_blame_buffer);
+        session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_update_buffer);
+        session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_save_buffer);
+
         session.add_request_handler(
             worktree_store.downgrade(),
             WorktreeStore::handle_create_project_entry,
@@ -83,10 +89,11 @@ impl HeadlessProject {
         message: TypedEnvelope<proto::AddWorktree>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::AddWorktreeResponse> {
+        let path = shellexpand::tilde(&message.payload.path).to_string();
         let worktree = this
             .update(&mut cx.clone(), |this, _| {
                 Worktree::local(
-                    Path::new(&message.payload.path),
+                    Path::new(&path),
                     true,
                     this.fs.clone(),
                     this.next_entry_id.clone(),
@@ -110,27 +117,6 @@ impl HeadlessProject {
                 }
             })
         })
-    }
-
-    pub async fn handle_update_buffer(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::UpdateBuffer>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::Ack> {
-        this.update(&mut cx, |this, cx| {
-            this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.handle_update_buffer(envelope, false, cx)
-            })
-        })?
-    }
-
-    pub async fn handle_save_buffer(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::SaveBuffer>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::BufferSaved> {
-        let buffer_store = this.update(&mut cx, |this, _| this.buffer_store.clone())?;
-        BufferStore::handle_save_buffer(buffer_store, PROJECT_ID, envelope, cx).await
     }
 
     pub async fn handle_open_buffer_by_path(
@@ -174,37 +160,34 @@ impl HeadlessProject {
         })
     }
 
+    pub async fn handle_list_remote_directory(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::ListRemoteDirectory>,
+        cx: AsyncAppContext,
+    ) -> Result<proto::ListRemoteDirectoryResponse> {
+        let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
+        let fs = cx.read_model(&this, |this, _| this.fs.clone())?;
+
+        let mut entries = Vec::new();
+        let mut response = fs.read_dir(Path::new(&expanded)).await?;
+        while let Some(path) = response.next().await {
+            if let Some(file_name) = path?.file_name() {
+                entries.push(file_name.to_string_lossy().to_string());
+            }
+        }
+        Ok(proto::ListRemoteDirectoryResponse { entries })
+    }
+
     pub fn on_buffer_store_event(
         &mut self,
         _: Model<BufferStore>,
         event: &BufferStoreEvent,
-        cx: &mut ModelContext<Self>,
+        _: &mut ModelContext<Self>,
     ) {
         match event {
-            BufferStoreEvent::LocalBufferUpdated { buffer } => {
-                let buffer = buffer.read(cx);
-                let buffer_id = buffer.remote_id();
-                let Some(new_file) = buffer.file() else {
-                    return;
-                };
+            BufferStoreEvent::MessageToReplicas(message) => {
                 self.session
-                    .send(proto::UpdateBufferFile {
-                        project_id: 0,
-                        buffer_id: buffer_id.into(),
-                        file: Some(new_file.to_proto(cx)),
-                    })
-                    .log_err();
-            }
-            BufferStoreEvent::DiffBaseUpdated { buffer } => {
-                let buffer = buffer.read(cx);
-                let buffer_id = buffer.remote_id();
-                let diff_base = buffer.diff_base();
-                self.session
-                    .send(proto::UpdateDiffBase {
-                        project_id: 0,
-                        buffer_id: buffer_id.to_proto(),
-                        diff_base: diff_base.map(|b| b.to_string()),
-                    })
+                    .send_dynamic(message.as_ref().clone())
                     .log_err();
             }
             _ => {}

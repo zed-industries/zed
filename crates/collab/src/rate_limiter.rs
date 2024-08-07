@@ -1,15 +1,15 @@
 use crate::{db::UserId, executor::Executor, Database, Error, Result};
-use anyhow::anyhow;
 use chrono::{DateTime, Duration, Utc};
 use dashmap::{DashMap, DashSet};
+use rpc::ErrorCodeExt;
 use sea_orm::prelude::DateTimeUtc;
 use std::sync::Arc;
 use util::ResultExt;
 
-pub trait RateLimit: 'static {
-    fn capacity() -> usize;
-    fn refill_duration() -> Duration;
-    fn db_name() -> &'static str;
+pub trait RateLimit: Send + Sync {
+    fn capacity(&self) -> usize;
+    fn refill_duration(&self) -> Duration;
+    fn db_name(&self) -> &'static str;
 }
 
 /// Used to enforce per-user rate limits
@@ -42,18 +42,23 @@ impl RateLimiter {
 
     /// Returns an error if the user has exceeded the specified `RateLimit`.
     /// Attempts to read the from the database if no cached RateBucket currently exists.
-    pub async fn check<T: RateLimit>(&self, user_id: UserId) -> Result<()> {
-        self.check_internal::<T>(user_id, Utc::now()).await
+    pub async fn check(&self, limit: &dyn RateLimit, user_id: UserId) -> Result<()> {
+        self.check_internal(limit, user_id, Utc::now()).await
     }
 
-    async fn check_internal<T: RateLimit>(&self, user_id: UserId, now: DateTimeUtc) -> Result<()> {
-        let bucket_key = (user_id, T::db_name().to_string());
+    async fn check_internal(
+        &self,
+        limit: &dyn RateLimit,
+        user_id: UserId,
+        now: DateTimeUtc,
+    ) -> Result<()> {
+        let bucket_key = (user_id, limit.db_name().to_string());
 
         // Attempt to fetch the bucket from the database if it hasn't been cached.
         // For now, we keep buckets in memory for the lifetime of the process rather than expiring them,
         // but this enforces limits across restarts so long as the database is reachable.
         if !self.buckets.contains_key(&bucket_key) {
-            if let Some(bucket) = self.load_bucket::<T>(user_id).await.log_err().flatten() {
+            if let Some(bucket) = self.load_bucket(limit, user_id).await.log_err().flatten() {
                 self.buckets.insert(bucket_key.clone(), bucket);
                 self.dirty_buckets.insert(bucket_key.clone());
             }
@@ -62,26 +67,30 @@ impl RateLimiter {
         let mut bucket = self
             .buckets
             .entry(bucket_key.clone())
-            .or_insert_with(|| RateBucket::new::<T>(now));
+            .or_insert_with(|| RateBucket::new(limit, now));
 
         if bucket.value_mut().allow(now) {
             self.dirty_buckets.insert(bucket_key);
             Ok(())
         } else {
-            Err(anyhow!("rate limit exceeded"))?
+            Err(rpc::proto::ErrorCode::RateLimitExceeded
+                .message("rate limit exceeded".into())
+                .anyhow())?
         }
     }
 
-    async fn load_bucket<T: RateLimit>(
+    async fn load_bucket(
         &self,
+        limit: &dyn RateLimit,
         user_id: UserId,
     ) -> Result<Option<RateBucket>, Error> {
         Ok(self
             .db
-            .get_rate_bucket(user_id, T::db_name())
+            .get_rate_bucket(user_id, limit.db_name())
             .await?
             .map(|saved_bucket| {
-                RateBucket::from_db::<T>(
+                RateBucket::from_db(
+                    limit,
                     saved_bucket.token_count as usize,
                     DateTime::from_naive_utc_and_offset(saved_bucket.last_refill, Utc),
                 )
@@ -115,7 +124,7 @@ impl RateLimiter {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct RateBucket {
     capacity: usize,
     token_count: usize,
@@ -124,20 +133,20 @@ struct RateBucket {
 }
 
 impl RateBucket {
-    fn new<T: RateLimit>(now: DateTimeUtc) -> Self {
+    fn new(limit: &dyn RateLimit, now: DateTimeUtc) -> Self {
         Self {
-            capacity: T::capacity(),
-            token_count: T::capacity(),
-            refill_time_per_token: T::refill_duration() / T::capacity() as i32,
+            capacity: limit.capacity(),
+            token_count: limit.capacity(),
+            refill_time_per_token: limit.refill_duration() / limit.capacity() as i32,
             last_refill: now,
         }
     }
 
-    fn from_db<T: RateLimit>(token_count: usize, last_refill: DateTimeUtc) -> Self {
+    fn from_db(limit: &dyn RateLimit, token_count: usize, last_refill: DateTimeUtc) -> Self {
         Self {
-            capacity: T::capacity(),
+            capacity: limit.capacity(),
             token_count,
-            refill_time_per_token: T::refill_duration() / T::capacity() as i32,
+            refill_time_per_token: limit.refill_duration() / limit.capacity() as i32,
             last_refill,
         }
     }
@@ -205,50 +214,52 @@ mod tests {
         let mut now = Utc::now();
 
         let rate_limiter = RateLimiter::new(db.clone());
+        let rate_limit_a = Box::new(RateLimitA);
+        let rate_limit_b = Box::new(RateLimitB);
 
         // User 1 can access resource A two times before being rate-limited.
         rate_limiter
-            .check_internal::<RateLimitA>(user_1, now)
+            .check_internal(&*rate_limit_a, user_1, now)
             .await
             .unwrap();
         rate_limiter
-            .check_internal::<RateLimitA>(user_1, now)
+            .check_internal(&*rate_limit_a, user_1, now)
             .await
             .unwrap();
         rate_limiter
-            .check_internal::<RateLimitA>(user_1, now)
+            .check_internal(&*rate_limit_a, user_1, now)
             .await
             .unwrap_err();
 
         // User 2 can access resource A and user 1 can access resource B.
         rate_limiter
-            .check_internal::<RateLimitB>(user_2, now)
+            .check_internal(&*rate_limit_b, user_2, now)
             .await
             .unwrap();
         rate_limiter
-            .check_internal::<RateLimitB>(user_1, now)
+            .check_internal(&*rate_limit_b, user_1, now)
             .await
             .unwrap();
 
         // After 1.5s, user 1 can make another request before being rate-limited again.
         now += Duration::milliseconds(1500);
         rate_limiter
-            .check_internal::<RateLimitA>(user_1, now)
+            .check_internal(&*rate_limit_a, user_1, now)
             .await
             .unwrap();
         rate_limiter
-            .check_internal::<RateLimitA>(user_1, now)
+            .check_internal(&*rate_limit_a, user_1, now)
             .await
             .unwrap_err();
 
         // After 500ms, user 1 can make another request before being rate-limited again.
         now += Duration::milliseconds(500);
         rate_limiter
-            .check_internal::<RateLimitA>(user_1, now)
+            .check_internal(&*rate_limit_a, user_1, now)
             .await
             .unwrap();
         rate_limiter
-            .check_internal::<RateLimitA>(user_1, now)
+            .check_internal(&*rate_limit_a, user_1, now)
             .await
             .unwrap_err();
 
@@ -258,18 +269,18 @@ mod tests {
         // for resource A.
         let rate_limiter = RateLimiter::new(db.clone());
         rate_limiter
-            .check_internal::<RateLimitA>(user_1, now)
+            .check_internal(&*rate_limit_a, user_1, now)
             .await
             .unwrap_err();
 
         // After 1s, user 1 can make another request before being rate-limited again.
         now += Duration::seconds(1);
         rate_limiter
-            .check_internal::<RateLimitA>(user_1, now)
+            .check_internal(&*rate_limit_a, user_1, now)
             .await
             .unwrap();
         rate_limiter
-            .check_internal::<RateLimitA>(user_1, now)
+            .check_internal(&*rate_limit_a, user_1, now)
             .await
             .unwrap_err();
     }
@@ -277,15 +288,15 @@ mod tests {
     struct RateLimitA;
 
     impl RateLimit for RateLimitA {
-        fn capacity() -> usize {
+        fn capacity(&self) -> usize {
             2
         }
 
-        fn refill_duration() -> Duration {
+        fn refill_duration(&self) -> Duration {
             Duration::seconds(2)
         }
 
-        fn db_name() -> &'static str {
+        fn db_name(&self) -> &'static str {
             "rate-limit-a"
         }
     }
@@ -293,15 +304,15 @@ mod tests {
     struct RateLimitB;
 
     impl RateLimit for RateLimitB {
-        fn capacity() -> usize {
+        fn capacity(&self) -> usize {
             10
         }
 
-        fn refill_duration() -> Duration {
+        fn refill_duration(&self) -> Duration {
             Duration::seconds(3)
         }
 
-        fn db_name() -> &'static str {
+        fn db_name(&self) -> &'static str {
             "rate-limit-b"
         }
     }

@@ -83,37 +83,34 @@ impl QuickActionBar {
                     let status = menu_state.status;
                     let editor = editor.clone();
 
-                    menu.when_else(
-                        status.is_connected(),
-                        |running| {
+                    menu.map(|menu| {
+                        if status.is_connected() {
                             let status = status.clone();
-                            running
-                                .custom_row(move |_cx| {
-                                    h_flex()
-                                        .child(
-                                            Label::new(format!(
-                                                "kernel: {} ({})",
-                                                menu_state.kernel_name.clone(),
-                                                menu_state.kernel_language.clone()
-                                            ))
+                            menu.custom_row(move |_cx| {
+                                h_flex()
+                                    .child(
+                                        Label::new(format!(
+                                            "kernel: {} ({})",
+                                            menu_state.kernel_name.clone(),
+                                            menu_state.kernel_language.clone()
+                                        ))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                    )
+                                    .into_any_element()
+                            })
+                            .custom_row(move |_cx| {
+                                h_flex()
+                                    .child(
+                                        Label::new(status.clone().to_string())
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
-                                        )
-                                        .into_any_element()
-                                })
-                                .custom_row(move |_cx| {
-                                    h_flex()
-                                        .child(
-                                            Label::new(status.clone().to_string())
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                        .into_any_element()
-                                })
-                        },
-                        |not_running| {
+                                    )
+                                    .into_any_element()
+                            })
+                        } else {
                             let status = status.clone();
-                            not_running.custom_row(move |_cx| {
+                            menu.custom_row(move |_cx| {
                                 h_flex()
                                     .child(
                                         Label::new(format!("{}...", status.clone().to_string()))
@@ -122,8 +119,8 @@ impl QuickActionBar {
                                     )
                                     .into_any_element()
                             })
-                        },
-                    )
+                        }
+                    })
                     .separator()
                     .custom_entry(
                         move |_cx| {
@@ -137,7 +134,7 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                repl::run(editor.clone(), cx).log_err();
+                                repl::run(editor.clone(), true, cx).log_err();
                             }
                         },
                     )

@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crate::GoToDeclaration;
 use crate::{
     selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut, DisplayPoint,
     DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation,
@@ -10,6 +11,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use workspace::OpenInTerminal;
 
+#[derive(Debug)]
 pub enum MenuPosition {
     /// When the editor is scrolled, the context menu stays on the exact
     /// same position on the screen, never disappearing.
@@ -27,6 +29,15 @@ pub struct MouseContextMenu {
     pub(crate) position: MenuPosition,
     pub(crate) context_menu: View<ui::ContextMenu>,
     _subscription: Subscription,
+}
+
+impl std::fmt::Debug for MouseContextMenu {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MouseContextMenu")
+            .field("position", &self.position)
+            .field("context_menu", &self.context_menu)
+            .finish()
+    }
 }
 
 impl MouseContextMenu {
@@ -153,6 +164,7 @@ pub fn deploy_context_menu(
                 .on_blur_subscription(Subscription::new(|| {}))
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Go to Definition", Box::new(GoToDefinition))
+                .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
                 .action("Go to Implementation", Box::new(GoToImplementation))
                 .action("Find All References", Box::new(FindAllReferences))

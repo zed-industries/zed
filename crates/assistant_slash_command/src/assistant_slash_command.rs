@@ -49,7 +49,7 @@ pub trait SlashCommand: 'static + Send + Sync {
         //
         // It may be that `LspAdapterDelegate` needs a more general name, or
         // perhaps another kind of delegate is needed here.
-        delegate: Arc<dyn LspAdapterDelegate>,
+        delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>>;
 }
@@ -60,7 +60,7 @@ pub type RenderFoldPlaceholder = Arc<
         + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
 >;
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct SlashCommandOutput {
     pub text: String,
     pub sections: Vec<SlashCommandOutputSection<usize>>,
