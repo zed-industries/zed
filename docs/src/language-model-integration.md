@@ -221,6 +221,10 @@ Zed allows you to override the default prompts used for various assistant featur
    given system information and latest terminal output if relevant.
    ```
 
-You can customize these templates to better suit your needs while maintaining the core structure and variables used by Zed. Zed will automatically reload your prompt overrides when they change on disk.
+3. `edit_workflow.hbs`: Used for generating the edit workflow prompt.
+
+4. `step_resolution.hbs`: Used for generating the step resolution prompt.
+
+You can customize these templates to better suit your needs while maintaining the core structure and variables used by Zed. Zed will automatically reload your prompt overrides when they change on disk. Consult Zed's assets/prompts directory for current versions you can play with.
 
 Be sure you want to override these, as you'll miss out on iteration on our built in features. This should be primarily used when developing Zed.

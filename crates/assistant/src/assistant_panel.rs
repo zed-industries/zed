@@ -2,6 +2,7 @@ use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
     prompt_library::open_prompt_library,
+    prompts::PromptBuilder,
     slash_command::{
         default_command::DefaultSlashCommand,
         docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
@@ -315,14 +316,17 @@ impl PickerDelegate for SavedContextPickerDelegate {
 impl AssistantPanel {
     pub fn load(
         workspace: WeakView<Workspace>,
+        prompt_builder: Arc<PromptBuilder>,
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
             let context_store = workspace
                 .update(&mut cx, |workspace, cx| {
-                    ContextStore::new(workspace.project().clone(), cx)
+                    let project = workspace.project().clone();
+                    ContextStore::new(project, prompt_builder.clone(), cx)
                 })?
                 .await?;
+
             workspace.update(&mut cx, |workspace, cx| {
                 // TODO: deserialize state.
                 cx.new_view(|cx| Self::new(workspace, context_store, cx))
