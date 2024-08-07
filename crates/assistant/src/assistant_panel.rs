@@ -24,8 +24,8 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockDisposition, BlockProperties, BlockStyle, Crease, CustomBlockId, RenderBlock,
-        ToDisplayPoint,
+        BlockContext, BlockDisposition, BlockProperties, BlockStyle, Crease, CustomBlockId,
+        RenderBlock, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
     Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowExt, ToOffset as _, ToPoint,
@@ -34,10 +34,11 @@ use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
     div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
-    AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement,
-    Pixels, ReadGlobal, Render, SharedString, StatefulInteractiveElement, Styled, Subscription,
-    Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
+    AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EntityId,
+    EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement, IntoElement, Model,
+    ParentElement, Pixels, ReadGlobal, Render, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -1367,29 +1368,34 @@ impl WorkflowStepStatus {
         &self,
         step_range: Range<language::Anchor>,
         editor: WeakView<ContextEditor>,
-        _cx: &mut WindowContext<'_>,
+        cx: &mut BlockContext<'_, '_>,
     ) -> AnyElement {
+        let id = EntityId::from(cx.block_id);
         match self {
             WorkflowStepStatus::ResolvingSuggestions => "Resolving Suggestions...".into_any(),
-            WorkflowStepStatus::Idle => {
-                IconButton::new("transform-workflow-step", IconName::Sparkle)
-                    .on_click({
-                        let editor = editor.clone();
-                        let step_range = step_range.clone();
-                        move |_, cx| {
-                            editor
-                                .update(cx, |this, cx| this.apply_edit_step(&step_range, cx))
-                                .ok();
-                        }
-                    })
-                    .into_any_element()
-            }
+            WorkflowStepStatus::Idle => Button::new(("transform-workflow-step", id), "Preview")
+                .icon(IconName::Sparkle)
+                .icon_position(IconPosition::Start)
+                .icon_size(IconSize::Small)
+                .style(ButtonStyle::Tinted(TintColor::Accent))
+                .tooltip(|cx| Tooltip::text("Preview changes", cx))
+                .on_click({
+                    let editor = editor.clone();
+                    let step_range = step_range.clone();
+                    move |_, cx| {
+                        editor
+                            .update(cx, |this, cx| this.apply_edit_step(&step_range, cx))
+                            .ok();
+                    }
+                })
+                .into_any_element(),
             WorkflowStepStatus::Pending => h_flex()
                 .gap_1()
                 .child(div().child(Label::new("Applying")).cursor_not_allowed())
                 .child(
-                    IconButton::new("stop-workflow-step", IconName::Stop)
+                    IconButton::new(("stop-workflow-step", id), IconName::Stop)
                         .icon_color(Color::Error)
+                        .tooltip(|cx| Tooltip::text("Stop step execution", cx))
                         .on_click({
                             let editor = editor.clone();
                             let step_range = step_range.clone();
@@ -1404,8 +1410,9 @@ impl WorkflowStepStatus {
             WorkflowStepStatus::Done => h_flex()
                 .gap_1()
                 .child(
-                    IconButton::new("confirm-workflow-step", IconName::Check)
+                    IconButton::new(("confirm-workflow-step", id), IconName::Check)
                         .icon_color(Color::Info)
+                        .tooltip(|cx| Tooltip::text("Confirm Step", cx))
                         .on_click({
                             let editor = editor.clone();
                             let step_range = step_range.clone();
@@ -1419,24 +1426,29 @@ impl WorkflowStepStatus {
                         }),
                 )
                 .child(
-                    IconButton::new("reject-workflow-step", IconName::Close).on_click({
-                        let editor = editor.clone();
-                        let step_range = step_range.clone();
-                        move |_, cx| {
-                            editor
-                                .update(cx, |this, cx| {
-                                    this.confirm_edit_step(&step_range, true, cx);
-                                })
-                                .ok();
-                        }
-                    }),
+                    IconButton::new(("reject-workflow-step", id), IconName::Close)
+                        .tooltip(|cx| Tooltip::text("Reject Step", cx))
+                        .on_click({
+                            let editor = editor.clone();
+                            let step_range = step_range.clone();
+                            move |_, cx| {
+                                editor
+                                    .update(cx, |this, cx| {
+                                        this.confirm_edit_step(&step_range, true, cx);
+                                    })
+                                    .ok();
+                            }
+                        }),
                 )
                 .into_any_element(),
             WorkflowStepStatus::Confirmed => h_flex()
                 .child(
-                    Button::new("revert-workflow-step", "Undo")
+                    Button::new(("revert-workflow-step", id), "Undo")
+                        .style(ButtonStyle::Filled)
                         .icon(Some(IconName::Undo))
-                        .tooltip(|cx| Tooltip::text("Undo step", cx))
+                        .icon_position(IconPosition::Start)
+                        .icon_size(IconSize::Small)
+                        .tooltip(|cx| Tooltip::text("Undo Step", cx))
                         .on_click({
                             let editor = editor.clone();
                             let step_range = step_range.clone();
