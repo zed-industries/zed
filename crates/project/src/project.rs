@@ -1395,10 +1395,13 @@ impl Project {
         let mut result: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
 
         for buffer_id in breakpoint_read_guard.keys() {
-            if let Some((worktree_path, serialized_breakpoint)) =
+            if let Some((worktree_path, mut serialized_breakpoint)) =
                 self.serialize_breakpoint_for_buffer_id(&buffer_id, cx)
             {
-                result.insert(worktree_path, serialized_breakpoint);
+                result
+                    .entry(worktree_path.clone())
+                    .or_default()
+                    .append(&mut serialized_breakpoint)
             }
         }
 
