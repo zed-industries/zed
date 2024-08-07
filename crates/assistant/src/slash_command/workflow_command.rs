@@ -1,18 +1,27 @@
-use std::sync::atomic::AtomicBool;
+use crate::prompts::PromptBuilder;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
-use assets::Assets;
+use std::sync::atomic::AtomicBool;
+
+use anyhow::Result;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
-use gpui::{AppContext, AssetSource, Task, WeakView};
+use gpui::{AppContext, Task, WeakView};
 use language::LspAdapterDelegate;
-use text::LineEnding;
 use ui::prelude::*;
+
 use workspace::Workspace;
 
-pub(crate) struct WorkflowSlashCommand;
+pub(crate) struct WorkflowSlashCommand {
+    prompt_builder: Arc<PromptBuilder>,
+}
+
+impl WorkflowSlashCommand {
+    pub fn new(prompt_builder: Arc<PromptBuilder>) -> Self {
+        Self { prompt_builder }
+    }
+}
 
 impl SlashCommand for WorkflowSlashCommand {
     fn name(&self) -> String {
@@ -46,26 +55,22 @@ impl SlashCommand for WorkflowSlashCommand {
         _argument: Option<&str>,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        _cx: &mut WindowContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let mut text = match Assets
-            .load("prompts/edit_workflow.md")
-            .and_then(|prompt| prompt.context("prompts/edit_workflow.md not found"))
-        {
-            Ok(prompt) => String::from_utf8_lossy(&prompt).into_owned(),
-            Err(error) => return Task::ready(Err(error)),
-        };
-        LineEnding::normalize(&mut text);
-        let range = 0..text.len();
+        let prompt_builder = self.prompt_builder.clone();
+        cx.spawn(|_cx| async move {
+            let text = prompt_builder.generate_workflow_prompt()?;
+            let range = 0..text.len();
 
-        Task::ready(Ok(SlashCommandOutput {
-            text,
-            sections: vec![SlashCommandOutputSection {
-                range,
-                icon: IconName::Route,
-                label: "Workflow".into(),
-            }],
-            run_commands_in_text: false,
-        }))
+            Ok(SlashCommandOutput {
+                text,
+                sections: vec![SlashCommandOutputSection {
+                    range,
+                    icon: IconName::Route,
+                    label: "Workflow".into(),
+                }],
+                run_commands_in_text: false,
+            })
+        })
     }
 }

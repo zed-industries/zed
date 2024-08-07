@@ -1,6 +1,6 @@
 use crate::{
-    Context, ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext,
-    SavedContextMetadata,
+    prompts::PromptBuilder, Context, ContextEvent, ContextId, ContextOperation, ContextVersion,
+    SavedContext, SavedContextMetadata,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
@@ -52,6 +52,7 @@ pub struct ContextStore {
     project_is_shared: bool,
     client_subscription: Option<client::Subscription>,
     _project_subscriptions: Vec<gpui::Subscription>,
+    prompt_builder: Arc<PromptBuilder>,
 }
 
 pub enum ContextStoreEvent {
@@ -82,7 +83,11 @@ impl ContextHandle {
 }
 
 impl ContextStore {
-    pub fn new(project: Model<Project>, cx: &mut AppContext) -> Task<Result<Model<Self>>> {
+    pub fn new(
+        project: Model<Project>,
+        prompt_builder: Arc<PromptBuilder>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Model<Self>>> {
         let fs = project.read(cx).fs().clone();
         let languages = project.read(cx).languages().clone();
         let telemetry = project.read(cx).client().telemetry().clone();
@@ -117,6 +122,7 @@ impl ContextStore {
                     project_is_shared: false,
                     client: project.read(cx).client(),
                     project: project.clone(),
+                    prompt_builder,
                 };
                 this.handle_project_changed(project, cx);
                 this.synchronize_contexts(cx);
@@ -334,6 +340,7 @@ impl ContextStore {
                 self.languages.clone(),
                 Some(self.project.clone()),
                 Some(self.telemetry.clone()),
+                self.prompt_builder.clone(),
                 cx,
             )
         });
@@ -358,6 +365,7 @@ impl ContextStore {
         let language_registry = self.languages.clone();
         let project = self.project.clone();
         let telemetry = self.telemetry.clone();
+        let prompt_builder = self.prompt_builder.clone();
         let request = self.client.request(proto::CreateContext { project_id });
         cx.spawn(|this, mut cx| async move {
             let response = request.await?;
@@ -369,6 +377,7 @@ impl ContextStore {
                     replica_id,
                     capability,
                     language_registry,
+                    prompt_builder,
                     Some(project),
                     Some(telemetry),
                     cx,
@@ -417,6 +426,7 @@ impl ContextStore {
                 SavedContext::from_json(&saved_context)
             }
         });
+        let prompt_builder = self.prompt_builder.clone();
 
         cx.spawn(|this, mut cx| async move {
             let saved_context = load.await?;
@@ -425,6 +435,7 @@ impl ContextStore {
                     saved_context,
                     path.clone(),
                     languages,
+                    prompt_builder,
                     Some(project),
                     Some(telemetry),
                     cx,
@@ -493,6 +504,7 @@ impl ContextStore {
             project_id,
             context_id: context_id.to_proto(),
         });
+        let prompt_builder = self.prompt_builder.clone();
         cx.spawn(|this, mut cx| async move {
             let response = request.await?;
             let context_proto = response.context.context("invalid context")?;
@@ -502,6 +514,7 @@ impl ContextStore {
                     replica_id,
                     capability,
                     language_registry,
+                    prompt_builder,
                     Some(project),
                     Some(telemetry),
                     cx,
