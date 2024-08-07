@@ -1,17 +1,10 @@
 # Adding New Languages to Zed
 
-TBD: Explain all the steps necessary to add a language extensions to Zed
-TBD: Document extension.toml syntax
+See: [Developing Zed Language Extensions](./development/language-extensions.md).
 
 ## LSP
 
 Zed uses the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) to provide language support. This means, in theory, we can support any language that has an LSP server.
-
-TBD: Document what LSP is, ho
-
-## Syntax Highlighting
-
-TBD: Explain how syntax highlighting works in Zed. [tree-sitter docs](./tree-sitter.md)
 
 ### Defining syntax highlighting rules
 
