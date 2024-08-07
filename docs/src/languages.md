@@ -137,7 +137,7 @@ Pick top 6 or 8 for grid:
 - [Metals](https://github.com/scalameta/metals-zed.git)
 - [SCSS](https://github.com/bajrangCoder/zed-scss.git)
 - [Slim](https://github.com/calmyournerves/zed-slim.git)
-- [Slint](#)
+- [Slint](https://gitlab.com/flukejones/zed-slint)
 - [Smithy](https://github.com/joshrutkowski/zed-smithy.git)
 - [Solidity](https://github.com/zarifpour/zed-solidity.git)
 - [SQL](https://github.com/evrensen467/zed-sql.git)
