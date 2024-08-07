@@ -68,6 +68,8 @@ A `true` setting will set the target directory to `target/rust-analyzer`. You ca
 
 ## More server configuration
 
+TBD: Is it possible to specify RUSTFLAGS? https://github.com/zed-industries/zed/issues/14334
+
 Rust-analyzer [manual](https://rust-analyzer.github.io/manual.html) describes various features and configuration options for rust-analyzer language server.
 Rust-analyzer in Zed runs with the default parameters.
 

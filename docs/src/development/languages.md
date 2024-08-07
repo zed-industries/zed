@@ -65,7 +65,7 @@ line_comments = ["# "]
 
 - `name` is the human readable name that will show up in the Select Language dropdown.
 - `grammar` is the grammar name as specified in the `extension.toml` and in your `grammar.js` tree-sitter grammar.
-- `path_suffixes` (optional) is an array of file suffixes that should be associated with this language. This supports glob patterns like `config/**/*.toml` where `**` matchs 0 or more directories and `*` matches 0 or more characters.
+- `path_suffixes` (optional) is an array of file suffixes that should be associated with this language. This supports glob patterns like `config/**/*.toml` where `**` matches 0 or more directories and `*` matches 0 or more characters.
 - `line_comments` (optional) is an array of strings that are used to identify line comments in the language.
 
 ## config.toml

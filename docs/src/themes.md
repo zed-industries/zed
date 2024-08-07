@@ -26,7 +26,7 @@ By default, Zed maintains two themes: one for light mode and one for dark mode. 
 }
 ```
 
-## Theme Overides
+## Theme Overrides
 
 TBD: Document `experimental.theme_overrides`
 

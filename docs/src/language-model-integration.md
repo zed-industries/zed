@@ -13,7 +13,7 @@ TBD: Shortcut `ctrl-alt-b` (Linux) `cmd-r` (Mac)
 - [OpenAI API Setup Instructions](#openai)
 - [OpenAI API Custom Endpoint](#openai-custom-endpoint)
 - [Ollama Setup Instructions](#ollama)
-- [Anthropic API Setup Instrucitons](#anthropic)
+- [Anthropic API Setup Instructions](#anthropic)
 - [Google Gemini API Setup Instructions](#google-gemini)
 - [GitHub Copilot Chat](#github-copliot)
 

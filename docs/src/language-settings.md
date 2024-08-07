@@ -8,7 +8,7 @@ TBD: Explain how tree-sitter is used in Zed
 ## Per-Language Settings
 
 TBD: Document how to language associations using [`file_types`](./configuring-zed.md#file-types)
-TBD: Certain top-level settings that can be overriden per-language:
+TBD: Certain top-level settings that can be overridden per-language:
 
 ```json
 {
@@ -37,7 +37,7 @@ TBD: Certain top-level settings that can be overriden per-language:
 - [`always_treat_brackets_as_autoclosed`](./configuring-zed.md#always-treat-brackets-as-autoclosed)
 - [`indent_guides`](./configuring-zed.md#indent-guides)
 
-TBD: Add additional settings which may be overriden.
+TBD: Add additional settings which may be overridden.
 
 ## Language Servers
 
