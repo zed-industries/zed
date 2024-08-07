@@ -5126,21 +5126,14 @@ impl Editor {
         _style: &EditorStyle,
         row: DisplayRow,
         is_active: bool,
-        overlaps_breakpoint: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<IconButton> {
         if self.available_code_actions.is_some() {
-            let color = if overlaps_breakpoint {
-                Color::Error
-            } else {
-                Color::Muted
-            };
-
             Some(
                 IconButton::new("code_actions_indicator", ui::IconName::Bolt)
                     .shape(ui::IconButtonShape::Square)
                     .icon_size(IconSize::XSmall)
-                    .icon_color(color)
+                    .icon_color(Color::Muted)
                     .selected(is_active)
                     .on_click(cx.listener(move |editor, _e, cx| {
                         editor.focus(cx);
@@ -5216,7 +5209,7 @@ impl Editor {
             .icon_color(color)
             .on_click(cx.listener(move |editor, _e, cx| {
                 editor.focus(cx);
-                editor.toggle_breakpoint_at_row(position, cx) //TODO handle folded
+                editor.toggle_breakpoint_at_anchor(position, cx) //TODO handle folded
             }))
     }
 
@@ -5225,12 +5218,19 @@ impl Editor {
         _style: &EditorStyle,
         is_active: bool,
         row: DisplayRow,
+        overlaps_breakpoint: bool,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
+        let color = if overlaps_breakpoint {
+            Color::Error
+        } else {
+            Color::Muted
+        };
+
         IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
             .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::XSmall)
-            .icon_color(Color::Muted)
+            .icon_color(color)
             .selected(is_active)
             .on_click(cx.listener(move |editor, _e, cx| {
                 editor.focus(cx);
@@ -6051,10 +6051,10 @@ impl Editor {
             .buffer_snapshot
             .anchor_before(Point::new(cursor_position.row, 0));
 
-        self.toggle_breakpoint_at_row(breakpoint_position, cx);
+        self.toggle_breakpoint_at_anchor(breakpoint_position, cx);
     }
 
-    pub fn toggle_breakpoint_at_row(
+    pub fn toggle_breakpoint_at_anchor(
         &mut self,
         breakpoint_position: Anchor,
         cx: &mut ViewContext<Self>,

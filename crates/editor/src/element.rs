@@ -1621,6 +1621,7 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
         snapshot: &EditorSnapshot,
+        breakpoints: &mut HashSet<DisplayPoint>,
         cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
@@ -1649,10 +1650,13 @@ impl EditorElement {
                         return None;
                     }
                     let display_row = multibuffer_point.to_display_point(snapshot).row();
+                    let display_point = DisplayPoint::new(display_row, 0);
+
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(display_row) == active_task_indicator_row,
                         display_row,
+                        breakpoints.remove(&display_point),
                         cx,
                     );
 
@@ -1681,7 +1685,7 @@ impl EditorElement {
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
         rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
-        overlaps_breakpoint: bool,
+        breakpoint_points: &mut HashSet<DisplayPoint>,
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
         let mut active = false;
@@ -1695,17 +1699,21 @@ impl EditorElement {
             {
                 active = deployed_from_indicator.map_or(true, |indicator_row| indicator_row == row);
             };
-            button = editor.render_code_actions_indicator(
-                &self.style,
-                row,
-                active,
-                overlaps_breakpoint,
-                cx,
-            );
+            button = editor.render_code_actions_indicator(&self.style, row, active, cx);
         });
 
+        let Some(button) = button else {
+            return None;
+        };
+
+        let button = if breakpoint_points.remove(&DisplayPoint::new(row, 0)) {
+            button.icon_color(Color::Error)
+        } else {
+            button
+        };
+
         let button = prepaint_gutter_button(
-            button?,
+            button,
             row,
             line_height,
             gutter_dimensions,
@@ -1786,6 +1794,7 @@ impl EditorElement {
         active_rows: &BTreeMap<DisplayRow, bool>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
+        breakpoint_rows: HashSet<DisplayRow>,
         cx: &mut WindowContext,
     ) -> Vec<Option<ShapedLine>> {
         let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
@@ -1825,7 +1834,9 @@ impl EditorElement {
             .map(|(ix, multibuffer_row)| {
                 let multibuffer_row = multibuffer_row?;
                 let display_row = DisplayRow(rows.start.0 + ix as u32);
-                let color = if active_rows.contains_key(&display_row) {
+                let color = if breakpoint_rows.contains(&display_row) {
+                    Hsla::red()
+                } else if active_rows.contains_key(&display_row) {
                     cx.theme().colors().editor_active_line_number
                 } else {
                     cx.theme().colors().editor_line_number
@@ -5137,12 +5148,29 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let gutter_breakpoint_position =
+                        self.editor.read(cx).gutter_breakpoint_indicator;
+
+                    let breakpoint_rows = breakpoint_lines
+                        .iter()
+                        .filter_map(|display_point| {
+                            if gutter_breakpoint_position
+                                .is_some_and(|point| &point == display_point)
+                            {
+                                None
+                            } else {
+                                Some(display_point.row())
+                            }
+                        })
+                        .collect();
+
                     let line_numbers = self.layout_line_numbers(
                         start_row..end_row,
                         buffer_rows.iter().copied(),
                         &active_rows,
                         newest_selection_head,
                         &snapshot,
+                        breakpoint_rows,
                         cx,
                     );
 
@@ -5449,11 +5477,6 @@ impl Element for EditorElement {
                                             .contains_key(&(buffer_id, row));
 
                                         if !has_test_indicator {
-                                            let breakpoint_point =
-                                                DisplayPoint::new(newest_selection_head.row(), 0);
-                                            let overlaps_breakpoint =
-                                                breakpoint_lines.remove(&breakpoint_point);
-
                                             code_actions_indicator = self
                                                 .layout_code_actions_indicator(
                                                     line_height,
@@ -5462,7 +5485,7 @@ impl Element for EditorElement {
                                                     &gutter_dimensions,
                                                     &gutter_hitbox,
                                                     &rows_with_hunk_bounds,
-                                                    overlaps_breakpoint,
+                                                    &mut breakpoint_lines,
                                                     cx,
                                                 );
                                         }
@@ -5471,6 +5494,21 @@ impl Element for EditorElement {
                             }
                         }
                     }
+
+                    let test_indicators = if gutter_settings.runnables {
+                        self.layout_run_indicators(
+                            line_height,
+                            scroll_pixel_position,
+                            &gutter_dimensions,
+                            &gutter_hitbox,
+                            &rows_with_hunk_bounds,
+                            &snapshot,
+                            &mut breakpoint_lines,
+                            cx,
+                        )
+                    } else {
+                        Vec::new()
+                    };
 
                     let breakpoints = self.layout_breakpoints(
                         line_height,
@@ -5482,20 +5520,6 @@ impl Element for EditorElement {
                         breakpoint_lines,
                         cx,
                     );
-
-                    let test_indicators = if gutter_settings.runnables {
-                        self.layout_run_indicators(
-                            line_height,
-                            scroll_pixel_position,
-                            &gutter_dimensions,
-                            &gutter_hitbox,
-                            &rows_with_hunk_bounds,
-                            &snapshot,
-                            cx,
-                        )
-                    } else {
-                        Vec::new()
-                    };
 
                     let close_indicators = self.layout_hunk_diff_close_indicators(
                         line_height,
@@ -6284,6 +6308,7 @@ mod tests {
         let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
         let element = EditorElement::new(&editor, style);
         let snapshot = window.update(cx, |editor, cx| editor.snapshot(cx)).unwrap();
+        let breakpoint_rows = HashSet::default();
 
         let layouts = cx
             .update_window(*window, |_, cx| {
@@ -6293,6 +6318,7 @@ mod tests {
                     &Default::default(),
                     Some(DisplayPoint::new(DisplayRow(0), 0)),
                     &snapshot,
+                    breakpoint_rows,
                     cx,
                 )
             })
