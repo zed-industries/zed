@@ -2210,10 +2210,13 @@ impl ContextEditor {
                                 });
 
                             let trigger = Button::new("show-error", "Error")
-                                .style(ButtonStyle::Tinted(TintColor::Negative))
-                                .icon(IconName::ExclamationTriangle)
                                 .color(Color::Error)
+                                .selected_label_color(Color::Error)
+                                .selected_icon_color(Color::Error)
+                                .icon(IconName::XCircle)
                                 .icon_color(Color::Error)
+                                .icon_size(IconSize::Small)
+                                .icon_position(IconPosition::Start)
                                 .tooltip(move |cx| {
                                     Tooltip::text("Error interacting with language model", cx)
                                 });
@@ -2475,7 +2478,7 @@ impl ContextEditor {
                 h_flex()
                     .p_3()
                     .border_b_1()
-                    .border_color(cx.theme().colors().border)
+                    .border_color(cx.theme().colors().border_disabled)
                     .bg(cx.theme().colors().editor_background)
                     .justify_between()
                     .child(
@@ -2643,11 +2646,7 @@ impl Render for ErrorPopover {
             .elevation_2(cx)
             .bg(cx.theme().colors().surface_background)
             .occlude()
-            .child(
-                Label::new("Error interacting with language model")
-                    .size(LabelSize::Large)
-                    .weight(FontWeight::MEDIUM),
-            )
+            .child(Label::new("Error interacting with language model").weight(FontWeight::SEMIBOLD))
             .child(Label::new(self.error.clone().repeat(8)))
             .child(
                 h_flex().justify_end().mt_1().child(
@@ -3468,7 +3467,11 @@ fn render_docs_slash_command_trailer(
         children.push(
             div()
                 .id(("latest-error", row.0))
-                .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
+                .child(
+                    Icon::new(IconName::ExclamationTriangle)
+                        .size(IconSize::Small)
+                        .color(Color::Warning),
+                )
                 .tooltip(move |cx| Tooltip::text(format!("failed to index: {latest_error}"), cx))
                 .into_any_element(),
         )
