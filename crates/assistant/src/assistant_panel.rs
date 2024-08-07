@@ -2454,11 +2454,6 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
-    fn dismiss_error_message(&mut self, cx: &mut ViewContext<Self>) {
-        self.error_message = None;
-        cx.notify();
-    }
-
     fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         use feature_flags::FeatureFlagAppExt;
         let nudge = self.assistant_panel.upgrade().map(|assistant_panel| {
