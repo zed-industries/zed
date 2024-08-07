@@ -68,6 +68,8 @@ pub struct InlineAssistant {
     assists: HashMap<InlineAssistId, InlineAssist>,
     assists_by_editor: HashMap<WeakView<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
+    assist_status_updates:
+        HashMap<InlineAssistId, (async_watch::Sender<()>, async_watch::Receiver<()>)>,
     confirmed_assists: HashSet<InlineAssistId>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
@@ -89,6 +91,7 @@ impl InlineAssistant {
             assists: HashMap::default(),
             assists_by_editor: HashMap::default(),
             assist_groups: HashMap::default(),
+            assist_status_updates: HashMap::default(),
             confirmed_assists: HashSet::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
@@ -659,7 +662,14 @@ impl InlineAssistant {
             } else {
                 self.confirmed_assists.insert(assist_id);
             }
+
+            if let Some((tx, _)) = self.assist_status_updates.get(&assist_id) {
+                tx.send(()).ok();
+            }
         }
+
+        // Remove the assist from the status updates map
+        self.assist_status_updates.remove(&assist_id);
     }
 
     fn dismiss_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
@@ -858,6 +868,10 @@ impl InlineAssistant {
                 )
             })
             .log_err();
+
+        if let Some((tx, _)) = self.assist_status_updates.get(&assist_id) {
+            tx.send(()).ok();
+        }
     }
 
     pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
@@ -868,6 +882,10 @@ impl InlineAssistant {
         };
 
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
+
+        if let Some((tx, _)) = self.assist_status_updates.get(&assist_id) {
+            tx.send(()).ok();
+        }
     }
 
     pub fn assist_status(
@@ -1068,6 +1086,17 @@ impl InlineAssistant {
                 .into_iter()
                 .collect();
         })
+    }
+
+    pub fn subscribe_to_assist(&mut self, assist_id: InlineAssistId) -> async_watch::Receiver<()> {
+        if let Some((_, rx)) = self.assist_status_updates.get(&assist_id) {
+            rx.clone()
+        } else {
+            let (tx, rx) = async_watch::channel(());
+            self.assist_status_updates
+                .insert(assist_id, (tx, rx.clone()));
+            rx
+        }
     }
 }
 
@@ -1982,6 +2011,8 @@ impl InlineAssist {
 
                             if assist.decorations.is_none() {
                                 this.finish_assist(assist_id, false, cx);
+                            } else if let Some(tx) = this.assist_status_updates.get(&assist_id) {
+                                tx.0.send(()).ok();
                             }
                         }
                     })

@@ -1310,11 +1310,20 @@ struct WorkflowStep {
     footer_block_id: CustomBlockId,
     suggestions: Option<ResolvedWorkflowStepEditSuggestions>,
     assists: Option<WorkflowStepAssists>,
+    status: WorkflowStepStatus,
 }
 
 struct WorkflowStepAssists {
     assist_ids: Vec<InlineAssistId>,
     editor: WeakView<Editor>,
+}
+
+enum WorkflowStepStatus {
+    ComputingSuggestions,
+    Idle,
+    Pending,
+    Done,
+    Confirmed,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -2021,6 +2030,7 @@ impl ContextEditor {
                         footer_block_id: block_ids[1],
                         suggestions,
                         assists: None,
+                        status: WorkflowStepStatus::Idle,
                     },
                 );
             }
