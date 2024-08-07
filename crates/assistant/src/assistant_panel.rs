@@ -1386,27 +1386,51 @@ impl WorkflowStepStatus {
             }
             WorkflowStepStatus::Pending => IconButton::new("stop-workflow-step", IconName::Stop)
                 .icon_color(Color::Error)
+                .on_click({
+                    let editor = editor.clone();
+                    let step_range = step_range.clone();
+                    move |_, cx| {
+                        editor
+                            .update(cx, |this, cx| this.stop_edit_step(&step_range, cx))
+                            .ok();
+                    }
+                })
                 .into_any_element(),
             WorkflowStepStatus::Done => h_flex()
                 .gap_1()
                 .child(
                     IconButton::new("confirm-workflow-step", IconName::Check)
-                        .icon_color(Color::Info),
+                        .icon_color(Color::Info)
+                        .on_click({
+                            let editor = editor.clone();
+                            let step_range = step_range.clone();
+                            move |_, cx| {
+                                editor
+                                    .update(cx, |this, cx| {
+                                        this.confirm_edit_step(&step_range, false, cx);
+                                    })
+                                    .ok();
+                            }
+                        }),
                 )
-                .child(IconButton::new("reject-workflow-step", IconName::Close))
+                .child(
+                    IconButton::new("reject-workflow-step", IconName::Close).on_click({
+                        let editor = editor.clone();
+                        let step_range = step_range.clone();
+                        move |_, cx| {
+                            editor
+                                .update(cx, |this, cx| {
+                                    this.confirm_edit_step(&step_range, true, cx);
+                                })
+                                .ok();
+                        }
+                    }),
+                )
                 .into_any_element(),
             WorkflowStepStatus::Confirmed => Label::new("Applied")
                 .color(Color::Ignored)
                 .into_any_element(),
         }
-        // match self {
-        //     Self::ResolvingSuggestions => "Resolving Suggestions...",
-        //     Self::Idle => "Transform",
-        //     Self::Pending => "Pending",
-        //     Self::Done => "Done",
-        //     Self::Confirmed => "Applied",
-        // }
-        // .into()
     }
 }
 
@@ -1563,6 +1587,57 @@ impl ContextEditor {
 
         let range = step.range.clone();
         self.apply_edit_step(&range, cx)
+    }
+
+    fn stop_edit_step(
+        &mut self,
+        range: &Range<language::Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        if let Some(workflow_step) = self.workflow_steps.get(range) {
+            if let Some(assists) = workflow_step.assists.as_ref() {
+                let assist_ids = assists.assist_ids.clone();
+                cx.window_context().defer(|cx| {
+                    InlineAssistant::update_global(cx, |assistant, cx| {
+                        for assist_id in assist_ids {
+                            assistant.stop_assist(assist_id, cx);
+                        }
+                    })
+                });
+
+                !assists.assist_ids.is_empty()
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    fn confirm_edit_step(
+        &mut self,
+        range: &Range<language::Anchor>,
+        undo: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        if let Some(workflow_step) = self.workflow_steps.get(range) {
+            if let Some(assists) = workflow_step.assists.as_ref() {
+                let assist_ids = assists.assist_ids.clone();
+                cx.window_context().defer(move |cx| {
+                    InlineAssistant::update_global(cx, |assistant, cx| {
+                        for assist_id in assist_ids {
+                            assistant.finish_assist(assist_id, undo, cx);
+                        }
+                    })
+                });
+
+                !assists.assist_ids.is_empty()
+            } else {
+                false
+            }
+        } else {
+            false
+        }
     }
 
     fn send_to_model(&mut self, cx: &mut ViewContext<Self>) {
