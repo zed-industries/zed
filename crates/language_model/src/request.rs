@@ -2,7 +2,7 @@ use std::io::{Cursor, Write};
 
 use crate::role::Role;
 use base64::write::EncoderWriter;
-use gpui::{point, size, AppContext, DevicePixels, ImageData, ImageSource, ObjectFit, Size};
+use gpui::{point, size, DevicePixels, ImageData, ObjectFit, Size};
 use image::{codecs::png::PngEncoder, imageops::resize};
 use serde::{Deserialize, Serialize};
 use ui::px;
@@ -80,11 +80,14 @@ impl LanguageModelImage {
         })
     }
 
-    pub fn tokens(&self) -> i32 {
+    pub fn estimate_tokens(&self) -> usize {
+        let width = self.size.width.raw().abs() as usize;
+        let height = self.size.height.raw().abs() as usize;
+
         // From: https://docs.anthropic.com/en/docs/build-with-claude/vision#calculate-image-costs
         // Note that are a lot of conditions on anthropic's API, and OpenAI doesn't use this,
         // so this method is more of a rough guess
-        (self.size.width.raw() * self.size.height.raw()) / 750
+        (width * height) / 750
     }
 }
 
