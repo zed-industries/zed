@@ -2246,12 +2246,12 @@ impl ContextEditor {
                                         };
                                         h_flex()
                                             .h(1. * cx.line_height())
-                                            .w_full()
+                                            .w(DefiniteLength::Fraction(0.95))
+                                            .mx_auto()
                                             .border_b_1()
                                             .border_color(border_color)
                                             .justify_end()
                                             .gap_2()
-                                            .pr_6()
                                             .children(current_status.as_ref().map(|status| {
                                                 status.into_element(
                                                     step_range.clone(),
@@ -2288,7 +2288,8 @@ impl ContextEditor {
                                     };
                                     v_flex()
                                         .h_full()
-                                        .w_full()
+                                        .w(DefiniteLength::Fraction(0.95))
+                                        .mx_auto()
                                         .border_t_1()
                                         .border_color(border_color)
                                         .into_any_element()
