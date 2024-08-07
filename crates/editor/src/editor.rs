@@ -5163,22 +5163,63 @@ impl Editor {
 
     fn active_breakpoint_points(&mut self, cx: &mut ViewContext<Self>) -> HashSet<DisplayPoint> {
         let mut breakpoint_display_points = HashSet::default();
-
-        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
-            return breakpoint_display_points;
-        };
+        let snapshot = self.snapshot(cx);
 
         let Some(opened_breakpoints) = self.opened_breakpoints.clone() else {
             return breakpoint_display_points;
         };
 
-        let snapshot = self.snapshot(cx);
-        let buffer = buffer.read(cx);
+        let opened_breakpoints = opened_breakpoints.read();
 
-        if let Some(breakpoints) = opened_breakpoints.read().get(&buffer.remote_id()) {
-            for breakpoint in breakpoints {
-                breakpoint_display_points.insert(breakpoint.position.to_display_point(&snapshot));
-            }
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            let buffer = buffer.read(cx);
+
+            if let Some(breakpoints) = opened_breakpoints.get(&buffer.remote_id()) {
+                for breakpoint in breakpoints {
+                    breakpoint_display_points
+                        .insert(breakpoint.position.to_display_point(&snapshot));
+                }
+            };
+
+            return breakpoint_display_points;
+        }
+
+        let multi_buffer_snapshot = &snapshot.display_snapshot.buffer_snapshot;
+
+        for excerpt_boundery in
+            multi_buffer_snapshot.excerpt_boundaries_in_range(Point::new(0, 0)..)
+        {
+            let info = excerpt_boundery.next.as_ref();
+
+            if let Some(info) = info {
+                let Some(range) = multi_buffer_snapshot.range_for_excerpt::<Point>(info.id) else {
+                    continue;
+                };
+
+                let excerpt_head = range.start.to_display_point(&snapshot.display_snapshot);
+                let buffer_range = info
+                    .buffer
+                    .summary_for_anchor::<Point>(&info.range.context.start)
+                    ..info
+                        .buffer
+                        .summary_for_anchor::<Point>(&info.range.context.end);
+
+                if let Some(breakpoints) = opened_breakpoints.get(&info.buffer_id) {
+                    for breakpoint in breakpoints {
+                        let breakpoint_position = info
+                            .buffer
+                            .summary_for_anchor::<Point>(&breakpoint.position.text_anchor);
+
+                        if buffer_range.contains(&breakpoint_position) {
+                            let delta = breakpoint_position.row - buffer_range.start.row;
+
+                            let position = excerpt_head + DisplayPoint::new(DisplayRow(delta), 0);
+
+                            breakpoint_display_points.insert(position);
+                        }
+                    }
+                };
+            };
         }
 
         breakpoint_display_points

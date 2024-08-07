@@ -689,7 +689,7 @@ impl WorkspaceDb {
                     Ok(_) => {}
                 }
 
-                for (worktree_path, serialized_breakpoints) in  workspace.breakpoints {
+                for (worktree_path, serialized_breakpoints) in workspace.breakpoints {
                     for serialized_breakpoint in serialized_breakpoints {
                         let relative_path = serialized_breakpoint.path;
 
