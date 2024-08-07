@@ -3310,27 +3310,21 @@ impl Render for ConfigurationView {
         v_flex()
             .id("assistant-configuration-view")
             .track_focus(&self.focus_handle)
-            .w_full()
-            .min_h_full()
+            .size_full()
             .p(Spacing::XXLarge.rems(cx))
-            .overflow_y_scroll()
             .gap_6()
             .child(
                 v_flex()
-                    .gap_2()
-                    .child(Headline::new("Configure your Assistant").size(HeadlineSize::Medium)),
-            )
-            .child(
-                v_flex()
-                    .gap_2()
+                    .gap_1()
+                    .child(Headline::new("Configure your Assistant").size(HeadlineSize::Medium))
                     .child(
                         Label::new(
-                            "At least one provider must be configured to use the assistant.",
+                            "At least one LLM provider must be configured to use the Assistant.",
                         )
                         .color(Color::Muted),
-                    )
-                    .child(v_flex().mt_2().gap_4().children(provider_views)),
+                    ),
             )
+            .child(v_flex().mt_2().gap_4().size_full().children(provider_views))
     }
 }
 
