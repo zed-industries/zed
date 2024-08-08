@@ -67,9 +67,12 @@ impl TestLlmDb {
 #[macro_export]
 macro_rules! test_llm_db {
     ($test_name:ident, $postgres_test_name:ident) => {
-        #[cfg(target_os = "macos")]
         #[gpui::test]
         async fn $postgres_test_name(cx: &mut gpui::TestAppContext) {
+            if !cfg!(target_os = "macos") {
+                return;
+            }
+
             let mut test_db = $crate::llm::db::TestLlmDb::postgres(cx.executor().clone());
             $test_name(test_db.db()).await;
         }
