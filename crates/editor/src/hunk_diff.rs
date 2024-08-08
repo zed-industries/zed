@@ -525,6 +525,7 @@ impl Editor {
                         .child(editor_with_deleted_text.clone())
                         .into_any_element()
                 }),
+                priority: 0,
             }),
             None,
             cx,

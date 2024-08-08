@@ -1058,7 +1058,7 @@ impl Context {
             language::Event::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse_slash_commands(cx);
-                self.prune_invalid_edit_steps(cx);
+                self.prune_invalid_workflow_steps(cx);
                 cx.emit(ContextEvent::MessagesEdited);
             }
             _ => {}
@@ -1165,7 +1165,7 @@ impl Context {
         }
     }
 
-    fn prune_invalid_edit_steps(&mut self, cx: &mut ModelContext<Self>) {
+    fn prune_invalid_workflow_steps(&mut self, cx: &mut ModelContext<Self>) {
         let buffer = self.buffer.read(cx);
         let prev_len = self.workflow_steps.len();
         let mut removed = Vec::new();
@@ -1183,7 +1183,7 @@ impl Context {
         }
     }
 
-    fn parse_edit_steps_in_range(
+    fn parse_workflow_steps_in_range(
         &mut self,
         range: Range<usize>,
         project: Model<Project>,
@@ -1629,7 +1629,7 @@ impl Context {
                                 message_start_offset..message_new_end_offset
                             });
                             if let Some(project) = this.project.clone() {
-                                this.parse_edit_steps_in_range(message_range, project, cx);
+                                this.parse_workflow_steps_in_range(message_range, project, cx);
                             }
                             cx.emit(ContextEvent::StreamedCompletion);
 

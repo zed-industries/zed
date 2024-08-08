@@ -9614,6 +9614,7 @@ impl Editor {
                                 }
                             }),
                             disposition: BlockDisposition::Below,
+                            priority: 0,
                         }],
                         Some(Autoscroll::fit()),
                         cx,
@@ -9877,6 +9878,7 @@ impl Editor {
                             height: message_height,
                             render: diagnostic_block_renderer(diagnostic, None, true, true),
                             disposition: BlockDisposition::Below,
+                            priority: 0,
                         }
                     }),
                     cx,

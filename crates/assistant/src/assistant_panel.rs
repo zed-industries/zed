@@ -2174,6 +2174,7 @@ impl ContextEditor {
                                 height: 1,
                                 disposition: BlockDisposition::Below,
                                 render: slash_command_error_block_renderer(error_message),
+                                priority: 0,
                             }),
                         None,
                         cx,
@@ -2417,6 +2418,7 @@ impl ContextEditor {
                                 }
                             }),
                             disposition: BlockDisposition::Above,
+                            priority: 0,
                         },
                         BlockProperties {
                             position: end,
@@ -2449,6 +2451,7 @@ impl ContextEditor {
                                     .into_any_element()
                             }),
                             disposition: BlockDisposition::Below,
+                            priority: 0,
                         },
                     ],
                     None,
@@ -2831,6 +2834,7 @@ impl ContextEditor {
                         }
                     }),
                     disposition: BlockDisposition::Above,
+                    priority: usize::MAX,
                 })
                 .collect::<Vec<_>>();
 
