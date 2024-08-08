@@ -3083,20 +3083,20 @@ mod tests {
         // Wait for tool use to be processed.
         cx.run_until_parked();
 
-        // Verify that the last edit step is not pending anymore.
+        // Verify that the first edit step is not pending anymore.
         context.read_with(cx, |context, cx| {
             assert_eq!(
                 workflow_steps(context, cx),
                 vec![
                     (
                         Point::new(response_start_row + 2, 0)
-                            ..Point::new(response_start_row + 14, 7),
-                        WorkflowStepTestStatus::Pending
+                            ..Point::new(response_start_row + 13, 3),
+                        WorkflowStepTestStatus::Resolved
                     ),
                     (
-                        Point::new(response_start_row + 16, 0)
-                            ..Point::new(response_start_row + 28, 7),
-                        WorkflowStepTestStatus::Resolved
+                        Point::new(response_start_row + 15, 0)
+                            ..Point::new(response_start_row + 26, 3),
+                        WorkflowStepTestStatus::Pending
                     ),
                 ]
             );
