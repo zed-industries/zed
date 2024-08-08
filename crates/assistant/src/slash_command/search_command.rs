@@ -5,6 +5,7 @@ use super::{
 };
 use anyhow::Result;
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LineEnding, LspAdapterDelegate};
 use semantic_index::SemanticIndex;
@@ -16,6 +17,12 @@ use std::{
 use ui::{prelude::*, IconName};
 use util::ResultExt;
 use workspace::Workspace;
+
+pub(crate) struct SearchSlashCommandFeatureFlag;
+
+impl FeatureFlag for SearchSlashCommandFeatureFlag {
+    const NAME: &'static str = "search-slash-command";
+}
 
 pub(crate) struct SearchSlashCommand;
 
