@@ -41,17 +41,17 @@ to override these settings.
 
 See [gopls inlayHints documentation](https://github.com/golang/tools/blob/master/gopls/doc/inlayHints.md) for more information.
 
-# Go Mod
+## Go Mod
 
 - Tree Sitter: [camdencheek/tree-sitter-go-mod](https://github.com/camdencheek/tree-sitter-go-mod)
 - Language Server: N/A
 
-# Go Sum
+## Go Sum
 
 - Tree Sitter: [amaanq/tree-sitter-go-sum](https://github.com/amaanq/tree-sitter-go-sum)
 - Language Server: N/A
 
-# Go Work
+## Go Work
 
 - Tree Sitter:
   [tree-sitter-go-work](https://github.com/d1y/tree-sitter-go-work)

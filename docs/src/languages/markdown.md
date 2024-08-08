@@ -1,7 +1,3 @@
----
-something = "else"
----
-
 # Markdown
 
 Markdown support is available natively in Zed.

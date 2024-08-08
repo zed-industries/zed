@@ -5,7 +5,7 @@ JavaScript support is available natively in Zed.
 - Tree Sitter: [tree-sitter/tree-sitter-javascript](https://github.com/tree-sitter/tree-sitter-javascript)
 - Language Server: [typescript-language-server/typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
 
-### Code formatting
+## Code formatting
 
 Formatting on save is enabled by default for JavaScript, using TypeScript's built-in code formatting. But many JavaScript projects use other command-line code-formatting tools, such as [Prettier](https://prettier.io/). You can use one of these tools by specifying an _external_ code formatter for JavaScript in your settings. See the [configuration](../configuring-zed.md) documentation for more information.
 
@@ -26,17 +26,17 @@ For example, if you have Prettier installed and on your `PATH`, you can use it t
 }
 ```
 
-### JSX
+## JSX
 
 TBD: Mention JSX
 
-### JSDoc
+## JSDoc
 
 TBD: Document JSDoc support in Zed.
 
 - Tree Sitter: [tree-sitter/tree-sitter-jsdoc](https://github.com/tree-sitter/tree-sitter-jsdoc)
 
-### ESLint
+## ESLint
 
 You can configure Zed to format code using `eslint --fix` by running the ESLint
 code action when formatting:
@@ -98,7 +98,7 @@ the formatter:
 }
 ```
 
-#### Configure ESLint's `nodePath`:
+### Configure ESLint's `nodePath`:
 
 You can configure ESLint's `nodePath` setting:
 
@@ -114,7 +114,7 @@ You can configure ESLint's `nodePath` setting:
 }
 ```
 
-#### Configure ESLint's `problems`:
+### Configure ESLint's `problems`:
 
 You can configure ESLint's `problems` setting.
 
@@ -134,7 +134,7 @@ For example, here's how to set `problems.shortenToSingleLine`:
 }
 ```
 
-#### Configure ESLint's `rulesCustomizations`:
+### Configure ESLint's `rulesCustomizations`:
 
 You can configure ESLint's `rulesCustomizations` setting:
 

@@ -5,13 +5,13 @@ Python support is available natively in Zed.
 - Tree Sitter: [tree-sitter/tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)
 - Language Server: [microsoft/pyright](https://github.com/microsoft/pyright)
 
-### Configuration
+## Configuration
 
 The [pyright](https://github.com/microsoft/pyright) language server offers flexible configuration options specified in a JSON-formatted text configuration. By default, the file is called `pyrightconfig.json` and is located within the root directory of your project. Pyright settings can also be specified in a `[tool.pyright]` section of a `pyproject.toml` file. A `pyrightconfig.json` file always takes precedent over `pyproject.toml` if both are present.
 
 For more information, see the Pyright [configuration documentation](https://microsoft.github.io/pyright/#/configuration).
 
-### Settings
+## Settings
 
 The [pyright](https://github.com/microsoft/pyright) language server also accepts specific LSP related settings, not necessarily connected to a project. These can be changed in the `lsp` section of your `settings.json`.
 
@@ -41,7 +41,7 @@ For example, in order to:
 
 For more information, see the Pyright [settings documentation](https://microsoft.github.io/pyright/#/settings).
 
-### Virtual environments
+## Virtual environments
 
 A python [virtual environment](https://docs.python.org/3/tutorial/venv.html) allows you to store all of a project's dependencies, including the Python interpreter and package manager, in a single directory that's isolated from any other Python projects on your computer.
 
@@ -94,7 +94,7 @@ You can also configure this option directly in your `settings.json` file ([pyrig
 }
 ```
 
-### Code formatting & Linting
+## Code formatting & Linting
 
 The Pyright language server does not provide code formatting or linting. If you want to detect lint errors and reformat your Python code upon saving, you'll need to set up.
 

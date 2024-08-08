@@ -5,7 +5,7 @@ Lua support is available through the [Lua extension](https://github.com/zed-indu
 - Tree Sitter: [tree-sitter-grammars/tree-sitter-lua](https://github.com/tree-sitter-grammars/tree-sitter-lua)
 - Language server: [LuaLS/lua-language-server](https://github.com/LuaLS/lua-language-server)
 
-### luarc.json
+## luarc.json
 
 TBD: Add .luarc.json example configuration
 
