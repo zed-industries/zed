@@ -1458,7 +1458,6 @@ impl WorkflowStepStatus {
                     move |_, cx| {
                         editor
                             .update(cx, |this, cx| {
-                                this.show_workflow_step(step_range.clone(), cx);
                                 this.apply_workflow_step(step_range.clone(), cx)
                             })
                             .ok();
@@ -1712,6 +1711,8 @@ impl ContextEditor {
     }
 
     fn apply_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
+        self.show_workflow_step(range.clone(), cx);
+
         if let Some(workflow_step) = self.workflow_steps.get(&range) {
             if let Some(assist) = workflow_step.assist.as_ref() {
                 let assist_ids = assist.assist_ids.clone();
