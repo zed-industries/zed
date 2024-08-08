@@ -33,8 +33,8 @@
 - [Overview](./extensions.md)
 - [Installing Extensions](./extensions/installing-extensions.md)
 - [Developing Extensions](./extensions/developing-extensions.md)
-  - [Developing Language Extensions](./extensions/developing-language-extensions.md)
-  - [Developing Themes](./extensions/developing-themes.md)
+- [Language Extensions](./extensions/languages.md)
+- [Theme Extensions](./extensions/themes.md)
 
 # Language Support
 
