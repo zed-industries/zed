@@ -29,9 +29,10 @@
 
 # Language Support
 
-TBD: Replace language support list with a top-8 and a link to /docs/languages
-
+- [AsciiDoc](./languages/asciidoc.md)
 - [Astro](./languages/astro.md)
+- [Bash](./languages/bash.md)
+- [Biome](./languages/biome.md)
 - [C](./languages/c.md)
 - [C++](./languages/cpp.md)
 - [C#](./languages/csharp.md)
@@ -39,6 +40,7 @@ TBD: Replace language support list with a top-8 and a link to /docs/languages
 - [CSS](./languages/css.md)
 - [Dart](./languages/dart.md)
 - [Deno](./languages/deno.md)
+- [Docker](./languages/docker.md)
 - [Elixir](./languages/elixir.md)
 - [Elm](./languages/elm.md)
 - [Erlang](./languages/erlang.md)
@@ -46,10 +48,14 @@ TBD: Replace language support list with a top-8 and a link to /docs/languages
 - [Go](./languages/go.md)
 - [Haskell](./languages/haskell.md)
 - [HTML](./languages/html.md)
+- [Java](./languages/java.md)
 - [JavaScript](./languages/javascript.md)
+- [Julia](./languages/julia.md)
 - [JSON](./languages/json.md)
 - [Lua](./languages/lua.md)
+- [Luau](./languages/luau.md)
 - [Markdown](./languages/markdown.md)
+- [Nim](./languages/nim.md)
 - [OCaml](./languages/ocaml.md)
 - [PHP](./languages/php.md)
 - [Prisma](./languages/prisma.md)
@@ -58,7 +64,9 @@ TBD: Replace language support list with a top-8 and a link to /docs/languages
 - [Python](./languages/python.md)
 - [R](./languages/r.md)
 - [Racket](./languages/racket.md)
+- [Roc](./languages/roc.md)
 - [Ruby](./languages/ruby.md)
+- [reStructuredText](./languages/rst.md)
 - [Rust](./languages/rust.md)
 - [Scheme](./languages/scheme.md)
 - [Svelte](./languages/svelte.md)
