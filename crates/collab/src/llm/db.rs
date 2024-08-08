@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "linux", allow(unused, dead_code))]
+
 mod ids;
 mod queries;
 mod seed;
