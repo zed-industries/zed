@@ -199,13 +199,6 @@
     }
   },
   {
-    "context": "VimControl && VimCount",
-    "bindings": {
-      "0": ["vim::Number", 0],
-      ":": "vim::CountCommand"
-    }
-  },
-  {
     "context": "vim_mode == normal",
     "bindings": {
       "escape": "editor::Cancel",
@@ -256,6 +249,13 @@
       "] c": "editor::GoToHunk",
       "[ c": "editor::GoToPrevHunk",
       "g c": ["vim::PushOperator", "ToggleComments"]
+    }
+  },
+  {
+    "context": "VimControl && VimCount",
+    "bindings": {
+      "0": ["vim::Number", 0],
+      ":": "vim::CountCommand"
     }
   },
   {

@@ -209,6 +209,7 @@ impl VimCommand {
         }
     }
 
+    // TODO: ranges with search queries
     fn parse_range(query: &str) -> (Option<CommandRange>, String) {
         let mut chars = query.chars().peekable();
 
@@ -264,7 +265,7 @@ impl VimCommand {
 
     fn parse_position(chars: &mut Peekable<Chars>) -> Option<Position> {
         match chars.peek()? {
-            '0'..'9' => {
+            '0'..='9' => {
                 let row = Self::parse_u32(chars);
                 Some(Position::Line {
                     row,
@@ -302,7 +303,7 @@ impl VimCommand {
         let mut res: i32 = 0;
         while matches!(chars.peek(), Some('+' | '-')) {
             let sign = if chars.next().unwrap() == '+' { 1 } else { -1 };
-            let amount = if matches!(chars.peek(), Some('0'..'9')) {
+            let amount = if matches!(chars.peek(), Some('0'..='9')) {
                 (Self::parse_u32(chars) as i32).saturating_mul(sign)
             } else {
                 sign
@@ -314,7 +315,7 @@ impl VimCommand {
 
     fn parse_u32(chars: &mut Peekable<Chars>) -> u32 {
         let mut res: u32 = 0;
-        while matches!(chars.peek(), Some('0'..'9')) {
+        while matches!(chars.peek(), Some('0'..='9')) {
             res = res
                 .saturating_mul(10)
                 .saturating_add(chars.next().unwrap() as u32 - '0' as u32);
@@ -393,7 +394,11 @@ impl CommandRange {
         } else {
             start
         };
-        anyhow::Ok(start..end)
+        if end < start {
+            anyhow::Ok(end..start)
+        } else {
+            anyhow::Ok(start..end)
+        }
     }
 
     pub fn as_count(&self) -> u32 {
@@ -702,44 +707,7 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
             });
         }
     }
-
-    // let (name, action) = if query.starts_with('/') || query.starts_with('?') {
-    //     (
-    //         query,
-    //         FindCommand {
-    //             query: query[1..].to_string(),
-    //             backwards: query.starts_with('?'),
-    //         }
-    //         .boxed_clone(),
-    //     )
-    // } else if query.starts_with('%') {
-    //     (
-    //         query,
-    //         ReplaceCommand {
-    //             query: query.to_string(),
-    //         }
-    //         .boxed_clone(),
-    //     )
-    // } else if range_regex().is_match(query) {
-    //     (
-    //         query,
-    //         ReplaceCommand {
-    //             query: query.to_string(),
-    //         }
-    //         .boxed_clone(),
-    //     )
-    // } else {
-    return None;
-    // };
-
-    // let string = ":".to_owned() + &name;
-    // let positions = generate_positions(&string, &query);
-
-    // Some(CommandInterceptResult {
-    //     action,
-    //     string,
-    //     positions,
-    // })
+    None
 }
 
 fn generate_positions(string: &str, query: &str) -> Vec<usize> {

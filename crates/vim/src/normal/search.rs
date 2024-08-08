@@ -360,7 +360,7 @@ fn replace_command(
                 let range = range.buffer_range(vim, editor, cx)?;
                 let snapshot = &editor.snapshot(cx).buffer_snapshot;
                 let end_point = Point::new(range.end.0, snapshot.line_len(range.end));
-                let range = snapshot.anchor_before(Point::new(range.start.0 as u32, 0))
+                let range = snapshot.anchor_before(Point::new(range.start.0, 0))
                     ..snapshot.anchor_after(end_point);
                 editor.set_search_within_ranges(&[range], cx);
                 anyhow::Ok(())
