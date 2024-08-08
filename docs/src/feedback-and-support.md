@@ -18,17 +18,19 @@ We track our issues at [`zed-industries/zed`](https://github.com/zed-industries/
 
 Try to focus on the things that are most critical to you rather than exhaustively listing all features another editor you have used has.
 
-Command palette: `request feature`
+Command palette: `zed: request feature`
 
 ### Bug Reports
 
 Try to add as much detail as possible, if it is not obvious to reproduce. Let us know how severe the problem is for you; is the issue more of a minor inconvenience or something that would prevent you from using Zed?
 
-Command palette: `file bug report`
+Command palette: `zed: file bug report`
 
 ## Feedback Channels
 
-In-app feedback can be submitted from within Zed via the feedback modal (command palette: `give feedback`).
+In-app feedback can be submitted from within Zed via the feedback modal.
+
+Command palette: `feedback: give feedback`
 
 If you prefer to write up your thoughts as an email, you can send them to [hi@zed.dev](mailto:hi@zed.dev).
 
