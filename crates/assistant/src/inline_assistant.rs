@@ -68,6 +68,9 @@ pub struct InlineAssistant {
     assists: HashMap<InlineAssistId, InlineAssist>,
     assists_by_editor: HashMap<WeakView<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
+    assist_observations:
+        HashMap<InlineAssistId, (async_watch::Sender<()>, async_watch::Receiver<()>)>,
+    confirmed_assists: HashMap<InlineAssistId, Model<Codegen>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Option<Arc<Telemetry>>,
@@ -88,6 +91,8 @@ impl InlineAssistant {
             assists: HashMap::default(),
             assists_by_editor: HashMap::default(),
             assist_groups: HashMap::default(),
+            assist_observations: HashMap::default(),
+            confirmed_assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
             telemetry: Some(telemetry),
@@ -343,6 +348,7 @@ impl InlineAssistant {
                 height: prompt_editor_height,
                 render: build_assist_editor_renderer(prompt_editor),
                 disposition: BlockDisposition::Above,
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Sticky,
@@ -357,6 +363,7 @@ impl InlineAssistant {
                         .into_any_element()
                 }),
                 disposition: BlockDisposition::Below,
+                priority: 0,
             },
         ];
 
@@ -654,8 +661,21 @@ impl InlineAssistant {
 
             if undo {
                 assist.codegen.update(cx, |codegen, cx| codegen.undo(cx));
+            } else {
+                self.confirmed_assists.insert(assist_id, assist.codegen);
             }
         }
+
+        // Remove the assist from the status updates map
+        self.assist_observations.remove(&assist_id);
+    }
+
+    pub fn undo_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
+        let Some(codegen) = self.confirmed_assists.remove(&assist_id) else {
+            return false;
+        };
+        codegen.update(cx, |this, cx| this.undo(cx));
+        true
     }
 
     fn dismiss_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
@@ -854,6 +874,10 @@ impl InlineAssistant {
                 )
             })
             .log_err();
+
+        if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
+            tx.send(()).ok();
+        }
     }
 
     pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
@@ -864,19 +888,24 @@ impl InlineAssistant {
         };
 
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
+
+        if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
+            tx.send(()).ok();
+        }
     }
 
-    pub fn status_for_assist(
-        &self,
-        assist_id: InlineAssistId,
-        cx: &WindowContext,
-    ) -> Option<CodegenStatus> {
-        let assist = self.assists.get(&assist_id)?;
-        match &assist.codegen.read(cx).status {
-            CodegenStatus::Idle => Some(CodegenStatus::Idle),
-            CodegenStatus::Pending => Some(CodegenStatus::Pending),
-            CodegenStatus::Done => Some(CodegenStatus::Done),
-            CodegenStatus::Error(error) => Some(CodegenStatus::Error(anyhow!("{:?}", error))),
+    pub fn assist_status(&self, assist_id: InlineAssistId, cx: &AppContext) -> InlineAssistStatus {
+        if let Some(assist) = self.assists.get(&assist_id) {
+            match &assist.codegen.read(cx).status {
+                CodegenStatus::Idle => InlineAssistStatus::Idle,
+                CodegenStatus::Pending => InlineAssistStatus::Pending,
+                CodegenStatus::Done => InlineAssistStatus::Done,
+                CodegenStatus::Error(_) => InlineAssistStatus::Error,
+            }
+        } else if self.confirmed_assists.contains_key(&assist_id) {
+            InlineAssistStatus::Confirmed
+        } else {
+            InlineAssistStatus::Canceled
         }
     }
 
@@ -1051,6 +1080,7 @@ impl InlineAssistant {
                             .into_any_element()
                     }),
                     disposition: BlockDisposition::Above,
+                    priority: 0,
                 });
             }
 
@@ -1059,6 +1089,37 @@ impl InlineAssistant {
                 .into_iter()
                 .collect();
         })
+    }
+
+    pub fn observe_assist(&mut self, assist_id: InlineAssistId) -> async_watch::Receiver<()> {
+        if let Some((_, rx)) = self.assist_observations.get(&assist_id) {
+            rx.clone()
+        } else {
+            let (tx, rx) = async_watch::channel(());
+            self.assist_observations.insert(assist_id, (tx, rx.clone()));
+            rx
+        }
+    }
+}
+
+pub enum InlineAssistStatus {
+    Idle,
+    Pending,
+    Done,
+    Error,
+    Confirmed,
+    Canceled,
+}
+
+impl InlineAssistStatus {
+    pub(crate) fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending)
+    }
+    pub(crate) fn is_confirmed(&self) -> bool {
+        matches!(self, Self::Confirmed)
+    }
+    pub(crate) fn is_done(&self) -> bool {
+        matches!(self, Self::Done)
     }
 }
 
@@ -1964,6 +2025,8 @@ impl InlineAssist {
 
                             if assist.decorations.is_none() {
                                 this.finish_assist(assist_id, false, cx);
+                            } else if let Some(tx) = this.assist_observations.get(&assist_id) {
+                                tx.0.send(()).ok();
                             }
                         }
                     })
@@ -2037,7 +2100,7 @@ pub struct Codegen {
     builder: Arc<PromptBuilder>,
 }
 
-pub enum CodegenStatus {
+enum CodegenStatus {
     Idle,
     Pending,
     Done,

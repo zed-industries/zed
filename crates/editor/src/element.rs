@@ -6478,6 +6478,7 @@ mod tests {
                         height: 3,
                         position: Anchor::min(),
                         render: Box::new(|cx| div().h(3. * cx.line_height()).into_any()),
+                        priority: 0,
                     }],
                     None,
                     cx,
