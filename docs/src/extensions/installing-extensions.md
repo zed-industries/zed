@@ -1,8 +1,8 @@
 # Installing Extensions
 
-You can search for extensions using the extensions page. On macOS, you can find the extensions page in the application menu under `Zed > Extensions`. You can also open it from the command palette with the `zed: extension` command.
+You can search for extensions by launching the Zed Extension Gallery by pressing `cmd-shift-x` (MacOS) or `ctrl-shift-x` (Linux), opening the command palette and selecting `zed: extensions` or by selecting "Zed > Extensions" from the menu bar.
 
-On this page, you can view the extensions that you currently have installed, or search for new ones.
+Here you can view the extensions that you currently have installed or search and install new ones.
 
 ## Installation Location
 
