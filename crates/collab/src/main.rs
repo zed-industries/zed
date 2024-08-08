@@ -279,10 +279,7 @@ async fn setup_llm_database(config: &Config) -> Result<()> {
 }
 
 async fn handle_root(Extension(mode): Extension<ServiceMode>) -> String {
-    format!(
-        "collab {mode:?} v{VERSION} ({})",
-        REVISION.unwrap_or("unknown")
-    )
+    format!("zed:{mode} v{VERSION} ({})", REVISION.unwrap_or("unknown"))
 }
 
 async fn handle_liveness_probe(
