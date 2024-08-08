@@ -12,15 +12,26 @@ Ruby support is available through the [Ruby extension](https://github.com/zed-in
 
 The Ruby extension also provides support for ERB files.
 
-## Language Servers:
+## Language Servers
 
-TBD: Add introduction paragraph about the language servers and their roles (e.g. rubocop for linting, etc)
+There are multiple language servers available for Ruby. Zed supports the two following:
 
-## Choosing a language server
+- [solargraph](https://github.com/castwide/solargraph)
+- [ruby-lsp](https://github.com/Shopify/ruby-lsp)
 
-The Ruby extension offers both `solargraph` and `ruby-lsp` language server support.
+They both have an overlapping feature set of autocomplete, diagnostics, code actions, etc. and it's up to you to decide which one you want to use. Note that you can't use both at the same time.
 
-`solargraph` is enabled by default.
+In addition to these two language servers, Zed also supports [rubocop](https://github.com/rubocop/rubocop) which is a static code analyzer and linter for Ruby. Under the hood, it's also used by Zed as a language server, but its functionality is complimentary to that of solargraph and ruby-lsp.
+
+## Configuring a language server
+
+The [Ruby extension](https://github.com/zed-industries/zed/tree/main/extensions/ruby) offers both `solargraph` and `ruby-lsp` language server support.
+
+### Using `solargraph`
+
+`solargraph` is enabled by default in the Ruby extension.
+
+### Using `ruby-lsp`
 
 To switch to `ruby-lsp`, add the following to your `settings.json`:
 
@@ -34,14 +45,31 @@ To switch to `ruby-lsp`, add the following to your `settings.json`:
 }
 ```
 
-The Ruby extension also provides support for `rubocop` language server for offense detection and autocorrection. To enable it, add the following to your
-`settings.json`:
+That disables `solargraph` and `rubocop` and enables `ruby-lsp`.
+
+### Using `rubocop`
+
+The Ruby extension also provides support for `rubocop` language server for offense detection and autocorrection.
+
+To enable it, add the following to your `settings.json`:
 
 ```json
 {
   "languages": {
     "Ruby": {
       "language_servers": ["ruby-lsp", "rubocop", "!solargraph", "..."]
+    }
+  }
+}
+```
+
+Or, conversely, you can disable `ruby-lsp` and enable `solargraph` and `rubocop` by adding the following to your `settings.json`:
+
+```json
+{
+  "languages": {
+    "Ruby": {
+      "language_servers": ["solargraph", "rubocop", "!ruby-lsp", "..."]
     }
   }
 }
