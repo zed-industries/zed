@@ -10,11 +10,6 @@ If you'd like to develop collaboration features, additionally see:
 
 - [Local Collaboration](./development/local-collaboration.md)
 
-## Developing Zed Extensions
-
-- [Developing Theme Extensions](./development/themes.md)
-- [Developing Language Extensions](./development/languages.md)
-
 ## Contributor links
 
 - [CONTRIBUTING.md](https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md)
