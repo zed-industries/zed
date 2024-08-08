@@ -1353,7 +1353,7 @@ impl Buffer {
             })
             .collect();
 
-        let preserve_preview = !self.preserve_preview();
+        let preserve_preview = self.preserve_preview();
         self.edit(edits, None, cx);
         if preserve_preview {
             self.refresh_preview();
@@ -2211,7 +2211,7 @@ impl Buffer {
 
     /// Whether we should preserve the preview status of a tab containing this buffer.
     pub fn preserve_preview(&self) -> bool {
-        self.has_edits_since(&self.preview_version)
+        !self.has_edits_since(&self.preview_version)
     }
 }
 
