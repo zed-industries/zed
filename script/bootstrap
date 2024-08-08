@@ -22,5 +22,5 @@ cd crates/collab
 eval "$(cargo run --bin dotenv)"
 
 echo "creating databases..."
-sqlx --database-url "$DATABASE_URL" database create
-sqlx --database-url "$LLM_DATABASE_URL" database create
+sqlx database create --database-url "$DATABASE_URL"
+sqlx database create --database-url "$LLM_DATABASE_URL"
