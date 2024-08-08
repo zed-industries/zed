@@ -1,8 +1,27 @@
-# Languages in Zed
+# Language settings
 
-## Syntax highlighting
+- Common settings for language configurations
+  - What are these?
+- What's done via tree-sitter vs what's done via a language server
+- Configuring language-server specific settings
 
-Syntax highlighting in Zed is handled by [tree-sitter](./tree-sitter.md).
+
+Goal of this page?
+Explaining where the
+
+
+> Move this to a different section maybe?
+
+## What it means to be a "language" in Zed
+
+Language support in Zed is based on the [Tree-sitter](./tree-sitter.md) parsing framework and the [language server protocol](#language-servers).
+
+Tree-sitter is a flexible framework that produces syntax-trees based on grammars. There are grammars available for many languages, and a growing list of Zed extensions powered by those grammars. If there's not an extension, it's [easy to create one] based on an existing grammar, or you can [develop your own grammar]. A growing list of Zed features are built using pattern matching over syntax trees with Tree-sitter queries. These queries are unique to a specific language grammar, and are bundled with language extensions.
+
+To develop a language settings [Developing Extensions](development/languages.md)
+
+> How do I develop a language extension?
+
 TBD: Explain how tree-sitter is used in Zed
 
 ## Per-Language Settings
@@ -41,15 +60,35 @@ TBD: Add additional settings which may be overridden.
 
 ## Language Servers
 
-TBD: Explain how Language servers are used in zed
+The Language Server Protocol (LSP) is a standardized protocol that allows communication between language-specific servers and clients like Zed.
+Language servers give Zed a way to support advanced features for multiple programming languages without having to implement each feature for each language.
 
-- differentiate between [tree-sitter](./tree-sitter.md)
-- explain how we download them
-- how they can be found locally (path, etc)
-  - https://zed.dev/docs/configuring-zed#direnv-integration
+Some of the things language servers provide:
 
-TBD: Explain how to choose between multiple language servers
-TBD: Cross link explanation to Python, TypeScript, Ruby, PHP, etc.
+- Code completion. Available completions can be accessed and applied using commands like `editor: show completions` and `editor: confirm completion`.
+- Error checking and diagnostics. These appear inline in buffers as squiggly underlines beneath text. The full list of errors and warnings for the project is available in the Project Diagnostics panel.
+- Code navigation. These can be accessed using commands like `editor: go to definition`, `editor: go to type definition`, and `editor: find all references`.
+- Refactoring. The `editor: rename` command tells the Language Server to rename a symbol both at its definition site as well as everywhere it's used.
+- [Inlay hints](./docs/configuring-zed#inlay-hints). These are hints that passively appear inline in the text of a buffer, for things like inferred types (if the language server provides that).
+- Hover
+- Workplace Symbols
+- Code Folding
+- Code Actions (optimize imports, etc)
+
+Anyone can create a new language server and use it in Zed, without needing to modify Zed's code base.
+This makes it possible to add support for new languages to Zed, as well as to customize how existing
+languages integrate with Zed, without the need for Zed itself to change.
+
+### Downloading Language Servers
+
+Zed simplifies language server management for users. When you open a file with a matching extension, the
+appropriate language server is automatically downloaded. On macOS, these servers are stored in
+`~/Library/Application Support/Zed/languages`,  while on Linux, they're placed in either `$XDG_DATA_HOME/languages`,
+`$FLATPAK_XDG_DATA_HOME/languages`, or  `$HOME/.local/share`, depending on which environment variables are set.
+Whether you're using bundled languages or those from extensions, Zed keeps your language servers up-to-date
+automatically, ensuring you always have the latest features and improvements.
+
+Zed supports multiple language servers per language. Default servers can be overridden using the `language_servers` setting, allowing you to enable or disable specific servers. For example, to enable intelephense and disable phpactor for PHP:
 
 ```json
 {
@@ -61,27 +100,55 @@ TBD: Cross link explanation to Python, TypeScript, Ruby, PHP, etc.
 }
 ```
 
-## inlayHints
+Some highlights about the above example:
 
-TBD: Explain what inlay hints are.
-Link: https://zed.dev/docs/configuring-zed#inlay-hints
+- The `!` symbol before `phpactor` indicates that this server should be disabled
+- `intelephense` is explicitly enabled
+- `...` ensures that any other default servers for PHP remain active.
 
-## Other Actions:
+Notable languages that expose multiple language servers are: [Python](./languages/python.md), [Ruby](./languages/ruby.md), and [PHP](./languages/php.md).
 
-TBD: Document the type of actions supported for language servers
+### Configuring a Language Server
 
-- Code Completion
-- Hover
-- Jump to Def
-- Workplace Symbols
-- Find References
-- Diagnostics
+Language servers expose initialization options that can be configured in Zed. These options allow you to customize the behavior of the language server for specific languages.
 
-TBD: LSP actions: Do we support all of these? Everywhere? Specific languages?
+To configure a language server, use the following JSON structure in your Zed configuration:
 
-- Rename
-- Code Folding
-- Find All Implementations
-- Go to type Definition
-- Go to Declaration
-- Code Actions (optomize imports, etc)
+```json
+"lsp": {
+  "server-name": {
+    "initialization_options": {
+      "option1": value1,
+      "option2": value2
+    }
+  }
+}
+```
+
+For example, to disable `cargo check` on save for Rust you can set the following in your `settings.json`:
+
+```json
+"lsp": {
+  "rust-analyzer": {
+    "initialization_options": {
+      "checkOnSave": false
+    }
+  }
+}
+```
+
+Or to enable short open tags for PHP:
+
+```json
+"lsp": {
+  "intelephense": {
+    "initialization_options": {
+      "environment": {
+        "shortOpenTag": true
+      }
+    }
+  }
+}
+```
+
+Each language server typically provides documentation on its supported initialization options. For instance, rust-analyzer's configuration options can be found at https://rust-analyzer.github.io/manual.html#configuration.
