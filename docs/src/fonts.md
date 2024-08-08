@@ -1,7 +1,6 @@
 # Fonts
 
-TBD: Document fonts in Zed
-Consider renaming this `configuring-zed-fonts` and moving all font settings here.
+TBD: WIP: Document fonts in Zed
 
 - Zed Plex Sans & Zed Plex Mono: based on IBM Plex Mono and IBM Plex Sans, etc
   - Document / commit to repo how these were generated customizations made.
@@ -15,16 +14,18 @@ Consider renaming this `configuring-zed-fonts` and moving all font settings here
 ## Configuration
 
 - Buffer fonts
-  - https://zed.dev/docs/configuring-zed#buffer-font-family
-  - https://zed.dev/docs/configuring-zed#buffer-font-features
-  - https://zed.dev/docs/configuring-zed#buffer-font-size
-  - https://zed.dev/docs/configuring-zed#buffer-line-height
-- Terminal fonts: (note these anchors should be changed to be `terminal-` prefixed)
-  - https://zed.dev/docs/configuring-zed#font-size
-  - https://zed.dev/docs/configuring-zed#font-family
-  - https://zed.dev/docs/configuring-zed#font-features
-
-TBD: Missing font settings documentation for `ui_font_*` and `buffer_font_fallbacks`
+  - `buffer-font-family`
+  - `buffer-font-features`
+  - `buffer-font-size`
+  - `buffer-line-height`
+  - `ui_font_family`
+  - `ui_font_fallbacks`
+  - `ui_font_features`
+  - `ui_font_weight`
+  - `ui_font_size`
+  - `terminal.font-size`
+  - `terminal.font-family`
+  - `terminal.font-features`
 
 ## See also:
 
