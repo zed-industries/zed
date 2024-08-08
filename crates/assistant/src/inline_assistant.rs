@@ -898,7 +898,7 @@ impl InlineAssistant {
                 CodegenStatus::Idle => InlineAssistStatus::Idle,
                 CodegenStatus::Pending => InlineAssistStatus::Pending,
                 CodegenStatus::Done => InlineAssistStatus::Done,
-                CodegenStatus::Error(error) => InlineAssistStatus::Error(anyhow!("{:?}", error)),
+                CodegenStatus::Error(_) => InlineAssistStatus::Error,
             }
         } else if self.confirmed_assists.contains_key(&assist_id) {
             InlineAssistStatus::Confirmed
@@ -1103,7 +1103,7 @@ pub enum InlineAssistStatus {
     Idle,
     Pending,
     Done,
-    Error(anyhow::Error),
+    Error,
     Confirmed,
     Canceled,
 }

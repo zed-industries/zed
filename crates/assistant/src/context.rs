@@ -284,10 +284,8 @@ pub enum ContextEvent {
     AssistError(String),
     MessagesEdited,
     SummaryChanged,
-    WorkflowStepsChanged {
-        removed: Vec<Range<language::Anchor>>,
-        updated: Vec<Range<language::Anchor>>,
-    },
+    WorkflowStepsRemoved(Vec<Range<language::Anchor>>),
+    WorkflowStepUpdated(Range<language::Anchor>),
     StreamedCompletion,
     PendingSlashCommandsUpdated {
         removed: Vec<Range<language::Anchor>>,
@@ -1180,10 +1178,7 @@ impl Context {
             }
         });
         if self.workflow_steps.len() != prev_len {
-            cx.emit(ContextEvent::WorkflowStepsChanged {
-                removed,
-                updated: Vec::new(),
-            });
+            cx.emit(ContextEvent::WorkflowStepsRemoved(removed));
             cx.notify();
         }
     }
@@ -1230,14 +1225,11 @@ impl Context {
                         .binary_search_by(|probe| probe.tagged_range.cmp(&tagged_range, &buffer));
 
                     if let Err(ix) = existing_step_index {
-                        // Step doesn't exist, so add it
-                        let task =
-                            self.resolve_workflow_step(tagged_range.clone(), project.clone(), cx);
                         new_edit_steps.push((
                             ix,
                             WorkflowStep {
                                 tagged_range,
-                                status: WorkflowStepStatus::Pending(task),
+                                status: WorkflowStepStatus::Pending(Task::ready(None)),
                             },
                         ));
                     }
@@ -1251,161 +1243,174 @@ impl Context {
 
         let mut updated = Vec::new();
         for (index, step) in new_edit_steps.into_iter().rev() {
-            updated.push(step.tagged_range.clone());
+            let step_range = step.tagged_range.clone();
+            updated.push(step_range.clone());
             self.workflow_steps.insert(index, step);
+            self.resolve_workflow_step(step_range, project.clone(), cx);
         }
         self.buffer
             .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
-
-        cx.emit(ContextEvent::WorkflowStepsChanged {
-            removed: Vec::new(),
-            updated,
-        });
-        cx.notify();
     }
 
-    fn resolve_workflow_step(
-        &self,
+    pub fn resolve_workflow_step(
+        &mut self,
         tagged_range: Range<language::Anchor>,
         project: Model<Project>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Option<()>> {
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
-            return Task::ready(Err(anyhow!("no active model")).log_err());
+    ) {
+        let Ok(step_index) = self
+            .workflow_steps
+            .binary_search_by(|step| step.tagged_range.cmp(&tagged_range, self.buffer.read(cx)))
+        else {
+            return;
         };
 
         let mut request = self.to_completion_request(cx);
-        let step_text = self
-            .buffer
-            .read(cx)
-            .text_for_range(tagged_range.clone())
-            .collect::<String>();
+        let Some(edit_step) = self.workflow_steps.get_mut(step_index) else {
+            return;
+        };
 
-        cx.spawn(|this, mut cx| {
-            async move {
-                let result = async {
-                    let mut prompt = this.update(&mut cx, |this, _| {
-                        this.prompt_builder.generate_step_resolution_prompt()
-                    })??;
-                    prompt.push_str(&step_text);
+        if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+            let step_text = self
+                .buffer
+                .read(cx)
+                .text_for_range(tagged_range.clone())
+                .collect::<String>();
 
-                    request.messages.push(LanguageModelRequestMessage {
-                        role: Role::User,
-                        content: prompt,
-                    });
+            let tagged_range = tagged_range.clone();
+            edit_step.status = WorkflowStepStatus::Pending(cx.spawn(|this, mut cx| {
+                async move {
+                    let result = async {
+                        let mut prompt = this.update(&mut cx, |this, _| {
+                            this.prompt_builder.generate_step_resolution_prompt()
+                        })??;
+                        prompt.push_str(&step_text);
 
-                    // Invoke the model to get its edit suggestions for this workflow step.
-                    let resolution = model
-                        .use_tool::<tool::WorkflowStepResolution>(request, &cx)
-                        .await?;
+                        request.messages.push(LanguageModelRequestMessage {
+                            role: Role::User,
+                            content: prompt,
+                        });
 
-                    // Translate the parsed suggestions to our internal types, which anchor the suggestions to locations in the code.
-                    let suggestion_tasks: Vec<_> = resolution
-                        .suggestions
-                        .iter()
-                        .map(|suggestion| suggestion.resolve(project.clone(), cx.clone()))
-                        .collect();
+                        // Invoke the model to get its edit suggestions for this workflow step.
+                        let resolution = model
+                            .use_tool::<tool::WorkflowStepResolution>(request, &cx)
+                            .await?;
 
-                    // Expand the context ranges of each suggestion and group suggestions with overlapping context ranges.
-                    let suggestions = future::join_all(suggestion_tasks)
-                        .await
-                        .into_iter()
-                        .filter_map(|task| task.log_err())
-                        .collect::<Vec<_>>();
+                        // Translate the parsed suggestions to our internal types, which anchor the suggestions to locations in the code.
+                        let suggestion_tasks: Vec<_> = resolution
+                            .suggestions
+                            .iter()
+                            .map(|suggestion| suggestion.resolve(project.clone(), cx.clone()))
+                            .collect();
 
-                    let mut suggestions_by_buffer = HashMap::default();
-                    for (buffer, suggestion) in suggestions {
-                        suggestions_by_buffer
-                            .entry(buffer)
-                            .or_insert_with(Vec::new)
-                            .push(suggestion);
-                    }
+                        // Expand the context ranges of each suggestion and group suggestions with overlapping context ranges.
+                        let suggestions = future::join_all(suggestion_tasks)
+                            .await
+                            .into_iter()
+                            .filter_map(|task| task.log_err())
+                            .collect::<Vec<_>>();
 
-                    let mut suggestion_groups_by_buffer = HashMap::default();
-                    for (buffer, mut suggestions) in suggestions_by_buffer {
-                        let mut suggestion_groups = Vec::<WorkflowSuggestionGroup>::new();
-                        let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-                        // Sort suggestions by their range so that earlier, larger ranges come first
-                        suggestions.sort_by(|a, b| a.range().cmp(&b.range(), &snapshot));
+                        let mut suggestions_by_buffer = HashMap::default();
+                        for (buffer, suggestion) in suggestions {
+                            suggestions_by_buffer
+                                .entry(buffer)
+                                .or_insert_with(Vec::new)
+                                .push(suggestion);
+                        }
 
-                        // Merge overlapping suggestions
-                        suggestions.dedup_by(|a, b| b.try_merge(&a, &snapshot));
+                        let mut suggestion_groups_by_buffer = HashMap::default();
+                        for (buffer, mut suggestions) in suggestions_by_buffer {
+                            let mut suggestion_groups = Vec::<WorkflowSuggestionGroup>::new();
+                            let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+                            // Sort suggestions by their range so that earlier, larger ranges come first
+                            suggestions.sort_by(|a, b| a.range().cmp(&b.range(), &snapshot));
 
-                        // Create context ranges for each suggestion
-                        for suggestion in suggestions {
-                            let context_range = {
-                                let suggestion_point_range = suggestion.range().to_point(&snapshot);
-                                let start_row = suggestion_point_range.start.row.saturating_sub(5);
-                                let end_row = cmp::min(
-                                    suggestion_point_range.end.row + 5,
-                                    snapshot.max_point().row,
-                                );
-                                let start = snapshot.anchor_before(Point::new(start_row, 0));
-                                let end = snapshot
-                                    .anchor_after(Point::new(end_row, snapshot.line_len(end_row)));
-                                start..end
-                            };
+                            // Merge overlapping suggestions
+                            suggestions.dedup_by(|a, b| b.try_merge(&a, &snapshot));
 
-                            if let Some(last_group) = suggestion_groups.last_mut() {
-                                if last_group
-                                    .context_range
-                                    .end
-                                    .cmp(&context_range.start, &snapshot)
-                                    .is_ge()
-                                {
-                                    // Merge with the previous group if context ranges overlap
-                                    last_group.context_range.end = context_range.end;
-                                    last_group.suggestions.push(suggestion);
+                            // Create context ranges for each suggestion
+                            for suggestion in suggestions {
+                                let context_range = {
+                                    let suggestion_point_range =
+                                        suggestion.range().to_point(&snapshot);
+                                    let start_row =
+                                        suggestion_point_range.start.row.saturating_sub(5);
+                                    let end_row = cmp::min(
+                                        suggestion_point_range.end.row + 5,
+                                        snapshot.max_point().row,
+                                    );
+                                    let start = snapshot.anchor_before(Point::new(start_row, 0));
+                                    let end = snapshot.anchor_after(Point::new(
+                                        end_row,
+                                        snapshot.line_len(end_row),
+                                    ));
+                                    start..end
+                                };
+
+                                if let Some(last_group) = suggestion_groups.last_mut() {
+                                    if last_group
+                                        .context_range
+                                        .end
+                                        .cmp(&context_range.start, &snapshot)
+                                        .is_ge()
+                                    {
+                                        // Merge with the previous group if context ranges overlap
+                                        last_group.context_range.end = context_range.end;
+                                        last_group.suggestions.push(suggestion);
+                                    } else {
+                                        // Create a new group
+                                        suggestion_groups.push(WorkflowSuggestionGroup {
+                                            context_range,
+                                            suggestions: vec![suggestion],
+                                        });
+                                    }
                                 } else {
-                                    // Create a new group
+                                    // Create the first group
                                     suggestion_groups.push(WorkflowSuggestionGroup {
                                         context_range,
                                         suggestions: vec![suggestion],
                                     });
                                 }
-                            } else {
-                                // Create the first group
-                                suggestion_groups.push(WorkflowSuggestionGroup {
-                                    context_range,
-                                    suggestions: vec![suggestion],
-                                });
                             }
+
+                            suggestion_groups_by_buffer.insert(buffer, suggestion_groups);
                         }
 
-                        suggestion_groups_by_buffer.insert(buffer, suggestion_groups);
-                    }
+                        Ok((resolution.step_title, suggestion_groups_by_buffer))
+                    };
 
-                    Ok((resolution.step_title, suggestion_groups_by_buffer))
-                };
+                    let result = result.await;
+                    this.update(&mut cx, |this, cx| {
+                        let step_index = this
+                            .workflow_steps
+                            .binary_search_by(|step| {
+                                step.tagged_range.cmp(&tagged_range, this.buffer.read(cx))
+                            })
+                            .map_err(|_| anyhow!("edit step not found"))?;
+                        if let Some(edit_step) = this.workflow_steps.get_mut(step_index) {
+                            edit_step.status = match result {
+                                Ok((title, suggestions)) => {
+                                    WorkflowStepStatus::Resolved(ResolvedWorkflowStep {
+                                        title,
+                                        suggestions,
+                                    })
+                                }
+                                Err(error) => WorkflowStepStatus::Error(Arc::new(error)),
+                            };
+                            cx.emit(ContextEvent::WorkflowStepUpdated(tagged_range));
+                            cx.notify();
+                        }
+                        anyhow::Ok(())
+                    })?
+                }
+                .log_err()
+            }));
+        } else {
+            edit_step.status = WorkflowStepStatus::Error(Arc::new(anyhow!("no active model")));
+        }
 
-                let result = result.await;
-                this.update(&mut cx, |this, cx| {
-                    let step_index = this
-                        .workflow_steps
-                        .binary_search_by(|step| {
-                            step.tagged_range.cmp(&tagged_range, this.buffer.read(cx))
-                        })
-                        .map_err(|_| anyhow!("edit step not found"))?;
-                    if let Some(edit_step) = this.workflow_steps.get_mut(step_index) {
-                        edit_step.status = match result {
-                            Ok((title, suggestions)) => {
-                                WorkflowStepStatus::Resolved(ResolvedWorkflowStep {
-                                    title,
-                                    suggestions,
-                                })
-                            }
-                            Err(error) => WorkflowStepStatus::Error(Arc::new(error)),
-                        };
-                        cx.emit(ContextEvent::WorkflowStepsChanged {
-                            updated: vec![tagged_range],
-                            removed: Vec::new(),
-                        });
-                    }
-                    anyhow::Ok(())
-                })?
-            }
-            .log_err()
-        })
+        cx.emit(ContextEvent::WorkflowStepUpdated(tagged_range));
+        cx.notify();
     }
 
     pub fn pending_command_for_position(

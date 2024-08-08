@@ -1409,10 +1409,30 @@ impl WorkflowStepStatus {
 
             WorkflowStepStatus::Error(error) => {
                 let error = error.clone();
-                div()
-                    .id("step-resolution-failure")
-                    .child(Label::new("Step Resolution Failed").color(Color::Error))
-                    .tooltip(move |cx| Tooltip::text(error.to_string(), cx))
+                h_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .id("step-resolution-failure")
+                            .child(Label::new("Step Resolution Failed").color(Color::Error))
+                            .tooltip(move |cx| Tooltip::text(error.to_string(), cx)),
+                    )
+                    .child(
+                        IconButton::new(("resolve-step", id), IconName::Update)
+                            .style(ButtonStyle::Tinted(TintColor::Negative))
+                            .tooltip(|cx| Tooltip::text("Try Again", cx))
+                            .on_click({
+                                let editor = editor.clone();
+                                let step_range = step_range.clone();
+                                move |_, cx| {
+                                    editor
+                                        .update(cx, |this, cx| {
+                                            this.resolve_workflow_step(step_range.clone(), cx)
+                                        })
+                                        .ok();
+                                }
+                            }),
+                    )
                     .into_any()
             }
 
@@ -1429,7 +1449,7 @@ impl WorkflowStepStatus {
                         editor
                             .update(cx, |this, cx| {
                                 this.show_workflow_step(step_range.clone(), cx);
-                                this.apply_workflow_step(&step_range, cx)
+                                this.apply_workflow_step(step_range.clone(), cx)
                             })
                             .ok();
                     }
@@ -1447,7 +1467,9 @@ impl WorkflowStepStatus {
                             let step_range = step_range.clone();
                             move |_, cx| {
                                 editor
-                                    .update(cx, |this, cx| this.stop_workflow_step(&step_range, cx))
+                                    .update(cx, |this, cx| {
+                                        this.stop_workflow_step(step_range.clone(), cx)
+                                    })
                                     .ok();
                             }
                         }),
@@ -1467,7 +1489,7 @@ impl WorkflowStepStatus {
                             move |_, cx| {
                                 editor
                                     .update(cx, |this, cx| {
-                                        this.reject_workflow_step(&step_range, cx);
+                                        this.reject_workflow_step(step_range.clone(), cx);
                                     })
                                     .ok();
                             }
@@ -1484,7 +1506,7 @@ impl WorkflowStepStatus {
                             move |_, cx| {
                                 editor
                                     .update(cx, |this, cx| {
-                                        this.confirm_workflow_step(&step_range, cx);
+                                        this.confirm_workflow_step(step_range.clone(), cx);
                                     })
                                     .ok();
                             }
@@ -1505,7 +1527,7 @@ impl WorkflowStepStatus {
                             move |_, cx| {
                                 editor
                                     .update(cx, |this, cx| {
-                                        this.undo_workflow_step(&step_range, cx);
+                                        this.undo_workflow_step(step_range.clone(), cx);
                                     })
                                     .ok();
                             }
@@ -1644,8 +1666,8 @@ impl ContextEditor {
         }
     }
 
-    fn apply_workflow_step(&mut self, range: &Range<language::Anchor>, cx: &mut ViewContext<Self>) {
-        if let Some(workflow_step) = self.workflow_steps.get(range) {
+    fn apply_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
+        if let Some(workflow_step) = self.workflow_steps.get(&range) {
             if let Some(assist) = workflow_step.assist.as_ref() {
                 let assist_ids = assist.assist_ids.clone();
                 cx.window_context().defer(|cx| {
@@ -1668,19 +1690,33 @@ impl ContextEditor {
         match step.status(cx) {
             WorkflowStepStatus::Resolving | WorkflowStepStatus::Pending => true,
             WorkflowStepStatus::Idle => {
-                self.apply_workflow_step(&range, cx);
+                self.apply_workflow_step(range, cx);
                 true
             }
             WorkflowStepStatus::Done => {
-                self.confirm_workflow_step(&range, cx);
+                self.confirm_workflow_step(range, cx);
                 true
             }
-            WorkflowStepStatus::Confirmed | WorkflowStepStatus::Error(_) => false,
+            WorkflowStepStatus::Error(_) => {
+                self.resolve_workflow_step(range, cx);
+                true
+            }
+            WorkflowStepStatus::Confirmed => false,
         }
     }
 
-    fn stop_workflow_step(&mut self, range: &Range<language::Anchor>, cx: &mut ViewContext<Self>) {
-        if let Some(workflow_step) = self.workflow_steps.get(range) {
+    fn resolve_workflow_step(
+        &mut self,
+        range: Range<language::Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.context.update(cx, |context, cx| {
+            context.resolve_workflow_step(range, self.project.clone(), cx)
+        });
+    }
+
+    fn stop_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
+        if let Some(workflow_step) = self.workflow_steps.get(&range) {
             if let Some(assist) = workflow_step.assist.as_ref() {
                 let assist_ids = assist.assist_ids.clone();
                 cx.window_context().defer(|cx| {
@@ -1694,8 +1730,8 @@ impl ContextEditor {
         }
     }
 
-    fn undo_workflow_step(&mut self, range: &Range<language::Anchor>, cx: &mut ViewContext<Self>) {
-        if let Some(workflow_step) = self.workflow_steps.get_mut(range) {
+    fn undo_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
+        if let Some(workflow_step) = self.workflow_steps.get_mut(&range) {
             if let Some(assist) = workflow_step.assist.take() {
                 cx.window_context().defer(|cx| {
                     InlineAssistant::update_global(cx, |assistant, cx| {
@@ -1710,10 +1746,10 @@ impl ContextEditor {
 
     fn confirm_workflow_step(
         &mut self,
-        range: &Range<language::Anchor>,
+        range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(workflow_step) = self.workflow_steps.get(range) {
+        if let Some(workflow_step) = self.workflow_steps.get(&range) {
             if let Some(assist) = workflow_step.assist.as_ref() {
                 let assist_ids = assist.assist_ids.clone();
                 cx.window_context().defer(move |cx| {
@@ -1727,12 +1763,8 @@ impl ContextEditor {
         }
     }
 
-    fn reject_workflow_step(
-        &mut self,
-        range: &Range<language::Anchor>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if let Some(workflow_step) = self.workflow_steps.get_mut(range) {
+    fn reject_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
+        if let Some(workflow_step) = self.workflow_steps.get_mut(&range) {
             if let Some(assist) = workflow_step.assist.take() {
                 cx.window_context().defer(move |cx| {
                     InlineAssistant::update_global(cx, |assistant, cx| {
@@ -1946,11 +1978,12 @@ impl ContextEditor {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
             }
-            ContextEvent::WorkflowStepsChanged {
-                updated: inserted,
-                removed,
-            } => {
-                self.update_workflow_steps(inserted, removed, cx);
+            ContextEvent::WorkflowStepsRemoved(removed) => {
+                self.remove_workflow_steps(removed, cx);
+                cx.notify();
+            }
+            ContextEvent::WorkflowStepUpdated(updated) => {
+                self.update_workflow_step(updated.clone(), cx);
                 cx.notify();
             }
             ContextEvent::SummaryChanged => {
@@ -2227,16 +2260,15 @@ impl ContextEditor {
         self.workflow_steps.get(&step.range)
     }
 
-    fn update_workflow_steps(
+    fn remove_workflow_steps(
         &mut self,
-        updated_steps: &[Range<language::Anchor>],
         removed_steps: &[Range<language::Anchor>],
         cx: &mut ViewContext<Self>,
     ) {
         let mut blocks_to_remove = HashSet::default();
-        for range in removed_steps {
-            self.hide_workflow_step(range.clone(), cx);
-            if let Some(step) = self.workflow_steps.remove(range) {
+        for step_range in removed_steps {
+            self.hide_workflow_step(step_range.clone(), cx);
+            if let Some(step) = self.workflow_steps.remove(step_range) {
                 blocks_to_remove.insert(step.header_block_id);
                 blocks_to_remove.insert(step.footer_block_id);
             }
@@ -2244,83 +2276,48 @@ impl ContextEditor {
         self.editor.update(cx, |editor, cx| {
             editor.remove_blocks(blocks_to_remove, None, cx)
         });
+        self.update_active_workflow_step(cx);
+    }
 
+    fn update_workflow_step(
+        &mut self,
+        step_range: Range<language::Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) {
         let buffer_snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
         let (&excerpt_id, _, _) = buffer_snapshot.as_singleton().unwrap();
-        for range in updated_steps {
-            let Some(step) = self.context.read(cx).workflow_step_for_range(range.clone()) else {
-                continue;
-            };
 
-            if let Some(existing_step) = self.workflow_steps.get_mut(range) {
-                if existing_step.resolved_step.is_none() {
-                    existing_step.resolved_step = step.status.into_resolved();
-                }
-            } else {
-                let resolved_step = step.status.into_resolved();
-                let start = buffer_snapshot
-                    .anchor_in_excerpt(excerpt_id, range.start)
-                    .unwrap();
-                let end = buffer_snapshot
-                    .anchor_in_excerpt(excerpt_id, range.end)
-                    .unwrap();
-                let weak_self = cx.view().downgrade();
-                let block_ids = self.editor.update(cx, |editor, cx| {
-                    let step_range = range.clone();
-                    editor.insert_blocks(
-                        vec![
-                            BlockProperties {
-                                position: start,
-                                height: 1,
-                                style: BlockStyle::Sticky,
-                                render: Box::new({
-                                    let weak_self = weak_self.clone();
-                                    let step_range = step_range.clone();
-                                    move |cx| {
-                                        let current_status = weak_self
-                                            .update(&mut **cx, |context_editor, cx| {
-                                                let step = context_editor
-                                                    .workflow_steps
-                                                    .get(&step_range)?;
-                                                Some(step.status(cx))
-                                            })
-                                            .ok()
-                                            .flatten();
+        let Some(step) = self
+            .context
+            .read(cx)
+            .workflow_step_for_range(step_range.clone())
+        else {
+            return;
+        };
 
-                                        let theme = cx.theme().status();
-                                        let border_color = if current_status
-                                            .as_ref()
-                                            .map_or(false, |status| status.is_confirmed())
-                                        {
-                                            theme.ignored_border
-                                        } else {
-                                            theme.info_border
-                                        };
-                                        h_flex()
-                                            .h(1. * cx.line_height())
-                                            .w(DefiniteLength::Fraction(0.95))
-                                            .mx_auto()
-                                            .border_b_1()
-                                            .border_color(border_color)
-                                            .justify_end()
-                                            .gap_2()
-                                            .children(current_status.as_ref().map(|status| {
-                                                status.into_element(
-                                                    step_range.clone(),
-                                                    weak_self.clone(),
-                                                    cx,
-                                                )
-                                            }))
-                                            .into_any()
-                                    }
-                                }),
-                                disposition: BlockDisposition::Above,
-                            },
-                            BlockProperties {
-                                position: end,
-                                height: 0,
-                                style: BlockStyle::Sticky,
-                                render: Box::new(move |cx| {
+        let resolved_step = step.status.into_resolved();
+        if let Some(existing_step) = self.workflow_steps.get_mut(&step_range) {
+            existing_step.resolved_step = resolved_step;
+        } else {
+            let start = buffer_snapshot
+                .anchor_in_excerpt(excerpt_id, step_range.start)
+                .unwrap();
+            let end = buffer_snapshot
+                .anchor_in_excerpt(excerpt_id, step_range.end)
+                .unwrap();
+            let weak_self = cx.view().downgrade();
+            let block_ids = self.editor.update(cx, |editor, cx| {
+                let step_range = step_range.clone();
+                editor.insert_blocks(
+                    vec![
+                        BlockProperties {
+                            position: start,
+                            height: 1,
+                            style: BlockStyle::Sticky,
+                            render: Box::new({
+                                let weak_self = weak_self.clone();
+                                let step_range = step_range.clone();
+                                move |cx| {
                                     let current_status = weak_self
                                         .update(&mut **cx, |context_editor, cx| {
                                             let step =
@@ -2329,6 +2326,7 @@ impl ContextEditor {
                                         })
                                         .ok()
                                         .flatten();
+
                                     let theme = cx.theme().status();
                                     let border_color = if current_status
                                         .as_ref()
@@ -2338,32 +2336,73 @@ impl ContextEditor {
                                     } else {
                                         theme.info_border
                                     };
-                                    v_flex()
-                                        .h_full()
+                                    h_flex()
+                                        .h(1. * cx.line_height())
                                         .w(DefiniteLength::Fraction(0.95))
                                         .mx_auto()
-                                        .border_t_1()
+                                        .border_b_1()
                                         .border_color(border_color)
-                                        .into_any_element()
-                                }),
-                                disposition: BlockDisposition::Below,
-                            },
-                        ],
-                        None,
-                        cx,
-                    )
-                });
-                self.workflow_steps.insert(
-                    range.clone(),
-                    WorkflowStep {
-                        range: range.clone(),
-                        header_block_id: block_ids[0],
-                        footer_block_id: block_ids[1],
-                        resolved_step,
-                        assist: None,
-                    },
-                );
-            }
+                                        .justify_end()
+                                        .gap_2()
+                                        .children(current_status.as_ref().map(|status| {
+                                            status.into_element(
+                                                step_range.clone(),
+                                                weak_self.clone(),
+                                                cx,
+                                            )
+                                        }))
+                                        .into_any()
+                                }
+                            }),
+                            disposition: BlockDisposition::Above,
+                        },
+                        BlockProperties {
+                            position: end,
+                            height: 0,
+                            style: BlockStyle::Sticky,
+                            render: Box::new(move |cx| {
+                                let current_status = weak_self
+                                    .update(&mut **cx, |context_editor, cx| {
+                                        let step =
+                                            context_editor.workflow_steps.get(&step_range)?;
+                                        Some(step.status(cx))
+                                    })
+                                    .ok()
+                                    .flatten();
+                                let theme = cx.theme().status();
+                                let border_color = if current_status
+                                    .as_ref()
+                                    .map_or(false, |status| status.is_confirmed())
+                                {
+                                    theme.ignored_border
+                                } else {
+                                    theme.info_border
+                                };
+                                v_flex()
+                                    .h_full()
+                                    .w(DefiniteLength::Fraction(0.95))
+                                    .mx_auto()
+                                    .border_t_1()
+                                    .border_color(border_color)
+                                    .into_any_element()
+                            }),
+                            disposition: BlockDisposition::Below,
+                        },
+                    ],
+                    None,
+                    cx,
+                )
+            });
+            self.workflow_steps.insert(
+                step_range.clone(),
+                WorkflowStep {
+                    range: step_range.clone(),
+                    header_block_id: block_ids[0],
+                    footer_block_id: block_ids[1],
+                    resolved_step,
+                    assist: None,
+                },
+            );
         }
 
         self.update_active_workflow_step(cx);
@@ -3007,10 +3046,11 @@ impl ContextEditor {
         let button_text = match self.active_workflow_step() {
             Some(step) => match step.status(cx) {
                 WorkflowStepStatus::Resolving => "Resolving Step...",
+                WorkflowStepStatus::Error(_) => "Retry Step Resolution",
                 WorkflowStepStatus::Idle => "Transform",
                 WorkflowStepStatus::Pending => "Transforming...",
                 WorkflowStepStatus::Done => "Confirm Transformation",
-                WorkflowStepStatus::Confirmed | WorkflowStepStatus::Error(_) => "Send",
+                WorkflowStepStatus::Confirmed => "Send",
             },
             None => "Send",
         };
