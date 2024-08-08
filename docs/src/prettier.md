@@ -1,6 +1,6 @@
-# PrettierJS
+# Prettier
 
-TBD: General Pettier JS documentation
+TBD: General Pettier documentation
 
 - How to use custom binary instead of auto-installed version
 - Configuring project specific settings
