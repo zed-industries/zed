@@ -2040,6 +2040,7 @@ mod tests {
                         disposition: block.disposition,
                         id: *id,
                         height: block.height,
+                        priority: block.priority,
                     },
                 )
             }));
