@@ -105,8 +105,6 @@
   - [Linux](./development/linux.md)
   - [Windows](./development/windows.md)
   - [Local Collaboration](./development/local-collaboration.md)
-- [Developing Language Extensions](./development/languages.md)
-- [Developing Themes](./development/themes.md)
 - [Release Process](./development/releases.md)
 - [Debugging Crashes](./development/debugging-crashes.md)
 
