@@ -1,14 +1,13 @@
-use std::{ops::Range, sync::OnceLock, time::Duration};
+use std::{iter::Peekable, str::Chars, time::Duration};
 
 use gpui::{actions, impl_actions, ViewContext};
 use language::Point;
-use multi_buffer::MultiBufferRow;
-use regex::Regex;
 use search::{buffer_search, BufferSearchBar, SearchOptions};
 use serde_derive::Deserialize;
-use workspace::{searchable::Direction, Workspace};
+use workspace::{notifications::NotifyResultExt, searchable::Direction, Workspace};
 
 use crate::{
+    command::CommandRange,
     motion::{search_motion, Motion},
     normal::move_cursor,
     state::{Mode, SearchState},
@@ -43,16 +42,16 @@ pub struct FindCommand {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ReplaceCommand {
-    pub query: String,
+    pub(crate) range: Option<CommandRange>,
+    pub(crate) replacement: Replacement,
 }
 
-#[derive(Debug, Default)]
-struct Replacement {
+#[derive(Debug, Default, PartialEq, Deserialize, Clone)]
+pub(crate) struct Replacement {
     search: String,
     replacement: String,
     should_replace_all: bool,
     is_case_sensitive: bool,
-    range: Option<Range<usize>>,
 }
 
 actions!(vim, [SearchSubmit, MoveToNextMatch, MoveToPrevMatch]);
@@ -60,11 +59,6 @@ impl_actions!(
     vim,
     [FindCommand, ReplaceCommand, Search, MoveToPrev, MoveToNext]
 );
-
-static RANGE_REGEX: OnceLock<Regex> = OnceLock::new();
-pub(crate) fn range_regex() -> &'static Regex {
-    RANGE_REGEX.get_or_init(|| Regex::new(r"^(\d+),(\d+)s(.*)").unwrap())
-}
 
 pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(move_to_next);
@@ -354,23 +348,25 @@ fn replace_command(
     action: &ReplaceCommand,
     cx: &mut ViewContext<Workspace>,
 ) {
-    let replacement = parse_replace_all(&action.query);
+    let replacement = action.replacement.clone();
     let pane = workspace.active_pane().clone();
-    let mut editor = Vim::read(cx)
+    let editor = Vim::read(cx)
         .active_editor
         .as_ref()
         .and_then(|editor| editor.upgrade());
-    if let Some(range) = &replacement.range {
-        if let Some(editor) = editor.as_mut() {
-            editor.update(cx, |editor, cx| {
+    if let Some(range) = &action.range {
+        if let Some(result) = Vim::update(cx, |vim, cx| {
+            vim.update_active_editor(cx, |vim, editor, cx| {
+                let range = range.buffer_range(vim, editor, cx)?;
                 let snapshot = &editor.snapshot(cx).buffer_snapshot;
-                let end_row = MultiBufferRow(range.end.saturating_sub(1) as u32);
-                let end_point = Point::new(end_row.0, snapshot.line_len(end_row));
-                let range = snapshot
-                    .anchor_before(Point::new(range.start.saturating_sub(1) as u32, 0))
+                let end_point = Point::new(range.end.0, snapshot.line_len(range.end));
+                let range = snapshot.anchor_before(Point::new(range.start.0, 0))
                     ..snapshot.anchor_after(end_point);
-                editor.set_search_within_ranges(&[range], cx)
+                editor.set_search_within_ranges(&[range], cx);
+                anyhow::Ok(())
             })
+        }) {
+            result.notify_err(workspace, cx);
         }
     }
     pane.update(cx, |pane, cx| {
@@ -432,95 +428,81 @@ fn replace_command(
     })
 }
 
-// convert a vim query into something more usable by zed.
-// we don't attempt to fully convert between the two regex syntaxes,
-// but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
-// and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
-fn parse_replace_all(query: &str) -> Replacement {
-    let mut chars = query.chars();
-    let mut range = None;
-    let maybe_line_range_and_rest: Option<(Range<usize>, &str)> =
-        range_regex().captures(query).map(|captures| {
-            (
-                captures.get(1).unwrap().as_str().parse().unwrap()
-                    ..captures.get(2).unwrap().as_str().parse().unwrap(),
-                captures.get(3).unwrap().as_str(),
-            )
-        });
-    if maybe_line_range_and_rest.is_some() {
-        let (line_range, rest) = maybe_line_range_and_rest.unwrap();
-        range = Some(line_range);
-        chars = rest.chars();
-    } else if Some('%') != chars.next() || Some('s') != chars.next() {
-        return Replacement::default();
-    }
+impl Replacement {
+    // convert a vim query into something more usable by zed.
+    // we don't attempt to fully convert between the two regex syntaxes,
+    // but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
+    // and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
+    pub(crate) fn parse(mut chars: Peekable<Chars>) -> Option<Replacement> {
+        let Some(delimiter) = chars
+            .next()
+            .filter(|c| !c.is_alphanumeric() && *c != '"' && *c != '|' && *c != '\'')
+        else {
+            return None;
+        };
 
-    let Some(delimiter) = chars.next() else {
-        return Replacement::default();
-    };
+        let mut search = String::new();
+        let mut replacement = String::new();
+        let mut flags = String::new();
 
-    let mut search = String::new();
-    let mut replacement = String::new();
-    let mut flags = String::new();
+        let mut buffer = &mut search;
 
-    let mut buffer = &mut search;
+        let mut escaped = false;
+        // 0 - parsing search
+        // 1 - parsing replacement
+        // 2 - parsing flags
+        let mut phase = 0;
 
-    let mut escaped = false;
-    // 0 - parsing search
-    // 1 - parsing replacement
-    // 2 - parsing flags
-    let mut phase = 0;
-
-    for c in chars {
-        if escaped {
-            escaped = false;
-            if phase == 1 && c.is_digit(10) {
-                buffer.push('$')
-            // unescape escaped parens
-            } else if phase == 0 && c == '(' || c == ')' {
-            } else if c != delimiter {
-                buffer.push('\\')
-            }
-            buffer.push(c)
-        } else if c == '\\' {
-            escaped = true;
-        } else if c == delimiter {
-            if phase == 0 {
-                buffer = &mut replacement;
-                phase = 1;
-            } else if phase == 1 {
-                buffer = &mut flags;
-                phase = 2;
+        for c in chars {
+            if escaped {
+                escaped = false;
+                if phase == 1 && c.is_digit(10) {
+                    buffer.push('$')
+                // unescape escaped parens
+                } else if phase == 0 && c == '(' || c == ')' {
+                } else if c != delimiter {
+                    buffer.push('\\')
+                }
+                buffer.push(c)
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == delimiter {
+                if phase == 0 {
+                    buffer = &mut replacement;
+                    phase = 1;
+                } else if phase == 1 {
+                    buffer = &mut flags;
+                    phase = 2;
+                } else {
+                    break;
+                }
             } else {
-                break;
+                // escape unescaped parens
+                if phase == 0 && c == '(' || c == ')' {
+                    buffer.push('\\')
+                }
+                buffer.push(c)
             }
-        } else {
-            // escape unescaped parens
-            if phase == 0 && c == '(' || c == ')' {
-                buffer.push('\\')
+        }
+
+        let mut replacement = Replacement {
+            search,
+            replacement,
+            should_replace_all: true,
+            is_case_sensitive: true,
+        };
+
+        for c in flags.chars() {
+            match c {
+                'g' | 'I' => {}
+                'c' | 'n' => replacement.should_replace_all = false,
+                'i' => replacement.is_case_sensitive = false,
+                _ => {}
             }
-            buffer.push(c)
         }
+
+        Some(replacement)
     }
-
-    let mut replacement = Replacement {
-        search,
-        replacement,
-        should_replace_all: true,
-        is_case_sensitive: true,
-        range,
-    };
-
-    for c in flags.chars() {
-        match c {
-            'g' | 'I' => {}
-            'c' | 'n' => replacement.should_replace_all = false,
-            'i' => replacement.is_case_sensitive = false,
-            _ => {}
-        }
-    }
-
-    replacement
 }
 
 #[cfg(test)]
