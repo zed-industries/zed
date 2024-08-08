@@ -4,6 +4,9 @@ const { execFileSync } = require("child_process");
 let { GITHUB_ACCESS_TOKEN } = process.env;
 const GITHUB_URL = "https://github.com";
 const SKIPPABLE_NOTE_REGEX = /^\s*-?\s*n\/?a\s*/ims;
+const PULL_REQUEST_WEB_URL = "https://github.com/zed-industries/zed/pull";
+const PULL_REQUEST_API_URL =
+  "https://api.github.com/repos/zed-industries/zed/pulls";
 
 main();
 
@@ -46,8 +49,7 @@ async function main() {
   // Fetch the pull requests from the GitHub API.
   console.log("Merged Pull requests:");
   for (const pullRequestNumber of newPullRequestNumbers) {
-    const pullRequestWebURL = `https://github.com/zed-industries/zed/pull/${pullRequestNumber}`;
-    const pullRequestApiURL = `https://api.github.com/repos/zed-industries/zed/pulls/${pullRequestNumber}`;
+    const pullRequestApiURL = `${PULL_REQUEST_API_URL}/${pullRequestNumber}`;
 
     const response = await fetch(pullRequestApiURL, {
       headers: {
@@ -55,7 +57,6 @@ async function main() {
       },
     });
 
-    // Print the pull request title and URL.
     const pullRequest = await response.json();
     const releaseNotesHeader = /^\s*Release Notes:(.+)/ims;
 
@@ -69,11 +70,10 @@ async function main() {
       continue;
     }
 
-    let paperTrail = getPaperTrailString(pullRequestWebURL, contributor);
+    let credit = getCreditString(pullRequestNumber, contributor);
 
     console.log("*", pullRequest.title);
-    console.log("  PR URL:    ", pullRequestWebURL);
-    console.log("  Trail:     ", paperTrail);
+    console.log(`  Credit:     (${credit})`);
 
     releaseNotes = notes.trim().split("\n");
 
@@ -87,15 +87,20 @@ async function main() {
   }
 }
 
-function getPaperTrailString(pullRequestURL, contributor) {
-  let creditsString = pullRequestURL;
+function getCreditString(pullRequestNumber, contributor) {
+  let credit = "";
 
-  if (contributor) {
-    const contributorUrl = `[${contributor}](${GITHUB_URL}/${contributor})`;
-    creditsString += `; thanks ${contributorUrl}`;
+  if (pullRequestNumber) {
+    let pullRequestMarkdownLink = `[#${pullRequestNumber}](${PULL_REQUEST_WEB_URL}/${pullRequestNumber})`;
+    credit += pullRequestMarkdownLink;
   }
 
-  return creditsString;
+  if (contributor) {
+    const contributorMarkdownLink = `[${contributor}](${GITHUB_URL}/${contributor})`;
+    credit += `; thanks ${contributorMarkdownLink}`;
+  }
+
+  return credit;
 }
 
 function getPullRequestNumbers(oldTag, newTag) {

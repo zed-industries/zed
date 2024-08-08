@@ -1,4 +1,4 @@
-fixes: <issue_link>
+Closes #ISSUE
 
 Release Notes:
 
@@ -8,7 +8,7 @@ Optionally, include screenshots / media showcasing your addition that can be inc
 
 ### Or...
 
-fixes: <issue_link>
+Closes #ISSUE
 
 Release Notes:
 
