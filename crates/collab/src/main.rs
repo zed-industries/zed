@@ -56,14 +56,13 @@ async fn main() -> Result<()> {
             let mut db = Database::new(db_options, Executor::Production).await?;
             db.initialize_notification_kinds().await?;
 
-            collab::seed::seed(&config, &db, true).await?;
+            collab::seed::seed(&config, &db, false).await?;
 
             if let Some(llm_database_url) = config.llm_database_url.clone() {
                 let db_options = db::ConnectOptions::new(llm_database_url);
                 let mut db = LlmDatabase::new(db_options.clone(), Executor::Production).await?;
                 db.initialize().await?;
-
-                collab::llm::db::seed_database(&config, &db, true).await?;
+                collab::llm::db::seed_database(&config, &mut db, true).await?;
             }
         }
         Some("serve") => {

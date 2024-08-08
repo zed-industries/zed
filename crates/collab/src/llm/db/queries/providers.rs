@@ -1,13 +1,17 @@
-use std::str::FromStr;
-
+use super::*;
 use sea_orm::QueryOrder;
+use std::str::FromStr;
 use strum::IntoEnumIterator as _;
 
-use super::*;
+pub struct ModelRateLimits {
+    pub max_requests_per_minute: i32,
+    pub max_tokens_per_minute: i32,
+    pub max_tokens_per_day: i32,
+}
 
 impl LlmDatabase {
     pub async fn initialize_providers(&mut self) -> Result<()> {
-        let (all_providers, all_models) = self
+        self.provider_ids = self
             .transaction(|tx| async move {
                 let existing_providers = provider::Entity::find().all(&*tx).await?;
 
@@ -40,12 +44,22 @@ impl LlmDatabase {
                     })
                     .collect();
 
+                Ok(all_providers)
+            })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn initialize_models(&mut self) -> Result<()> {
+        let all_provider_ids = &self.provider_ids;
+        self.models = self
+            .transaction(|tx| async move {
                 let all_models: HashMap<_, _> = model::Entity::find()
                     .all(&*tx)
                     .await?
                     .into_iter()
                     .filter_map(|model| {
-                        let provider = all_providers.iter().find_map(|(provider, id)| {
+                        let provider = all_provider_ids.iter().find_map(|(provider, id)| {
                             if *id == model.provider_id {
                                 Some(provider)
                             } else {
@@ -55,15 +69,35 @@ impl LlmDatabase {
                         Some(((*provider, model.name.clone()), model))
                     })
                     .collect();
-
-                Ok((all_providers, all_models))
+                Ok(all_models)
             })
             .await?;
-
-        self.provider_ids = all_providers;
-        self.models = all_models;
-
         Ok(())
+    }
+
+    pub async fn insert_models(
+        &mut self,
+        models: &[(LanguageModelProvider, String, ModelRateLimits)],
+    ) -> Result<()> {
+        let all_provider_ids = &self.provider_ids;
+        self.transaction(|tx| async move {
+            model::Entity::insert_many(models.into_iter().map(|(provider, name, rate_limits)| {
+                let provider_id = all_provider_ids[&provider];
+                model::ActiveModel {
+                    provider_id: ActiveValue::set(provider_id),
+                    name: ActiveValue::set(name.clone()),
+                    max_requests_per_minute: ActiveValue::set(rate_limits.max_requests_per_minute),
+                    max_tokens_per_minute: ActiveValue::set(rate_limits.max_tokens_per_minute),
+                    max_tokens_per_day: ActiveValue::set(rate_limits.max_tokens_per_day),
+                    ..Default::default()
+                }
+            }))
+            .exec_without_returning(&*tx)
+            .await?;
+            Ok(())
+        })
+        .await?;
+        self.initialize_models().await
     }
 
     /// Returns the list of LLM providers.

@@ -1,6 +1,6 @@
 use chrono::Duration;
 use rpc::LanguageModelProvider;
-use std::str::FromStr;
+use std::{iter, str::FromStr};
 use strum::IntoEnumIterator as _;
 
 use super::*;

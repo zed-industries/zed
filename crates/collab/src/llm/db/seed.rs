@@ -1,49 +1,45 @@
-use super::LlmDatabase;
 use super::*;
 use crate::{Config, Result};
+use queries::providers::ModelRateLimits;
 
-pub async fn seed_database(_config: &Config, db: &LlmDatabase, _force: bool) -> Result<()> {
-    db.transaction(|tx| async move {
-        let anthropic_id = db.provider_ids[&LanguageModelProvider::Anthropic];
-
-        model::Entity::insert_many(vec![
-            model::ActiveModel {
-                provider_id: ActiveValue::set(anthropic_id),
-                name: ActiveValue::set("claude-3-5-sonnet".to_string()),
-                max_requests_per_minute: ActiveValue::set(5),
-                max_tokens_per_minute: ActiveValue::set(20_000),
-                max_tokens_per_day: ActiveValue::set(300_000),
-                ..Default::default()
+pub async fn seed_database(_config: &Config, db: &mut LlmDatabase, _force: bool) -> Result<()> {
+    db.insert_models(&[
+        (
+            LanguageModelProvider::Anthropic,
+            "claude-3-5-sonnet".into(),
+            ModelRateLimits {
+                max_requests_per_minute: 5,
+                max_tokens_per_minute: 20_000,
+                max_tokens_per_day: 300_000,
             },
-            model::ActiveModel {
-                provider_id: ActiveValue::set(anthropic_id),
-                name: ActiveValue::set("claude-3-opus".to_string()),
-                max_requests_per_minute: ActiveValue::set(5),
-                max_tokens_per_minute: ActiveValue::set(10_000),
-                max_tokens_per_day: ActiveValue::set(300_000),
-                ..Default::default()
+        ),
+        (
+            LanguageModelProvider::Anthropic,
+            "claude-3-opus".into(),
+            ModelRateLimits {
+                max_requests_per_minute: 5,
+                max_tokens_per_minute: 10_000,
+                max_tokens_per_day: 300_000,
             },
-            model::ActiveModel {
-                provider_id: ActiveValue::set(anthropic_id),
-                name: ActiveValue::set("claude-3-sonnet".to_string()),
-                max_requests_per_minute: ActiveValue::set(5),
-                max_tokens_per_minute: ActiveValue::set(20_000),
-                max_tokens_per_day: ActiveValue::set(300_000),
-                ..Default::default()
+        ),
+        (
+            LanguageModelProvider::Anthropic,
+            "claude-3-sonnet".into(),
+            ModelRateLimits {
+                max_requests_per_minute: 5,
+                max_tokens_per_minute: 20_000,
+                max_tokens_per_day: 300_000,
             },
-            model::ActiveModel {
-                provider_id: ActiveValue::set(anthropic_id),
-                name: ActiveValue::set("claude-3-haiku".to_string()),
-                max_requests_per_minute: ActiveValue::set(5),
-                max_tokens_per_minute: ActiveValue::set(25_000),
-                max_tokens_per_day: ActiveValue::set(300_000),
-                ..Default::default()
+        ),
+        (
+            LanguageModelProvider::Anthropic,
+            "claude-3-haiku".into(),
+            ModelRateLimits {
+                max_requests_per_minute: 5,
+                max_tokens_per_minute: 25_000,
+                max_tokens_per_day: 300_000,
             },
-        ])
-        .exec_without_returning(&*tx)
-        .await?;
-
-        Ok(())
-    })
+        ),
+    ])
     .await
 }

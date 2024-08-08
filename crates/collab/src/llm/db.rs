@@ -61,6 +61,7 @@ impl LlmDatabase {
 
     pub async fn initialize(&mut self) -> Result<()> {
         self.initialize_providers().await?;
+        self.initialize_models().await?;
         self.initialize_usage_measures().await?;
         Ok(())
     }

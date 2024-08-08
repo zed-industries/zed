@@ -1,5 +1,5 @@
 use crate::{
-    llm::db::{queries::usages::Usage, LlmDatabase},
+    llm::db::{queries::providers::ModelRateLimits, queries::usages::Usage, LlmDatabase},
     test_llm_db,
 };
 use chrono::{Duration, Utc};
@@ -9,12 +9,24 @@ use rpc::LanguageModelProvider;
 test_llm_db!(test_tracking_usage, test_tracking_usage_postgres);
 
 async fn test_tracking_usage(db: &mut LlmDatabase) {
+    let provider = LanguageModelProvider::Anthropic;
+    let model = "claude-3-5-sonnet";
+
     db.initialize().await.unwrap();
+    db.insert_models(&[(
+        provider,
+        model.to_string(),
+        ModelRateLimits {
+            max_requests_per_minute: 5,
+            max_tokens_per_minute: 10_000,
+            max_tokens_per_day: 50_000,
+        },
+    )])
+    .await
+    .unwrap();
 
     let t0 = Utc::now();
     let user_id = 123;
-    let provider = LanguageModelProvider::Anthropic;
-    let model = "claude-3-5-sonnet";
 
     let now = t0;
     db.record_usage(user_id, provider, model, 1000, now)
