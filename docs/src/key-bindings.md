@@ -59,7 +59,7 @@ The keys can be any single unicode codepoint that your keyboard generates (for e
 
 A few examples:
 
-```
+```json
  "bindings": {
    "cmd-k cmd-s": "zed::OpenKeymap", // matches ⌘-k then ⌘-s
    "space e": "editor::Complete", // type space then e

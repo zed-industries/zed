@@ -67,7 +67,7 @@ Note that this is most useful for configuring language servers, as any UI relate
 
 If you'd like to install language-server extensions, you can add them to the list of `auto_installed_extensions`. Again you don't need to do this to get syntax highlighting (which is handled by the local zed).
 
-```
+```json
 {
   "auto_install_extensions": {
     "java": true
@@ -95,13 +95,13 @@ We are working on a direct SSH connection feature, which you can try out if you'
 
 To try this out you can either from the command line run:
 
-```
+```sh
 zed ssh://user@host:port/path/to/project
 ```
 
 Or you can (in your settings file) add:
 
-```
+```json
 "ssh_connections": []
 ```
 

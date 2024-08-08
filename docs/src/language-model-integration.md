@@ -217,13 +217,13 @@ You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI 
 
 1. Download, for example, the `mistral` model with Ollama:
 
-   ```
+   ```sh
    ollama pull mistral
    ```
 
 2. Make sure that the Ollama server is running. You can start it either via running the Ollama app, or launching:
 
-   ```
+   ```sh
    ollama serve
    ```
 

@@ -10,7 +10,7 @@ First, make sure you've installed Zed's backend dependencies for your platform:
 
 Before you can run the `collab` server locally, you'll need to set up a `zed` Postgres database.
 
-```
+```sh
 script/bootstrap
 ```
 
@@ -18,7 +18,7 @@ This script will set up the `zed` Postgres database, and populate it with some u
 
 The script will seed the database with various content defined by:
 
-```
+```sh
 cat crates/collab/seed.default.json
 ```
 
@@ -35,16 +35,14 @@ To use a different set of admin users, you can create your own version of that j
 
 In one terminal, run Zed's collaboration server and the `livekit` dev server:
 
-```bash
+```sh
 foreman start
 ```
 
 In a second terminal, run two or more instances of Zed.
 
-```
-
+```sh
 script/zed-local -2
-
 ```
 
 This script starts one to four instances of Zed, depending on the `-2`, `-3` or `-4` flags. Each instance will be connected to the local `collab` server, signed in as a different user from `.admins.json` or `.admins.default.json`.

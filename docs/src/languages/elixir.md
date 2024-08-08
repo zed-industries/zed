@@ -44,13 +44,13 @@ To switch to `lexical`, add the following to your `settings.json`:
 
 1. Install `elixir`:
 
-```bash
+```sh
 brew install elixir
 ```
 
 2. Install `elixir-ls`:
 
-```bash
+```sh
 brew install elixir-ls
 ```
 

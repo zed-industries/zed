@@ -81,13 +81,13 @@ Zed currently doesn't install Solargraph automatically. To use Solargraph, you n
 
 You can install the gem manually with the following command:
 
-```shell
+```sh
 gem install solargraph
 ```
 
 Alternatively, if your project uses Bundler, you can add the Solargraph gem to your `Gemfile`:
 
-```ruby
+```rb
 gem 'solargraph', group: :development
 ```
 
@@ -130,7 +130,7 @@ Zed currently doesn't install Ruby LSP automatically. To use Ruby LSP, you need 
 
 You can install the gem manually with the following command:
 
-```shell
+```sh
 gem install ruby-lsp
 ```
 
@@ -156,7 +156,7 @@ Zed currently doesn't install `rubocop` automatically. To use `rubocop`, you nee
 
 You can install the gem manually with the following command:
 
-```shell
+```sh
 gem install rubocop
 ```
 
@@ -219,7 +219,7 @@ In order to do that, you need to configure the language server so that it knows 
 
 With these settings you will get completions for Tailwind CSS classes in HTML attributes inside ERB files and inside Ruby/ERB strings that are coming after a `class:` key. Examples:
 
-```ruby
+```rb
 # Ruby file:
 def method
   div(class: "pl-2 <completion here>") do

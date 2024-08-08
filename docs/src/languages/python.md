@@ -54,7 +54,7 @@ To do this, create a JSON file called `pyrightconfig.json` at the root of your p
 
 For example, a common approach is to create a virtual environment directory called `.venv` at the root of your project directory with the following commands:
 
-```bash
+```sh
 # create a virtual environment in the .venv directory
 python3 -m venv .venv
 # set up the current shell to use that virtual environment

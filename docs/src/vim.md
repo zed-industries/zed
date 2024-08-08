@@ -135,7 +135,7 @@ Vim mode adds several contexts to the `Editor`:
 If you're using Vim mode on Linux or Windows, you may find that it has overridden keybindings
 that you can't live without. You can restore them to their defaults by copying these into your keymap:
 
-```
+```json
 {
   "context": "Editor && !menu",
   "bindings": {

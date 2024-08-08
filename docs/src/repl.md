@@ -73,14 +73,14 @@ On MacOS, your system Python will _not_ work. Either set up [pyenv](https://gith
 
 To setup your current python to have an available kernel, run:
 
-```
+```sh
 pip install ipykernel
 python -m ipykernel install --user
 ```
 
 #### Conda Environment
 
-```
+```sh
 source activate myenv
 conda install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
@@ -88,7 +88,7 @@ python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 
 #### Virtualenv with pip
 
-```
+```sh
 source activate myenv
 pip install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
@@ -98,7 +98,7 @@ python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 
 Install [Ark](https://github.com/posit-dev/ark/releases) by downloading the release for your operating system. E.g. for macOS just unpack `ark` binary and put it into `/usr/local/bin`. Then run:
 
-```
+```sh
 ark --install
 ```
 
@@ -112,7 +112,7 @@ TBD: Add R REPL (XEOS-R) instructions
 
 [Install Deno](https://docs.deno.com/runtime/manual/getting_started/installation/) and then install the Deno jupyter kernel:
 
-```
+```sh
 deno jupyter --install
 ```
 
@@ -169,7 +169,7 @@ Available kernels are shown via the `repl: sessions` command. To refresh the ker
 
 If you have `jupyter` installed, you can run `jupyter kernelspec list` to see the available kernels.
 
-```
+```sh
 $ jupyter kernelspec list
 Available kernels:
   ark                   /Users/z/Library/Jupyter/kernels/ark
