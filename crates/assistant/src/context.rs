@@ -3053,12 +3053,12 @@ mod tests {
                 vec![
                     (
                         Point::new(response_start_row + 2, 0)
-                            ..Point::new(response_start_row + 14, 7),
+                            ..Point::new(response_start_row + 13, 3),
                         WorkflowStepTestStatus::Pending
                     ),
                     (
-                        Point::new(response_start_row + 16, 0)
-                            ..Point::new(response_start_row + 28, 7),
+                        Point::new(response_start_row + 15, 0)
+                            ..Point::new(response_start_row + 26, 3),
                         WorkflowStepTestStatus::Pending
                     ),
                 ]
