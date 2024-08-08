@@ -107,6 +107,9 @@ pub struct ThemeColors {
     ///
     /// This might be used to show when a toggleable icon button is selected.
     pub icon_accent: Hsla,
+    /// Color used to accent some debugger elements
+    /// Is used by breakpoints
+    pub debugger_accent: Hsla,
 
     // ===
     // UI Elements

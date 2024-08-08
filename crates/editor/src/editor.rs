@@ -5237,7 +5237,7 @@ impl Editor {
         {
             Color::Hint
         } else {
-            Color::Error
+            Color::Debugger
         };
 
         IconButton::new(("breakpoint_indicator", row.0 as usize), ui::IconName::Play)
@@ -5259,7 +5259,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
         let color = if overlaps_breakpoint {
-            Color::Error
+            Color::Debugger
         } else {
             Color::Muted
         };

@@ -294,6 +294,11 @@ pub struct ThemeColorsContent {
     #[serde(rename = "icon.accent")]
     pub icon_accent: Option<String>,
 
+    /// Color used to accent some of the debuggers elements
+    /// Only accent breakpoint & breakpoint related symbols right now
+    #[serde(rename = "debugger.accent")]
+    pub debugger_accent: Option<String>,
+
     #[serde(rename = "status_bar.background")]
     pub status_bar_background: Option<String>,
 
@@ -660,6 +665,10 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             icon_accent: self
                 .icon_accent
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            debugger_accent: self
+                .debugger_accent
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             status_bar_background: self

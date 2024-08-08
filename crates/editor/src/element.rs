@@ -1708,7 +1708,7 @@ impl EditorElement {
         };
 
         let button = if breakpoint_points.remove(&DisplayPoint::new(row, 0)) {
-            button.icon_color(Color::Error)
+            button.icon_color(Color::Debugger)
         } else {
             button
         };
@@ -1837,7 +1837,7 @@ impl EditorElement {
                 let multibuffer_row = multibuffer_row?;
                 let display_row = DisplayRow(rows.start.0 + ix as u32);
                 let color = if breakpoint_rows.contains(&display_row) {
-                    Hsla::red()
+                    cx.theme().colors().debugger_accent
                 } else if active_rows.contains_key(&display_row) {
                     cx.theme().colors().editor_active_line_number
                 } else {
