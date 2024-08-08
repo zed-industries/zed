@@ -21,7 +21,7 @@ if (!hasReleaseNotes) {
       "```",
       "Release Notes:",
       "",
-      "- (Added|Fixed|Improved) ... ([#<public_issue_number_if_exists>](https://github.com/zed-industries/zed/issues/<public_issue_number_if_exists>)).",
+      "- Added/Fixed/Improved ...",
       "```",
       "",
       'If your change is not user-facing, you can use "N/A" for the entry:',
@@ -29,25 +29,6 @@ if (!hasReleaseNotes) {
       "Release Notes:",
       "",
       "- N/A",
-      "```",
-    ].join("\n"),
-  );
-}
-
-const INCORRECT_ISSUE_LINK_PATTERN = new RegExp("-.*\\(#\\d+\\)", "g");
-
-const hasIncorrectIssueLinks = INCORRECT_ISSUE_LINK_PATTERN.test(
-  danger.github.pr.body,
-);
-if (hasIncorrectIssueLinks) {
-  warn(
-    [
-      "This PR has incorrectly formatted GitHub issue links in the release notes.",
-      "",
-      "GitHub issue links must be formatted as plain Markdown links:",
-      "",
-      "```",
-      "- Improved something ([#ISSUE](https://github.com/zed-industries/zed/issues/ISSUE)).",
       "```",
     ].join("\n"),
   );
