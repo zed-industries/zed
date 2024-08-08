@@ -137,11 +137,25 @@ async fn perform_completion(
                 .anthropic_api_key
                 .as_ref()
                 .context("no Anthropic AI API key configured on the server")?;
+
+            let mut request: anthropic::Request =
+                serde_json::from_str(&params.provider_request.get())?;
+
+            // Parse the model, throw away the version that was included, and then set a specific
+            // version that we control on the server.
+            // Right now, we use the version that's defined in `model.id()`, but we will likely
+            // want to change this code once a new version of an Anthropic model is released,
+            // so that users can use the new version, without having to update Zed.
+            request.model = match anthropic::Model::from_id(&request.model) {
+                Ok(model) => model.id().to_string(),
+                Err(_) => request.model,
+            };
+
             let chunks = anthropic::stream_completion(
                 &state.http_client,
                 anthropic::ANTHROPIC_API_URL,
                 api_key,
-                serde_json::from_str(&params.provider_request.get())?,
+                request,
                 None,
             )
             .await?;
