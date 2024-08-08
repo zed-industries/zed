@@ -1,4 +1,8 @@
-use super::{events::key_to_native, BoolExt};
+use super::{
+    attributed_string::{NSAttributedString, NSMutableAttributedString, NSTextAttachment},
+    events::key_to_native,
+    BoolExt,
+};
 use crate::{
     hash, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString, CursorStyle,
     ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher, MacDisplay, MacTextSystem,
@@ -10,12 +14,13 @@ use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
-        NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
+        NSEventModifierFlags, NSImage, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel,
+        NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD,
+        NSPasteboardTypeString, NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
     },
     base::{id, nil, selector, BOOL, YES},
     foundation::{
-        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSString,
+        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSRange, NSString,
         NSUInteger, NSURL,
     },
 };
@@ -422,7 +427,7 @@ impl Platform for MacPlatform {
             pool.drain();
 
             (*app).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
-            (*app.delegate()).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
+            (*NSWindow::delegate(app)).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
         }
     }
 
@@ -750,7 +755,7 @@ impl Platform for MacPlatform {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
-            app.setMainMenu_(self.create_menu_bar(menus, app.delegate(), actions, keymap));
+            app.setMainMenu_(self.create_menu_bar(menus, NSWindow::delegate(app), actions, keymap));
         }
     }
 
@@ -759,7 +764,7 @@ impl Platform for MacPlatform {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
-            let new = self.create_dock_menu(menu, app.delegate(), actions, keymap);
+            let new = self.create_dock_menu(menu, NSWindow::delegate(app), actions, keymap);
             if let Some(old) = state.dock_menu.replace(new) {
                 CFRelease(old as _)
             }
@@ -1106,12 +1111,114 @@ fn try_clipboard_image(pasteboard: id, format: ImageFormat) -> Option<ClipboardI
 
                 let id = hash(&bytes);
 
+                {
+                    // write some images and text to the clip
+                    // let image1 = ns_image(&bytes).unwrap();
+                    // let image2 = ns_image(&bytes).unwrap();
+                    let image1 = NSImage::initWithPasteboard_(nil, pasteboard);
+                    let image2 = NSImage::initWithPasteboard_(nil, pasteboard);
+                    // let attributed_string = text_and_images([image1, image2]);
+                    // text_and_images([NSImage::initWithPasteboard_(, pasteboard), ns_image(&bytes).unwrap()]);
+                    let attributed_string = unsafe {
+                        use cocoa::appkit::NSImage;
+
+                        let image: id = msg_send![class!(NSImage), alloc];
+                        NSImage::initWithContentsOfFile_(
+                            image,
+                            NSString::alloc(nil).init_str("/Users/rtfeldman/Downloads/test.jpeg"),
+                        );
+                        let size = image.size();
+
+                        let string = NSString::alloc(nil).init_str("Test String");
+                        let attr_string =
+                            NSMutableAttributedString::alloc(nil).init_attributed_string(string);
+                        let hello_string = NSString::alloc(nil).init_str("Hello World");
+                        let hello_attr_string =
+                            NSAttributedString::alloc(nil).init_attributed_string(hello_string);
+                        attr_string.appendAttributedString_(hello_attr_string);
+
+                        let attachment = NSTextAttachment::alloc(nil);
+                        let _: () = msg_send![attachment, setImage: image];
+                        let image_attr_string = msg_send![class!(NSAttributedString), attributedStringWithAttachment: attachment];
+                        attr_string.appendAttributedString_(image_attr_string);
+
+                        let another_string = NSString::alloc(nil).init_str("Another String");
+                        let another_attr_string =
+                            NSAttributedString::alloc(nil).init_attributed_string(another_string);
+                        attr_string.appendAttributedString_(another_attr_string);
+
+                        attr_string
+                    };
+
+                    pasteboard.clearContents();
+
+                    let rtfd_data = attributed_string.RTFDFromRange_documentAttributes_(
+                        NSRange::new(0, msg_send![attributed_string, length]),
+                        nil,
+                    );
+                    if rtfd_data != nil {
+                        pasteboard.setData_forType(rtfd_data, NSPasteboardTypeRTFD);
+                    }
+
+                    // let rtf_data = attributed_string.RTFFromRange_documentAttributes_(
+                    //     NSRange::new(0, attributed_string.length()),
+                    //     nil,
+                    // );
+                    // if rtf_data != nil {
+                    //     pasteboard.setData_forType(rtf_data, NSPasteboardTypeRTF);
+                    // }
+
+                    // let plain_text = attributed_string.string();
+                    // pasteboard.setString_forType(plain_text, NSPasteboardTypeString);
+                }
+
                 Some(ClipboardItem::Image(Image { format, bytes, id }))
             }
         } else {
             None
         }
     }
+}
+
+unsafe fn ns_image(bytes: &[u8]) -> Option<id> {
+    let data =
+        NSData::dataWithBytes_length_(nil, bytes.as_ptr() as *const c_void, bytes.len() as u64)
+            .autorelease();
+    let image = NSImage::initWithData_(nil, data).autorelease();
+
+    if image == nil {
+        None
+    } else {
+        Some(image)
+    }
+}
+
+unsafe fn text_and_images(images: impl IntoIterator<Item = id>) -> id {
+    let attributed_string = NSMutableAttributedString::alloc(nil).init().autorelease();
+    let text_before = "text before";
+    let text_after = "text after";
+
+    for image in images {
+        let before_text = NSAttributedString::alloc(nil)
+            .initWithString_(ns_string(text_before))
+            .autorelease();
+        attributed_string.appendAttributedString_(before_text);
+
+        let text_attachment = NSTextAttachment::alloc(nil).init().autorelease();
+        let _: () = msg_send![text_attachment, setImage: image];
+
+        let image_attributed_string = NSAttributedString::alloc(nil)
+            .initWithAttachment_(text_attachment)
+            .autorelease();
+        attributed_string.appendAttributedString_(image_attributed_string);
+
+        let after_text = NSAttributedString::alloc(nil)
+            .initWithString_(ns_string(text_after))
+            .autorelease();
+        attributed_string.appendAttributedString_(after_text);
+    }
+
+    attributed_string
 }
 
 unsafe fn path_from_objc(path: id) -> PathBuf {
