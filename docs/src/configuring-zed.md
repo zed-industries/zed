@@ -6,10 +6,12 @@ In addition to the settings described here, you may also want to change your [th
 
 ## Settings files
 
+<!--
 TBD: Settings files. Rewrite with "remote settings" in mind (e.g. `local settings` on the remote host).
 Consider renaming `zed: Open Local Settings` to `zed: Open Project Settings`.
 
 TBD: Add settings documentation about how settings are merged as overlays. E.g. project>local>default. Note how settings that are maps are merged, but settings that are arrays are replaced and must include the defaults.
+-->
 
 Your settings file can be opened with `cmd-,` (on macOS) or `ctrl-,` (on Linux). By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
 
@@ -631,7 +633,9 @@ If any of the formatters fails, the subsequent ones will still be executed.
 
 **Examples**
 
+<!--
 TBD: Add Python Ruff source.organizeImports example
+-->
 
 1. Organize imports on format in TypeScript and TSX buffers:
 
@@ -1038,8 +1042,6 @@ The following settings can be overridden for each specific language:
 - `always_treat_brackets_as_autoclosed`
 
 These values take in the same options as the root-level settings with the same name.
-
-TBD: Document `language_servers` settings key under languages. See: [Language Settings](./language-settings.md)
 
 ## Preview tabs
 

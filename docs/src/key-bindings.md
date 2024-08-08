@@ -76,7 +76,33 @@ It is possible to match against typing a modifier key on its own. For example `s
 
 ### Contexts
 
-TBD: Add keybinding contexts https://github.com/zed-industries/zed/issues/14718
+Each key binding includes a `context` which determes when the key binding is active. If no context key is present it is considered to be in the `Global` context. The context is a boolean expression that can include the following:
+
+- Pane
+- Workspace
+- Editor
+- Menu
+- Terminal
+- Assistant
+- ProjectPanel
+- ProjectSearch
+- BufferSearch
+- Search
+- Dock
+- EmptyPane
+- SharedScreen
+- VimControl
+- vim_mode == normal
+- vim_mode == visual
+- vim_mode == insert
+- vim_mode == replace
+- vim_mode == operator
+- vim_mode == waiting
+
+<!--
+TBD: Improve keybinding contexts documentation https://github.com/zed-industries/zed/issues/14718
+-->
+
 See also: [vim context docs](/docs/vim#contexts)
 
 ### Remapping keys
@@ -107,7 +133,7 @@ A common request is to be able to map from one sequence of keys to another. As o
 There are some limitations to this, notably:
 
 - Any asynchronous operation will not happen until after all your key bindings have been dispatched. For example this means that while you can use a binding to open a file (as in the `cmd-alt-r` example) you cannot send further keystrokes and hope to have them interpreted by the new view.
-- - Other examples of asynchronous things are: communicating with a language server, changing the language of a buffer, anything that hits the network.
+- Other examples of asynchronous things are: communicating with a language server, changing the language of a buffer, anything that hits the network.
 - There is a limit of 100 simulated keys at a time, this is to avoid accidental infinite recursion if you trigger SendKeystrokes again inside your bindings.
 
 The argument to `SendKeystrokes` is a space-separated list of keystrokes (using the same syntax as above). Due to the way that keystrokes are parsed, any segment that is not recognized as a keypress will be sent verbatim to the currently focused input field.
