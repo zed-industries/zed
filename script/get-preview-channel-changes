@@ -2,7 +2,12 @@
 
 const { execFileSync } = require("child_process");
 let { GITHUB_ACCESS_TOKEN } = process.env;
-const FIXES_REGEX = /(fixes|closes|completes) (.+[/#]\d+.*)$/im;
+const GITHUB_URL = "https://github.com";
+const SKIPPABLE_NOTE_REGEX = /^\s*-?\s*n\/?a\s*/ims;
+const PULL_REQUEST_WEB_URL = "https://github.com/zed-industries/zed/pull";
+const PULL_REQUEST_API_URL =
+  "https://api.github.com/repos/zed-industries/zed/pulls";
+const DIVIDER = "-".repeat(80);
 
 main();
 
@@ -44,49 +49,57 @@ async function main() {
 
   // Fetch the pull requests from the GitHub API.
   console.log("Merged Pull requests:");
+  console.log(DIVIDER);
   for (const pullRequestNumber of newPullRequestNumbers) {
-    const webURL = `https://github.com/zed-industries/zed/pull/${pullRequestNumber}`;
-    const apiURL = `https://api.github.com/repos/zed-industries/zed/pulls/${pullRequestNumber}`;
+    const pullRequestApiURL = `${PULL_REQUEST_API_URL}/${pullRequestNumber}`;
 
-    const response = await fetch(apiURL, {
+    const response = await fetch(pullRequestApiURL, {
       headers: {
         Authorization: `token ${GITHUB_ACCESS_TOKEN}`,
       },
     });
 
-    // Print the pull request title and URL.
     const pullRequest = await response.json();
     const releaseNotesHeader = /^\s*Release Notes:(.+)/ims;
 
     let releaseNotes = pullRequest.body || "";
-    let contributor = pullRequest.user?.login ?? "Unable to identify";
+    let contributor =
+      pullRequest.user?.login ?? "Unable to identify contributor";
     const captures = releaseNotesHeader.exec(releaseNotes);
-    const notes = captures ? captures[1] : "MISSING";
-    const skippableNoteRegex = /^\s*-?\s*n\/?a\s*/ims;
+    let notes = captures ? captures[1] : "MISSING";
+    notes = notes.trim();
 
-    if (skippableNoteRegex.exec(notes) != null) {
+    if (SKIPPABLE_NOTE_REGEX.exec(notes) != null) {
       continue;
     }
-    console.log("*", pullRequest.title);
-    console.log("  PR URL:    ", webURL);
-    console.log("  Author:    ", contributor);
 
-    // If the pull request contains a 'closes' line, print the closed issue.
-    const fixesMatch = (pullRequest.body || "").match(FIXES_REGEX);
-    if (fixesMatch) {
-      const fixedIssueURL = fixesMatch[2];
-      console.log("  Issue URL:    ", fixedIssueURL);
-    }
+    let credit = getCreditString(pullRequestNumber, contributor);
 
-    releaseNotes = notes.trim().split("\n");
-    console.log("  Release Notes:");
+    console.log(`PR Title: ${pullRequest.title}`);
+    console.log(`Credit: (${credit})`);
 
-    for (const line of releaseNotes) {
-      console.log(`    ${line}`);
-    }
-
+    console.log("Release Notes:");
     console.log();
+    console.log(notes);
+
+    console.log(DIVIDER);
   }
+}
+
+function getCreditString(pullRequestNumber, contributor) {
+  let credit = "";
+
+  if (pullRequestNumber) {
+    let pullRequestMarkdownLink = `[#${pullRequestNumber}](${PULL_REQUEST_WEB_URL}/${pullRequestNumber})`;
+    credit += pullRequestMarkdownLink;
+  }
+
+  if (contributor) {
+    const contributorMarkdownLink = `[${contributor}](${GITHUB_URL}/${contributor})`;
+    credit += `; thanks ${contributorMarkdownLink}`;
+  }
+
+  return credit;
 }
 
 function getPullRequestNumbers(oldTag, newTag) {
