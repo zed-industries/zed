@@ -66,6 +66,39 @@ The `rust-analyzer` target directory can be set in `initialization_options`:
 
 A `true` setting will set the target directory to `target/rust-analyzer`. You can set a custom directory with a string like `"target/analyzer"` instead of `true`.
 
+## Binary
+
+You can configure which `rust-analyzer` binary Zed should use.
+
+To use a binary in a custom location, add the following to your `settings.json`:
+
+```json
+{
+  "lsp": {
+    "rust-analyzer": {
+      "binary": {
+        "path": "/Users/example/bin/rust-analyzer",
+        "args": []
+      }
+    }
+  }
+}
+```
+
+To use a binary that is on your `$PATH`, add the following to your `settings.json`:
+
+```json
+{
+  "lsp": {
+    "rust-analyzer": {
+      "binary": {
+        "path_lookup": true
+      }
+    }
+  }
+}
+```
+
 ## More server configuration
 
 TBD: Is it possible to specify RUSTFLAGS? https://github.com/zed-industries/zed/issues/14334
