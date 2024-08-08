@@ -9,6 +9,27 @@ const PULL_REQUEST_API_URL =
   "https://api.github.com/repos/zed-industries/zed/pulls";
 const DIVIDER = "-".repeat(80);
 
+// Maintain list manually, as our GitHub organization has community members in it.
+const STAFF_MEMBERS = new Set([
+  "as-cii",
+  "bennetbo",
+  "ConradIrwin",
+  "danilobleal",
+  "iamnbutler",
+  "JosephTLyons",
+  "jvmncs",
+  "maxbrunsfeld",
+  "maxdeviant",
+  "mikayla-maki",
+  "nathansobo",
+  "notpeter",
+  "osiewicz",
+  "rgbkrk",
+  "rtfeldman",
+  "SomeoneToIgnore",
+  "thorstenball",
+]);
+
 main();
 
 async function main() {
@@ -74,8 +95,11 @@ async function main() {
     }
 
     let credit = getCreditString(pullRequestNumber, contributor);
+    const isStaff = STAFF_MEMBERS.has(contributor);
+    contributor = isStaff ? `${contributor} (staff)` : contributor;
 
     console.log(`PR Title: ${pullRequest.title}`);
+    console.log(`Contributor: ${contributor}`);
     console.log(`Credit: (${credit})`);
 
     console.log("Release Notes:");
@@ -94,7 +118,7 @@ function getCreditString(pullRequestNumber, contributor) {
     credit += pullRequestMarkdownLink;
   }
 
-  if (contributor) {
+  if (contributor && !STAFF_MEMBERS.has(contributor)) {
     const contributorMarkdownLink = `[${contributor}](${GITHUB_URL}/${contributor})`;
     credit += `; thanks ${contributorMarkdownLink}`;
   }
