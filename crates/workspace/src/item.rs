@@ -289,7 +289,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     }
 
     fn preserve_preview(&self, _cx: &AppContext) -> bool {
-        true
+        false
     }
 }
 
