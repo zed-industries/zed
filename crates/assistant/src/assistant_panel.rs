@@ -10,14 +10,14 @@ use crate::{
     },
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, CodegenStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
-    CycleMessageRole, DebugEditSteps, DeployHistory, DeployPromptLibrary, EditSuggestionGroup,
-    InlineAssist, InlineAssistId, InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector,
+    CycleMessageRole, DebugEditSteps, DeployHistory, DeployPromptLibrary, InlineAssist,
+    InlineAssistId, InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector,
     PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    ResolvedWorkflowStepEditSuggestions, SavedContextMetadata, Split, ToggleFocus,
-    ToggleModelSelector, WorkflowStepEditSuggestions,
+    ResolvedWorkflowStep, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    WorkflowStepStatus,
 };
 use crate::{ContextStoreEvent, ShowConfiguration};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use client::{proto, Client, Status};
 use collections::{BTreeSet, HashMap, HashSet};
@@ -41,8 +41,7 @@ use gpui::{
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
-    language_settings::SoftWrap, Buffer, Capability, LanguageRegistry, LspAdapterDelegate, Point,
-    ToOffset,
+    language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
 };
 use language_model::{
     provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
@@ -1330,15 +1329,10 @@ struct ScrollPosition {
     cursor: Anchor,
 }
 
-struct StepAssists {
-    assist_ids: Vec<InlineAssistId>,
+struct WorkflowAssist {
     editor: WeakView<Editor>,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct ActiveWorkflowStep {
-    range: Range<language::Anchor>,
-    suggestions: Option<ResolvedWorkflowStepEditSuggestions>,
+    editor_was_open: bool,
+    assist_ids: Vec<InlineAssistId>,
 }
 
 pub struct ContextEditor {
@@ -1353,9 +1347,9 @@ pub struct ContextEditor {
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
     pending_slash_command_blocks: HashMap<Range<language::Anchor>, CustomBlockId>,
+    workflow_assists: HashMap<Range<language::Anchor>, WorkflowAssist>,
+    active_workflow_step_range: Option<Range<language::Anchor>>,
     _subscriptions: Vec<Subscription>,
-    assists_by_step: HashMap<Range<language::Anchor>, StepAssists>,
-    active_workflow_step: Option<ActiveWorkflowStep>,
     assistant_panel: WeakView<AssistantPanel>,
     error_message: Option<SharedString>,
 }
@@ -1413,8 +1407,8 @@ impl ContextEditor {
             pending_slash_command_creases: HashMap::default(),
             pending_slash_command_blocks: HashMap::default(),
             _subscriptions,
-            assists_by_step: HashMap::default(),
-            active_workflow_step: None,
+            workflow_assists: HashMap::default(),
+            active_workflow_step_range: None,
             assistant_panel,
             error_message: None,
         };
@@ -1449,16 +1443,16 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
-        if !self.apply_edit_step(cx) {
+        if !self.apply_workflow_step(cx) {
             self.error_message = None;
             self.send_to_model(cx);
             cx.notify();
         }
     }
 
-    fn apply_edit_step(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if let Some(step) = self.active_workflow_step.as_ref() {
-            if let Some(assists) = self.assists_by_step.get(&step.range) {
+    fn apply_workflow_step(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(step_range) = self.active_workflow_step_range.as_ref() {
+            if let Some(assists) = self.workflow_assists.get(&step_range) {
                 let assist_ids = assists.assist_ids.clone();
                 cx.window_context().defer(|cx| {
                     InlineAssistant::update_global(cx, |assistant, cx| {
@@ -1519,16 +1513,13 @@ impl ContextEditor {
                     .text_for_range(step.tagged_range.clone())
                     .collect::<String>()
             ));
-            match &step.edit_suggestions {
-                WorkflowStepEditSuggestions::Resolved(ResolvedWorkflowStepEditSuggestions {
-                    title,
-                    edit_suggestions,
-                }) => {
+            match &step.status {
+                WorkflowStepStatus::Resolved(ResolvedWorkflowStep { title, suggestions }) => {
                     output.push_str("Resolution:\n");
                     output.push_str(&format!("  {:?}\n", title));
-                    output.push_str(&format!("  {:?}\n", edit_suggestions));
+                    output.push_str(&format!("  {:?}\n", suggestions));
                 }
-                WorkflowStepEditSuggestions::Pending(_) => {
+                WorkflowStepStatus::Pending(_) => {
                     output.push_str("Resolution: Pending\n");
                 }
             }
@@ -1676,7 +1667,7 @@ impl ContextEditor {
                 });
             }
             ContextEvent::WorkflowStepsChanged => {
-                self.update_active_workflow_step(cx);
+                self.update_active_workflow_step_from_cursor(cx);
                 cx.notify();
             }
             ContextEvent::SummaryChanged => {
@@ -1941,14 +1932,14 @@ impl ContextEditor {
             }
             EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(cx);
-                self.update_active_workflow_step(cx);
+                self.update_active_workflow_step_from_cursor(cx);
             }
             _ => {}
         }
         cx.emit(event.clone());
     }
 
-    fn update_active_workflow_step(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_active_workflow_step_from_cursor(&mut self, cx: &mut ViewContext<Self>) {
         let new_step = self
             .workflow_step_range_for_cursor(cx)
             .as_ref()
@@ -1957,14 +1948,11 @@ impl ContextEditor {
                     .context
                     .read(cx)
                     .workflow_step_for_range(step_range.clone())?;
-                Some(ActiveWorkflowStep {
-                    range: workflow_step.tagged_range.clone(),
-                    suggestions: workflow_step.edit_suggestions.as_resolved().cloned(),
-                })
+                Some(workflow_step.tagged_range.clone())
             });
-        if new_step.as_ref() != self.active_workflow_step.as_ref() {
-            if let Some(old_step) = self.active_workflow_step.take() {
-                self.cancel_workflow_step_if_idle(old_step.range, cx);
+        if new_step.as_ref() != self.active_workflow_step_range.as_ref() {
+            if let Some(old_step_range) = self.active_workflow_step_range.take() {
+                self.hide_workflow_step(old_step_range, cx);
             }
 
             if let Some(new_step) = new_step {
@@ -1973,21 +1961,21 @@ impl ContextEditor {
         }
     }
 
-    fn cancel_workflow_step_if_idle(
+    fn hide_workflow_step(
         &mut self,
         step_range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(step_assists) = self.assists_by_step.get_mut(&step_range) else {
+        let Some(step_assist) = self.workflow_assists.get_mut(&step_range) else {
             return;
         };
-        let Some(editor) = step_assists.editor.upgrade() else {
-            self.assists_by_step.remove(&step_range);
+        let Some(editor) = step_assist.editor.upgrade() else {
+            self.workflow_assists.remove(&step_range);
             return;
         };
 
         InlineAssistant::update_global(cx, |assistant, cx| {
-            step_assists.assist_ids.retain(|assist_id| {
+            step_assist.assist_ids.retain(|assist_id| {
                 match assistant.status_for_assist(*assist_id, cx) {
                     Some(CodegenStatus::Idle) | None => {
                         assistant.finish_assist(*assist_id, true, cx);
@@ -1998,14 +1986,15 @@ impl ContextEditor {
             });
         });
 
-        if step_assists.assist_ids.is_empty() {
-            self.assists_by_step.remove(&step_range);
+        if step_assist.assist_ids.is_empty() {
+            let editor_was_open = step_assist.editor_was_open;
+            self.workflow_assists.remove(&step_range);
             self.workspace
                 .update(cx, |workspace, cx| {
                     if let Some(pane) = workspace.pane_for(&editor) {
                         pane.update(cx, |pane, cx| {
                             let item_id = editor.entity_id();
-                            if pane.is_active_preview_item(item_id) {
+                            if !editor_was_open && pane.is_active_preview_item(item_id) {
                                 pane.close_item_by_id(item_id, SaveIntent::Skip, cx)
                                     .detach_and_log_err(cx);
                             }
@@ -2016,147 +2005,200 @@ impl ContextEditor {
         }
     }
 
-    fn activate_workflow_step(&mut self, step: ActiveWorkflowStep, cx: &mut ViewContext<Self>) {
-        if let Some(step_assists) = self.assists_by_step.get(&step.range) {
-            if let Some(editor) = step_assists.editor.upgrade() {
-                for assist_id in &step_assists.assist_ids {
-                    match InlineAssistant::global(cx).status_for_assist(*assist_id, cx) {
-                        Some(CodegenStatus::Idle) | None => {}
-                        _ => {
-                            self.workspace
-                                .update(cx, |workspace, cx| {
-                                    workspace.activate_item(&editor, false, false, cx);
-                                })
-                                .ok();
-                            InlineAssistant::update_global(cx, |assistant, cx| {
-                                assistant.scroll_to_assist(*assist_id, cx)
-                            });
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some(ResolvedWorkflowStepEditSuggestions {
-            title,
-            edit_suggestions,
-        }) = step.suggestions.as_ref()
-        {
-            if let Some((editor, assist_ids)) =
-                self.suggest_edits(title.clone(), edit_suggestions.clone(), cx)
-            {
-                self.assists_by_step.insert(
-                    step.range.clone(),
-                    StepAssists {
-                        assist_ids,
-                        editor: editor.downgrade(),
-                    },
-                );
-            }
-        }
-
-        self.active_workflow_step = Some(step);
-    }
-
-    fn suggest_edits(
+    fn activate_workflow_step(
         &mut self,
-        title: String,
-        edit_suggestions: HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>,
+        step_range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<(View<Editor>, Vec<InlineAssistId>)> {
-        let assistant_panel = self.assistant_panel.upgrade()?;
-        if edit_suggestions.is_empty() {
+    ) -> Option<()> {
+        if self.scroll_to_existing_workflow_assist(&step_range, cx) {
             return None;
         }
 
-        let editor;
-        let mut suggestion_groups = Vec::new();
-        if edit_suggestions.len() == 1 && edit_suggestions.values().next().unwrap().len() == 1 {
-            // If there's only one buffer and one suggestion group, open it directly
-            let (buffer, groups) = edit_suggestions.into_iter().next().unwrap();
-            let group = groups.into_iter().next().unwrap();
-            editor = self
-                .workspace
-                .update(cx, |workspace, cx| {
-                    let active_pane = workspace.active_pane().clone();
-                    workspace.open_project_item::<Editor>(active_pane, buffer, false, false, cx)
-                })
-                .log_err()?;
+        let step = self
+            .workflow_step(&step_range, cx)
+            .with_context(|| format!("could not find workflow step for range {:?}", step_range))
+            .log_err()?;
+        let Some(resolved) = step.status.as_resolved() else {
+            return None;
+        };
 
-            let (&excerpt_id, _, _) = editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .read(cx)
-                .as_singleton()
-                .unwrap();
+        let title = resolved.title.clone();
+        let suggestions = resolved.suggestions.clone();
 
-            // Scroll the editor to the suggested assist
-            editor.update(cx, |editor, cx| {
-                let multibuffer = editor.buffer().read(cx).snapshot(cx);
-                let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
-                let anchor = if group.context_range.start.to_offset(buffer) == 0 {
-                    Anchor::min()
-                } else {
-                    multibuffer
-                        .anchor_in_excerpt(excerpt_id, group.context_range.start)
-                        .unwrap()
-                };
+        if let Some((editor, assist_ids, editor_was_open)) = {
+            let assistant_panel = self.assistant_panel.upgrade()?;
+            if suggestions.is_empty() {
+                return None;
+            }
 
-                editor.set_scroll_anchor(
-                    ScrollAnchor {
-                        offset: gpui::Point::default(),
-                        anchor,
-                    },
-                    cx,
-                );
-            });
+            let editor;
+            let mut editor_was_open = false;
+            let mut suggestion_groups = Vec::new();
+            if suggestions.len() == 1 && suggestions.values().next().unwrap().len() == 1 {
+                // If there's only one buffer and one suggestion group, open it directly
+                let (buffer, groups) = suggestions.into_iter().next().unwrap();
+                let group = groups.into_iter().next().unwrap();
+                editor = self
+                    .workspace
+                    .update(cx, |workspace, cx| {
+                        let active_pane = workspace.active_pane().clone();
+                        editor_was_open =
+                            workspace.is_project_item_open::<Editor>(&active_pane, &buffer, cx);
+                        workspace.open_project_item::<Editor>(active_pane, buffer, false, false, cx)
+                    })
+                    .log_err()?;
 
-            suggestion_groups.push((excerpt_id, group));
-        } else {
-            // If there are multiple buffers or suggestion groups, create a multibuffer
-            let multibuffer = cx.new_model(|cx| {
-                let replica_id = self.project.read(cx).replica_id();
-                let mut multibuffer =
-                    MultiBuffer::new(replica_id, Capability::ReadWrite).with_title(title);
-                for (buffer, groups) in edit_suggestions {
-                    let excerpt_ids = multibuffer.push_excerpts(
-                        buffer,
-                        groups.iter().map(|suggestion_group| ExcerptRange {
-                            context: suggestion_group.context_range.clone(),
-                            primary: None,
-                        }),
+                let (&excerpt_id, _, _) = editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap();
+
+                // Scroll the editor to the suggested assist
+                editor.update(cx, |editor, cx| {
+                    let multibuffer = editor.buffer().read(cx).snapshot(cx);
+                    let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
+                    let anchor = if group.context_range.start.to_offset(buffer) == 0 {
+                        Anchor::min()
+                    } else {
+                        multibuffer
+                            .anchor_in_excerpt(excerpt_id, group.context_range.start)
+                            .unwrap()
+                    };
+
+                    editor.set_scroll_anchor(
+                        ScrollAnchor {
+                            offset: gpui::Point::default(),
+                            anchor,
+                        },
                         cx,
                     );
-                    suggestion_groups.extend(excerpt_ids.into_iter().zip(groups));
-                }
-                multibuffer
-            });
+                });
 
-            editor = cx.new_view(|cx| {
-                Editor::for_multibuffer(multibuffer, Some(self.project.clone()), true, cx)
-            });
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, cx)
-                })
-                .log_err()?;
+                suggestion_groups.push((excerpt_id, group));
+            } else {
+                // If there are multiple buffers or suggestion groups, create a multibuffer
+                let multibuffer = cx.new_model(|cx| {
+                    let replica_id = self.project.read(cx).replica_id();
+                    let mut multibuffer =
+                        MultiBuffer::new(replica_id, Capability::ReadWrite).with_title(title);
+                    for (buffer, groups) in suggestions {
+                        let excerpt_ids = multibuffer.push_excerpts(
+                            buffer,
+                            groups.iter().map(|suggestion_group| ExcerptRange {
+                                context: suggestion_group.context_range.clone(),
+                                primary: None,
+                            }),
+                            cx,
+                        );
+                        suggestion_groups.extend(excerpt_ids.into_iter().zip(groups));
+                    }
+                    multibuffer
+                });
+
+                editor = cx.new_view(|cx| {
+                    Editor::for_multibuffer(multibuffer, Some(self.project.clone()), true, cx)
+                });
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, cx)
+                    })
+                    .log_err()?;
+            }
+
+            let mut assist_ids = Vec::new();
+            for (excerpt_id, suggestion_group) in suggestion_groups {
+                for suggestion in suggestion_group.suggestions {
+                    assist_ids.extend(suggestion.show(
+                        &editor,
+                        excerpt_id,
+                        &self.workspace,
+                        &assistant_panel,
+                        cx,
+                    ));
+                }
+            }
+
+            if let Some(range) = self.active_workflow_step_range.clone() {
+                self.workflow_assists.insert(
+                    range,
+                    WorkflowAssist {
+                        assist_ids: assist_ids.clone(),
+                        editor: editor.downgrade(),
+                        editor_was_open,
+                    },
+                );
+            }
+
+            Some((editor, assist_ids, editor_was_open))
+        } {
+            self.workflow_assists.insert(
+                step_range.clone(),
+                WorkflowAssist {
+                    assist_ids,
+                    editor_was_open,
+                    editor: editor.downgrade(),
+                },
+            );
         }
 
-        let mut assist_ids = Vec::new();
-        for (excerpt_id, suggestion_group) in suggestion_groups {
-            for suggestion in suggestion_group.suggestions {
-                assist_ids.extend(suggestion.show(
-                    &editor,
-                    excerpt_id,
-                    &self.workspace,
-                    &assistant_panel,
-                    cx,
-                ));
+        self.active_workflow_step_range = Some(step_range);
+
+        Some(())
+    }
+
+    fn active_workflow_step<'a>(&'a self, cx: &'a AppContext) -> Option<&'a crate::WorkflowStep> {
+        self.active_workflow_step_range
+            .as_ref()
+            .and_then(|step_range| {
+                self.context
+                    .read(cx)
+                    .workflow_step_for_range(step_range.clone())
+            })
+    }
+
+    fn workflow_step<'a>(
+        &'a mut self,
+        step_range: &Range<text::Anchor>,
+        cx: &'a mut ViewContext<ContextEditor>,
+    ) -> Option<&'a crate::WorkflowStep> {
+        self.context
+            .read(cx)
+            .workflow_step_for_range(step_range.clone())
+    }
+
+    fn scroll_to_existing_workflow_assist(
+        &self,
+        step_range: &Range<language::Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let step_assists = match self.workflow_assists.get(step_range) {
+            Some(assists) => assists,
+            None => return false,
+        };
+        let editor = match step_assists.editor.upgrade() {
+            Some(editor) => editor,
+            None => return false,
+        };
+        for assist_id in &step_assists.assist_ids {
+            match InlineAssistant::global(cx).status_for_assist(*assist_id, cx) {
+                Some(CodegenStatus::Idle) | None => {}
+                _ => {
+                    self.workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.activate_item(&editor, false, false, cx);
+                        })
+                        .ok();
+                    InlineAssistant::update_global(cx, |assistant, cx| {
+                        assistant.scroll_to_assist(*assist_id, cx)
+                    });
+                    return true;
+                }
             }
         }
-        Some((editor, assist_ids))
+        false
     }
 
     fn handle_editor_search_event(
@@ -2540,12 +2582,12 @@ impl ContextEditor {
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
-        let button_text = match self.active_workflow_step.as_ref() {
+        let button_text = match self.active_workflow_step(cx) {
             Some(step) => {
-                if step.suggestions.is_none() {
-                    "Computing Changes..."
-                } else {
+                if step.status.is_resolved() {
                     "Apply Changes"
+                } else {
+                    "Computing Changes..."
                 }
             }
             None => "Send",
