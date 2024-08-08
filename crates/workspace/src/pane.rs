@@ -665,6 +665,12 @@ impl Pane {
         self.preview_item_id
     }
 
+    pub fn preview_item(&self) -> Option<Box<dyn ItemHandle>> {
+        self.preview_item_id
+            .and_then(|id| self.items.iter().find(|item| item.item_id() == id))
+            .cloned()
+    }
+
     fn preview_item_idx(&self) -> Option<usize> {
         if let Some(preview_item_id) = self.preview_item_id {
             self.items
@@ -688,9 +694,9 @@ impl Pane {
     }
 
     pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &AppContext) {
-        if let Some(preview_item_id) = self.preview_item_id {
-            if preview_item_id == item_id {
-                self.set_preview_item_id(None, cx)
+        if let Some(preview_item) = self.preview_item() {
+            if preview_item.item_id() == item_id && !preview_item.preserve_preview(cx) {
+                self.set_preview_item_id(None, cx);
             }
         }
     }

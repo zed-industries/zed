@@ -3785,6 +3785,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
                 disposition: BlockDisposition::Below,
                 height: 1,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             }],
             Some(Autoscroll::fit()),
             cx,

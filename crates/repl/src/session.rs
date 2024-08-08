@@ -87,6 +87,7 @@ impl EditorBlock {
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
                 disposition: BlockDisposition::Below,
+                priority: 0,
             };
 
             let block_id = editor.insert_blocks([block], None, cx)[0];

@@ -18,7 +18,7 @@ use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Indicator};
+use ui::{prelude::*, Icon, IconName};
 use util::ResultExt;
 
 const PROVIDER_ID: &str = "anthropic";
@@ -535,9 +535,9 @@ impl Render for ConfigurationView {
                 .justify_between()
                 .child(
                     h_flex()
-                        .gap_2()
-                        .child(Indicator::dot().color(Color::Success))
-                        .child(Label::new("API key configured").size(LabelSize::Small)),
+                        .gap_1()
+                        .child(Icon::new(IconName::Check).color(Color::Success))
+                        .child(Label::new("API key configured.")),
                 )
                 .child(
                     Button::new("reset-key", "Reset key")

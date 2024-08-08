@@ -1,5 +1,4 @@
 use crate::{settings_store::SettingsStore, Settings};
-use anyhow::Result;
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{AppContext, BackgroundExecutor, ReadGlobal, UpdateGlobal};
@@ -67,7 +66,7 @@ pub fn watch_config_file(
 pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,
-    settings_changed: impl Fn(Result<()>, &mut AppContext) + 'static,
+    settings_changed: impl Fn(Option<anyhow::Error>, &mut AppContext) + 'static,
 ) {
     let user_settings_content = cx
         .background_executor()
@@ -85,7 +84,7 @@ pub fn handle_settings_file_changes(
                 if let Err(err) = &result {
                     log::error!("Failed to load user settings: {err}");
                 }
-                settings_changed(result, cx);
+                settings_changed(result.err(), cx);
                 cx.refresh();
             });
             if result.is_err() {

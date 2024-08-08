@@ -405,7 +405,7 @@ dependencies = [
  "multi_buffer",
  "ollama",
  "open_ai",
- "ordered-float 2.10.0",
+ "ordered-float 2.10.1",
  "parking_lot",
  "paths",
  "picker",
@@ -3558,7 +3558,7 @@ dependencies = [
  "lsp",
  "markdown",
  "multi_buffer",
- "ordered-float 2.10.0",
+ "ordered-float 2.10.1",
  "parking_lot",
  "project",
  "rand 0.8.5",
@@ -5321,9 +5321,9 @@ checksum = "9a3a5bfb195931eeb336b2a7b4d761daec841b97f947d34394601737a7bba5e4"
 
 [[package]]
 name = "hyper"
-version = "0.14.27"
+version = "0.14.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffb1cfd654a8219eaef89881fdb3bb3b1cdc5fa75ded05d6933b2b382e395468"
+checksum = "a152ddd61dfaec7273fe8419ab357f33aee0d914c5f4efbf0d96fa749eea5ec9"
 dependencies = [
  "bytes 1.5.0",
  "futures-channel",
@@ -5336,7 +5336,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "socket2 0.4.9",
+ "socket2 0.5.7",
  "tokio",
  "tower-service",
  "tracing",
@@ -7322,9 +7322,9 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "ordered-float"
-version = "2.10.0"
+version = "2.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7940cf2ca942593318d07fcf2596cdca60a85c9e7fab408a5e21a4f9dcd40d87"
+checksum = "68f19d67e5a2795c94e73e0bb1cc1a7edeb2e28efd39e2e1c9b7a40c1108b11c"
 dependencies = [
  "num-traits",
 ]
@@ -7382,7 +7382,7 @@ dependencies = [
  "indoc",
  "language",
  "menu",
- "ordered-float 2.10.0",
+ "ordered-float 2.10.1",
  "picker",
  "project",
  "rope",
@@ -7499,9 +7499,9 @@ checksum = "bb813b8af86854136c6922af0598d719255ecb2179515e6e7730d468f05c9cae"
 
 [[package]]
 name = "parking_lot"
-version = "0.12.1"
+version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3742b2c103b9f06bc9fff0a37ff4912935851bee6d36f3c02bcc755bcfec228f"
+checksum = "f1bf18183cf54e8d6059647fc3063646a1801cf30896933ec2311622cc4b9a27"
 dependencies = [
  "lock_api",
  "parking_lot_core",
@@ -8184,7 +8184,7 @@ dependencies = [
  "gpui",
  "language",
  "lsp",
- "ordered-float 2.10.0",
+ "ordered-float 2.10.1",
  "picker",
  "project",
  "release_channel",
@@ -8593,7 +8593,7 @@ dependencies = [
  "log",
  "markdown",
  "menu",
- "ordered-float 2.10.0",
+ "ordered-float 2.10.1",
  "picker",
  "project",
  "release_channel",

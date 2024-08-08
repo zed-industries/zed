@@ -1823,6 +1823,63 @@ fn test_autoindent_query_with_outdent_captures(cx: &mut AppContext) {
 }
 
 #[gpui::test]
+async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    // First we insert some newlines to request an auto-indent (asynchronously).
+    // Then we request that a preview tab be preserved for the new version, even though it's edited.
+    let buffer = cx.new_model(|cx| {
+        let text = "fn a() {}";
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
+
+        // This causes autoindent to be async.
+        buffer.set_sync_parse_timeout(Duration::ZERO);
+
+        buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
+        buffer.refresh_preview();
+
+        // Synchronously, we haven't auto-indented and we're still preserving the preview.
+        assert_eq!(buffer.text(), "fn a() {\n\n}");
+        assert!(buffer.preserve_preview());
+        buffer
+    });
+
+    // Now let the autoindent finish
+    cx.executor().run_until_parked();
+
+    // The auto-indent applied, but didn't dismiss our preview
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "fn a() {\n    \n}");
+        assert!(buffer.preserve_preview());
+
+        // Edit inserting another line. It will autoindent async.
+        // Then refresh the preview version.
+        buffer.edit(
+            [(Point::new(1, 4)..Point::new(1, 4), "\n")],
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        buffer.refresh_preview();
+        assert_eq!(buffer.text(), "fn a() {\n    \n\n}");
+        assert!(buffer.preserve_preview());
+
+        // Then perform another edit, this time without refreshing the preview version.
+        buffer.edit([(Point::new(1, 4)..Point::new(1, 4), "x")], None, cx);
+        // This causes the preview to not be preserved.
+        assert!(!buffer.preserve_preview());
+    });
+
+    // Let the async autoindent from the first edit finish.
+    cx.executor().run_until_parked();
+
+    // The autoindent applies, but it shouldn't restore the preview status because we had an edit in the meantime.
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "fn a() {\n    x\n    \n}");
+        assert!(!buffer.preserve_preview());
+    });
+}
+
+#[gpui::test]
 fn test_insert_empty_line(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
