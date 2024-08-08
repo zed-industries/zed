@@ -244,13 +244,15 @@ You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI 
 
 You can use Claude 3.5 Sonnet with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
-You need can obtain an API key [here](https://console.anthropic.com/settings/keys).
+You can obtain an API key [here](https://console.anthropic.com/settings/keys).
 
 Even if you pay for Claude Pro, you will still have to [pay for additional credits](https://console.anthropic.com/settings/plans) to use it via the API.
 
 ### Google Gemini
 
-TBD: Add Google Gemini setup instructions
+You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the assistant panel.
+
+You can obtain an API key [here](https://aistudio.google.com/app/apikey).
 
 ### GitHub Copilot
 
