@@ -7,6 +7,7 @@ const SKIPPABLE_NOTE_REGEX = /^\s*-?\s*n\/?a\s*/ims;
 const PULL_REQUEST_WEB_URL = "https://github.com/zed-industries/zed/pull";
 const PULL_REQUEST_API_URL =
   "https://api.github.com/repos/zed-industries/zed/pulls";
+const DIVIDER = "-".repeat(80);
 
 main();
 
@@ -48,6 +49,7 @@ async function main() {
 
   // Fetch the pull requests from the GitHub API.
   console.log("Merged Pull requests:");
+  console.log(DIVIDER);
   for (const pullRequestNumber of newPullRequestNumbers) {
     const pullRequestApiURL = `${PULL_REQUEST_API_URL}/${pullRequestNumber}`;
 
@@ -64,7 +66,8 @@ async function main() {
     let contributor =
       pullRequest.user?.login ?? "Unable to identify contributor";
     const captures = releaseNotesHeader.exec(releaseNotes);
-    const notes = captures ? captures[1] : "MISSING";
+    let notes = captures ? captures[1] : "MISSING";
+    notes = notes.trim();
 
     if (SKIPPABLE_NOTE_REGEX.exec(notes) != null) {
       continue;
@@ -72,18 +75,14 @@ async function main() {
 
     let credit = getCreditString(pullRequestNumber, contributor);
 
-    console.log("*", pullRequest.title);
-    console.log(`  Credit:     (${credit})`);
+    console.log(`PR Title: ${pullRequest.title}`);
+    console.log(`Credit: (${credit})`);
 
-    releaseNotes = notes.trim().split("\n");
-
-    console.log("  Release Notes:");
-
-    for (const line of releaseNotes) {
-      console.log(`    ${line}`);
-    }
-
+    console.log("Release Notes:");
     console.log();
+    console.log(notes);
+
+    console.log(DIVIDER);
   }
 }
 
