@@ -53,7 +53,7 @@ actions!(
         DeployPromptLibrary,
         ConfirmCommand,
         ToggleModelSelector,
-        DebugEditSteps
+        DebugWorkflowSteps
     ]
 );
 

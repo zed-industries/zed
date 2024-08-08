@@ -10,7 +10,7 @@ use crate::{
     },
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
-    DebugEditSteps, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
+    DebugWorkflowSteps, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
     InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
     PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, ResolvedWorkflowStep,
     SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
@@ -1334,49 +1334,54 @@ struct WorkflowStep {
     range: Range<language::Anchor>,
     header_block_id: CustomBlockId,
     footer_block_id: CustomBlockId,
-    resolved_step: Option<ResolvedWorkflowStep>,
+    resolved_step: Option<Result<ResolvedWorkflowStep, Arc<anyhow::Error>>>,
     assist: Option<WorkflowAssist>,
 }
 
 impl WorkflowStep {
     fn status(&self, cx: &AppContext) -> WorkflowStepStatus {
-        if self.resolved_step.is_none() {
-            WorkflowStepStatus::Resolving
-        } else if let Some(assist) = self.assist.as_ref() {
-            let assistant = InlineAssistant::global(cx);
-            if assist
-                .assist_ids
-                .iter()
-                .any(|assist_id| assistant.assist_status(*assist_id, cx).is_pending())
-            {
-                WorkflowStepStatus::Pending
-            } else if assist
-                .assist_ids
-                .iter()
-                .all(|assist_id| assistant.assist_status(*assist_id, cx).is_confirmed())
-            {
-                WorkflowStepStatus::Confirmed
-            } else if assist
-                .assist_ids
-                .iter()
-                .all(|assist_id| assistant.assist_status(*assist_id, cx).is_done())
-            {
-                WorkflowStepStatus::Done
-            } else {
-                WorkflowStepStatus::Idle
+        match self.resolved_step.as_ref() {
+            Some(Ok(_)) => {
+                if let Some(assist) = self.assist.as_ref() {
+                    let assistant = InlineAssistant::global(cx);
+                    if assist
+                        .assist_ids
+                        .iter()
+                        .any(|assist_id| assistant.assist_status(*assist_id, cx).is_pending())
+                    {
+                        WorkflowStepStatus::Pending
+                    } else if assist
+                        .assist_ids
+                        .iter()
+                        .all(|assist_id| assistant.assist_status(*assist_id, cx).is_confirmed())
+                    {
+                        WorkflowStepStatus::Confirmed
+                    } else if assist
+                        .assist_ids
+                        .iter()
+                        .all(|assist_id| assistant.assist_status(*assist_id, cx).is_done())
+                    {
+                        WorkflowStepStatus::Done
+                    } else {
+                        WorkflowStepStatus::Idle
+                    }
+                } else {
+                    WorkflowStepStatus::Idle
+                }
             }
-        } else {
-            WorkflowStepStatus::Idle
+            Some(Err(error)) => WorkflowStepStatus::Error(error.clone()),
+            None => WorkflowStepStatus::Resolving,
         }
     }
 }
 
 enum WorkflowStepStatus {
-    Resolving, // => Show "Resolving Step..." (or some UI that makes this status clear)
-    Idle, // => Show a "Transform" icon button (1 sparkle) like the one we have for inline assistant
-    Pending, // => Show a "Stop" icon button like the one we have for inline assistant
-    Done, // => Show a "Cancel" button and a "Confirm" icon button. The former undoes the assists, the latter confirms them all
-    Confirmed, // => Change the color of the borders to be muted, and maybe have a label above the step that says "Applied".
+    Resolving,
+    Error(Arc<anyhow::Error>),
+    Idle,
+    Pending,
+    Done,
+    Confirmed,
 }
 
 impl WorkflowStepStatus {
@@ -1401,6 +1406,15 @@ impl WorkflowStepStatus {
                 ))
                 .tooltip(|cx| Tooltip::text("Resolving steps...", cx))
                 .into_any_element(),
+
+            WorkflowStepStatus::Error(error) => {
+                let error = error.clone();
+                div()
+                    .id("step-resolution-failure")
+                    .child(Label::new("Step Resolution Failed").color(Color::Error))
+                    .tooltip(move |cx| Tooltip::text(error.to_string(), cx))
+                    .into_any()
+            }
 
             WorkflowStepStatus::Idle => Button::new(("transform-workflow-step", id), "Preview")
                 .icon(IconName::Sparkle)
@@ -1652,17 +1666,16 @@ impl ContextEditor {
 
         let range = step.range.clone();
         match step.status(cx) {
-            WorkflowStepStatus::Resolving => true,
+            WorkflowStepStatus::Resolving | WorkflowStepStatus::Pending => true,
             WorkflowStepStatus::Idle => {
                 self.apply_workflow_step(&range, cx);
                 true
             }
-            WorkflowStepStatus::Pending => true,
             WorkflowStepStatus::Done => {
                 self.confirm_workflow_step(&range, cx);
                 true
             }
-            WorkflowStepStatus::Confirmed => false,
+            WorkflowStepStatus::Confirmed | WorkflowStepStatus::Error(_) => false,
         }
     }
 
@@ -1761,7 +1774,7 @@ impl ContextEditor {
         }
     }
 
-    fn debug_workflow_steps(&mut self, _: &DebugEditSteps, cx: &mut ViewContext<Self>) {
+    fn debug_workflow_steps(&mut self, _: &DebugWorkflowSteps, cx: &mut ViewContext<Self>) {
         let mut output = String::new();
         for (i, step) in self.context.read(cx).workflow_steps().iter().enumerate() {
             output.push_str(&format!("Step {}:\n", i + 1));
@@ -1785,6 +1798,9 @@ impl ContextEditor {
                 }
                 crate::WorkflowStepStatus::Pending(_) => {
                     output.push_str("Resolution: Pending\n");
+                }
+                crate::WorkflowStepStatus::Error(error) => {
+                    writeln!(output, "Resolution: Error\n{:?}", error).unwrap();
                 }
             }
             output.push('\n');
@@ -2238,10 +2254,10 @@ impl ContextEditor {
 
             if let Some(existing_step) = self.workflow_steps.get_mut(range) {
                 if existing_step.resolved_step.is_none() {
-                    existing_step.resolved_step = step.status.as_resolved().cloned();
+                    existing_step.resolved_step = step.status.into_resolved();
                 }
             } else {
-                let resolved_step = step.status.as_resolved().cloned();
+                let resolved_step = step.status.into_resolved();
                 let start = buffer_snapshot
                     .anchor_in_excerpt(excerpt_id, range.start)
                     .unwrap();
@@ -2420,7 +2436,7 @@ impl ContextEditor {
             WorkflowStepStatus::Idle => {
                 if let Some(assist) = step.assist.as_ref() {
                     scroll_to_assist_id = assist.assist_ids.first().copied();
-                } else if let Some(resolved) = step.resolved_step.as_ref() {
+                } else if let Some(Ok(resolved)) = step.resolved_step.as_ref() {
                     step.assist = Self::open_assists_for_step(
                         resolved,
                         &self.project,
@@ -2994,7 +3010,7 @@ impl ContextEditor {
                 WorkflowStepStatus::Idle => "Transform",
                 WorkflowStepStatus::Pending => "Transforming...",
                 WorkflowStepStatus::Done => "Confirm Transformation",
-                WorkflowStepStatus::Confirmed => "Send",
+                WorkflowStepStatus::Confirmed | WorkflowStepStatus::Error(_) => "Send",
             },
             None => "Send",
         };
