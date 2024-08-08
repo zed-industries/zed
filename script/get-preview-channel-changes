@@ -1,7 +1,7 @@
 #!/usr/bin/env node --redirect-warnings=/dev/null
 
 const { execFileSync } = require("child_process");
-let { GITHUB_ACCESS_TOKEN } = process.env;
+const { GITHUB_ACCESS_TOKEN } = process.env;
 const GITHUB_URL = "https://github.com";
 const SKIPPABLE_NOTE_REGEX = /^\s*-?\s*n\/?a\s*/ims;
 const PULL_REQUEST_WEB_URL = "https://github.com/zed-industries/zed/pull";
@@ -13,10 +13,10 @@ const DIVIDER = "-".repeat(80);
 const STAFF_MEMBERS = new Set([
   "as-cii",
   "bennetbo",
-  "ConradIrwin",
-  "danilobleal",
+  "conradirwin",
+  "danilo-leal",
   "iamnbutler",
-  "JosephTLyons",
+  "josephtlyons",
   "jvmncs",
   "maxbrunsfeld",
   "maxdeviant",
@@ -26,7 +26,7 @@ const STAFF_MEMBERS = new Set([
   "osiewicz",
   "rgbkrk",
   "rtfeldman",
-  "SomeoneToIgnore",
+  "someonetoignore",
   "thorstenball",
 ]);
 
@@ -83,19 +83,19 @@ async function main() {
     const pullRequest = await response.json();
     const releaseNotesHeader = /^\s*Release Notes:(.+)/ims;
 
-    let releaseNotes = pullRequest.body || "";
+    const releaseNotes = pullRequest.body || "";
     let contributor =
       pullRequest.user?.login ?? "Unable to identify contributor";
     const captures = releaseNotesHeader.exec(releaseNotes);
     let notes = captures ? captures[1] : "MISSING";
     notes = notes.trim();
+    const isStaff = isStaffMember(contributor);
 
     if (SKIPPABLE_NOTE_REGEX.exec(notes) != null) {
       continue;
     }
 
-    let credit = getCreditString(pullRequestNumber, contributor);
-    const isStaff = STAFF_MEMBERS.has(contributor);
+    const credit = getCreditString(pullRequestNumber, contributor, isStaff);
     contributor = isStaff ? `${contributor} (staff)` : contributor;
 
     console.log(`PR Title: ${pullRequest.title}`);
@@ -110,15 +110,15 @@ async function main() {
   }
 }
 
-function getCreditString(pullRequestNumber, contributor) {
+function getCreditString(pullRequestNumber, contributor, isStaff) {
   let credit = "";
 
   if (pullRequestNumber) {
-    let pullRequestMarkdownLink = `[#${pullRequestNumber}](${PULL_REQUEST_WEB_URL}/${pullRequestNumber})`;
+    const pullRequestMarkdownLink = `[#${pullRequestNumber}](${PULL_REQUEST_WEB_URL}/${pullRequestNumber})`;
     credit += pullRequestMarkdownLink;
   }
 
-  if (contributor && !STAFF_MEMBERS.has(contributor)) {
+  if (contributor && isStaff) {
     const contributorMarkdownLink = `[${contributor}](${GITHUB_URL}/${contributor})`;
     credit += `; thanks ${contributorMarkdownLink}`;
   }
@@ -141,4 +141,9 @@ function getPullRequestNumbers(oldTag, newTag) {
     .filter((line) => line);
 
   return pullRequestNumbers;
+}
+
+function isStaffMember(githubHandle) {
+  githubHandle = githubHandle.toLowerCase();
+  return STAFF_MEMBERS.has(githubHandle);
 }
