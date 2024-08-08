@@ -940,12 +940,7 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
     ) {
         context_editor.update(cx, |context_editor, cx| {
-            let new_summary = context_editor
-                .context
-                .read(cx)
-                .summary()
-                .map(|s| s.text.clone())
-                .unwrap_or_else(|| context_editor.title(cx).to_string());
+            let new_summary = context_editor.title(cx).to_string();
             self.model_summary_editor.update(cx, |summary_editor, cx| {
                 if summary_editor.text(cx) != new_summary {
                     summary_editor.set_text(new_summary, cx);
