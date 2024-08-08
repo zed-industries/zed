@@ -1,5 +1,6 @@
 use chrono::Duration;
 use rpc::LanguageModelProvider;
+use sea_orm::QuerySelect;
 use std::{iter, str::FromStr};
 use strum::IntoEnumIterator as _;
 
@@ -11,6 +12,12 @@ pub struct Usage {
     pub tokens_this_minute: usize,
     pub tokens_this_day: usize,
     pub tokens_this_month: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ActiveUserCount {
+    pub users_in_recent_minutes: usize,
+    pub users_in_recent_days: usize,
 }
 
 impl LlmDatabase {
@@ -155,6 +162,31 @@ impl LlmDatabase {
             .await?;
 
             Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_active_user_count(&self, now: DateTimeUtc) -> Result<ActiveUserCount> {
+        self.transaction(|tx| async move {
+            let minute_since = now - Duration::minutes(5);
+            let day_since = now - Duration::days(5);
+
+            let users_in_recent_minutes = usage::Entity::find()
+                .filter(usage::Column::Timestamp.gte(minute_since.naive_utc()))
+                .group_by(usage::Column::UserId)
+                .count(&*tx)
+                .await? as usize;
+
+            let users_in_recent_days = usage::Entity::find()
+                .filter(usage::Column::Timestamp.gte(day_since.naive_utc()))
+                .group_by(usage::Column::UserId)
+                .count(&*tx)
+                .await? as usize;
+
+            Ok(ActiveUserCount {
+                users_in_recent_minutes,
+                users_in_recent_days,
+            })
         })
         .await
     }
