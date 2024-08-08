@@ -5,6 +5,7 @@
 - [Getting Started](./getting-started.md)
   - [System Requirements](./system-requirements.md)
   - [Linux](./linux.md)
+  - [Windows](./windows.md)
   - [Telemetry](./telemetry.md)
   - [Additional Learning Materials](./additional-learning-materials.md)
 
@@ -87,6 +88,8 @@
   - [Linux](./development/linux.md)
   - [Windows](./development/windows.md)
   - [Local Collaboration](./development/local-collaboration.md)
+- [Developing Language Extensions](./development/languages.md)
+- [Developing Themes](./development/themes.md)
 - [Release Process](./development/releases.md)
 - [Debugging Crashes](./development/debugging-crashes.md)
 
