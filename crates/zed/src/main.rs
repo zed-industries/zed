@@ -19,7 +19,8 @@ use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
 use gpui::{
-    App, AppContext, AsyncAppContext, Context, Global, Task, UpdateGlobal as _, VisualContext,
+    Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, Task,
+    UpdateGlobal as _, VisualContext,
 };
 use image_viewer;
 use language::LanguageRegistry;
@@ -46,7 +47,10 @@ use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{maybe, parse_env_output, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
-use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
+use workspace::{
+    notifications::{simple_message_notification::MessageNotification, NotificationId},
+    AppState, WorkspaceSettings, WorkspaceStore,
+};
 use zed::{
     app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
     initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
@@ -425,7 +429,7 @@ fn main() {
         OpenListener::set_global(cx, open_listener.clone());
 
         settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, cx);
+        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
 
         client::init_settings(cx);
@@ -537,6 +541,31 @@ fn main() {
         })
         .detach();
     });
+}
+
+fn handle_settings_changed(result: Result<()>, cx: &mut AppContext) {
+    struct SettingsParseErrorNotification;
+    let id = NotificationId::unique::<SettingsParseErrorNotification>();
+
+    for workspace in workspace::local_workspace_windows(cx) {
+        workspace
+            .update(cx, |workspace, cx| match &result {
+                Ok(()) => workspace.dismiss_notification(&id, cx),
+                Err(error) => {
+                    workspace.show_notification(id.clone(), cx, |cx| {
+                        cx.new_view(|_| {
+                            MessageNotification::new(format!("Invalid settings file\n{error}"))
+                                .with_click_message("Open settings file")
+                                .on_click(|cx| {
+                                    cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
+                                    cx.emit(DismissEvent);
+                                })
+                        })
+                    });
+                }
+            })
+            .log_err();
+    }
 }
 
 fn handle_open_request(

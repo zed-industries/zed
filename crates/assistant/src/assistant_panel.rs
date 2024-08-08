@@ -10,11 +10,11 @@ use crate::{
     },
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
-    DebugEditSteps, DeployHistory, DeployPromptLibrary, EditSuggestionGroup, InlineAssist,
-    InlineAssistId, InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector,
-    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    ResolvedWorkflowStepEditSuggestions, SavedContextMetadata, Split, ToggleFocus,
-    ToggleModelSelector, WorkflowStepEditSuggestions,
+    DebugEditSteps, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
+    InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
+    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, ResolvedWorkflowStep,
+    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector, WorkflowStepStatus,
+    WorkflowSuggestionGroup,
 };
 use crate::{ContextStoreEvent, ShowConfiguration};
 use anyhow::{anyhow, Result};
@@ -1309,14 +1309,14 @@ struct ScrollPosition {
 struct WorkflowStep {
     header_block_id: CustomBlockId,
     footer_block_id: CustomBlockId,
-    suggestions: Option<ResolvedWorkflowStepEditSuggestions>,
+    suggestions: Option<ResolvedWorkflowStep>,
     assists: Option<WorkflowStepAssists>,
 }
 
 impl WorkflowStep {
-    fn status(&self, cx: &AppContext) -> WorkflowStepStatus {
+    fn status(&self, cx: &AppContext) -> StepStatus {
         if self.suggestions.is_none() {
-            WorkflowStepStatus::ResolvingSuggestions
+            StepStatus::ResolvingSuggestions
         } else if let Some(assists) = self.assists.as_ref() {
             let assistant = InlineAssistant::global(cx);
             if assists
@@ -1324,24 +1324,24 @@ impl WorkflowStep {
                 .iter()
                 .any(|assist_id| assistant.assist_status(*assist_id, cx).is_pending())
             {
-                WorkflowStepStatus::Pending
+                StepStatus::Pending
             } else if assists
                 .assist_ids
                 .iter()
                 .all(|assist_id| assistant.assist_status(*assist_id, cx).is_confirmed())
             {
-                WorkflowStepStatus::Confirmed
+                StepStatus::Confirmed
             } else if assists
                 .assist_ids
                 .iter()
                 .all(|assist_id| assistant.assist_status(*assist_id, cx).is_done())
             {
-                WorkflowStepStatus::Done
+                StepStatus::Done
             } else {
-                WorkflowStepStatus::Idle
+                StepStatus::Idle
             }
         } else {
-            WorkflowStepStatus::Idle
+            StepStatus::Idle
         }
     }
 }
@@ -1352,7 +1352,7 @@ struct WorkflowStepAssists {
     _observe_assist_status: Task<()>,
 }
 
-enum WorkflowStepStatus {
+enum StepStatus {
     ResolvingSuggestions, // => Show "Resolving Step..." (or some UI that makes this status clear)
     Idle, // => Show a "Transform" icon button (1 sparkle) like the one we have for inline assistant
     Pending, // => Show a "Stop" icon button like the one we have for inline assistant
@@ -1360,7 +1360,7 @@ enum WorkflowStepStatus {
     Confirmed, // => Change the color of the borders to be muted, and maybe have a label above the step that says "Applied".
 }
 
-impl WorkflowStepStatus {
+impl StepStatus {
     pub(crate) fn is_confirmed(&self) -> bool {
         matches!(self, Self::Confirmed)
     }
@@ -1372,7 +1372,7 @@ impl WorkflowStepStatus {
     ) -> AnyElement {
         let id = EntityId::from(cx.block_id);
         match self {
-            WorkflowStepStatus::ResolvingSuggestions => div()
+            StepStatus::ResolvingSuggestions => div()
                 .id(("resolving-suggestion-container", id))
                 .child(Icon::new(IconName::ArrowCircle).with_animation(
                     ("resolving-suggestion-label", id),
@@ -1382,7 +1382,7 @@ impl WorkflowStepStatus {
                 .tooltip(|cx| Tooltip::text("Resolving steps...", cx))
                 .into_any_element(),
 
-            WorkflowStepStatus::Idle => Button::new(("transform-workflow-step", id), "Preview")
+            StepStatus::Idle => Button::new(("transform-workflow-step", id), "Preview")
                 .icon(IconName::Sparkle)
                 .icon_position(IconPosition::Start)
                 .icon_size(IconSize::Small)
@@ -1401,7 +1401,7 @@ impl WorkflowStepStatus {
                     }
                 })
                 .into_any_element(),
-            WorkflowStepStatus::Pending => h_flex()
+            StepStatus::Pending => h_flex()
                 .gap_1()
                 .child(div().child(Label::new("Applying...")).cursor_not_allowed())
                 .child(
@@ -1420,7 +1420,7 @@ impl WorkflowStepStatus {
                 )
                 .into_any_element(),
 
-            WorkflowStepStatus::Done => h_flex()
+            StepStatus::Done => h_flex()
                 .gap_1()
                 .child(
                     IconButton::new(("reject-workflow-step", id), IconName::Close)
@@ -1457,7 +1457,7 @@ impl WorkflowStepStatus {
                         }),
                 )
                 .into_any_element(),
-            WorkflowStepStatus::Confirmed => h_flex()
+            StepStatus::Confirmed => h_flex()
                 .child(
                     Button::new(("revert-workflow-step", id), "Undo")
                         .style(ButtonStyle::Filled)
@@ -1755,16 +1755,13 @@ impl ContextEditor {
                     .text_for_range(step.tagged_range.clone())
                     .collect::<String>()
             ));
-            match &step.edit_suggestions {
-                WorkflowStepEditSuggestions::Resolved(ResolvedWorkflowStepEditSuggestions {
-                    title,
-                    edit_suggestions,
-                }) => {
+            match &step.status {
+                WorkflowStepStatus::Resolved(ResolvedWorkflowStep { title, suggestions }) => {
                     output.push_str("Resolution:\n");
                     output.push_str(&format!("  {:?}\n", title));
-                    output.push_str(&format!("  {:?}\n", edit_suggestions));
+                    output.push_str(&format!("  {:?}\n", suggestions));
                 }
-                WorkflowStepEditSuggestions::Pending(_) => {
+                WorkflowStepStatus::Pending(_) => {
                     output.push_str("Resolution: Pending\n");
                 }
             }
@@ -2214,10 +2211,10 @@ impl ContextEditor {
 
             if let Some(existing_step) = self.workflow_steps.get_mut(range) {
                 if existing_step.suggestions.is_none() {
-                    existing_step.suggestions = step.edit_suggestions.as_resolved().cloned();
+                    existing_step.suggestions = step.status.as_resolved().cloned();
                 }
             } else {
-                let suggestions = step.edit_suggestions.as_resolved().cloned();
+                let suggestions = step.status.as_resolved().cloned();
                 let start = buffer_snapshot
                     .anchor_in_excerpt(excerpt_id, range.start)
                     .unwrap();
@@ -2356,7 +2353,7 @@ impl ContextEditor {
             return;
         };
 
-        if matches!(step.status(cx), WorkflowStepStatus::Idle) {
+        if matches!(step.status(cx), StepStatus::Idle) {
             let assist_ids = step.assists.take().unwrap().assist_ids;
             InlineAssistant::update_global(cx, |assistant, cx| {
                 for assist_id in assist_ids {
@@ -2391,15 +2388,12 @@ impl ContextEditor {
 
         let mut scroll_to_assist_id = None;
         match step.status(cx) {
-            WorkflowStepStatus::Idle => {
-                if let Some(ResolvedWorkflowStepEditSuggestions {
-                    title,
-                    edit_suggestions,
-                }) = step.suggestions.as_ref()
+            StepStatus::Idle => {
+                if let Some(ResolvedWorkflowStep { title, suggestions }) = step.suggestions.as_ref()
                 {
                     if let Some((editor, assist_ids)) = Self::suggest_edits(
                         title.clone(),
-                        edit_suggestions.clone(),
+                        suggestions.clone(),
                         &self.project,
                         &self.assistant_panel,
                         &self.workspace,
@@ -2437,7 +2431,7 @@ impl ContextEditor {
                     }
                 }
             }
-            WorkflowStepStatus::Pending => {
+            StepStatus::Pending => {
                 if let Some(assists) = step.assists.as_ref() {
                     let assistant = InlineAssistant::global(cx);
                     scroll_to_assist_id = assists
@@ -2447,7 +2441,7 @@ impl ContextEditor {
                         .find(|assist_id| assistant.assist_status(*assist_id, cx).is_pending());
                 }
             }
-            WorkflowStepStatus::Done => {
+            StepStatus::Done => {
                 if let Some(assists) = step.assists.as_ref() {
                     scroll_to_assist_id = assists.assist_ids.first().copied();
                 }
@@ -2480,22 +2474,22 @@ impl ContextEditor {
 
     fn suggest_edits(
         title: String,
-        edit_suggestions: HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>,
+        suggestions: HashMap<Model<Buffer>, Vec<WorkflowSuggestionGroup>>,
         project: &Model<Project>,
         assistant_panel: &WeakView<AssistantPanel>,
         workspace: &WeakView<Workspace>,
         cx: &mut WindowContext,
     ) -> Option<(View<Editor>, Vec<InlineAssistId>)> {
         let assistant_panel = assistant_panel.upgrade()?;
-        if edit_suggestions.is_empty() {
+        if suggestions.is_empty() {
             return None;
         }
 
         let editor;
         let mut suggestion_groups = Vec::new();
-        if edit_suggestions.len() == 1 && edit_suggestions.values().next().unwrap().len() == 1 {
+        if suggestions.len() == 1 && suggestions.values().next().unwrap().len() == 1 {
             // If there's only one buffer and one suggestion group, open it directly
-            let (buffer, groups) = edit_suggestions.into_iter().next().unwrap();
+            let (buffer, groups) = suggestions.into_iter().next().unwrap();
             let group = groups.into_iter().next().unwrap();
             editor = workspace
                 .update(cx, |workspace, cx| {
@@ -2540,7 +2534,7 @@ impl ContextEditor {
                 let replica_id = project.read(cx).replica_id();
                 let mut multibuffer =
                     MultiBuffer::new(replica_id, Capability::ReadWrite).with_title(title);
-                for (buffer, groups) in edit_suggestions {
+                for (buffer, groups) in suggestions {
                     let excerpt_ids = multibuffer.push_excerpts(
                         buffer,
                         groups.iter().map(|suggestion_group| ExcerptRange {

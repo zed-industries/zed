@@ -231,20 +231,20 @@ jobs:
           mv target/x86_64-apple-darwin/release/Zed.dmg target/x86_64-apple-darwin/release/Zed-x86_64.dmg
 
       - name: Upload app bundle (universal) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@0b2256b8c012f0828dc542b3febcab082c67f72b # v4
+        uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}.dmg
           path: target/release/Zed.dmg
       - name: Upload app bundle (aarch64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@0b2256b8c012f0828dc542b3febcab082c67f72b # v4
+        uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
           path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
 
       - name: Upload app bundle (x86_64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@0b2256b8c012f0828dc542b3febcab082c67f72b # v4
+        uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
@@ -319,7 +319,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@0b2256b8c012f0828dc542b3febcab082c67f72b # v4
+        uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
@@ -403,7 +403,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@0b2256b8c012f0828dc542b3febcab082c67f72b # v4
+        uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz

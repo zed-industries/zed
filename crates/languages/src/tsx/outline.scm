@@ -74,3 +74,5 @@
         )
     )
 ) @item
+
+(comment) @annotation

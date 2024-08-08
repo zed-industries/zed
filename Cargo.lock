@@ -2504,6 +2504,7 @@ dependencies = [
  "settings",
  "sha2",
  "sqlx",
+ "strum",
  "subtle",
  "supermaven_api",
  "telemetry_events",
@@ -13775,7 +13776,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.148.0"
+version = "0.149.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -13993,7 +13994,7 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -14014,7 +14015,7 @@ dependencies = [
 
 [[package]]
 name = "zed_php"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]

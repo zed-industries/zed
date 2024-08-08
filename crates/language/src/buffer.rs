@@ -97,6 +97,7 @@ pub struct Buffer {
     /// The version vector when this buffer was last loaded from
     /// or saved to disk.
     saved_version: clock::Global,
+    preview_version: clock::Global,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
@@ -703,6 +704,7 @@ impl Buffer {
         Self {
             saved_mtime,
             saved_version: buffer.version(),
+            preview_version: buffer.version(),
             reload_task: None,
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
@@ -1351,7 +1353,11 @@ impl Buffer {
             })
             .collect();
 
+        let preserve_preview = self.preserve_preview();
         self.edit(edits, None, cx);
+        if preserve_preview {
+            self.refresh_preview();
+        }
     }
 
     /// Create a minimal edit that will cause the given row to be indented
@@ -2194,6 +2200,18 @@ impl Buffer {
     /// Usually this is driven by LSP server which returns a list of trigger characters for completions.
     pub fn completion_triggers(&self) -> &[String] {
         &self.completion_triggers
+    }
+
+    /// Call this directly after performing edits to prevent the preview tab
+    /// from being dismissed by those edits. It causes `should_dismiss_preview`
+    /// to return false until there are additional edits.
+    pub fn refresh_preview(&mut self) {
+        self.preview_version = self.version.clone();
+    }
+
+    /// Whether we should preserve the preview status of a tab containing this buffer.
+    pub fn preserve_preview(&self) -> bool {
+        !self.has_edits_since(&self.preview_version)
     }
 }
 

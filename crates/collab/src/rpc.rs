@@ -5164,6 +5164,7 @@ async fn get_llm_api_token(
 
     let token = LlmTokenClaims::create(
         session.user_id(),
+        session.is_staff(),
         session.current_plan().await?,
         &session.app_state.config,
     )?;
