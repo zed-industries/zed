@@ -12,20 +12,20 @@
 
 const settings = [
   {
-    status: null,
+    status: "Preview",
     key: "ui",
     name: "font_weight",
-    type: ["string" | "number"],
+    type: "string",
     default_value: 400,
     values: [100, 200, 300, 400, 500, 600, 700, 800, 900],
     short_description: "The weight of the ui font",
     description: "The weight of the ui font",
   },
   {
-    status: null,
+    status: "Nightly",
     key: "ui",
     name: "font_weight",
-    type: ["string" | "number"],
+    type: "number",
     default_value: 400,
     values: [100, 200, 300, 400, 500, 600, 700, 800, 900],
     short_description: "The weight of the ui font",
@@ -71,9 +71,6 @@ function createSettingsTable(settings) {
     const nameContainer = document.createElement("div");
     nameContainer.className = "setting-name";
     let nameText = `${setting.key}.${setting.name}`;
-    if (setting.status) {
-      nameText += ` - ${setting.status}`;
-    }
     nameContainer.textContent = nameText;
 
     const typeContainer = document.createElement("div");
@@ -84,6 +81,13 @@ function createSettingsTable(settings) {
 
     header.appendChild(nameContainer);
     header.appendChild(typeContainer);
+
+    if (setting.status) {
+      const statusContainer = document.createElement("div");
+      statusContainer.className = "setting-status";
+      statusContainer.innerHTML = render_tag(setting.status, "info");
+      header.appendChild(statusContainer);
+    }
 
     // Details table
     const detailsTable = document.createElement("table");

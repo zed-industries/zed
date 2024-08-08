@@ -17,18 +17,30 @@
   grid-column: span 2 / span 2;
   display: flex;
   flex-direction: column;
+  gap: 0.8rem;
   padding: 0.5em 1em 0.5rem 0;
 }
 
 .setting-name {
+  font-family: monospace;
   font-size: 1.4rem;
   font-weight: bold;
   color: var(--sidebar-fg);
 }
 
 .setting-type {
+  font-family: monospace;
   font-size: 1.4rem;
   color: var(--fg);
+}
+
+.setting-status {
+  width: fit-content;
+  padding: 0.2em 0.5em;
+  background-color: var(--sidebar-active-bg);
+  font-size: 1.2rem;
+  font-family: monospace;
+  color: #000;
 }
 
 .setting-details {
