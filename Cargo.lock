@@ -405,7 +405,7 @@ dependencies = [
  "multi_buffer",
  "ollama",
  "open_ai",
- "ordered-float 2.10.0",
+ "ordered-float 2.10.1",
  "parking_lot",
  "paths",
  "picker",
@@ -3558,7 +3558,7 @@ dependencies = [
  "lsp",
  "markdown",
  "multi_buffer",
- "ordered-float 2.10.0",
+ "ordered-float 2.10.1",
  "parking_lot",
  "project",
  "rand 0.8.5",
@@ -7322,9 +7322,9 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "ordered-float"
-version = "2.10.0"
+version = "2.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7940cf2ca942593318d07fcf2596cdca60a85c9e7fab408a5e21a4f9dcd40d87"
+checksum = "68f19d67e5a2795c94e73e0bb1cc1a7edeb2e28efd39e2e1c9b7a40c1108b11c"
 dependencies = [
  "num-traits",
 ]
@@ -7382,7 +7382,7 @@ dependencies = [
  "indoc",
  "language",
  "menu",
- "ordered-float 2.10.0",
+ "ordered-float 2.10.1",
  "picker",
  "project",
  "rope",
@@ -8184,7 +8184,7 @@ dependencies = [
  "gpui",
  "language",
  "lsp",
- "ordered-float 2.10.0",
+ "ordered-float 2.10.1",
  "picker",
  "project",
  "release_channel",
@@ -8593,7 +8593,7 @@ dependencies = [
  "log",
  "markdown",
  "menu",
- "ordered-float 2.10.0",
+ "ordered-float 2.10.1",
  "picker",
  "project",
  "release_channel",
