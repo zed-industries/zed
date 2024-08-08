@@ -1,8 +1,5 @@
 # Channels
 
-TBD: Much of this is duplicated content with [collaboration.md](./collaboration.md). Consider consolidating the two pages.
-TBD: Mention Audio chat? Link `calls.mute_on_join` setting.
-
 At Zed we believe that great things are built by great people working together. We have designed Zed to help every individual work faster and to help teams of people work together more effectively.
 
 ### Overview
@@ -34,33 +31,19 @@ After joining a channel, you can `Share` a project with the other people there. 
 
 When you are editing someone else’s project, you still have the full power of the editor at your fingertips, you can jump to definitions, use the AI assistant, and see any diagnostic errors. This is extremely powerful for pairing, as one of you can be implementing the current method while the other is reading and researching the correct solution to the next problem. And, because you have your own config running, it feels like you’re using your own machine.
 
-### Screensharing
-
-TBD: Describe screensharing. Mention MacOS security settings required.
-
-### Following
-
-You can follow someone by clicking on their avatar in the top bar, or their name in the collaboration panel. When following, your pane will show you what they are looking at, even if they are jumping between different files in the project. If you want to stop following them, you can by scrolling around, or clicking in a different part of the file.
-
-Following is incredibly useful when you’re learning a new codebase, or trying to debug together. Because you can always see what each person is looking at, there’s no confusion as to what is being talked about.
-
-As a bonus, if the other person is sharing their screen, you can follow them out of Zed and see what is going on, so you can see if the code you wrote together really works.
+See [our collaboration documention](./collaboration.md) for more details about how this works.
 
 ### Notes
-
-TBD: Expand Collab Notes section. Mention it's a multiplayer google-docs style editor. Persistence, etc.
 
 Each channel has a notes file associated with it to keep track of current status, new ideas, or to collaborate on building out the design for the feature that you’re working on before diving into code.
 
 <figure><img src="../.gitbook/assets/channels-3.png" alt=""><figcaption></figcaption></figure>
 
+This is similar to a Google Doc, except powered by Zed's collaborative software and persisted to our servers.
+
 ### Chat
 
-TBD: Update Collab Chat section. Like zoom chat, but persists across sessions. (maybe drop 'ephemeral' below?)
-
-The chat is also there for quickly sharing context, or getting questions answered, that are more ephemeral in nature.
-
-Between the two, you can use Zed’s collaboration mode for large-scale changes with multiple people tackling different aspects of the problem. Because you’re all working on the same copy of the code, there are no merge conflicts, and because you all have access to the same notes, it’s easy to track progress and keep everyone in the loop.
+The chat is also there for quickly sharing context without a microphone, getting questions answered, or however else you'd want to use a chat channel.
 
 ### Inviting people
 

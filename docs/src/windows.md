@@ -1,13 +1,13 @@
 # Zed on Windows
 
-Zed is not supported on Windows (yet).
+Zed is not supported on Windows (yet). We have limited developer bandwidth, and a
+new platform is a large undertaking. However, the community has developed
+a build of Zed on Windows, and you can compile it yourself with these instructions:
 
-TBD: Explain why Zed is not supported on Windows.
+- [Building for Windows](./development/windows)
 
-Zed Employees are not currently working on Windows support.
+Zed Employees are not currently working on the Windows build.
 However, we welcome contributions from the community to improve Windows support.
 
 - https://github.com/zed-industries/zed/issues?q=is%3Aissue+is%3Aopen+label%3Awindows
 - https://discord.com/channels/869392257814519848/1208481909676576818
-
-- [Building for Windows](./development/windows)
