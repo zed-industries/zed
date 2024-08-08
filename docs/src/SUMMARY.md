@@ -22,6 +22,7 @@
 
 - [Multibuffers](./multibuffers.md)
 - [Language model integration](./language-model-integration.md)
+<!-- - [AI Completions](./ai-completions.md) -->
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
 - [Git](./git.md)
