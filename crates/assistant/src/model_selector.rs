@@ -18,7 +18,6 @@ use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
-// Test.
 #[derive(IntoElement)]
 pub struct ModelSelector<T: PopoverTrigger> {
     handle: Option<PopoverMenuHandle<Picker<ModelPickerDelegate>>>,
