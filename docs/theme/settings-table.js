@@ -7,7 +7,7 @@
 // - short_description
 // - long_description? / examples? -> these ones get pulled out into sections
 
-// Every row should have a #peralink
+// Every row should have a #permalink
 // Create a table from an array of settings
 
 const settings = [
@@ -24,101 +24,105 @@ const settings = [
   {
     status: null,
     key: "ui",
-    name: "font_size",
-    type: ["string", "number"],
-    default_value: 16,
-    values: [12, 14, 16, 18, 20, 24],
-    short_description: "The size of the ui font",
-    description: "The size of the ui font in pixels",
-  },
-  {
-    status: "Preview",
-    key: "ui",
-    name: "theme",
-    type: "string",
-    default_value: "light",
-    values: ["light", "dark", "auto"],
-    short_description: "The UI theme",
-    description: "The overall theme for the user interface",
-  },
-  {
-    status: null,
-    key: "editor",
-    name: "line_numbers",
-    type: "boolean",
-    default_value: true,
-    values: [true, false],
-    short_description: "Show line numbers",
-    description: "Whether to display line numbers in the editor",
+    name: "font_weight",
+    type: ["string" | "number"],
+    default_value: 400,
+    values: [100, 200, 300, 400, 500, 600, 700, 800, 900],
+    short_description: "The weight of the ui font",
+    description: "The weight of the ui font",
   },
 ];
 
+const render_tag = (text, variant = "default") => {
+  let classes = "tag";
+
+  if (variant !== "default") {
+    switch (variant) {
+      case "info":
+        classes += "tag-info;";
+        break;
+      case "warning":
+        classes += "tag-warning;";
+        break;
+      case "error":
+        classes += "tag-error";
+        break;
+      default:
+        classes;
+    }
+  }
+
+  return `<span class="${classes}">${text}</span>`;
+};
+
 function createSettingsTable(settings) {
-  const table = document.createElement("table");
-  table.className = "settings-table";
+  const container = document.createElement("div");
+  container.className = "settings-list";
 
-  // Create table header
-  const thead = document.createElement("thead");
-  const headerRow = document.createElement("tr");
-  ["Name", "Type", "Default", "Values", "Description"].forEach((text) => {
-    const th = document.createElement("th");
-    th.textContent = text;
-    headerRow.appendChild(th);
-  });
-  thead.appendChild(headerRow);
-  table.appendChild(thead);
-
-  // Create table body
-  const tbody = document.createElement("tbody");
   settings.forEach((setting) => {
-    const row = document.createElement("tr");
-    row.id = `setting-${setting.key}-${setting.name}`;
+    const settingContainer = document.createElement("div");
+    settingContainer.className = "setting-container";
+    settingContainer.id = `setting-${setting.key}-${setting.name}`;
 
-    // Name (including key and status if available)
-    const nameCell = document.createElement("td");
+    // Header
+    const header = document.createElement("div");
+    header.className = "setting-header";
+
+    const nameContainer = document.createElement("div");
+    nameContainer.className = "setting-name";
     let nameText = `${setting.key}.${setting.name}`;
     if (setting.status) {
       nameText += ` - ${setting.status}`;
     }
-    nameCell.textContent = nameText;
-    row.appendChild(nameCell);
+    nameContainer.textContent = nameText;
 
-    // Type
-    const typeCell = document.createElement("td");
-    typeCell.textContent = Array.isArray(setting.type)
+    const typeContainer = document.createElement("div");
+    typeContainer.className = "setting-type";
+    typeContainer.textContent = Array.isArray(setting.type)
       ? setting.type.join(", ")
       : setting.type;
-    row.appendChild(typeCell);
 
-    // Default
-    const defaultCell = document.createElement("td");
-    defaultCell.textContent = setting.default_value;
-    row.appendChild(defaultCell);
+    header.appendChild(nameContainer);
+    header.appendChild(typeContainer);
 
-    // Values
-    const valuesCell = document.createElement("td");
-    valuesCell.textContent = Array.isArray(setting.values)
-      ? setting.values.join(", ")
-      : setting.values;
-    row.appendChild(valuesCell);
+    // Details table
+    const detailsTable = document.createElement("table");
+    detailsTable.className = "setting-details";
 
-    // Description
-    const descCell = document.createElement("td");
-    descCell.textContent = setting.short_description;
-    row.appendChild(descCell);
+    const rows = [
+      ["Default", setting.default_value],
+      [
+        "Values",
+        Array.isArray(setting.values)
+          ? setting.values.join(", ")
+          : setting.values,
+      ],
+      ["Description", setting.short_description],
+    ];
 
-    tbody.appendChild(row);
+    rows.forEach(([label, value]) => {
+      const row = detailsTable.insertRow();
+      const labelCell = row.insertCell();
+      labelCell.textContent = label;
+      labelCell.className = "setting-label";
+      const valueCell = row.insertCell();
+      valueCell.textContent = value;
+      valueCell.className = "setting-value";
+    });
+
+    settingContainer.appendChild(header);
+    settingContainer.appendChild(detailsTable);
+    container.appendChild(settingContainer);
   });
-  table.appendChild(tbody);
 
-  return table;
+  return container;
 }
 
 // Usage
 document.addEventListener("DOMContentLoaded", () => {
-  const tableContainer = document.getElementById("settings-table-container");
-  if (tableContainer) {
-    const table = createSettingsTable(settings);
-    tableContainer.appendChild(table);
+  const settingsContainer = document.getElementById("settings-container");
+  if (settingsContainer) {
+    const settingsList = createSettingsTable(settings);
+    settingsContainer.appendChild(settingsList);
   }
 });

@@ -1,45 +1,64 @@
-.settings-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 1em;
+.settings-list {
+  display: flex;
+  flex-direction: column;
   font-family: var(--font);
   color: var(--fg);
   background-color: var(--bg);
 }
 
-.settings-table th,
-.settings-table td {
-  border: 1px solid var(--table-border-color);
-  padding: 8px;
-  text-align: left;
+.setting-container {
+  padding: 12px 0;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  border-bottom: 1px solid var(--table-border-color);
 }
 
-.settings-table th {
-  background-color: var(--table-header-bg);
+.setting-header {
+  grid-column: span 2 / span 2;
+  display: flex;
+  flex-direction: column;
+  padding: 0.5em 1em 0.5rem 0;
+}
+
+.setting-name {
+  font-size: 1.4rem;
   font-weight: bold;
   color: var(--sidebar-fg);
 }
 
-.settings-table tr:nth-child(even) {
-  background-color: var(--table-alternate-bg);
+.setting-type {
+  font-size: 1.4rem;
+  color: var(--fg);
 }
 
-.settings-table tr:hover {
-  background-color: var(--theme-hover);
+.setting-details {
+  grid-column: span 4 / span 4;
+  width: 100%;
 }
 
-.settings-table a {
-  color: var(--links);
-  text-decoration: none;
+.setting-details tr:nth-child(even) {
+  background-color: transparent;
 }
 
-.settings-table a:hover {
-  text-decoration: underline;
+.setting-details td {
+  padding: 0.5em 0 0.5em 1em;
 }
 
-.settings-table code {
+.setting-label {
+  font-size: 1.2rem;
+  width: 15%;
+  border: none;
+}
+
+.setting-value {
+  font-size: 1.4rem;
+  width: 70%;
+  border: none;
+}
+
+.settings-list code {
   font-family: var(--mono-font);
-  font-size: var(--code-font-size);
+  font-size: 1.4rem;
   background-color: var(--quote-bg);
   padding: 2px 4px;
   border-radius: 3px;
