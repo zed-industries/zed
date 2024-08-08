@@ -1,6 +1,6 @@
 # AI (LLM) Code Completions
 
-<--
+<!--
 TBD: WIP (unpublished in SUMMARY.md). Document AI code completions.
 -->
 

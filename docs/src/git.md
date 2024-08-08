@@ -10,8 +10,7 @@ Zed currently supports the following Git features:
 
 More advanced Git features—like staging and committing changes or viewing history within Zed—will be coming in the future.
 
-<--
-
+<!--
 ## Git Hunk Navigation
 
 TBD: Explain Git Hunks
@@ -19,7 +18,6 @@ TBD: Explain Git Hunks
 - Navigating hunks
 - Expanding hunks
 - Reverting hunks
-
 -->
 
 ## Git Integrations

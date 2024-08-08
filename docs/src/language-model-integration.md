@@ -2,9 +2,7 @@
 
 ## Assistant Panel
 
-The assistant panel provides you with a way to interact with OpenAI's large language models. The assistant is good for various tasks, such as generating code, asking questions about existing code, and even writing plaintext, such as emails and documentation. To open the assistant panel, toggle the right dock by using the `workspace: toggle right dock` action in the command palette (`cmd-shift-p`).
-
-TBD: Shortcut `ctrl-alt-b` (Linux) `cmd-r` (Mac)
+The assistant panel provides you with a way to interact with OpenAI's large language models. The assistant is good for various tasks, such as generating code, asking questions about existing code, and even writing plaintext, such as emails and documentation. To open the assistant panel, toggle the right dock by using the `workspace: toggle right dock` action in the command palette or by using the `cmd-r` (Mac) or `ctrl-alt-b` (Linux) shortcut.
 
 > **Note**: A custom [key binding](./key-bindings.md) can be set to toggle the right dock.
 
@@ -173,7 +171,9 @@ Be sure you want to override these, as you'll miss out on iteration on our built
 
 ### OpenAI
 
+<!--
 TBD: OpenAI Setup flow: Review/Correct/Simplify
+-->
 
 1. Create an [OpenAI API key](https://platform.openai.com/account/api-keys)
 2. Make sure that your OpenAI account has credits
@@ -182,14 +182,9 @@ TBD: OpenAI Setup flow: Review/Correct/Simplify
 
    ![The focused assistant panel](https://zed.dev/img/assistant/assistant-focused.png)
 
-TBD: Remove outdated `assistant: reset key` references.
-
-5. Open the command palette (`cmd-shift-p`) and use the now-available `assistant: reset key` action to set your OpenAI API key:
-   ![Enter your OpenAI API key into the field on the right and hit return](https://zed.dev/img/assistant/assistant-reset-key.png)
-
 The OpenAI API key will be saved in your keychain.
 
-Zed will also use the `OPENAI_API_KEY` environment variable if it's defined. If you need to reset your OpenAI API key, focus on the assistant panel and run the command palette action `assistant: reset key`.
+Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### OpenAI Custom Endpoint
 
@@ -254,6 +249,8 @@ You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the m
 
 You can obtain an API key [here](https://aistudio.google.com/app/apikey).
 
+<!--
 ### GitHub Copilot
 
 TBD: Add Github Copilot Chat setup instructions
+-->
