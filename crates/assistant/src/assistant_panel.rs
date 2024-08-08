@@ -363,9 +363,13 @@ impl AssistantPanel {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 let focus_handle = pane.focus_handle(cx);
                 let left_children = IconButton::new("history", IconName::TextSearch)
-                    .on_click(
-                        cx.listener(|_, _, cx| cx.dispatch_action(DeployHistory.boxed_clone())),
-                    )
+                    .on_click(cx.listener({
+                        let focus_handle = focus_handle.clone();
+                        move |_, _, cx| {
+                            focus_handle.focus(cx);
+                            cx.dispatch_action(DeployHistory.boxed_clone())
+                        }
+                    }))
                     .tooltip(move |cx| {
                         cx.new_view(|cx| {
                             let keybind =
