@@ -91,7 +91,7 @@ impl LlmState {
         if let Some(db) = &self.db {
             let mut cache = self.active_user_count.write().await;
             let new_count = db.get_active_user_count(now).await?;
-            *cache = Some((now, new_count.clone()));
+            *cache = Some((now, new_count));
             Ok(new_count)
         } else {
             Ok(ActiveUserCount::default())
@@ -386,7 +386,7 @@ async fn check_usage_limit(
     ];
 
     for (usage, limit, resource) in checks {
-        if usage > limit as usize {
+        if usage > limit {
             return Err(Error::http(
                 StatusCode::TOO_MANY_REQUESTS,
                 format!("Rate limit exceeded. Maximum {} reached.", resource),
