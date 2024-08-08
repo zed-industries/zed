@@ -2,8 +2,8 @@
 
 JSON support is available natively in Zed.
 
-- Tree Sitter: [tree-sitter-json](https://github.com/tree-sitter/tree-sitter-json)
-- Language Server: [json-language-server](https://github.com/zed-industries/json-language-server)
+- Tree Sitter: [tree-sitter/tree-sitter-json](https://github.com/tree-sitter/tree-sitter-json)
+- Language Server: [zed-industries/json-language-server](https://github.com/zed-industries/json-language-server)
 
 TBD: Add formatter (prettier) settings (autoformat, tab_size, etc)
 

@@ -6,7 +6,7 @@ Roc language support in Zed is provided by the community-maintained [Roc extensi
 Report issues to: [https://github.com/h2000/zed-roc/issues](https://github.com/h2000/zed-roc/issues)
 
 - Tree Sitter: [faldor20/tree-sitter-roc](https://github.com/faldor20/tree-sitter-roc)
-- Language Server: [roc-language-server](https://github.com/roc-lang/roc/)
+- Language Server: [roc-lang/roc/tree/main/crates/language_server](https://github.com/roc-lang/roc/tree/main/crates/language_server)
 
 ## Setup
 

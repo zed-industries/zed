@@ -4,8 +4,8 @@ Gleam support is available through the [Gleam extension](https://github.com/zed-
 
 TBD: Document supported actions: Remove unused imports, Remove redundant tuples
 
-- Tree Sitter: [tree-sitter-gleam](https://github.com/gleam-lang/tree-sitter-gleam)
-- Language Server: [gleam language server](https://github.com/gleam-lang/gleam/tree/main/compiler-core/src/language_server)
+- Tree Sitter: [gleam-lang/tree-sitter-gleam](https://github.com/gleam-lang/tree-sitter-gleam)
+- Language Server: [gleam-lang/gleam/tree/main/compiler-core/src/language_server](https://github.com/gleam-lang/gleam/tree/main/compiler-core/src/language_server)
 
 See also:
 

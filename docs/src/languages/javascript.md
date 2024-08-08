@@ -2,8 +2,8 @@
 
 JavaScript support is available natively in Zed.
 
-- Tree Sitter: [tree-sitter-javascript](https://github.com/tree-sitter/tree-sitter-javascript)
-- Language Server: [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
+- Tree Sitter: [tree-sitter/tree-sitter-javascript](https://github.com/tree-sitter/tree-sitter-javascript)
+- Language Server: [typescript-language-server/typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
 
 ### Code formatting
 
@@ -34,7 +34,7 @@ TBD: Mention JSX
 
 TBD: Document JSDoc support in Zed.
 
-- Tree Sitter: [jsdoc](https://github.com/tree-sitter/tree-sitter-jsdoc)
+- Tree Sitter: [tree-sitter/tree-sitter-jsdoc](https://github.com/tree-sitter/tree-sitter-jsdoc)
 
 ### ESLint
 

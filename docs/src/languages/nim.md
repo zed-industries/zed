@@ -4,7 +4,7 @@ Nim language support in Zed is provided by the community-maintained [Nim extensi
 Report issues to: [https://github.com/foxoman/zed-nim/issues](https://github.com/foxoman/zed-nim/issues)
 
 - Tree Sitter: [alaviss/tree-sitter-nim](https://github.com/alaviss/tree-sitter-nim)
-- Language Server: [nimlangserver](https://github.com/nim-lang/langserver)
+- Language Server: [nim-lang/langserver](https://github.com/nim-lang/langserver)
 
 ## Formatting
 

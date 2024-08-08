@@ -2,9 +2,9 @@
 
 TypeScript and TSX support are available natively in Zed.
 
-- Tree Sitter: [tree-sitter-typescript](https://github.com/tree-sitter/tree-sitter-typescript)
-- Language Server: [vtsls](https://github.com/yioneko/vtsls)
-- Alternate Language Server: [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
+- Tree Sitter: [tree-sitter/tree-sitter-typescript](https://github.com/tree-sitter/tree-sitter-typescript)
+- Language Server: [yioneko/vtsls](https://github.com/yioneko/vtsls)
+- Alternate Language Server: [typescript-language-server/typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
 
 TBD: Document the difference between Language servers
 TBD: Include instructions for configuring vtsls.
