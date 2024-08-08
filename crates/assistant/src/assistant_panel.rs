@@ -1331,6 +1331,7 @@ struct ScrollPosition {
 }
 
 struct WorkflowStep {
+    range: Range<language::Anchor>,
     header_block_id: CustomBlockId,
     footer_block_id: CustomBlockId,
     resolved_step: Option<ResolvedWorkflowStep>,
@@ -1413,7 +1414,7 @@ impl WorkflowStepStatus {
                     move |_, cx| {
                         editor
                             .update(cx, |this, cx| {
-                                this.activate_workflow_step(step_range.clone(), cx);
+                                this.show_workflow_step(step_range.clone(), cx);
                                 this.apply_workflow_step(&step_range, cx)
                             })
                             .ok();
@@ -1452,7 +1453,7 @@ impl WorkflowStepStatus {
                             move |_, cx| {
                                 editor
                                     .update(cx, |this, cx| {
-                                        this.confirm_workflow_step(&step_range, true, cx);
+                                        this.reject_workflow_step(&step_range, cx);
                                     })
                                     .ok();
                             }
@@ -1469,7 +1470,7 @@ impl WorkflowStepStatus {
                             move |_, cx| {
                                 editor
                                     .update(cx, |this, cx| {
-                                        this.confirm_workflow_step(&step_range, false, cx);
+                                        this.confirm_workflow_step(&step_range, cx);
                                     })
                                     .ok();
                             }
@@ -1629,11 +1630,7 @@ impl ContextEditor {
         }
     }
 
-    fn apply_workflow_step(
-        &mut self,
-        range: &Range<language::Anchor>,
-        cx: &mut ViewContext<Self>,
-    ) -> bool {
+    fn apply_workflow_step(&mut self, range: &Range<language::Anchor>, cx: &mut ViewContext<Self>) {
         if let Some(workflow_step) = self.workflow_steps.get(range) {
             if let Some(assist) = workflow_step.assist.as_ref() {
                 let assist_ids = assist.assist_ids.clone();
@@ -1644,30 +1641,32 @@ impl ContextEditor {
                         }
                     })
                 });
-
-                !assist.assist_ids.is_empty()
-            } else {
-                false
             }
-        } else {
-            false
         }
     }
 
     fn apply_active_workflow_step(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        let Some(step) = self.active_workflow_step.as_ref() else {
+        let Some(step) = self.active_workflow_step() else {
             return false;
         };
 
         let range = step.range.clone();
-        self.apply_workflow_step(&range, cx)
+        match step.status(cx) {
+            WorkflowStepStatus::Resolving => true,
+            WorkflowStepStatus::Idle => {
+                self.apply_workflow_step(&range, cx);
+                true
+            }
+            WorkflowStepStatus::Pending => true,
+            WorkflowStepStatus::Done => {
+                self.confirm_workflow_step(&range, cx);
+                true
+            }
+            WorkflowStepStatus::Confirmed => false,
+        }
     }
 
-    fn stop_workflow_step(
-        &mut self,
-        range: &Range<language::Anchor>,
-        cx: &mut ViewContext<Self>,
-    ) -> bool {
+    fn stop_workflow_step(&mut self, range: &Range<language::Anchor>, cx: &mut ViewContext<Self>) {
         if let Some(workflow_step) = self.workflow_steps.get(range) {
             if let Some(assist) = workflow_step.assist.as_ref() {
                 let assist_ids = assist.assist_ids.clone();
@@ -1678,64 +1677,58 @@ impl ContextEditor {
                         }
                     })
                 });
-
-                !assist.assist_ids.is_empty()
-            } else {
-                false
             }
-        } else {
-            false
         }
     }
 
-    fn undo_workflow_step(
-        &mut self,
-        range: &Range<language::Anchor>,
-        cx: &mut ViewContext<Self>,
-    ) -> bool {
-        if let Some(workflow_step) = self.workflow_steps.get(range) {
-            if let Some(assist) = workflow_step.assist.as_ref() {
-                let assist_ids = assist.assist_ids.clone();
+    fn undo_workflow_step(&mut self, range: &Range<language::Anchor>, cx: &mut ViewContext<Self>) {
+        if let Some(workflow_step) = self.workflow_steps.get_mut(range) {
+            if let Some(assist) = workflow_step.assist.take() {
                 cx.window_context().defer(|cx| {
                     InlineAssistant::update_global(cx, |assistant, cx| {
-                        for assist_id in assist_ids {
+                        for assist_id in assist.assist_ids {
                             assistant.undo_assist(assist_id, cx);
                         }
                     })
                 });
-
-                !assist.assist_ids.is_empty()
-            } else {
-                false
             }
-        } else {
-            false
         }
     }
 
     fn confirm_workflow_step(
         &mut self,
         range: &Range<language::Anchor>,
-        undo: bool,
         cx: &mut ViewContext<Self>,
-    ) -> bool {
+    ) {
         if let Some(workflow_step) = self.workflow_steps.get(range) {
             if let Some(assist) = workflow_step.assist.as_ref() {
                 let assist_ids = assist.assist_ids.clone();
                 cx.window_context().defer(move |cx| {
                     InlineAssistant::update_global(cx, |assistant, cx| {
                         for assist_id in assist_ids {
-                            assistant.finish_assist(assist_id, undo, cx);
+                            assistant.finish_assist(assist_id, false, cx);
                         }
                     })
                 });
-
-                !assist.assist_ids.is_empty()
-            } else {
-                false
             }
-        } else {
-            false
+        }
+    }
+
+    fn reject_workflow_step(
+        &mut self,
+        range: &Range<language::Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(workflow_step) = self.workflow_steps.get_mut(range) {
+            if let Some(assist) = workflow_step.assist.take() {
+                cx.window_context().defer(move |cx| {
+                    InlineAssistant::update_global(cx, |assistant, cx| {
+                        for assist_id in assist.assist_ids {
+                            assistant.finish_assist(assist_id, true, cx);
+                        }
+                    })
+                });
+            }
         }
     }
 
@@ -2347,6 +2340,7 @@ impl ContextEditor {
                 self.workflow_steps.insert(
                     range.clone(),
                     WorkflowStep {
+                        range: range.clone(),
                         header_block_id: block_ids[0],
                         footer_block_id: block_ids[1],
                         resolved_step,
@@ -2367,7 +2361,8 @@ impl ContextEditor {
             }
 
             if let Some(new_step) = new_step {
-                self.activate_workflow_step(new_step.range, cx);
+                self.show_workflow_step(new_step.range.clone(), cx);
+                self.active_workflow_step = Some(new_step);
             }
         }
     }
@@ -2411,7 +2406,7 @@ impl ContextEditor {
         }
     }
 
-    fn activate_workflow_step(
+    fn show_workflow_step(
         &mut self,
         step_range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
@@ -2423,7 +2418,9 @@ impl ContextEditor {
         let mut scroll_to_assist_id = None;
         match step.status(cx) {
             WorkflowStepStatus::Idle => {
-                if let Some(resolved) = step.resolved_step.as_ref() {
+                if let Some(assist) = step.assist.as_ref() {
+                    scroll_to_assist_id = assist.assist_ids.first().copied();
+                } else if let Some(resolved) = step.resolved_step.as_ref() {
                     step.assist = Self::open_assists_for_step(
                         resolved,
                         &self.project,
@@ -2467,11 +2464,6 @@ impl ContextEditor {
                 });
             }
         }
-
-        self.active_workflow_step = Some(ActiveWorkflowStep {
-            range: step_range,
-            resolved: step.resolved_step.is_some(),
-        });
     }
 
     fn open_assists_for_step(
