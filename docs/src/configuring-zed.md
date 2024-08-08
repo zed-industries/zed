@@ -1252,25 +1252,27 @@ List of `integer` column numbers
 - Default:
 
 ```json
-"terminal": {
-  "alternate_scroll": "off",
-  "blinking": "terminal_controlled",
-  "copy_on_select": false,
-  "env": {},
-  "font_family": null,
-  "font_features": null,
-  "font_size": null,
-  "option_as_meta": true,
-  "button": false,
-  "shell": {},
-  "toolbar": {
-    "title": true
-  },
-  "working_directory": "current_project_directory"
+{
+  "terminal": {
+    "alternate_scroll": "off",
+    "blinking": "terminal_controlled",
+    "copy_on_select": false,
+    "env": {},
+    "font_family": null,
+    "font_features": null,
+    "font_size": null,
+    "option_as_meta": true,
+    "button": false,
+    "shell": {},
+    "toolbar": {
+      "title": true
+    },
+    "working_directory": "current_project_directory"
+  }
 }
 ```
 
-### Terminal Alternate Scroll
+### Terminal: Alternate Scroll
 
 - Description: Set whether Alternate Scroll mode (DECSET code: `?1007`) is active by default. Alternate Scroll mode converts mouse scroll events into up / down key presses when in the alternate screen (e.g. when running applications like vim or less). The terminal can still set and unset this mode with ANSI escape codes.
 - Setting: `alternate_scroll`
@@ -1282,7 +1284,9 @@ List of `integer` column numbers
 
 ```json
 {
-  "alternate_scroll": "on"
+  "terminal": {
+    "alternate_scroll": "on"
+  }
 }
 ```
 
@@ -1290,11 +1294,13 @@ List of `integer` column numbers
 
 ```json
 {
-  "alternate_scroll": "off"
+  "terminal": {
+    "alternate_scroll": "off"
+  }
 }
 ```
 
-### Blinking
+### Terminal: Blinking
 
 - Description: Set the cursor blinking behavior in the terminal
 - Setting: `blinking`
@@ -1306,7 +1312,9 @@ List of `integer` column numbers
 
 ```json
 {
-  "blinking": "off"
+  "terminal": {
+    "blinking": "off"
+  }
 }
 ```
 
@@ -1314,17 +1322,23 @@ List of `integer` column numbers
 
 ```json
 {
-  "blinking": "terminal_controlled"
+  "terminal": {
+    "blinking": "terminal_controlled"
+  }
 }
 ```
 
 3. Always blink the cursor, ignore the terminal mode
 
 ```json
-"blinking": "on",
+{
+  "terminal": {
+    "blinking": "on"
+  }
+}
 ```
 
-### Copy On Select
+### Terminal: Copy On Select
 
 - Description: Whether or not selecting text in the terminal will automatically copy to the system clipboard.
 - Setting: `copy_on_select`
@@ -1334,7 +1348,17 @@ List of `integer` column numbers
 
 `boolean` values
 
-### Env
+**Example**
+
+```json
+{
+  "terminal": {
+    "copy_on_select": true
+  }
+}
+```
+
+### Terminal: Env
 
 - Description: Any key-value pairs added to this object will be added to the terminal's environment. Keys must be unique, use `:` to separate multiple values in a single variable
 - Setting: `env`
@@ -1343,13 +1367,17 @@ List of `integer` column numbers
 **Example**
 
 ```json
-"env": {
-  "ZED": "1",
-  "KEY": "value1:value2"
+{
+  "terminal": {
+    "env": {
+      "ZED": "1",
+      "KEY": "value1:value2"
+    }
+  }
 }
 ```
 
-### Font Size
+### Terminal: Font Size
 
 - Description: What font size to use for the terminal. When not set defaults to matching the editor's font size
 - Setting: `font_size`
@@ -1359,7 +1387,15 @@ List of `integer` column numbers
 
 `integer` values
 
-### Font Family
+```json
+{
+  "terminal": {
+    "font_size": 15
+  }
+}
+```
+
+### Terminal: Font Family
 
 - Description: What font to use for the terminal. When not set, defaults to matching the editor's font.
 - Setting: `font_family`
@@ -1369,7 +1405,15 @@ List of `integer` column numbers
 
 The name of any font family installed on the user's system
 
-### Font Features
+```json
+{
+  "terminal": {
+    "font_family": "Berkeley Mono"
+  }
+}
+```
+
+### Terminal: Font Features
 
 - Description: What font features to use for the terminal. When not set, defaults to matching the editor's font features.
 - Setting: `font_features`
@@ -1379,7 +1423,19 @@ The name of any font family installed on the user's system
 
 See Buffer Font Features
 
-### Option As Meta
+
+```jsonc
+{
+  "terminal": {
+    "font_features": {
+      "calt": false
+      // See Buffer Font Features for more features
+    }
+  }
+}
+```
+
+### Terminal: Option As Meta
 
 - Description: Re-interprets the option keys to act like a 'meta' key, like in Emacs.
 - Setting: `option_as_meta`
@@ -1389,7 +1445,15 @@ See Buffer Font Features
 
 `boolean` values
 
-### Shell
+```json
+{
+  "terminal": {
+    "option_as_meta": true
+  }
+}
+```
+
+### Terminal: Shell
 
 - Description: What shell to use when launching the terminal.
 - Setting: `shell`
@@ -1401,46 +1465,60 @@ See Buffer Font Features
 
 ```json
 {
-  "shell": "system"
+  "terminal": {
+    "shell": "system"
+  }
 }
 ```
 
 2. A program to launch:
 
 ```json
-"shell": {
-    "program": "sh"
+{
+  "terminal": {
+    "shell": {
+        "program": "sh"
+    }
+  }
 }
 ```
 
 3. A program with arguments:
 
 ```json
-"shell": {
-  "with_arguments": {
-    "program": "/bin/bash",
-    "args": ["--login"]
+{
+  "terminal": {
+    "shell": {
+      "with_arguments": {
+        "program": "/bin/bash",
+        "args": ["--login"]
+      }
+    }
   }
 }
 ```
 
-## Terminal Toolbar
+## Terminal: Toolbar
 
 - Description: Whether or not to show various elements in the terminal toolbar. It only affects terminals placed in the editor pane.
 - Setting: `toolbar`
 - Default:
 
 ```json
-"toolbar": {
-  "title": true,
-},
+{
+  "terminal": {
+    "toolbar": {
+      "title": true,
+    }
+  }
+}
 ```
 
 **Options**
 
 At the moment, only the `title` option is available, it controls displaying of the terminal title that can be changed via `PROMPT_COMMAND`. If the title is hidden, the terminal toolbar is not displayed.
 
-### Terminal Button
+### Terminal: Button
 
 - Description: Control to show or hide the terminal button in the status bar
 - Setting: `button`
@@ -1450,7 +1528,15 @@ At the moment, only the `title` option is available, it controls displaying of t
 
 `boolean` values
 
-### Working Directory
+```json
+{
+  "terminal": {
+    "button": false
+  }
+}
+```
+
+### Terminal: Working Directory
 
 - Description: What working directory to use when launching the terminal.
 - Setting: `working_directory`
@@ -1462,7 +1548,9 @@ At the moment, only the `title` option is available, it controls displaying of t
 
 ```json
 {
-  "working_directory": "current_project_directory"
+  "terminal": {
+    "working_directory": "current_project_directory"
+  }
 }
 ```
 
@@ -1470,7 +1558,9 @@ At the moment, only the `title` option is available, it controls displaying of t
 
 ```json
 {
-  "working_directory": "first_project_directory"
+  "terminal": {
+    "working_directory": "first_project_directory"
+  }
 }
 ```
 
@@ -1478,16 +1568,22 @@ At the moment, only the `title` option is available, it controls displaying of t
 
 ```json
 {
-  "working_directory": "always_home"
+  "terminal": {
+    "working_directory": "always_home"
+  }
 }
 ```
 
 4. Always use a specific directory. This value will be shell expanded. If this path is not a valid directory the terminal will default to this platform's home directory.
 
 ```json
-"working_directory": {
-  "always": {
-    "directory": "~/zed/projects/"
+{
+  "terminal": {
+    "working_directory": {
+      "always": {
+        "directory": "~/zed/projects/"
+      }
+    }
   }
 }
 ```
