@@ -3,8 +3,7 @@ mod queries;
 mod seed;
 mod tables;
 
-// We only run Postgres tests on macOS right now.
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests;
 
 use collections::HashMap;
