@@ -263,8 +263,6 @@ define_connection! {
     //     preview: bool // Indicates if this item is a preview item
     // )
     //
-    // Anthony is testing database configs below
-    // TODO Anth: Update docs below
     // CREATE TABLE breakpoints(
     //      workspace_id: usize Foreign Key, // References workspace table
     //      worktree_path: PathBuf, // Path of worktree that this breakpoint belong's too. Used to determine the absolute path of a breakpoint

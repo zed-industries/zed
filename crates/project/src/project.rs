@@ -1339,8 +1339,19 @@ impl Project {
             .insert(id, DebugAdapterClientState::Starting(task));
     }
 
-    // TODO Anth: Convert this function to use a serialized breakpoint and return one too
-    pub fn serialize_breakpoint_for_buffer_id(
+    /// Get all serialized breakpoints that belong to a buffer
+    ///
+    /// # Parameters
+    /// `buffer_id`: The buffer id to get serialized breakpoints of
+    /// `cx`: The context of the editor
+    ///
+    /// # Return
+    /// `None`: If the buffer associated with buffer id doesn't exist or this editor
+    ///     doesn't belong to a project
+    ///
+    /// `(Path, Vec<SerializedBreakpoint)`: Returns worktree path (used when saving workspace)
+    ///     and a vector of the serialized breakpoints
+    pub fn serialize_breakpoints_for_buffer_id(
         &self,
         buffer_id: &BufferId,
         cx: &ModelContext<Self>,
@@ -1363,7 +1374,11 @@ impl Project {
         ))
     }
 
-    // TODO Anth: Add docs about how this is used when a new editor with breakpoints is init
+    // Convert serialize breakpoints to active buffer breakpoints
+    //
+    // When a new buffer is opened, project converts any serialize
+    // breakpoints to active breakpoints that the buffer is aware
+    // of.
     pub fn convert_to_open_breakpoints(
         &mut self,
         project_path: &ProjectPath,
@@ -1387,6 +1402,12 @@ impl Project {
         }
     }
 
+    /// Serialize all breakpoints to save within workspace's database
+    ///
+    /// # Return
+    /// HashMap:
+    ///     Key: A valid worktree path
+    ///     Value: All serialized breakpoints that belong to a worktree
     pub fn serialize_breakpoints(
         &self,
         cx: &ModelContext<Self>,
@@ -1396,7 +1417,7 @@ impl Project {
 
         for buffer_id in breakpoint_read_guard.keys() {
             if let Some((worktree_path, mut serialized_breakpoint)) =
-                self.serialize_breakpoint_for_buffer_id(&buffer_id, cx)
+                self.serialize_breakpoints_for_buffer_id(&buffer_id, cx)
             {
                 result
                     .entry(worktree_path.clone())
@@ -1418,11 +1439,14 @@ impl Project {
                 .extend(serialized_bp.iter().map(|bp| bp.clone()));
         }
 
-        // TODO Anth: Add documentation
         result
     }
 
-    // We don't need to send breakpoints from closed files because ... TODO: Fill in reasoning
+    /// Sends updated breakpoint information of one file to all active debug adapters
+    ///
+    /// This function is called whenever a breakpoint is toggled, and it doesn't need
+    /// to send breakpoints from closed files because those breakpoints can't change
+    /// without opening a buffer.
     pub fn update_file_breakpoints(&self, buffer_id: BufferId, cx: &ModelContext<Self>) {
         let clients = self
             .debug_adapters
@@ -2552,9 +2576,10 @@ impl Project {
         self.detect_language_for_buffer(buffer, cx);
         self.register_buffer_with_language_servers(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
-            // Serialize the breakpoints of this buffer and send them
-            // Unopened breakpoints to maintain correct state
-            // TODO Anth: Almost done yayyy
+            // Serialize the breakpoints of this buffer and set them
+            // as unopened breakpoints to maintain correct state.
+            // Otherwise, project wouldn't allow breakpoints within
+            // closed files.
             if let Some(breakpoints) = this.open_breakpoints.write().remove(&buffer.remote_id()) {
                 if let Some(project_path) = buffer.project_path(cx) {
                     this.closed_breakpoints

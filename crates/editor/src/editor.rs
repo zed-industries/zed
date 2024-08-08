@@ -560,7 +560,7 @@ pub struct Editor {
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
     /// All the breakpoints that are contained within open buffers in the editor
-    opened_breakpoints: Option<Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>>,
+    breakpoints: Option<Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>>,
     /// Allow's a user to create a breakpoint by selecting this indicator
     /// It should be None while a user is not hovering over the gutter
     /// Otherwise it represents the point that the breakpoint will be shown
@@ -1885,7 +1885,7 @@ impl Editor {
             blame_subscription: None,
             file_header_size,
             tasks: Default::default(),
-            opened_breakpoints,
+            breakpoints: opened_breakpoints,
             gutter_breakpoint_indicator: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -5148,11 +5148,16 @@ impl Editor {
         }
     }
 
+    /// Get all display points of breakpoints that will be rendered within editor
+    ///
+    /// This function is used to handle overlaps between breakpoints and Code action/runner symbol.
+    /// It's also used to set the color of line numbers with breakpoints to the breakpoint color.
+    /// TODO Debugger: Use this function to color toggle symbols that house nested breakpoints
     fn active_breakpoint_points(&mut self, cx: &mut ViewContext<Self>) -> HashSet<DisplayPoint> {
         let mut breakpoint_display_points = HashSet::default();
         let snapshot = self.snapshot(cx);
 
-        let Some(opened_breakpoints) = self.opened_breakpoints.clone() else {
+        let Some(opened_breakpoints) = self.breakpoints.clone() else {
             return breakpoint_display_points;
         };
 
@@ -5179,12 +5184,19 @@ impl Editor {
             let info = excerpt_boundery.next.as_ref();
 
             if let Some(info) = info {
-                let Some(range) = multi_buffer_snapshot.range_for_excerpt::<Point>(info.id) else {
+                let Some(excerpt_ranges) =
+                    multi_buffer_snapshot.range_for_excerpt::<Point>(info.id)
+                else {
                     continue;
                 };
 
-                let excerpt_head = range.start.to_display_point(&snapshot.display_snapshot);
-                let buffer_range = info
+                // To translate a breakpoint's position within a singular buffer to a multi buffer
+                // position we need to know it's excerpt starting location, it's position within
+                // the singular buffer, and if that position is within the excerpt's range.
+                let excerpt_head = excerpt_ranges
+                    .start
+                    .to_display_point(&snapshot.display_snapshot);
+                let buffer_range = info // Buffer lines being shown within the excerpt
                     .buffer
                     .summary_for_anchor::<Point>(&info.range.context.start)
                     ..info
@@ -5193,11 +5205,12 @@ impl Editor {
 
                 if let Some(breakpoints) = opened_breakpoints.get(&info.buffer_id) {
                     for breakpoint in breakpoints {
-                        let breakpoint_position = info
+                        let breakpoint_position = info // Breakpoint's position within the singular buffer
                             .buffer
                             .summary_for_anchor::<Point>(&breakpoint.position.text_anchor);
 
                         if buffer_range.contains(&breakpoint_position) {
+                            // Translated breakpoint position from singular buffer to multi buffer
                             let delta = breakpoint_position.row - buffer_range.start.row;
 
                             let position = excerpt_head + DisplayPoint::new(DisplayRow(delta), 0);
@@ -6087,7 +6100,7 @@ impl Editor {
             return;
         };
 
-        let Some(breakpoints) = &self.opened_breakpoints else {
+        let Some(breakpoints) = &self.breakpoints else {
             return;
         };
 
