@@ -64,13 +64,13 @@ use std::{
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use text::OffsetRangeExt;
+use ui::TintColor;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
     Avatar, AvatarShape, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
-use ui::{IconButtonShape, TintColor};
 use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
