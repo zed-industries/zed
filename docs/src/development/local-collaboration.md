@@ -35,10 +35,8 @@ To use a different set of admin users, you can create your own version of that j
 
 In one terminal, run Zed's collaboration server and the `livekit` dev server:
 
-```
-
+```bash
 foreman start
-
 ```
 
 In a second terminal, run two or more instances of Zed.

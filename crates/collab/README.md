@@ -32,7 +32,7 @@ To use a different set of admin users, create `crates/collab/seed.json`.
 
 In one terminal, run Zed's collaboration server and the livekit dev server:
 
-```
+```bash
 foreman start
 ```
 
