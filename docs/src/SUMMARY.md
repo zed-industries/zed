@@ -28,6 +28,14 @@
 - [Remote Development](./remote-development.md)
 - [REPL](./repl.md)
 
+# Extensions
+
+- [Overview](./extensions.md)
+- [Installing Extensions](./extensions/installing-extensions.md)
+- [Developing Extensions](./extensions/developing-extensions.md)
+  - [Developing Language Extensions](./extensions/developing-language-extensions.md)
+  - [Developing Themes](./extensions/developing-themes.md)
+
 # Language Support
 
 - [All Languages](./languages.md)
@@ -92,7 +100,6 @@
 
 # Developing Zed
 
-- [Adding New Languages](./adding-new-languages.md)
 - [Developing Zed](./development.md)
   - [macOS](./development/macos.md)
   - [Linux](./development/linux.md)
