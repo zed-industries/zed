@@ -1,6 +1,6 @@
 # Nim
 
-Nim language support in Zed is provided by the community-maintained [zed Nim extension](https://github.com/foxoman/zed-nim).
+Nim language support in Zed is provided by the community-maintained [Nim extension](https://github.com/foxoman/zed-nim).
 Report issues to: [https://github.com/foxoman/zed-nim/issues](https://github.com/foxoman/zed-nim/issues)
 
 - Tree Sitter: [alaviss/tree-sitter-nim](https://github.com/alaviss/tree-sitter-nim)
