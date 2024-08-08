@@ -20,3 +20,4 @@ enable = false
 "/javascript.html" = "/docs/languages/javascript.html"
 "/ruby.html" = "/docs/languages/ruby.html"
 "/python.html" = "/docs/languages/python.html"
+"/adding-new-languages.html" = "/docs/extensions/languages.html"
