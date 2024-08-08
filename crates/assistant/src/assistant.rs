@@ -17,6 +17,7 @@ use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
 pub use context_store::*;
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
@@ -272,7 +273,6 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
     slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
     slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
-    slash_command_registry.register_command(search_command::SearchSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
     slash_command_registry.register_command(term_command::TermSlashCommand, true);
@@ -286,6 +286,13 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
         );
     }
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
+
+    cx.observe_flag::<search_command::SearchSlashCommandFeatureFlag, _>(move |is_enabled, _cx| {
+        if is_enabled {
+            slash_command_registry.register_command(search_command::SearchSlashCommand, true);
+        }
+    })
+    .detach();
 }
 
 pub fn humanize_token_count(count: usize) -> String {
