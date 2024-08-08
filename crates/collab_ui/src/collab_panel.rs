@@ -2042,7 +2042,7 @@ impl CollabPanel {
         let Some(channel) = channel_store.channel_for_id(channel_id) else {
             return;
         };
-        let item = ClipboardItem::new(channel.link(cx));
+        let item = ClipboardItem::new_string(channel.link(cx));
         cx.write_to_clipboard(item)
     }
 
@@ -2261,7 +2261,7 @@ impl CollabPanel {
                     .size(ButtonSize::None)
                     .visible_on_hover("section-header")
                     .on_click(move |_, cx| {
-                        let item = ClipboardItem::new(channel_link_copy.clone());
+                        let item = ClipboardItem::new_string(channel_link_copy.clone());
                         cx.write_to_clipboard(item)
                     })
                     .tooltip(|cx| Tooltip::text("Copy channel link", cx))

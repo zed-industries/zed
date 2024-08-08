@@ -1067,7 +1067,7 @@ impl OutlinePanel {
             .and_then(|entry| self.abs_path(&entry, cx))
             .map(|p| p.to_string_lossy().to_string())
         {
-            cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
+            cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
         }
     }
 
@@ -1082,7 +1082,7 @@ impl OutlinePanel {
             })
             .map(|p| p.to_string_lossy().to_string())
         {
-            cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
+            cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
         }
     }
 

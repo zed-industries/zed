@@ -2447,12 +2447,31 @@ impl From<usize> for Pixels {
 /// affected by the device's scale factor, `DevicePixels` always correspond to real pixels on the
 /// display.
 #[derive(
-    Add, AddAssign, Clone, Copy, Default, Div, Eq, Hash, Ord, PartialEq, PartialOrd, Sub, SubAssign,
+    Add,
+    AddAssign,
+    Clone,
+    Copy,
+    Default,
+    Div,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Sub,
+    SubAssign,
+    Serialize,
+    Deserialize,
 )]
 #[repr(transparent)]
 pub struct DevicePixels(pub(crate) i32);
 
 impl DevicePixels {
+    /// Get the raw value underlying this device pixel
+    pub fn raw(&self) -> i32 {
+        self.0
+    }
+
     /// Converts the `DevicePixels` value to the number of bytes needed to represent it in memory.
     ///
     /// This function is useful when working with graphical data that needs to be stored in a buffer,

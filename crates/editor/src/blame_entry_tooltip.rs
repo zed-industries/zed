@@ -2,8 +2,8 @@ use futures::Future;
 use git::blame::BlameEntry;
 use git::Oid;
 use gpui::{
-    Asset, ClipboardItem, Element, ParentElement, Render, ScrollHandle, StatefulInteractiveElement,
-    WeakView, WindowContext,
+    AppContext, Asset, ClipboardItem, Element, ParentElement, Render, ScrollHandle,
+    StatefulInteractiveElement, WeakView,
 };
 use settings::Settings;
 use std::hash::Hash;
@@ -35,7 +35,7 @@ impl<'a> CommitAvatar<'a> {
 
         let avatar_url = CommitAvatarAsset::new(remote.clone(), self.sha);
 
-        let element = match cx.use_cached_asset::<CommitAvatarAsset>(&avatar_url) {
+        let element = match cx.use_asset::<CommitAvatarAsset>(&avatar_url) {
             // Loading or no avatar found
             None | Some(None) => Icon::new(IconName::Person)
                 .color(Color::Muted)
@@ -73,7 +73,7 @@ impl Asset for CommitAvatarAsset {
 
     fn load(
         source: Self::Source,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let client = cx.http_client();
 
@@ -242,9 +242,9 @@ impl Render for BlameEntryTooltip {
                                                 .icon_color(Color::Muted)
                                                 .on_click(move |_, cx| {
                                                     cx.stop_propagation();
-                                                    cx.write_to_clipboard(ClipboardItem::new(
-                                                        full_sha.clone(),
-                                                    ))
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(full_sha.clone()),
+                                                    )
                                                 }),
                                         ),
                                 ),

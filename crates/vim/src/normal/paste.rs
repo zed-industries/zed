@@ -376,7 +376,7 @@ mod test {
             cx.read_from_clipboard().map(|item| item.text().clone()),
             Some("jumps".into())
         );
-        cx.write_to_clipboard(ClipboardItem::new("test-copy".to_string()));
+        cx.write_to_clipboard(ClipboardItem::new_string("test-copy".to_string()));
         cx.simulate_keystrokes("shift-p");
         cx.assert_state(
             indoc! {"

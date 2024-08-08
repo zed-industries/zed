@@ -33,11 +33,12 @@ use editor::{
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
-    div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
-    AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement,
-    Pixels, ReadGlobal, Render, SharedString, StatefulInteractiveElement, Styled, Subscription,
-    Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
+    div, img, percentage, point, size, Action, Animation, AnimationExt, AnyElement, AnyView,
+    AppContext, AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity,
+    EventEmitter, FocusHandle, FocusableView, FontWeight, ImageData, InteractiveElement,
+    IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render, SharedString, Size,
+    StatefulInteractiveElement, Styled, Subscription, Task, Transformation, UpdateGlobal, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -1343,6 +1344,7 @@ pub struct ContextEditor {
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
     editor: View<Editor>,
     blocks: HashSet<CustomBlockId>,
+    image_blocks: HashSet<CustomBlockId>,
     scroll_position: Option<ScrollPosition>,
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
@@ -1399,6 +1401,7 @@ impl ContextEditor {
             editor,
             lsp_adapter_delegate,
             blocks: Default::default(),
+            image_blocks: Default::default(),
             scroll_position: None,
             remote_id: None,
             fs,
@@ -1413,6 +1416,7 @@ impl ContextEditor {
             error_message: None,
         };
         this.update_message_headers(cx);
+        this.update_image_blocks(cx);
         this.insert_slash_command_output_sections(sections, cx);
         this
     }
@@ -1662,6 +1666,7 @@ impl ContextEditor {
         match event {
             ContextEvent::MessagesEdited => {
                 self.update_message_headers(cx);
+                self.update_image_blocks(cx);
                 self.context.update(cx, |context, cx| {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
@@ -2447,12 +2452,92 @@ impl ContextEditor {
             }
 
             if spanned_messages > 1 {
-                cx.write_to_clipboard(ClipboardItem::new(copied_text));
+                cx.write_to_clipboard(ClipboardItem::new_string(copied_text));
                 return;
             }
         }
 
         cx.propagate();
+    }
+
+    fn paste(&mut self, _: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
+        if let Some(ClipboardItem::Image(data)) = cx.read_from_clipboard() {
+            if let Ok(image_data) = data.to_image_data(cx) {
+                let mut image_positions = Vec::new();
+                self.editor.update(cx, |editor, cx| {
+                    editor.transact(cx, |editor, cx| {
+                        let edits = editor
+                            .selections
+                            .all::<usize>(cx)
+                            .into_iter()
+                            .map(|selection| (selection.start..selection.end, "\n"));
+                        editor.edit(edits, cx);
+
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        for selection in editor.selections.all::<usize>(cx) {
+                            image_positions.push(snapshot.anchor_before(selection.end));
+                        }
+                    });
+                });
+
+                let image_data = Arc::new(image_data);
+
+                self.context.update(cx, |context, cx| {
+                    for image_position in image_positions {
+                        context.insert_image(image_position.text_anchor, image_data.clone(), cx);
+                    }
+                });
+            } else {
+                log::warn!("Tried to paste {} bytes of {:?} image data, but it could not be successfully converted to RGBA.", data.bytes().len(), data.format());
+            }
+        } else {
+            cx.propagate();
+        }
+    }
+
+    fn update_image_blocks(&mut self, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let excerpt_id = *buffer.as_singleton().unwrap().0;
+            let old_blocks = std::mem::take(&mut self.image_blocks);
+            let new_blocks = self
+                .context
+                .read(cx)
+                .images(cx)
+                .filter_map(|image| {
+                    const MAX_HEIGHT_IN_LINES: u32 = 8;
+                    let anchor = buffer.anchor_in_excerpt(excerpt_id, image.anchor).unwrap();
+                    anchor.is_valid(&buffer).then(|| BlockProperties {
+                        position: anchor,
+                        height: MAX_HEIGHT_IN_LINES,
+                        style: BlockStyle::Sticky,
+                        render: Box::new(move |cx| {
+                            let image_size = size_for_image(
+                                &image.data,
+                                size(
+                                    cx.max_width - cx.gutter_dimensions.full_width(),
+                                    MAX_HEIGHT_IN_LINES as f32 * cx.line_height,
+                                ),
+                            );
+                            h_flex()
+                                .pl(cx.gutter_dimensions.full_width())
+                                .child(
+                                    img(image.data.clone())
+                                        .object_fit(gpui::ObjectFit::ScaleDown)
+                                        .w(image_size.width)
+                                        .h(image_size.height),
+                                )
+                                .into_any_element()
+                        }),
+                        disposition: BlockDisposition::Above,
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            editor.remove_blocks(old_blocks, None, cx);
+            let ids = editor.insert_blocks(new_blocks, None, cx);
+            self.image_blocks = HashSet::from_iter(ids);
+        });
     }
 
     fn split(&mut self, _: &Split, cx: &mut ViewContext<Self>) {
@@ -2669,6 +2754,7 @@ impl Render for ContextEditor {
             .capture_action(cx.listener(ContextEditor::cancel_last_assist))
             .capture_action(cx.listener(ContextEditor::save))
             .capture_action(cx.listener(ContextEditor::copy))
+            .capture_action(cx.listener(ContextEditor::paste))
             .capture_action(cx.listener(ContextEditor::cycle_message_role))
             .capture_action(cx.listener(ContextEditor::confirm_command))
             .on_action(cx.listener(ContextEditor::assist))
@@ -3592,6 +3678,30 @@ fn token_state(context: &Model<Context>, cx: &AppContext) -> Option<TokenState> 
         }
     };
     Some(token_state)
+}
+
+fn size_for_image(data: &ImageData, max_size: Size<Pixels>) -> Size<Pixels> {
+    let image_size = data
+        .size(0)
+        .map(|dimension| Pixels::from(u32::from(dimension)));
+    let image_ratio = image_size.width / image_size.height;
+    let bounds_ratio = max_size.width / max_size.height;
+
+    if image_size.width > max_size.width || image_size.height > max_size.height {
+        if bounds_ratio > image_ratio {
+            size(
+                image_size.width * (max_size.height / image_size.height),
+                max_size.height,
+            )
+        } else {
+            size(
+                max_size.width,
+                image_size.height * (max_size.width / image_size.width),
+            )
+        }
+    } else {
+        size(image_size.width, image_size.height)
+    }
 }
 
 enum ConfigurationError {

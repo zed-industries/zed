@@ -38,12 +38,20 @@ pub(crate) struct RenderImageParams {
     pub(crate) frame_index: usize,
 }
 
-/// A cached and processed image.
+/// A cached and processed image, in BGRA format
 pub struct ImageData {
     /// The ID associated with this image
     pub id: ImageId,
     data: SmallVec<[Frame; 1]>,
 }
+
+impl PartialEq for ImageData {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for ImageData {}
 
 impl ImageData {
     /// Create a new image from the given data.
@@ -57,8 +65,10 @@ impl ImageData {
     }
 
     /// Convert this image into a byte slice.
-    pub fn as_bytes(&self, frame_index: usize) -> &[u8] {
-        &self.data[frame_index].buffer()
+    pub fn as_bytes(&self, frame_index: usize) -> Option<&[u8]> {
+        self.data
+            .get(frame_index)
+            .map(|frame| frame.buffer().as_raw().as_slice())
     }
 
     /// Get the size of this image, in pixels.

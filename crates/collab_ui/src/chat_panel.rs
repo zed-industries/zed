@@ -710,7 +710,7 @@ impl ChatPanel {
                             active_chat.read(cx).find_loaded_message(message_id)
                         }) {
                             let text = message.body.clone();
-                            cx.write_to_clipboard(ClipboardItem::new(text))
+                            cx.write_to_clipboard(ClipboardItem::new_string(text))
                         }
                     }),
                 )

@@ -7,7 +7,7 @@ use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
-    div, img, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    div, surface, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     ParentElement, Render, SharedString, Styled, Task, View, ViewContext, VisualContext,
     WindowContext,
 };
@@ -75,7 +75,7 @@ impl Render for SharedScreen {
             .children(
                 self.frame
                     .as_ref()
-                    .map(|frame| img(frame.image()).size_full()),
+                    .map(|frame| surface(frame.image()).size_full()),
             )
     }
 }

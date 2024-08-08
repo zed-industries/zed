@@ -182,14 +182,14 @@ impl OllamaLanguageModel {
                 .into_iter()
                 .map(|msg| match msg.role {
                     Role::User => ChatMessage::User {
-                        content: msg.content,
+                        content: msg.string_contents(),
                     },
                     Role::Assistant => ChatMessage::Assistant {
-                        content: msg.content,
+                        content: msg.string_contents(),
                         tool_calls: None,
                     },
                     Role::System => ChatMessage::System {
-                        content: msg.content,
+                        content: msg.string_contents(),
                     },
                 })
                 .collect(),
@@ -257,7 +257,7 @@ impl LanguageModel for OllamaLanguageModel {
         let token_count = request
             .messages
             .iter()
-            .map(|msg| msg.content.chars().count())
+            .map(|msg| msg.string_contents().chars().count())
             .sum::<usize>()
             / 4;
 

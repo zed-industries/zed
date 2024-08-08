@@ -145,7 +145,7 @@ impl Clipboard {
 
         match unsafe { read_fd(fd) } {
             Ok(v) => {
-                self.cached_read = Some(ClipboardItem::new(v));
+                self.cached_read = Some(ClipboardItem::new_string(v));
                 self.cached_read.clone()
             }
             Err(err) => {
@@ -177,7 +177,7 @@ impl Clipboard {
 
         match unsafe { read_fd(fd) } {
             Ok(v) => {
-                self.cached_primary_read = Some(ClipboardItem::new(v.clone()));
+                self.cached_primary_read = Some(ClipboardItem::new_string(v.clone()));
                 self.cached_primary_read.clone()
             }
             Err(err) => {
