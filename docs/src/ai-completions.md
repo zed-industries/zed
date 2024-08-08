@@ -1,4 +1,4 @@
-# AI Code Completions
+# AI (LLM) Code Completions
 
 TBD: Document AI code completions. Mention how to they differ from [LSP completions](./language-settings.md).
 
@@ -16,12 +16,6 @@ TBD: Document Supermaven configuration
 
 TBD: Document inline completions, how to trigger and navigate them, (`alt-\`, `tab`, `alt-]`, `alt-[`, `cmd-right`.)
 
-## Inline Assistant
-
-TBD: Describe using of inline assistant
-
-## Inline Completions
-
 ## Assistant Panel
 
-- See: [Assistant Panel](language-model-integration.md)
+You may also use the Assistant Panel or the Inline Assistant to interact with language models, see [Language Model Integration](language-model-integration.md) documentation for more information.
