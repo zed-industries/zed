@@ -1423,15 +1423,14 @@ The name of any font family installed on the user's system
 
 See Buffer Font Features
 
-
 ```jsonc
 {
   "terminal": {
     "font_features": {
-      "calt": false
+      "calt": false,
       // See Buffer Font Features for more features
-    }
-  }
+    },
+  },
 }
 ```
 
@@ -1477,7 +1476,7 @@ See Buffer Font Features
 {
   "terminal": {
     "shell": {
-        "program": "sh"
+      "program": "sh"
     }
   }
 }
@@ -1508,7 +1507,7 @@ See Buffer Font Features
 {
   "terminal": {
     "toolbar": {
-      "title": true,
+      "title": true
     }
   }
 }
