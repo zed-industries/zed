@@ -1,7 +1,7 @@
 use super::{events::key_to_native, BoolExt};
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardImage, ClipboardItem, ClipboardString,
-    CursorStyle, ForegroundExecutor, ImageFormat, Keymap, MacDispatcher, MacDisplay, MacTextSystem,
+    hash, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString, CursorStyle,
+    ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher, MacDisplay, MacTextSystem,
     MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem,
     PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowParams,
 };
@@ -1104,7 +1104,9 @@ fn try_clipboard_image(pasteboard: id, format: ImageFormat) -> Option<ClipboardI
                     data.length() as usize,
                 ));
 
-                Some(ClipboardItem::Image(ClipboardImage { format, bytes }))
+                let id = hash(&bytes);
+
+                Some(ClipboardItem::Image(Image { format, bytes, id }))
             }
         } else {
             None

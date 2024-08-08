@@ -34,8 +34,8 @@ use fs::Fs;
 use gpui::{
     div, img, percentage, point, size, Action, Animation, AnimationExt, AnyElement, AnyView,
     AppContext, AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity,
-    EventEmitter, FocusHandle, FocusableView, FontWeight, ImageData, InteractiveElement,
-    IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render, SharedString, Size,
+    EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement, IntoElement, Model,
+    ParentElement, Pixels, ReadGlobal, Render, RenderImage, SharedString, Size,
     StatefulInteractiveElement, Styled, Subscription, Task, Transformation, UpdateGlobal, View,
     ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -2389,35 +2389,31 @@ impl ContextEditor {
     }
 
     fn paste(&mut self, _: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
-        if let Some(ClipboardItem::Image(data)) = cx.read_from_clipboard() {
-            if let Ok(image_data) = data.to_image_data(cx) {
-                let mut image_positions = Vec::new();
-                self.editor.update(cx, |editor, cx| {
-                    editor.transact(cx, |editor, cx| {
-                        let edits = editor
-                            .selections
-                            .all::<usize>(cx)
-                            .into_iter()
-                            .map(|selection| (selection.start..selection.end, "\n"));
-                        editor.edit(edits, cx);
+        if let Some(ClipboardItem::Image(image)) = cx.read_from_clipboard() {
+            let mut image_positions = Vec::new();
+            self.editor.update(cx, |editor, cx| {
+                editor.transact(cx, |editor, cx| {
+                    let edits = editor
+                        .selections
+                        .all::<usize>(cx)
+                        .into_iter()
+                        .map(|selection| (selection.start..selection.end, "\n"));
+                    editor.edit(edits, cx);
 
-                        let snapshot = editor.buffer().read(cx).snapshot(cx);
-                        for selection in editor.selections.all::<usize>(cx) {
-                            image_positions.push(snapshot.anchor_before(selection.end));
-                        }
-                    });
-                });
-
-                let image_data = Arc::new(image_data);
-
-                self.context.update(cx, |context, cx| {
-                    for image_position in image_positions {
-                        context.insert_image(image_position.text_anchor, image_data.clone(), cx);
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    for selection in editor.selections.all::<usize>(cx) {
+                        image_positions.push(snapshot.anchor_before(selection.end));
                     }
                 });
-            } else {
-                log::warn!("Tried to paste {} bytes of {:?} image data, but it could not be successfully converted to RGBA.", data.bytes().len(), data.format());
-            }
+            });
+
+            let image = Arc::new(image);
+
+            self.context.update(cx, |context, cx| {
+                for image_position in image_positions {
+                    context.insert_image(image_position.text_anchor, image.clone(), cx);
+                }
+            });
         } else {
             cx.propagate();
         }
@@ -2435,27 +2431,34 @@ impl ContextEditor {
                 .filter_map(|image| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
                     let anchor = buffer.anchor_in_excerpt(excerpt_id, image.anchor).unwrap();
+                    let image = image.data.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         position: anchor,
                         height: MAX_HEIGHT_IN_LINES,
                         style: BlockStyle::Sticky,
                         render: Box::new(move |cx| {
-                            let image_size = size_for_image(
-                                &image.data,
-                                size(
-                                    cx.max_width - cx.gutter_dimensions.full_width(),
-                                    MAX_HEIGHT_IN_LINES as f32 * cx.line_height,
-                                ),
-                            );
-                            h_flex()
-                                .pl(cx.gutter_dimensions.full_width())
-                                .child(
-                                    img(image.data.clone())
-                                        .object_fit(gpui::ObjectFit::ScaleDown)
-                                        .w(image_size.width)
-                                        .h(image_size.height),
-                                )
-                                .into_any_element()
+                            image
+                                .clone()
+                                .use_render_image(cx.context)
+                                .map(|image| {
+                                    let image_size = size_for_image(
+                                        &image,
+                                        size(
+                                            cx.max_width - cx.gutter_dimensions.full_width(),
+                                            MAX_HEIGHT_IN_LINES as f32 * cx.line_height,
+                                        ),
+                                    );
+                                    h_flex()
+                                        .pl(cx.gutter_dimensions.full_width())
+                                        .child(
+                                            img(image.clone())
+                                                .object_fit(gpui::ObjectFit::ScaleDown)
+                                                .w(image_size.width)
+                                                .h(image_size.height),
+                                        )
+                                        .into_any_element()
+                                })
+                                .unwrap_or_else(|| Empty.into_any_element())
                         }),
                         disposition: BlockDisposition::Above,
                     })
@@ -3608,7 +3611,7 @@ fn token_state(context: &Model<Context>, cx: &AppContext) -> Option<TokenState> 
     Some(token_state)
 }
 
-fn size_for_image(data: &ImageData, max_size: Size<Pixels>) -> Size<Pixels> {
+fn size_for_image(data: &RenderImage, max_size: Size<Pixels>) -> Size<Pixels> {
     let image_size = data
         .size(0)
         .map(|dimension| Pixels::from(u32::from(dimension)));

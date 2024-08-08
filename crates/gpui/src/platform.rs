@@ -20,11 +20,11 @@ mod test;
 mod windows;
 
 use crate::{
-    point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
-    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GPUSpecs, GlyphId,
-    ImageData, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Scene, SharedString, Size, SvgSize, Task, TaskLabel,
-    WindowContext, DEFAULT_WINDOW_SIZE,
+    point, Action, AnyWindowHandle, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds,
+    DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
+    GPUSpecs, GlyphId, ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, SharedString, Size,
+    SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -977,7 +977,7 @@ pub enum ClipboardItem {
     /// The clipboard item is a plaintext string
     String(ClipboardString),
     /// The clipboard item is an image
-    Image(ClipboardImage),
+    Image(Image),
 }
 
 impl ClipboardItem {
@@ -996,7 +996,7 @@ impl ClipboardItem {
 }
 
 /// One of the editor's supported image formats (e.g. PNG, JPEG) - used when dealing with images in the clipboard
-#[derive(Clone, Copy, Debug, Eq, PartialEq, EnumIter)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, EnumIter, Hash)]
 pub enum ImageFormat {
     // Sorted from most to least likely to be pasted into an editor,
     // which matters when we iterate through them trying to see if
@@ -1017,18 +1017,30 @@ pub enum ImageFormat {
     Tiff,
 }
 
-/// A clipboard item that represents an image.
+/// An image, with a format and certain bytes
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ClipboardImage {
+pub struct Image {
     /// The image format the bytes represent (e.g. PNG)
     format: ImageFormat,
     /// The raw image bytes
     bytes: Vec<u8>,
+    id: u64,
 }
 
-impl ClipboardImage {
+impl Hash for Image {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.id);
+    }
+}
+
+impl Image {
+    /// Use the GPUI `use_asset` API to make this image renderable
+    pub fn use_render_image(self: Arc<Self>, cx: &mut WindowContext) -> Option<Arc<RenderImage>> {
+        ImageSource::Image(self).use_data(cx)
+    }
+
     /// Convert the clipboard image to an `ImageData` object.
-    pub fn to_image_data(&self, cx: &WindowContext) -> Result<ImageData> {
+    pub fn to_image_data(&self, cx: &AppContext) -> Result<Arc<RenderImage>> {
         fn frames_for_image(
             bytes: &[u8],
             format: image::ImageFormat,
@@ -1065,9 +1077,10 @@ impl ClipboardImage {
             ImageFormat::Bmp => frames_for_image(&self.bytes, image::ImageFormat::Bmp)?,
             ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
             ImageFormat::Svg => {
+                // TODO: Fix this
                 let pixmap = cx
                     .svg_renderer()
-                    .render_pixmap(&self.bytes, SvgSize::ScaleFactor(cx.scale_factor()))?;
+                    .render_pixmap(&self.bytes, SvgSize::ScaleFactor(1.0))?;
 
                 let buffer =
                     image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
@@ -1077,7 +1090,7 @@ impl ClipboardImage {
             }
         };
 
-        Ok(ImageData::new(frames))
+        Ok(Arc::new(RenderImage::new(frames)))
     }
 
     /// Get the format of the clipboard image

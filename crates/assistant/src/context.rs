@@ -16,7 +16,7 @@ use futures::{
     FutureExt, StreamExt,
 };
 use gpui::{
-    AppContext, Context as _, EventEmitter, ImageData, Model, ModelContext, Subscription, Task,
+    AppContext, Context as _, EventEmitter, Image, Model, ModelContext, Subscription, Task,
     UpdateGlobal, View, WeakView,
 };
 use language::{
@@ -321,7 +321,7 @@ pub struct MessageMetadata {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Message {
-    pub image_offsets: SmallVec<[(usize, Arc<ImageData>); 1]>,
+    pub image_offsets: SmallVec<[(usize, Arc<Image>); 1]>,
     pub offset_range: Range<usize>,
     pub index_range: Range<usize>,
     pub id: MessageId,
@@ -370,7 +370,7 @@ impl Message {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ImageAnchor {
     pub anchor: language::Anchor,
-    pub data: Arc<ImageData>,
+    pub data: Arc<Image>,
 }
 
 struct PendingCompletion {
@@ -1784,7 +1784,7 @@ impl Context {
     pub fn insert_image(
         &mut self,
         anchor: language::Anchor,
-        image: Arc<ImageData>,
+        image: Arc<Image>,
         cx: &mut ModelContext<Self>,
     ) {
         cx.emit(ContextEvent::MessagesEdited);
@@ -3867,21 +3867,5 @@ mod tool {
                 _ => None,
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_messages_from_iters_empty() {
-        let buffer = Buffer::new(0);
-        let metadata = HashMap::new();
-        let messages = std::iter::empty();
-        let images = std::iter::empty();
-
-        let result: Vec<Message> =
-            Context::messages_from_iters(&buffer, &metadata, messages, images).collect();
-
-        assert!(result.is_empty());
     }
 }

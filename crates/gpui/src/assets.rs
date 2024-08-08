@@ -39,21 +39,21 @@ pub(crate) struct RenderImageParams {
 }
 
 /// A cached and processed image, in BGRA format
-pub struct ImageData {
+pub struct RenderImage {
     /// The ID associated with this image
     pub id: ImageId,
     data: SmallVec<[Frame; 1]>,
 }
 
-impl PartialEq for ImageData {
+impl PartialEq for RenderImage {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl Eq for ImageData {}
+impl Eq for RenderImage {}
 
-impl ImageData {
+impl RenderImage {
     /// Create a new image from the given data.
     pub fn new(data: impl Into<SmallVec<[Frame; 1]>>) -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -88,7 +88,7 @@ impl ImageData {
     }
 }
 
-impl fmt::Debug for ImageData {
+impl fmt::Debug for RenderImage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ImageData")
             .field("id", &self.id)

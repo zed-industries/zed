@@ -1,8 +1,8 @@
 use crate::{
     px, AbsoluteLength, AppContext, Asset, Bounds, DefiniteLength, Element, ElementId,
-    GlobalElementId, Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement, LayoutId,
-    Length, ObjectFit, Pixels, SharedString, SharedUri, Size, StyleRefinement, Styled, SvgSize,
-    UriOrPath, WindowContext,
+    GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    Length, ObjectFit, Pixels, RenderImage, SharedString, SharedUri, Size, StyleRefinement, Styled,
+    SvgSize, UriOrPath, WindowContext,
 };
 use futures::{AsyncReadExt, Future};
 use http_client;
@@ -28,7 +28,9 @@ pub enum ImageSource {
     /// Image content will be loaded from the provided file at render time.
     File(Arc<PathBuf>),
     /// Cached image data
-    Data(Arc<ImageData>),
+    Render(Arc<RenderImage>),
+    /// Cached image data
+    Image(Arc<Image>),
     /// Image content will be loaded from Asset at render time.
     Embedded(SharedString),
 }
@@ -85,9 +87,9 @@ impl From<PathBuf> for ImageSource {
     }
 }
 
-impl From<Arc<ImageData>> for ImageSource {
-    fn from(value: Arc<ImageData>) -> Self {
-        Self::Data(value)
+impl From<Arc<RenderImage>> for ImageSource {
+    fn from(value: Arc<RenderImage>) -> Self {
+        Self::Render(value)
     }
 }
 
@@ -271,7 +273,7 @@ impl InteractiveElement for Img {
 }
 
 impl ImageSource {
-    fn use_data(&self, cx: &mut WindowContext) -> Option<Arc<ImageData>> {
+    pub(crate) fn use_data(&self, cx: &mut WindowContext) -> Option<Arc<RenderImage>> {
         match self {
             ImageSource::Uri(_) | ImageSource::Embedded(_) | ImageSource::File(_) => {
                 let uri_or_path: UriOrPath = match self {
@@ -281,15 +283,16 @@ impl ImageSource {
                     _ => unreachable!(),
                 };
 
-                cx.use_asset::<Image>(&uri_or_path)?.log_err()
+                cx.use_asset::<ImageAsset>(&uri_or_path)?.log_err()
             }
 
-            ImageSource::Data(data) => Some(data.to_owned()),
+            ImageSource::Render(data) => Some(data.to_owned()),
+            ImageSource::Image(data) => cx.use_asset::<ImageDecoder>(data)?.log_err(),
         }
     }
 
     /// Fetch the data associated with this source, using GPUI's asset caching
-    pub async fn data(&self, cx: &mut AppContext) -> Option<Arc<ImageData>> {
+    pub async fn data(&self, cx: &mut AppContext) -> Option<Arc<RenderImage>> {
         match self {
             ImageSource::Uri(_) | ImageSource::Embedded(_) | ImageSource::File(_) => {
                 let uri_or_path: UriOrPath = match self {
@@ -299,20 +302,37 @@ impl ImageSource {
                     _ => unreachable!(),
                 };
 
-                cx.fetch_asset::<Image>(&uri_or_path).0.await.log_err()
+                cx.fetch_asset::<ImageAsset>(&uri_or_path).0.await.log_err()
             }
 
-            ImageSource::Data(data) => Some(data.to_owned()),
+            ImageSource::Render(data) => Some(data.to_owned()),
+            ImageSource::Image(data) => cx.fetch_asset::<ImageDecoder>(data).0.await.log_err(),
         }
     }
 }
 
 #[derive(Clone)]
-enum Image {}
+enum ImageDecoder {}
 
-impl Asset for Image {
+impl Asset for ImageDecoder {
+    type Source = Arc<Image>;
+    type Output = Result<Arc<RenderImage>, Arc<anyhow::Error>>;
+
+    fn load(
+        source: Self::Source,
+        cx: &mut AppContext,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let result = source.to_image_data(cx).map_err(Arc::new);
+        async { result }
+    }
+}
+
+#[derive(Clone)]
+enum ImageAsset {}
+
+impl Asset for ImageAsset {
     type Source = UriOrPath;
-    type Output = Result<Arc<ImageData>, ImageCacheError>;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
 
     fn load(
         source: Self::Source,
@@ -381,7 +401,7 @@ impl Asset for Image {
                     }
                 };
 
-                ImageData::new(data)
+                RenderImage::new(data)
             } else {
                 let pixmap =
                     // TODO: Can we make svgs always rescale?
@@ -390,7 +410,7 @@ impl Asset for Image {
                 let buffer =
                     ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
 
-                ImageData::new(SmallVec::from_elem(Frame::new(buffer), 1))
+                RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1))
             };
 
             Ok(Arc::new(data))
