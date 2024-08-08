@@ -35,7 +35,6 @@
                               (#set! "language" "sql"))
 )
 
-
 (call_expression
   function: (identifier) @_name (#eq? @_name "ts")
   arguments: (template_string (string_fragment) @content
