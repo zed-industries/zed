@@ -8,7 +8,7 @@ mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
 use assistant::PromptBuilder;
-use clap::{command, Parser};
+use clap::{command, Parser, ValueEnum};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, DevServerToken, UserStore};
 use collab_ui::channel_view::ChannelView;
@@ -19,7 +19,7 @@ use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
 use gpui::{
-    Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, Task,
+    Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, ReadGlobal as _, Task,
     UpdateGlobal as _, VisualContext,
 };
 use image_viewer;
@@ -527,19 +527,45 @@ fn main() {
             }
         }
 
-        let app_state = app_state.clone();
+        let state = app_state.clone();
         let prompt_builder = prompt_builder.clone();
         cx.spawn(move |cx| async move {
             while let Some(urls) = open_rx.next().await {
                 cx.update(|cx| {
                     if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
-                        handle_open_request(request, app_state.clone(), prompt_builder.clone(), cx);
+                        handle_open_request(request, state.clone(), prompt_builder.clone(), cx);
                     }
                 })
                 .ok();
             }
         })
         .detach();
+        if let Some(schema) = args.schema {
+            let app_state = app_state.clone();
+            cx.spawn(|cx| async move {
+                match schema {
+                    SchemaKind::Settings => {
+                        let language_names = app_state.languages.language_names();
+                        let schema = cx.update(|cx| {
+                            SettingsStore::global(cx).json_schema(
+                                &settings::SettingsJsonSchemaParams {
+                                    staff_mode: false,
+                                    language_names: &language_names,
+                                    font_names: &[],
+                                },
+                                cx,
+                            )
+                        });
+                        if let Ok(schema) = schema {
+                            if let Ok(schema) = serde_json::to_string(&schema) {
+                                let _ = std::fs::write("settings-schema.json", &(schema));
+                            }
+                        }
+                    }
+                }
+            })
+            .detach();
+        }
     });
 }
 
@@ -1030,6 +1056,11 @@ fn stdout_is_a_pty() -> bool {
     std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && std::io::stdout().is_terminal()
 }
 
+#[derive(Clone, Debug, PartialEq, ValueEnum)]
+enum SchemaKind {
+    Settings,
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "zed", disable_version_flag = true)]
 struct Args {
@@ -1044,6 +1075,10 @@ struct Args {
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
+
+    /// Instructs zed to dump a JSON schema to a file.
+    #[arg(long)]
+    schema: Option<SchemaKind>,
 }
 
 fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
