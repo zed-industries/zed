@@ -1353,10 +1353,10 @@ impl Buffer {
             })
             .collect();
 
-        let preserve_preview = !self.should_dismiss_preview();
+        let preserve_preview = !self.preserve_preview();
         self.edit(edits, None, cx);
         if preserve_preview {
-            self.refresh_preview_version();
+            self.refresh_preview();
         }
     }
 
@@ -2205,11 +2205,12 @@ impl Buffer {
     /// Call this directly after performing edits to prevent the preview tab
     /// from being dismissed by those edits. It causes `should_dismiss_preview`
     /// to return false until there are additional edits.
-    pub fn refresh_preview_version(&mut self) {
+    pub fn refresh_preview(&mut self) {
         self.preview_version = self.version.clone();
     }
 
-    pub fn should_dismiss_preview(&self) -> bool {
+    /// Whether we should preserve the preview status of a tab containing this buffer.
+    pub fn preserve_preview(&self) -> bool {
         self.has_edits_since(&self.preview_version)
     }
 }

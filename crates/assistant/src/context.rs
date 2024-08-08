@@ -505,7 +505,7 @@ impl WorkflowSuggestion {
                     buffer.start_transaction(cx);
                     let line_start = buffer.insert_empty_line(position, true, true, cx);
                     initial_transaction_id = buffer.end_transaction(cx);
-                    buffer.preserve_preview(cx);
+                    buffer.refresh_preview(cx);
 
                     let line_start = buffer.read(cx).anchor_before(line_start);
                     line_start..line_start
@@ -521,7 +521,7 @@ impl WorkflowSuggestion {
                     buffer.start_transaction(cx);
                     let line_start = buffer.insert_empty_line(position, true, true, cx);
                     initial_transaction_id = buffer.end_transaction(cx);
-                    buffer.preserve_preview(cx);
+                    buffer.refresh_preview(cx);
 
                     let line_start = buffer.read(cx).anchor_before(line_start);
                     line_start..line_start
@@ -537,7 +537,7 @@ impl WorkflowSuggestion {
                     buffer.start_transaction(cx);
                     let line_start = buffer.insert_empty_line(position, false, true, cx);
                     initial_transaction_id = buffer.end_transaction(cx);
-                    buffer.preserve_preview(cx);
+                    buffer.refresh_preview(cx);
 
                     let line_start = buffer.read(cx).anchor_before(line_start);
                     line_start..line_start
@@ -553,7 +553,7 @@ impl WorkflowSuggestion {
                     buffer.start_transaction(cx);
                     let line_start = buffer.insert_empty_line(position, true, false, cx);
                     initial_transaction_id = buffer.end_transaction(cx);
-                    buffer.preserve_preview(cx);
+                    buffer.refresh_preview(cx);
 
                     let line_start = buffer.read(cx).anchor_before(line_start);
                     line_start..line_start

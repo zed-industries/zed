@@ -288,7 +288,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         None
     }
 
-    fn should_dismiss_preview(&self, _cx: &AppContext) -> bool {
+    fn preserve_preview(&self, _cx: &AppContext) -> bool {
         true
     }
 }
@@ -431,7 +431,7 @@ pub trait ItemHandle: 'static + Send {
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
     fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings;
-    fn should_dismiss_preview(&self, cx: &AppContext) -> bool;
+    fn preserve_preview(&self, cx: &AppContext) -> bool;
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -824,8 +824,8 @@ impl<T: Item> ItemHandle for View<T> {
         SerializableItemRegistry::view_to_serializable_item_handle(self.to_any(), cx)
     }
 
-    fn should_dismiss_preview(&self, cx: &AppContext) -> bool {
-        self.read(cx).should_dismiss_preview(cx)
+    fn preserve_preview(&self, cx: &AppContext) -> bool {
+        self.read(cx).preserve_preview(cx)
     }
 }
 

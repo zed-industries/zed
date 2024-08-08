@@ -2510,12 +2510,12 @@ impl Codegen {
         self.buffer.update(cx, |buffer, cx| {
             if let Some(transaction_id) = self.transformation_transaction_id.take() {
                 buffer.undo_transaction(transaction_id, cx);
-                buffer.preserve_preview(cx);
+                buffer.refresh_preview(cx);
             }
 
             if let Some(transaction_id) = self.initial_transaction_id.take() {
                 buffer.undo_transaction(transaction_id, cx);
-                buffer.preserve_preview(cx);
+                buffer.refresh_preview(cx);
             }
         });
     }

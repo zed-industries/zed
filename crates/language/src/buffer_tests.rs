@@ -1836,11 +1836,11 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
         buffer.set_sync_parse_timeout(Duration::ZERO);
 
         buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
-        buffer.refresh_preview_version();
+        buffer.refresh_preview();
 
         // Synchronously, we haven't auto-indented and we're still preserving the preview.
         assert_eq!(buffer.text(), "fn a() {\n\n}");
-        assert!(!buffer.should_dismiss_preview());
+        assert!(!buffer.preserve_preview());
         buffer
     });
 
@@ -1850,7 +1850,7 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
     // The auto-indent applied, but didn't dismiss our preview
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
-        assert!(!buffer.should_dismiss_preview());
+        assert!(!buffer.preserve_preview());
 
         // Edit inserting another line. It will autoindent async.
         // Then refresh the preview version.
@@ -1859,14 +1859,14 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
             Some(AutoindentMode::EachLine),
             cx,
         );
-        buffer.refresh_preview_version();
+        buffer.refresh_preview();
         assert_eq!(buffer.text(), "fn a() {\n    \n\n}");
-        assert!(!buffer.should_dismiss_preview());
+        assert!(!buffer.preserve_preview());
 
         // Then perform another edit, this time without refreshing the preview version.
         buffer.edit([(Point::new(1, 4)..Point::new(1, 4), "x")], None, cx);
         // This causes the preview to not be preserved.
-        assert!(buffer.should_dismiss_preview());
+        assert!(buffer.preserve_preview());
     });
 
     // Let the async autoindent from the first edit finish.
@@ -1875,7 +1875,7 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
     // The autoindent applies, but it shouldn't restore the preview status because we had an edit in the meantime.
     buffer.update(cx, |buffer, _| {
         assert_eq!(buffer.text(), "fn a() {\n    \n    \n}");
-        assert!(buffer.should_dismiss_preview());
+        assert!(buffer.preserve_preview());
     });
 }
 

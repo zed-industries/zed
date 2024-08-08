@@ -895,8 +895,8 @@ impl Item for Editor {
         }
     }
 
-    fn should_dismiss_preview(&self, cx: &AppContext) -> bool {
-        self.buffer.read(cx).should_dismiss_preview(cx)
+    fn preserve_preview(&self, cx: &AppContext) -> bool {
+        self.buffer.read(cx).preserve_preview(cx)
     }
 }
 
