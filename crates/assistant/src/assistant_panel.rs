@@ -2281,6 +2281,22 @@ impl ContextEditor {
                                     }
                                 });
 
+                            let trigger = Button::new("show-error", "Error")
+                                .color(Color::Error)
+                                .selected_label_color(Color::Error)
+                                .selected_icon_color(Color::Error)
+                                .icon(IconName::XCircle)
+                                .icon_color(Color::Error)
+                                .icon_size(IconSize::Small)
+                                .icon_position(IconPosition::Start)
+                                .tooltip(move |cx| {
+                                    Tooltip::with_meta(
+                                        "Error interacting with language model",
+                                        None,
+                                        "Click for more details",
+                                        cx,
+                                    )
+                                });
                             h_flex()
                                 .id(("message_header", message_id.as_u64()))
                                 .pl(cx.gutter_dimensions.full_width())
@@ -2292,13 +2308,14 @@ impl ContextEditor {
                                 .children(
                                     if let MessageStatus::Error(error) = message.status.clone() {
                                         Some(
-                                            div()
-                                                .id("error")
-                                                .tooltip(move |cx| Tooltip::text(error.clone(), cx))
-                                                .child(
-                                                    Icon::new(IconName::ExclamationTriangle)
-                                                        .color(Color::Error),
-                                                ),
+                                            PopoverMenu::new("show-error-popover")
+                                                .menu(move |cx| {
+                                                    Some(cx.new_view(|cx| ErrorPopover {
+                                                        error: error.clone(),
+                                                        focus_handle: cx.focus_handle(),
+                                                    }))
+                                                })
+                                                .trigger(trigger),
                                         )
                                     } else {
                                         None
@@ -2483,33 +2500,31 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
-    fn dismiss_error_message(&mut self, cx: &mut ViewContext<Self>) {
-        self.error_message = None;
-        cx.notify();
-    }
-
     fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         use feature_flags::FeatureFlagAppExt;
         let nudge = self.assistant_panel.upgrade().map(|assistant_panel| {
             assistant_panel.read(cx).show_zed_ai_notice && cx.has_flag::<feature_flags::ZedPro>()
         });
 
-        if let Some(error) = self.error_message.clone() {
-            Some(Self::render_error_popover(error, cx).into_any_element())
-        } else if nudge.unwrap_or(false) {
+        if nudge.map_or(false, |value| value) {
             Some(
-                v_flex()
-                    .elevation_3(cx)
-                    .p_2()
-                    .gap_2()
+                h_flex()
+                    .p_3()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .bg(cx.theme().colors().editor_background)
+                    .justify_between()
                     .child(
-                        Label::new("Use Zed AI")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
+                        h_flex()
+                            .gap_3()
+                            .child(Icon::new(IconName::ZedAssistant).color(Color::Accent))
+                            .child(Label::new("Zed AI is here! Get started by signing in →")),
                     )
-                    .child(h_flex().justify_end().child(
-                        Button::new("sign-in", "Sign in to use Zed AI").on_click(cx.listener(
-                            |this, _event, cx| {
+                    .child(
+                        Button::new("sign-in", "Sign in")
+                            .size(ButtonSize::Compact)
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(|this, _event, cx| {
                                 let client = this
                                     .workspace
                                     .update(cx, |workspace, _| workspace.client().clone())
@@ -2522,62 +2537,49 @@ impl ContextEditor {
                                     })
                                     .detach_and_log_err(cx)
                                 }
-                            },
-                        )),
-                    ))
+                            })),
+                    )
                     .into_any_element(),
             )
         } else if let Some(configuration_error) = configuration_error(cx) {
             let label = match configuration_error {
-                ConfigurationError::NoProvider => "No provider configured",
-                ConfigurationError::ProviderNotAuthenticated => "Provider is not configured",
+                ConfigurationError::NoProvider => "No LLM provider selected.",
+                ConfigurationError::ProviderNotAuthenticated => "LLM provider is not configured.",
             };
             Some(
-                v_flex()
-                    .elevation_3(cx)
-                    .p_2()
-                    .gap_2()
-                    .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                h_flex()
+                    .p_3()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .bg(cx.theme().colors().editor_background)
+                    .justify_between()
                     .child(
-                        h_flex().justify_end().child(
-                            Button::new("open-configuration", "Open configuration")
-                                .icon(IconName::Settings)
-                                .icon_size(IconSize::Small)
-                                .on_click({
-                                    let focus_handle = self.focus_handle(cx).clone();
-                                    move |_event, cx| {
-                                        focus_handle.dispatch_action(&ShowConfiguration, cx);
-                                    }
-                                }),
-                        ),
+                        h_flex()
+                            .gap_3()
+                            .child(
+                                Icon::new(IconName::ExclamationTriangle)
+                                    .size(IconSize::Small)
+                                    .color(Color::Warning),
+                            )
+                            .child(Label::new(label)),
+                    )
+                    .child(
+                        Button::new("open-configuration", "Open configuration")
+                            .size(ButtonSize::Compact)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::Filled)
+                            .on_click({
+                                let focus_handle = self.focus_handle(cx).clone();
+                                move |_event, cx| {
+                                    focus_handle.dispatch_action(&ShowConfiguration, cx);
+                                }
+                            }),
                     )
                     .into_any_element(),
             )
         } else {
             None
         }
-    }
-
-    fn render_error_popover(error: SharedString, cx: &mut ViewContext<Self>) -> Div {
-        v_flex()
-            .p_2()
-            .elevation_2(cx)
-            .bg(cx.theme().colors().surface_background)
-            .min_w_24()
-            .occlude()
-            .child(
-                Label::new("Error interacting with language model")
-                    .size(LabelSize::Small)
-                    .weight(FontWeight::BOLD)
-                    .color(Color::Muted),
-            )
-            .child(Label::new(error).size(LabelSize::Small))
-            .child(
-                h_flex().justify_end().child(
-                    Button::new("dismiss", "Dismiss")
-                        .on_click(cx.listener(|this, _, cx| this.dismiss_error_message(cx))),
-                ),
-            )
     }
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -2664,7 +2666,7 @@ impl EventEmitter<SearchEvent> for ContextEditor {}
 
 impl Render for ContextEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
+        v_flex()
             .key_context("ContextEditor")
             .capture_action(cx.listener(ContextEditor::cancel_last_assist))
             .capture_action(cx.listener(ContextEditor::save))
@@ -2675,7 +2677,7 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::split))
             .on_action(cx.listener(ContextEditor::debug_edit_steps))
             .size_full()
-            .v_flex()
+            .children(self.render_notice(cx))
             .child(
                 div()
                     .flex_grow()
@@ -2683,30 +2685,50 @@ impl Render for ContextEditor {
                     .child(self.editor.clone()),
             )
             .child(
-                h_flex()
-                    .flex_none()
-                    .relative()
-                    .when_some(self.render_notice(cx), |this, notice| {
-                        this.child(
-                            div()
-                                .absolute()
-                                .w_3_4()
-                                .min_w_24()
-                                .max_w_128()
-                                .right_4()
-                                .bottom_9()
-                                .child(notice),
-                        )
-                    })
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .absolute()
-                            .right_4()
-                            .bottom_2()
-                            .justify_end()
-                            .child(self.render_send_button(cx)),
-                    ),
+                h_flex().flex_none().relative().child(
+                    h_flex()
+                        .w_full()
+                        .absolute()
+                        .right_4()
+                        .bottom_2()
+                        .justify_end()
+                        .child(self.render_send_button(cx)),
+                ),
+            )
+    }
+}
+
+struct ErrorPopover {
+    error: SharedString,
+    focus_handle: FocusHandle,
+}
+
+impl EventEmitter<DismissEvent> for ErrorPopover {}
+
+impl FocusableView for ErrorPopover {
+    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for ErrorPopover {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .mt_2()
+            .max_w_96()
+            .py_2()
+            .px_3()
+            .gap_0p5()
+            .elevation_2(cx)
+            .bg(cx.theme().colors().surface_background)
+            .occlude()
+            .child(Label::new("Error interacting with language model").weight(FontWeight::SEMIBOLD))
+            .child(Label::new(self.error.clone()))
+            .child(
+                h_flex().justify_end().mt_1().child(
+                    Button::new("dismiss", "Dismiss")
+                        .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
+                ),
             )
     }
 }
@@ -3326,13 +3348,38 @@ impl ConfigurationView {
         let provider_name = provider.name().0.clone();
         let configuration_view = self.configuration_views.get(&provider.id()).cloned();
 
+        let open_new_context = cx.listener({
+            let provider = provider.clone();
+            move |_, _, cx| {
+                cx.emit(ConfigurationViewEvent::NewProviderContextEditor(
+                    provider.clone(),
+                ))
+            }
+        });
+
         v_flex()
-            .gap_4()
-            .child(Headline::new(provider_name.clone()).size(HeadlineSize::Medium))
+            .gap_2()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(Headline::new(provider_name.clone()).size(HeadlineSize::Small))
+                    .when(provider.is_authenticated(cx), move |this| {
+                        this.child(
+                            h_flex().justify_end().child(
+                                Button::new("new-context", "Open new context")
+                                    .icon_position(IconPosition::Start)
+                                    .icon(IconName::Plus)
+                                    .style(ButtonStyle::Filled)
+                                    .layer(ElevationIndex::ModalSurface)
+                                    .on_click(open_new_context),
+                            ),
+                        )
+                    }),
+            )
             .child(
                 div()
                     .p(Spacing::Large.rems(cx))
-                    .bg(cx.theme().colors().title_bar_background)
+                    .bg(cx.theme().colors().surface_background)
                     .border_1()
                     .border_color(cx.theme().colors().border_variant)
                     .rounded_md()
@@ -3346,28 +3393,6 @@ impl ConfigurationView {
                         this.child(configuration_view)
                     }),
             )
-            .when(provider.is_authenticated(cx), move |this| {
-                this.child(
-                    h_flex().justify_end().child(
-                        Button::new(
-                            "new-context",
-                            format!("Open new context using {}", provider_name),
-                        )
-                        .icon_position(IconPosition::Start)
-                        .icon(IconName::Plus)
-                        .style(ButtonStyle::Filled)
-                        .layer(ElevationIndex::ModalSurface)
-                        .on_click(cx.listener({
-                            let provider = provider.clone();
-                            move |_, _, cx| {
-                                cx.emit(ConfigurationViewEvent::NewProviderContextEditor(
-                                    provider.clone(),
-                                ))
-                            }
-                        })),
-                    ),
-                )
-            })
     }
 }
 
@@ -3382,26 +3407,30 @@ impl Render for ConfigurationView {
         v_flex()
             .id("assistant-configuration-view")
             .track_focus(&self.focus_handle)
-            .w_full()
-            .min_h_full()
-            .p(Spacing::XXLarge.rems(cx))
+            .bg(cx.theme().colors().editor_background)
+            .size_full()
             .overflow_y_scroll()
-            .gap_6()
             .child(
                 v_flex()
-                    .gap_2()
-                    .child(Headline::new("Configure your Assistant").size(HeadlineSize::Medium)),
+                    .p(Spacing::XXLarge.rems(cx))
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .gap_1()
+                    .child(Headline::new("Configure your Assistant").size(HeadlineSize::Medium))
+                    .child(
+                        Label::new(
+                            "At least one LLM provider must be configured to use the Assistant.",
+                        )
+                        .color(Color::Muted),
+                    ),
             )
             .child(
                 v_flex()
-                    .gap_2()
-                    .child(
-                        Label::new(
-                            "At least one provider must be configured to use the assistant.",
-                        )
-                        .color(Color::Muted),
-                    )
-                    .child(v_flex().mt_2().gap_4().children(provider_views)),
+                    .p(Spacing::XXLarge.rems(cx))
+                    .mt_1()
+                    .gap_6()
+                    .size_full()
+                    .children(provider_views),
             )
     }
 }
@@ -3514,8 +3543,12 @@ fn render_docs_slash_command_trailer(
         children.push(
             div()
                 .id(("latest-error", row.0))
-                .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
-                .tooltip(move |cx| Tooltip::text(format!("failed to index: {latest_error}"), cx))
+                .child(
+                    Icon::new(IconName::ExclamationTriangle)
+                        .size(IconSize::Small)
+                        .color(Color::Warning),
+                )
+                .tooltip(move |cx| Tooltip::text(format!("Failed to index: {latest_error}"), cx))
                 .into_any_element(),
         )
     }
