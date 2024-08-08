@@ -7,7 +7,7 @@ This crate provides the theme system for Zed.
 A theme is a collection of colors used to build a consistent appearance for UI components across the application.
 To produce a theme in Zed,
 
-A theme is made of of two parts: A [ThemeFamily] and one or more [Theme]s.
+A theme is made of two parts: A [ThemeFamily] and one or more [Theme]s.
 
 //
 A [ThemeFamily] contains metadata like theme name, author, and theme-specific [ColorScales] as well as a series of themes.

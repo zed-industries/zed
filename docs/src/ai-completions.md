@@ -44,7 +44,7 @@ You should be able to sign-in to Supermaven by clicking on the Supermaven icon i
 
 ## Inline completions
 
-There a number of of actions/shortcuts available to interact with inline completions:
+There a number of actions/shortcuts available to interact with inline completions:
 
 - `editor: accept inline completion` (`tab`): To accept the current inline completion
 - `editor: accept partial inline completion` (`cmd-right`): To accept the current inline completion up to the next word boundary
