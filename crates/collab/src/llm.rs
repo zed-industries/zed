@@ -319,32 +319,39 @@ fn normalize_model_name(provider: LanguageModelProvider, name: String) -> String
 async fn check_usage_limit(
     db: &Arc<LlmDatabase>,
     provider: LanguageModelProvider,
-    model: &str,
+    model_name: &str,
     claims: &LlmTokenClaims,
 ) -> Result<()> {
+    let model = db.model(provider, model_name)?;
     let usage = db
-        .get_usage(claims.user_id as i32, provider, model, Utc::now())
+        .get_usage(claims.user_id as i32, provider, model_name, Utc::now())
         .await?;
 
-    let model = db.model(provider, model)?;
+    let checks = [
+        (
+            usage.requests_this_minute,
+            model.max_requests_per_minute,
+            "requests per minute",
+        ),
+        (
+            usage.tokens_this_minute,
+            model.max_tokens_per_minute,
+            "tokens per minute",
+        ),
+        (
+            usage.tokens_this_day,
+            model.max_tokens_per_day,
+            "tokens per day",
+        ),
+    ];
 
-    if usage.requests_this_minute > model.max_requests_per_minute as usize {
-        return Err(Error::http(
-            StatusCode::TOO_MANY_REQUESTS,
-            "Rate limit exceeded. Maximum requests per minute reached.".to_string(),
-        ));
-    }
-    if usage.tokens_this_minute > model.max_tokens_per_minute as usize {
-        return Err(Error::http(
-            StatusCode::TOO_MANY_REQUESTS,
-            "Rate limit exceeded. Maximum tokens per minute reached.".to_string(),
-        ));
-    }
-    if usage.tokens_this_day > model.max_tokens_per_day as usize {
-        return Err(Error::http(
-            StatusCode::TOO_MANY_REQUESTS,
-            "Rate limit exceeded. Maximum tokens per day reached.".to_string(),
-        ));
+    for (usage, limit, resource) in checks {
+        if usage > limit as usize {
+            return Err(Error::http(
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Rate limit exceeded. Maximum {} reached.", resource),
+            ));
+        }
     }
 
     Ok(())
