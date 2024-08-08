@@ -1766,7 +1766,7 @@ impl MultiBuffer {
         for buffer_state in self.buffers.borrow().values() {
             buffer_state
                 .buffer
-                .update(cx, |buffer, _cx| buffer.preserve_preview());
+                .update(cx, |buffer, _cx| buffer.refresh_preview_version());
         }
     }
 

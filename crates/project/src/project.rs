@@ -4990,7 +4990,6 @@ impl Project {
                 if ensure_final_newline {
                     buffer.ensure_final_newline(cx);
                 }
-                // dbg!();
                 buffer.end_transaction(cx)
             })?;
 

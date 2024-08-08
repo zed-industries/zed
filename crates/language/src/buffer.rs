@@ -98,7 +98,6 @@ pub struct Buffer {
     /// or saved to disk.
     saved_version: clock::Global,
     preview_version: clock::Global,
-    preview_preserved: bool,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
@@ -736,7 +735,6 @@ impl Buffer {
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
-            preview_preserved: false,
         }
     }
 
@@ -1355,7 +1353,11 @@ impl Buffer {
             })
             .collect();
 
+        let preserve_preview = !self.should_dismiss_preview();
         self.edit(edits, None, cx);
+        if preserve_preview {
+            self.refresh_preview_version();
+        }
     }
 
     /// Create a minimal edit that will cause the given row to be indented
@@ -2203,7 +2205,7 @@ impl Buffer {
     /// Call this directly after performing edits to prevent the preview tab
     /// from being dismissed by those edits. It causes `should_dismiss_preview`
     /// to return false until there are additional edits.
-    pub fn preserve_preview(&mut self) {
+    pub fn refresh_preview_version(&mut self) {
         self.preview_version = self.version.clone();
     }
 
