@@ -13,15 +13,6 @@ pub struct Usage {
     pub tokens_this_month: usize,
 }
 
-const MINUTE_BUCKET_COUNT: usize = 6;
-const MINUTE_BUCKET_DURATION: Duration = Duration::seconds(60 / MINUTE_BUCKET_COUNT as i64);
-
-const DAY_BUCKET_COUNT: usize = 24;
-const DAY_BUCKET_DURATION: Duration = Duration::minutes(24 * 60 / DAY_BUCKET_COUNT as i64);
-
-const MONTH_BUCKET_COUNT: usize = 30;
-const MONTH_BUCKET_DURATION: Duration = Duration::hours(24);
-
 impl LlmDatabase {
     pub async fn initialize_usage_measures(&mut self) -> Result<()> {
         let all_measures = self
@@ -83,30 +74,14 @@ impl LlmDatabase {
                 .all(&*tx)
                 .await?;
 
-            let requests_this_minute = self.get_usage_for_measure(
-                &usages,
-                now,
-                UsageMeasure::RequestsPerMinute,
-                MINUTE_BUCKET_DURATION,
-            )?;
-            let tokens_this_minute = self.get_usage_for_measure(
-                &usages,
-                now,
-                UsageMeasure::TokensPerMinute,
-                MINUTE_BUCKET_DURATION,
-            )?;
-            let tokens_this_day = self.get_usage_for_measure(
-                &usages,
-                now,
-                UsageMeasure::TokensPerDay,
-                DAY_BUCKET_DURATION,
-            )?;
-            let tokens_this_month = self.get_usage_for_measure(
-                &usages,
-                now,
-                UsageMeasure::TokensPerMonth,
-                MONTH_BUCKET_DURATION,
-            )?;
+            let requests_this_minute =
+                self.get_usage_for_measure(&usages, now, UsageMeasure::RequestsPerMinute)?;
+            let tokens_this_minute =
+                self.get_usage_for_measure(&usages, now, UsageMeasure::TokensPerMinute)?;
+            let tokens_this_day =
+                self.get_usage_for_measure(&usages, now, UsageMeasure::TokensPerDay)?;
+            let tokens_this_month =
+                self.get_usage_for_measure(&usages, now, UsageMeasure::TokensPerMonth)?;
 
             Ok(Usage {
                 requests_this_minute,
@@ -145,8 +120,6 @@ impl LlmDatabase {
                 UsageMeasure::RequestsPerMinute,
                 now,
                 1,
-                MINUTE_BUCKET_COUNT,
-                MINUTE_BUCKET_DURATION,
                 &tx,
             )
             .await?;
@@ -157,8 +130,6 @@ impl LlmDatabase {
                 UsageMeasure::TokensPerMinute,
                 now,
                 token_count,
-                MINUTE_BUCKET_COUNT,
-                MINUTE_BUCKET_DURATION,
                 &tx,
             )
             .await?;
@@ -169,8 +140,6 @@ impl LlmDatabase {
                 UsageMeasure::TokensPerDay,
                 now,
                 token_count,
-                DAY_BUCKET_COUNT,
-                DAY_BUCKET_DURATION,
                 &tx,
             )
             .await?;
@@ -181,8 +150,6 @@ impl LlmDatabase {
                 UsageMeasure::TokensPerMonth,
                 now,
                 token_count,
-                MONTH_BUCKET_COUNT,
-                MONTH_BUCKET_DURATION,
                 &tx,
             )
             .await?;
@@ -200,49 +167,44 @@ impl LlmDatabase {
         usages: &[usage::Model],
         usage_measure: UsageMeasure,
         now: DateTimeUtc,
-        count: usize,
-        bucket_count: usize,
-        bucket_duration: Duration,
+        usage_to_add: usize,
         tx: &DatabaseTransaction,
     ) -> Result<()> {
         let now = now.naive_utc();
-        let measure_id = self.usage_measure_ids[&usage_measure];
+        let measure_id = *self
+            .usage_measure_ids
+            .get(&usage_measure)
+            .ok_or_else(|| anyhow!("usage measure {usage_measure} not found"))?;
 
-        let mut new_timestamp = now;
-        let mut new_buckets = vec![0; bucket_count];
-        let mut existing_id = None;
+        let mut id = None;
+        let mut timestamp = now;
+        let mut buckets = vec![0_i64];
 
-        if let Some(usage) = usages.iter().find(|usage| usage.measure_id == measure_id) {
-            existing_id = Some(usage.id);
-            let time_delta = now - usage.timestamp;
-            if time_delta < bucket_duration * bucket_count as i32 {
-                let num_buckets_advanced = (time_delta.num_seconds() as f32
-                    / bucket_duration.num_seconds() as f32)
-                    .ceil() as usize;
-                new_timestamp = usage.timestamp + bucket_duration * num_buckets_advanced as i32;
-
-                for (bucket_ix, bucket) in new_buckets.iter_mut().enumerate() {
-                    *bucket = usage
-                        .buckets
-                        .get(bucket_ix + num_buckets_advanced)
-                        .copied()
-                        .unwrap_or(0);
-                }
+        if let Some(old_usage) = usages.iter().find(|usage| usage.measure_id == measure_id) {
+            id = Some(old_usage.id);
+            let (live_buckets, buckets_since) =
+                Self::get_live_buckets(old_usage, now, usage_measure);
+            if !live_buckets.is_empty() {
+                buckets.clear();
+                buckets.extend_from_slice(live_buckets);
+                buckets.extend(iter::repeat(0).take(buckets_since));
+                timestamp =
+                    old_usage.timestamp + (usage_measure.bucket_duration() * buckets_since as i32);
             }
         }
 
-        *new_buckets.last_mut().unwrap() += count as i64;
+        *buckets.last_mut().unwrap() += usage_to_add as i64;
 
         let mut model = usage::ActiveModel {
             user_id: ActiveValue::set(user_id),
             model_id: ActiveValue::set(model_id),
             measure_id: ActiveValue::set(measure_id),
-            timestamp: ActiveValue::set(new_timestamp),
-            buckets: ActiveValue::set(new_buckets),
+            timestamp: ActiveValue::set(timestamp),
+            buckets: ActiveValue::set(buckets),
             ..Default::default()
         };
 
-        if let Some(id) = existing_id {
+        if let Some(id) = id {
             model.id = ActiveValue::unchanged(id);
             model.update(tx).await?;
         } else {
@@ -258,24 +220,67 @@ impl LlmDatabase {
         &self,
         usages: &[usage::Model],
         now: DateTimeUtc,
-        measure: UsageMeasure,
-        bucket_duration: Duration,
+        usage_measure: UsageMeasure,
     ) -> Result<usize> {
-        let measure_id = self
+        let now = now.naive_utc();
+        let measure_id = *self
             .usage_measure_ids
-            .get(&measure)
-            .ok_or_else(|| anyhow!("usage measure {measure} not found"))?;
-        let Some(usage) = usages.iter().find(|usage| usage.measure_id == *measure_id) else {
+            .get(&usage_measure)
+            .ok_or_else(|| anyhow!("usage measure {usage_measure} not found"))?;
+        let Some(usage) = usages.iter().find(|usage| usage.measure_id == measure_id) else {
             return Ok(0);
         };
 
-        let now = now.naive_utc();
-        let buckets_elapsed =
-            (now - usage.timestamp).num_seconds().max(0) / bucket_duration.num_seconds();
-        Ok(usage
-            .buckets
-            .iter()
-            .skip(buckets_elapsed as usize)
-            .sum::<i64>() as _)
+        let (live_buckets, _) = Self::get_live_buckets(usage, now, usage_measure);
+        Ok(live_buckets.iter().sum::<i64>() as _)
+    }
+
+    fn get_live_buckets(
+        usage: &usage::Model,
+        now: chrono::NaiveDateTime,
+        measure: UsageMeasure,
+    ) -> (&[i64], usize) {
+        let seconds_since_usage = (now - usage.timestamp).num_seconds().max(0);
+        let buckets_since_usage =
+            seconds_since_usage as f32 / measure.bucket_duration().num_seconds() as f32;
+        let buckets_since_usage = buckets_since_usage.ceil() as usize;
+        let mut live_buckets = &[] as &[i64];
+        if buckets_since_usage < measure.bucket_count() {
+            let expired_bucket_count =
+                (usage.buckets.len() + buckets_since_usage).saturating_sub(measure.bucket_count());
+            live_buckets = &usage.buckets[expired_bucket_count..];
+            while live_buckets.first() == Some(&0) {
+                live_buckets = &live_buckets[1..];
+            }
+        }
+        (live_buckets, buckets_since_usage)
+    }
+}
+
+const MINUTE_BUCKET_COUNT: usize = 12;
+const DAY_BUCKET_COUNT: usize = 48;
+const MONTH_BUCKET_COUNT: usize = 30;
+
+impl UsageMeasure {
+    fn bucket_count(&self) -> usize {
+        match self {
+            UsageMeasure::RequestsPerMinute => MINUTE_BUCKET_COUNT,
+            UsageMeasure::TokensPerMinute => MINUTE_BUCKET_COUNT,
+            UsageMeasure::TokensPerDay => DAY_BUCKET_COUNT,
+            UsageMeasure::TokensPerMonth => MONTH_BUCKET_COUNT,
+        }
+    }
+
+    fn total_duration(&self) -> Duration {
+        match self {
+            UsageMeasure::RequestsPerMinute => Duration::minutes(1),
+            UsageMeasure::TokensPerMinute => Duration::minutes(1),
+            UsageMeasure::TokensPerDay => Duration::hours(24),
+            UsageMeasure::TokensPerMonth => Duration::days(30),
+        }
+    }
+
+    fn bucket_duration(&self) -> Duration {
+        self.total_duration() / self.bucket_count() as i32
     }
 }

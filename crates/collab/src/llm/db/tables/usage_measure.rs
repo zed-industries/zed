@@ -1,13 +1,15 @@
 use crate::llm::db::UsageMeasureId;
 use sea_orm::entity::prelude::*;
 
-#[derive(Debug, PartialEq, Eq, Hash, strum::EnumString, strum::Display, strum::EnumIter)]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, Hash, strum::EnumString, strum::Display, strum::EnumIter,
+)]
 #[strum(serialize_all = "snake_case")]
 pub enum UsageMeasure {
+    RequestsPerMinute,
     TokensPerMinute,
     TokensPerDay,
     TokensPerMonth,
-    RequestsPerMinute,
 }
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]

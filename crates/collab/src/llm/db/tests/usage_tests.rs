@@ -106,7 +106,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
     );
 
     let t2 = t0 + Duration::days(30);
-    let now = t2 + Duration::hours(1);
+    let now = t2;
     let usage = db.get_usage(user_id, provider, model, now).await.unwrap();
     assert_eq!(
         usage,
