@@ -1392,6 +1392,7 @@ impl WorkflowStepStatus {
     pub(crate) fn into_element(
         &self,
         step_range: Range<language::Anchor>,
+        focus_handle: FocusHandle,
         editor: WeakView<ContextEditor>,
         cx: &mut BlockContext<'_, '_>,
     ) -> AnyElement {
@@ -1436,12 +1437,21 @@ impl WorkflowStepStatus {
                     .into_any()
             }
 
-            WorkflowStepStatus::Idle => Button::new(("transform-workflow-step", id), "Preview")
+            WorkflowStepStatus::Idle => Button::new(("transform-workflow-step", id), "Transform")
                 .icon(IconName::Sparkle)
                 .icon_position(IconPosition::Start)
                 .icon_size(IconSize::Small)
                 .style(ButtonStyle::Tinted(TintColor::Accent))
-                .tooltip(|cx| Tooltip::text("Preview changes", cx))
+                .tooltip(move |cx| {
+                    cx.new_view(|cx| {
+                        Tooltip::new("Transform").key_binding(KeyBinding::for_action_in(
+                            &Assist,
+                            &focus_handle,
+                            cx,
+                        ))
+                    })
+                    .into()
+                })
                 .on_click({
                     let editor = editor.clone();
                     let step_range = step_range.clone();
@@ -1461,7 +1471,21 @@ impl WorkflowStepStatus {
                 .child(
                     IconButton::new(("stop-workflow-step", id), IconName::Stop)
                         .style(ButtonStyle::Tinted(TintColor::Negative))
-                        .tooltip(|cx| Tooltip::text("Stop step execution", cx))
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |cx| {
+                                cx.new_view(|cx| {
+                                    Tooltip::new("Stop Transformation").key_binding(
+                                        KeyBinding::for_action_in(
+                                            &editor::actions::Cancel,
+                                            &focus_handle,
+                                            cx,
+                                        ),
+                                    )
+                                })
+                                .into()
+                            }
+                        })
                         .on_click({
                             let editor = editor.clone();
                             let step_range = step_range.clone();
@@ -1482,7 +1506,21 @@ impl WorkflowStepStatus {
                     IconButton::new(("reject-workflow-step", id), IconName::Close)
                         .shape(IconButtonShape::Square)
                         .style(ButtonStyle::Tinted(TintColor::Negative))
-                        .tooltip(|cx| Tooltip::text("Reject Step", cx))
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |cx| {
+                                cx.new_view(|cx| {
+                                    Tooltip::new("Reject Transformation").key_binding(
+                                        KeyBinding::for_action_in(
+                                            &editor::actions::Cancel,
+                                            &focus_handle,
+                                            cx,
+                                        ),
+                                    )
+                                })
+                                .into()
+                            }
+                        })
                         .on_click({
                             let editor = editor.clone();
                             let step_range = step_range.clone();
@@ -1499,7 +1537,14 @@ impl WorkflowStepStatus {
                     IconButton::new(("confirm-workflow-step", id), IconName::Check)
                         .shape(IconButtonShape::Square)
                         .style(ButtonStyle::Tinted(TintColor::Positive))
-                        .tooltip(|cx| Tooltip::text("Confirm Step", cx))
+                        .tooltip(move |cx| {
+                            cx.new_view(|cx| {
+                                Tooltip::new("Accept Transformation").key_binding(
+                                    KeyBinding::for_action_in(&Assist, &focus_handle, cx),
+                                )
+                            })
+                            .into()
+                        })
                         .on_click({
                             let editor = editor.clone();
                             let step_range = step_range.clone();
@@ -1515,12 +1560,12 @@ impl WorkflowStepStatus {
                 .into_any_element(),
             WorkflowStepStatus::Confirmed => h_flex()
                 .child(
-                    Button::new(("revert-workflow-step", id), "Undo")
+                    Button::new(("revert-workflow-step", id), "Undo Transformation")
                         .style(ButtonStyle::Filled)
                         .icon(Some(IconName::Undo))
                         .icon_position(IconPosition::Start)
                         .icon_size(IconSize::Small)
-                        .tooltip(|cx| Tooltip::text("Undo Step", cx))
+                        .tooltip(|cx| Tooltip::text("Undo Transformation", cx))
                         .on_click({
                             let editor = editor.clone();
                             let step_range = step_range.clone();
@@ -1797,13 +1842,28 @@ impl ContextEditor {
         }
     }
 
-    fn cancel_last_assist(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
-        if !self
+    fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
+        if self
             .context
             .update(cx, |context, _| context.cancel_last_assist())
         {
-            cx.propagate();
+            return;
         }
+
+        if let Some(active_step) = self.active_workflow_step() {
+            match active_step.status(cx) {
+                WorkflowStepStatus::Pending => {
+                    self.stop_workflow_step(active_step.range.clone(), cx);
+                    return;
+                }
+                WorkflowStepStatus::Done => {
+                    self.reject_workflow_step(active_step.range.clone(), cx);
+                    return;
+                }
+                _ => {}
+            }
+        }
+        cx.propagate();
     }
 
     fn debug_workflow_steps(&mut self, _: &DebugWorkflowSteps, cx: &mut ViewContext<Self>) {
@@ -2308,6 +2368,7 @@ impl ContextEditor {
             let weak_self = cx.view().downgrade();
             let block_ids = self.editor.update(cx, |editor, cx| {
                 let step_range = step_range.clone();
+                let editor_focus_handle = editor.focus_handle(cx);
                 editor.insert_blocks(
                     vec![
                         BlockProperties {
@@ -2347,6 +2408,7 @@ impl ContextEditor {
                                         .children(current_status.as_ref().map(|status| {
                                             status.into_element(
                                                 step_range.clone(),
+                                                editor_focus_handle.clone(),
                                                 weak_self.clone(),
                                                 cx,
                                             )
@@ -3049,7 +3111,7 @@ impl ContextEditor {
                 WorkflowStepStatus::Error(_) => "Retry Step Resolution",
                 WorkflowStepStatus::Idle => "Transform",
                 WorkflowStepStatus::Pending => "Transforming...",
-                WorkflowStepStatus::Done => "Confirm Transformation",
+                WorkflowStepStatus::Done => "Accept Transformation",
                 WorkflowStepStatus::Confirmed => "Send",
             },
             None => "Send",
@@ -3128,7 +3190,7 @@ impl Render for ContextEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .key_context("ContextEditor")
-            .capture_action(cx.listener(ContextEditor::cancel_last_assist))
+            .capture_action(cx.listener(ContextEditor::cancel))
             .capture_action(cx.listener(ContextEditor::save))
             .capture_action(cx.listener(ContextEditor::copy))
             .capture_action(cx.listener(ContextEditor::cycle_message_role))
