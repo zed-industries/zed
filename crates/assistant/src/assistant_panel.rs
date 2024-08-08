@@ -1398,30 +1398,35 @@ impl WorkflowStepStatus {
     ) -> AnyElement {
         let id = EntityId::from(cx.block_id);
         match self {
-            WorkflowStepStatus::Resolving => div()
-                .id(("resolving-suggestion-container", id))
-                .child(Icon::new(IconName::ArrowCircle).with_animation(
+            WorkflowStepStatus::Resolving => Icon::new(IconName::ArrowCircle)
+                .size(IconSize::Small)
+                .with_animation(
                     ("resolving-suggestion-label", id),
                     Animation::new(Duration::from_secs(2)).repeat(),
                     |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                ))
-                .tooltip(|cx| Tooltip::text("Resolving steps...", cx))
+                )
                 .into_any_element(),
 
             WorkflowStepStatus::Error(error) => {
                 let error = error.clone();
                 h_flex()
-                    .gap_1()
+                    .gap_2()
                     .child(
                         div()
                             .id("step-resolution-failure")
-                            .child(Label::new("Step Resolution Failed").color(Color::Error))
+                            .child(
+                                Label::new("Step Resolution Failed")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Error),
+                            )
                             .tooltip(move |cx| Tooltip::text(error.to_string(), cx)),
                     )
                     .child(
-                        IconButton::new(("resolve-step", id), IconName::Update)
-                            .style(ButtonStyle::Tinted(TintColor::Negative))
-                            .tooltip(|cx| Tooltip::text("Try Again", cx))
+                        Button::new(("transform", id), "Retry")
+                            .icon(IconName::Update)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::Small)
+                            .label_size(LabelSize::Small)
                             .on_click({
                                 let editor = editor.clone();
                                 let step_range = step_range.clone();
@@ -1437,10 +1442,11 @@ impl WorkflowStepStatus {
                     .into_any()
             }
 
-            WorkflowStepStatus::Idle => Button::new(("transform-workflow-step", id), "Transform")
+            WorkflowStepStatus::Idle => Button::new(("transform", id), "Transform")
                 .icon(IconName::Sparkle)
                 .icon_position(IconPosition::Start)
                 .icon_size(IconSize::Small)
+                .label_size(LabelSize::Small)
                 .style(ButtonStyle::Tinted(TintColor::Accent))
                 .tooltip(move |cx| {
                     cx.new_view(|cx| {
@@ -1464,46 +1470,42 @@ impl WorkflowStepStatus {
                     }
                 })
                 .into_any_element(),
-            WorkflowStepStatus::Pending => h_flex()
-                .gap_1()
-                .child(div().child(Label::new("Applying...")).cursor_not_allowed())
-                .child(
-                    IconButton::new(("stop-workflow-step", id), IconName::Stop)
-                        .style(ButtonStyle::Tinted(TintColor::Negative))
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |cx| {
-                                cx.new_view(|cx| {
-                                    Tooltip::new("Stop Transformation").key_binding(
-                                        KeyBinding::for_action_in(
-                                            &editor::actions::Cancel,
-                                            &focus_handle,
-                                            cx,
-                                        ),
-                                    )
-                                })
-                                .into()
-                            }
-                        })
-                        .on_click({
-                            let editor = editor.clone();
-                            let step_range = step_range.clone();
-                            move |_, cx| {
-                                editor
-                                    .update(cx, |this, cx| {
-                                        this.stop_workflow_step(step_range.clone(), cx)
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
+            WorkflowStepStatus::Pending => Button::new(("stop-transformation", id), "Stop")
+                .icon(IconName::Stop)
+                .icon_position(IconPosition::Start)
+                .icon_size(IconSize::Small)
+                .label_size(LabelSize::Small)
+                .style(ButtonStyle::Tinted(TintColor::Negative))
+                .tooltip(move |cx| {
+                    cx.new_view(|cx| {
+                        Tooltip::new("Stop Transformation").key_binding(KeyBinding::for_action_in(
+                            &editor::actions::Cancel,
+                            &focus_handle,
+                            cx,
+                        ))
+                    })
+                    .into()
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    let step_range = step_range.clone();
+                    move |_, cx| {
+                        editor
+                            .update(cx, |this, cx| {
+                                this.stop_workflow_step(step_range.clone(), cx)
+                            })
+                            .ok();
+                    }
+                })
                 .into_any_element(),
-
             WorkflowStepStatus::Done => h_flex()
                 .gap_1()
                 .child(
-                    IconButton::new(("reject-workflow-step", id), IconName::Close)
-                        .shape(IconButtonShape::Square)
+                    Button::new(("stop-transformation", id), "Reject")
+                        .icon(IconName::Close)
+                        .icon_position(IconPosition::Start)
+                        .icon_size(IconSize::Small)
+                        .label_size(LabelSize::Small)
                         .style(ButtonStyle::Tinted(TintColor::Negative))
                         .tooltip({
                             let focus_handle = focus_handle.clone();
@@ -1533,8 +1535,11 @@ impl WorkflowStepStatus {
                         }),
                 )
                 .child(
-                    IconButton::new(("confirm-workflow-step", id), IconName::Check)
-                        .shape(IconButtonShape::Square)
+                    Button::new(("confirm-workflow-step", id), "Accept")
+                        .icon(IconName::Check)
+                        .icon_position(IconPosition::Start)
+                        .icon_size(IconSize::Small)
+                        .label_size(LabelSize::Small)
                         .style(ButtonStyle::Tinted(TintColor::Positive))
                         .tooltip(move |cx| {
                             cx.new_view(|cx| {
@@ -1559,11 +1564,12 @@ impl WorkflowStepStatus {
                 .into_any_element(),
             WorkflowStepStatus::Confirmed => h_flex()
                 .child(
-                    Button::new(("revert-workflow-step", id), "Undo Transformation")
+                    Button::new(("revert-workflow-step", id), "Undo")
                         .style(ButtonStyle::Filled)
                         .icon(Some(IconName::Undo))
                         .icon_position(IconPosition::Start)
                         .icon_size(IconSize::Small)
+                        .label_size(LabelSize::Small)
                         .tooltip(|cx| Tooltip::text("Undo Transformation", cx))
                         .on_click({
                             let editor = editor.clone();
@@ -2399,22 +2405,27 @@ impl ContextEditor {
                                     } else {
                                         theme.info_border
                                     };
-                                    h_flex()
-                                        .h(1. * cx.line_height())
-                                        .w(DefiniteLength::Fraction(0.95))
-                                        .mx_auto()
-                                        .border_b_1()
-                                        .border_color(border_color)
-                                        .justify_end()
-                                        .gap_2()
-                                        .children(current_status.as_ref().map(|status| {
-                                            status.into_element(
-                                                step_range.clone(),
-                                                editor_focus_handle.clone(),
-                                                weak_self.clone(),
-                                                cx,
-                                            )
-                                        }))
+
+                                    div()
+                                        .w_full()
+                                        .px(cx.gutter_dimensions.full_width())
+                                        .child(
+                                            h_flex()
+                                                .w_full()
+                                                .border_b_1()
+                                                .border_color(border_color)
+                                                .pb_1()
+                                                .justify_end()
+                                                .gap_2()
+                                                .children(current_status.as_ref().map(|status| {
+                                                    status.into_element(
+                                                        step_range.clone(),
+                                                        editor_focus_handle.clone(),
+                                                        weak_self.clone(),
+                                                        cx,
+                                                    )
+                                                })),
+                                        )
                                         .into_any()
                                 }
                             }),
@@ -2443,13 +2454,14 @@ impl ContextEditor {
                                 } else {
                                     theme.info_border
                                 };
-                                v_flex()
-                                    .h_full()
-                                    .w(DefiniteLength::Fraction(0.95))
-                                    .mx_auto()
-                                    .border_t_1()
-                                    .border_color(border_color)
-                                    .into_any_element()
+
+                                div()
+                                    .w_full()
+                                    .px(cx.gutter_dimensions.full_width())
+                                    .child(
+                                        h_flex().w_full().border_t_1().border_color(border_color),
+                                    )
+                                    .into_any()
                             }),
                             disposition: BlockDisposition::Below,
                             priority: 0,
