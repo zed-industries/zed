@@ -31,6 +31,7 @@ mod inlay_hint_cache;
 mod inline_completion_provider;
 pub mod items;
 mod linked_editing_ranges;
+mod lsp_ext;
 mod mouse_context_menu;
 pub mod movement;
 mod persistence;

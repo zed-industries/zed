@@ -276,8 +276,8 @@ message Envelope {
         GetLlmToken get_llm_token = 235;
         GetLlmTokenResponse get_llm_token_response = 236;
 
-        LspExtSwitchSourceHeader lsp_ext_switch_source_header = 237;
-        LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 238; // current max
+        LspExtSwitchSourceHeader lsp_ext_switch_source_header = 239;
+        LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 240; // current max
     }
 
     reserved 158 to 161;
