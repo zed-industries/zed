@@ -1466,6 +1466,7 @@ mod tests {
     struct JournalSettings {
         pub path: String,
         pub hour_format: HourFormat,
+        pub entry_format: String,
     }
 
     #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -1479,6 +1480,7 @@ mod tests {
     struct JournalSettingsJson {
         pub path: Option<String>,
         pub hour_format: Option<HourFormat>,
+        pub entry_format: Option<String>,
     }
 
     impl Settings for JournalSettings {
