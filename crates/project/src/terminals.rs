@@ -260,7 +260,7 @@ impl Project {
                     .and_then(|(worktree, relative_path)| {
                         worktree.read(cx).entry_for_path(&relative_path)
                     })
-                    .is_some()
+                    .is_some_and(|entry| entry.is_dir())
             })
     }
 
