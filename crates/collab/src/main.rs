@@ -248,11 +248,6 @@ async fn setup_app_database(config: &Config) -> Result<()> {
 }
 
 async fn setup_llm_database(config: &Config) -> Result<()> {
-    // TODO: This is temporary until we have the LLM database stood up.
-    if !config.is_development() {
-        return Ok(());
-    }
-
     let database_url = config
         .llm_database_url
         .as_ref()
@@ -298,7 +293,12 @@ async fn handle_liveness_probe(
         state.db.get_all_users(0, 1).await?;
     }
 
-    if let Some(_llm_state) = llm_state {}
+    if let Some(llm_state) = llm_state {
+        llm_state
+            .db
+            .get_active_user_count(chrono::Utc::now())
+            .await?;
+    }
 
     Ok("ok".to_string())
 }
