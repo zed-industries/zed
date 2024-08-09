@@ -9,7 +9,8 @@ use multi_buffer::{Anchor, ToOffset};
 use settings::Settings;
 use std::ops::Range;
 
-pub use popover::SignatureHelpPopover;
+use crate::signature_help::popover::SignatureHelpPopover;
+pub use popover::SignatureHelpMarkdown;
 pub use state::SignatureHelpState;
 
 // Language-specific settings may define quotes as "brackets", so filter them out separately.
@@ -166,7 +167,7 @@ impl Editor {
                     .update(&mut cx, |editor, cx| {
                         let language = editor.language_at(position, cx);
                         let project = editor.project.clone()?;
-                        let (markdown, language_registry) = {
+                        let (signature_helps, language_registry) = {
                             project.update(cx, |project, mut cx| {
                                 let language_registry = project.languages().clone();
                                 (
@@ -175,7 +176,7 @@ impl Editor {
                                 )
                             })
                         };
-                        Some((markdown, language_registry, language))
+                        Some((signature_helps, language_registry, language))
                     })
                     .ok()
                     .flatten();
@@ -185,18 +186,46 @@ impl Editor {
                     language,
                 )) = signature_help
                 {
-                    // TODO allow multiple signature helps inside the same popover
-                    if let Some(mut signature_help) = signature_help_task.await.into_iter().next() {
-                        let mut parsed_content = parse_markdown(
-                            signature_help.markdown.as_str(),
-                            &language_registry,
-                            language,
-                        )
-                        .await;
-                        parsed_content
-                            .highlights
-                            .append(&mut signature_help.highlights);
-                        Some(SignatureHelpPopover { parsed_content })
+                    let signature_helps = signature_help_task.await;
+                    let mut signature_help_markdowns = Vec::with_capacity(signature_helps.len());
+
+                    if let Some(signature_helps) = signature_helps.into_iter().next() {
+                        for signature_help in signature_helps.signature_helps.into_iter() {
+                            let mut signature = parse_markdown(
+                                signature_help.signature_markdown.as_str(),
+                                &language_registry,
+                                language.clone(),
+                            )
+                            .await;
+                            let signature_description = if let Some(ref description_markdown) =
+                                signature_help.description_markdown
+                            {
+                                Some(
+                                    parse_markdown(
+                                        description_markdown.as_str(),
+                                        &language_registry,
+                                        language.clone(),
+                                    )
+                                    .await,
+                                )
+                            } else {
+                                None
+                            };
+
+                            if let Some(highlight) = signature_help.highlight {
+                                signature.highlights.push(highlight);
+                            }
+
+                            let signature_help_markdown = SignatureHelpMarkdown {
+                                signature,
+                                signature_description,
+                            };
+                            signature_help_markdowns.push(signature_help_markdown);
+                        }
+                        Some(SignatureHelpPopover::new(
+                            signature_help_markdowns,
+                            signature_helps.active_signature,
+                        ))
                     } else {
                         None
                     }
