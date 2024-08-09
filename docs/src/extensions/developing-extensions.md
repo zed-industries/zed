@@ -88,11 +88,13 @@ In your PR, do the following:
 
 1. Add your extension as a Git submodule within the `extensions/` directory
 2. Add a new entry to the top-level `extensions.toml` file containing your extension:
-  ```toml
-   [my-extension]
-   submodule = "extensions/my-extension"
-   version = "0.0.1"
-   ```
+
+```toml
+ [my-extension]
+ submodule = "extensions/my-extension"
+ version = "0.0.1"
+```
+
 3. Run `pnpm sort-extensions` to ensure `extensions.toml` and `.gitmodules` are sorted
 
 Once your PR is merged, the extension will be packaged and published to the Zed extension registry.

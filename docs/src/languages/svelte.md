@@ -6,7 +6,7 @@ Svelte support is available through the [Svelte extension](https://github.com/ze
 - Language Server: [sveltejs/language-tools](https://github.com/sveltejs/language-tools)
 
 <!--
-TBD: Rewrite Svelte docs so it doesn't beging with a json block assuming you know what inlayHints are.
+TBD: Rewrite Svelte docs so it doesn't begin with a json block assuming you know what inlayHints are.
 -->
 
 ## Inlay Hints

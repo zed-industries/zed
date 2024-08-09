@@ -74,6 +74,7 @@ To set up custom file associations, use the `file_types` setting in your `settin
 ```
 
 This configuration tells Zed to:
+
 - Treat `.c` files as C++ instead of C
 - Recognize files named "MyLockFile" as TOML
 - Apply Dockerfile syntax to any file starting with "Dockerfile"
@@ -104,6 +105,7 @@ Zed simplifies language server management for users:
 1. Automatic Download: When you open a file with a matching file type, Zed automatically downloads the appropriate language server. Zed may prompt you to install an extension for known file types.
 
 2. Storage Location:
+
    - macOS: `~/Library/Application Support/Zed/languages`
    - Linux: `$XDG_DATA_HOME/languages`, `$FLATPAK_XDG_DATA_HOME/languages`, or `$HOME/.local/share`
 
@@ -124,6 +126,7 @@ You can specify your preference using the `language_servers` setting:
 ```
 
 In this example:
+
 - `intelephense` is set as the primary language server
 - `phpactor` is disabled (note the `!` prefix)
 - `...` preserves any other default language server settings
@@ -151,6 +154,7 @@ This example configures the Rust Analyzer to use Clippy for additional linting w
 When configuring language server options in Zed, it's important to use nested objects rather than dot-delimited strings. This is particularly relevant when working with more complex configurations. Let's look at a real-world example using the TypeScript language server:
 
 Suppose you want to configure the following settings for TypeScript:
+
 - Enable strict null checks
 - Set the target ECMAScript version to ES2020
 - Configure import organization preferences
@@ -186,7 +190,7 @@ You can toggle language server support globally or per-language:
   }
 ```
 
-This disables the language server for Markdown files, which can be useful for performance in large documentation projects.  You can configure this globally in your `~/.zed/settings.json` or inside a `.zed/settings.json` in your project directory.
+This disables the language server for Markdown files, which can be useful for performance in large documentation projects. You can configure this globally in your `~/.zed/settings.json` or inside a `.zed/settings.json` in your project directory.
 
 ## Formatting and Linting
 
@@ -280,6 +284,7 @@ Zed allows you to run both formatting and linting on save. Here's an example tha
 ### Troubleshooting
 
 If you encounter issues with formatting or linting:
+
 1. Check Zed's log file for error messages (Use the command palette: `zed: open log`)
 2. Ensure external tools (formatters, linters) are correctly installed and in your PATH
 3. Verify configurations in both Zed settings and language-specific config files (e.g., `.eslintrc`, `.prettierrc`)
@@ -330,6 +335,7 @@ This configuration changes the color of function names in Python files.
 ### Selecting and Customizing Themes
 
 Change your theme:
+
 1. Use the theme selector (Cmd+K Cmd+T on macOS, Ctrl+K Ctrl+T on Linux)
 2. Or set it in your `settings.json`:
 
