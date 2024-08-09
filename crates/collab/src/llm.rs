@@ -457,7 +457,8 @@ impl<S> Drop for TokenCountingStream<S> {
                     claims.user_id as i32,
                     provider,
                     &model,
-                    input_token_count + output_token_count,
+                    input_token_count,
+                    output_token_count,
                     Utc::now(),
                 )
                 .await
@@ -481,7 +482,9 @@ impl<S> Drop for TokenCountingStream<S> {
                         requests_this_minute: usage.requests_this_minute as u64,
                         tokens_this_minute: usage.tokens_this_minute as u64,
                         tokens_this_day: usage.tokens_this_day as u64,
-                        tokens_this_month: usage.tokens_this_month as u64,
+                        input_tokens_this_month: usage.input_tokens_this_month as u64,
+                        output_tokens_this_month: usage.output_tokens_this_month as u64,
+                        spending_this_month: usage.spending_this_month as u64,
                     },
                 )
                 .await
