@@ -32,12 +32,12 @@ use editor::{
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
-    div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView, AppContext,
-    AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity, EntityId,
-    EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement, IntoElement, Model,
-    ParentElement, Pixels, ReadGlobal, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Task, Transformation, UpdateGlobal, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    canvas, div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView,
+    AppContext, AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity,
+    EntityId, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
+    IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render, SharedString,
+    StatefulInteractiveElement, Styled, Subscription, Task, Transformation, UpdateGlobal, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -3945,7 +3945,7 @@ impl Render for ConfigurationView {
             .map(|provider| self.render_provider_view(&provider, cx))
             .collect::<Vec<_>>();
 
-        v_flex()
+        let mut element = v_flex()
             .id("assistant-configuration-view")
             .track_focus(&self.focus_handle)
             .bg(cx.theme().colors().editor_background)
@@ -3970,9 +3970,24 @@ impl Render for ConfigurationView {
                     .p(Spacing::XXLarge.rems(cx))
                     .mt_1()
                     .gap_6()
-                    .size_full()
+                    .flex_1()
                     .children(provider_views),
             )
+            .into_any();
+
+        // We use a canvas here to get scrolling to work in the ConfigurationView. It's a workaround
+        // because we couldn't the element to take up the size of the parent.
+        canvas(
+            move |bounds, cx| {
+                element.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
+                element
+            },
+            |_, mut element, cx| {
+                element.paint(cx);
+            },
+        )
+        .flex_1()
+        .w_full()
     }
 }
 
