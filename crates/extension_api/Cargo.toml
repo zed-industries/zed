@@ -8,10 +8,6 @@ keywords = ["zed", "extension"]
 edition = "2021"
 license = "Apache-2.0"
 
-# Don't publish v0.0.7 until we're ready to commit to the breaking API changes
-# Marshall is DRI on this.
-publish = false
-
 [lints]
 workspace = true
 

@@ -8,7 +8,6 @@ use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 6);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 6);
 
 wasmtime::component::bindgen!({
     async: true,
