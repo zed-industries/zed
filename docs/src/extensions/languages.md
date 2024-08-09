@@ -75,7 +75,7 @@ In Tree-sitter, the `highlights.scm` file defines syntax highlighting rules for 
 
 Here's an example from a `highlights.scm` for JSON:
 
-```scm
+```scheme
 (string) @string
 
 (pair
@@ -86,47 +86,47 @@ Here's an example from a `highlights.scm` for JSON:
 
 This query marks strings, object keys, and numbers for highlighting. The following is a comprehensive list of captures supported by themes:
 
-| Capture | Description |
-|---------|-------------|
-| @attribute | Captures attributes |
-| @boolean | Captures boolean values |
-| @comment | Captures comments |
-| @comment.doc | Captures documentation comments |
-| @constant | Captures constants |
-| @constructor | Captures constructors |
-| @embedded | Captures embedded content |
-| @emphasis | Captures emphasized text |
-| @emphasis.strong | Captures strongly emphasized text |
-| @enum | Captures enumerations |
-| @function | Captures functions |
-| @hint | Captures hints |
-| @keyword | Captures keywords |
-| @label | Captures labels |
-| @link_text | Captures link text |
-| @link_uri | Captures link URIs |
-| @number | Captures numeric values |
-| @operator | Captures operators |
-| @predictive | Captures predictive text |
-| @preproc | Captures preprocessor directives |
-| @primary | Captures primary elements |
-| @property | Captures properties |
-| @punctuation | Captures punctuation |
-| @punctuation.bracket | Captures brackets |
-| @punctuation.delimiter | Captures delimiters |
-| @punctuation.list_marker | Captures list markers |
-| @punctuation.special | Captures special punctuation |
-| @string | Captures string literals |
-| @string.escape | Captures escaped characters in strings |
-| @string.regex | Captures regular expressions |
-| @string.special | Captures special strings |
-| @string.special.symbol | Captures special symbols |
-| @tag | Captures tags |
-| @text.literal | Captures literal text |
-| @title | Captures titles |
-| @type | Captures types |
-| @variable | Captures variables |
-| @variable.special | Captures special variables |
-| @variant | Captures variants |
+| Capture                  | Description                            |
+| ------------------------ | -------------------------------------- |
+| @attribute               | Captures attributes                    |
+| @boolean                 | Captures boolean values                |
+| @comment                 | Captures comments                      |
+| @comment.doc             | Captures documentation comments        |
+| @constant                | Captures constants                     |
+| @constructor             | Captures constructors                  |
+| @embedded                | Captures embedded content              |
+| @emphasis                | Captures emphasized text               |
+| @emphasis.strong         | Captures strongly emphasized text      |
+| @enum                    | Captures enumerations                  |
+| @function                | Captures functions                     |
+| @hint                    | Captures hints                         |
+| @keyword                 | Captures keywords                      |
+| @label                   | Captures labels                        |
+| @link_text               | Captures link text                     |
+| @link_uri                | Captures link URIs                     |
+| @number                  | Captures numeric values                |
+| @operator                | Captures operators                     |
+| @predictive              | Captures predictive text               |
+| @preproc                 | Captures preprocessor directives       |
+| @primary                 | Captures primary elements              |
+| @property                | Captures properties                    |
+| @punctuation             | Captures punctuation                   |
+| @punctuation.bracket     | Captures brackets                      |
+| @punctuation.delimiter   | Captures delimiters                    |
+| @punctuation.list_marker | Captures list markers                  |
+| @punctuation.special     | Captures special punctuation           |
+| @string                  | Captures string literals               |
+| @string.escape           | Captures escaped characters in strings |
+| @string.regex            | Captures regular expressions           |
+| @string.special          | Captures special strings               |
+| @string.special.symbol   | Captures special symbols               |
+| @tag                     | Captures tags                          |
+| @text.literal            | Captures literal text                  |
+| @title                   | Captures titles                        |
+| @type                    | Captures types                         |
+| @variable                | Captures variables                     |
+| @variable.special        | Captures special variables             |
+| @variant                 | Captures variants                      |
 
 ### Bracket matching
 
@@ -134,7 +134,7 @@ The `brackets.scm` file defines matching brackets.
 
 Here's an example from a `brackets.scm` file for JSON:
 
-```scm
+```scheme
 ("[" @open "]" @close)
 ("{" @open "}" @close)
 ("\"" @open "\"" @close)
@@ -142,10 +142,10 @@ Here's an example from a `brackets.scm` file for JSON:
 
 This query identifies opening and closing brackets, braces, and quotation marks.
 
-| Capture | Description |
-|---------|-------------|
-| @open | Captures opening brackets, braces, and quotes |
-| @close | Captures closing brackets, braces, and quotes |
+| Capture | Description                                   |
+| ------- | --------------------------------------------- |
+| @open   | Captures opening brackets, braces, and quotes |
+| @close  | Captures closing brackets, braces, and quotes |
 
 ### Code outline/structure
 
@@ -153,7 +153,7 @@ The `outline.scm` file defines the structure for the code outline.
 
 Here's an example from an `outline.scm` file for JSON:
 
-```scm
+```scheme
 (pair
   key: (string (string_content) @name)) @item
 ```
@@ -176,16 +176,16 @@ The `indents.scm` file defines indentation rules.
 
 Here's an example from an `indents.scm` file for JSON:
 
-```scm
+```scheme
 (array "]" @end) @indent
 (object "}" @end) @indent
 ```
 
 This query marks the end of arrays and objects for indentation purposes.
 
-| Capture | Description |
-|---------|-------------|
-| @end | Captures closing brackets and braces |
+| Capture | Description                                        |
+| ------- | -------------------------------------------------- |
+| @end    | Captures closing brackets and braces               |
 | @indent | Captures entire arrays and objects for indentation |
 
 ### Code injections
@@ -194,7 +194,7 @@ The `injections.scm` file defines rules for embedding one language within anothe
 
 Here's an example from an `injections.scm` file for Markdown:
 
-```scm
+```scheme
 (fenced_code_block
   (info_string
     (language) @language)
@@ -206,10 +206,10 @@ Here's an example from an `injections.scm` file for Markdown:
 
 This query identifies fenced code blocks, capturing the language specified in the info string and the content within the block. It also captures inline content and sets its language to "markdown-inline".
 
-| Capture | Description |
-|---------|-------------|
-| @language | Captures the language identifier for a code block |
-| @content | Captures the content to be treated as a different language |
+| Capture   | Description                                                |
+| --------- | ---------------------------------------------------------- |
+| @language | Captures the language identifier for a code block          |
+| @content  | Captures the content to be treated as a different language |
 
 Note that we couldn't use JSON as an example here because it doesn't support language injections.
 
@@ -219,7 +219,7 @@ The `overrides.scm` file defines syntax overrides.
 
 Here's an example from an `overrides.scm` file for JSON:
 
-```scm
+```scheme
 (string) @string
 ```
 
@@ -231,7 +231,7 @@ The `redactions.scm` file defines text redaction rules. When collaborating and s
 
 Here's an example from a `redactions.scm` file for JSON:
 
-```scm
+```scheme
 (pair value: (number) @redact)
 (pair value: (string) @redact)
 (array (number) @redact)
@@ -240,8 +240,8 @@ Here's an example from a `redactions.scm` file for JSON:
 
 This query marks number and string values in key-value pairs and arrays for redaction.
 
-| Capture | Description |
-|---------|-------------|
+| Capture | Description                    |
+| ------- | ------------------------------ |
 | @redact | Captures values to be redacted |
 
 ### Runnable code detection
@@ -250,7 +250,7 @@ The `runnables.scm` file defines rules for detecting runnable code.
 
 Here's an example from an `runnables.scm` file for JSON:
 
-```scm
+```scheme
 (
     (document
         (object
@@ -276,10 +276,10 @@ This query detects runnable scripts in package.json and composer.json files.
 
 The `@run` capture specifies where the run button should appear in the editor. Other captures, except those prefixed with an underscore, are exposed as environment variables with a prefix of `ZED_CUSTOM_$(capture_name)` when running the code.
 
-| Capture | Description |
-|---------|-------------|
-| @_name | Captures the "scripts" key |
-| @run | Captures the script name |
+| Capture | Description                                            |
+| ------- | ------------------------------------------------------ |
+| @\_name | Captures the "scripts" key                             |
+| @run    | Captures the script name                               |
 | @script | Also captures the script name (for different purposes) |
 
 TBD: `#set! tag`
