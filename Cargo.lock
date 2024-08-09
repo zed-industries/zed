@@ -8831,6 +8831,7 @@ dependencies = [
  "ui",
  "util",
  "uuid",
+ "windows 0.58.0",
  "workspace",
 ]
 

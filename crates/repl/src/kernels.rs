@@ -55,6 +55,12 @@ impl KernelSpecification {
             cmd.envs(env);
         }
 
+        #[cfg(windows)]
+        {
+            use smol::process::windows::CommandExt;
+            cmd.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+        }
+
         Ok(cmd)
     }
 }
@@ -395,11 +401,17 @@ pub async fn kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<KernelSpecific
     }
 
     // Search for kernels inside the base python environment
-    let command = Command::new("python")
-        .arg("-c")
-        .arg("import sys; print(sys.prefix)")
-        .output()
-        .await;
+    let mut command = Command::new("python");
+    command.arg("-c");
+    command.arg("import sys; print(sys.prefix)");
+
+    #[cfg(windows)]
+    {
+        use smol::process::windows::CommandExt;
+        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+    }
+
+    let command = command.output().await;
 
     if let Ok(command) = command {
         if command.status.success() {
