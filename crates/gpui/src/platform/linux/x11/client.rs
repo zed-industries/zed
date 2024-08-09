@@ -148,8 +148,12 @@ pub struct X11ClientState {
 pub struct X11ClientStatePtr(pub Weak<RefCell<X11ClientState>>);
 
 impl X11ClientStatePtr {
+    fn get_client(&self) -> X11Client {
+        X11Client(self.0.upgrade().expect("client already dropped"))
+    }
+
     pub fn drop_window(&self, x_window: u32) {
-        let client = X11Client(self.0.upgrade().expect("client already dropped"));
+        let client = self.get_client();
         let mut state = client.0.borrow_mut();
 
         if let Some(window_ref) = state.windows.remove(&x_window) {
@@ -166,6 +170,42 @@ impl X11ClientStatePtr {
         if state.windows.is_empty() {
             state.common.signal.stop();
         }
+    }
+
+    pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        let client = self.get_client();
+        let mut state = client.0.borrow_mut();
+        if state.composing || state.ximc.is_none() {
+            return;
+        }
+
+        let mut ximc = state.ximc.take().unwrap();
+        let xim_handler = state.xim_handler.take().unwrap();
+        let ic_attributes = ximc
+            .build_ic_attributes()
+            .push(
+                xim::AttributeName::InputStyle,
+                xim::InputStyle::PREEDIT_CALLBACKS
+                    | xim::InputStyle::STATUS_NOTHING
+                    | xim::InputStyle::PREEDIT_POSITION,
+            )
+            .push(xim::AttributeName::ClientWindow, xim_handler.window)
+            .push(xim::AttributeName::FocusWindow, xim_handler.window)
+            .nested_list(xim::AttributeName::PreeditAttributes, |b| {
+                b.push(
+                    xim::AttributeName::SpotLocation,
+                    xim::Point {
+                        x: u32::from(bounds.origin.x + bounds.size.width) as i16,
+                        y: u32::from(bounds.origin.y + bounds.size.height) as i16,
+                    },
+                );
+            })
+            .build();
+        let _ = ximc
+            .set_ic_values(xim_handler.im_id, xim_handler.ic_id, ic_attributes)
+            .log_err();
+        state.ximc = Some(ximc);
+        state.xim_handler = Some(xim_handler);
     }
 }
 
@@ -1029,13 +1069,13 @@ impl X11Client {
 
     fn xim_handle_preedit(&self, window: xproto::Window, text: String) -> Option<()> {
         let window = self.get_window(window).unwrap();
-        window.handle_ime_preedit(text);
 
         let mut state = self.0.borrow_mut();
         let mut ximc = state.ximc.take().unwrap();
         let mut xim_handler = state.xim_handler.take().unwrap();
-        state.composing = true;
+        state.composing = !text.is_empty();
         drop(state);
+        window.handle_ime_preedit(text);
 
         if let Some(area) = window.get_ime_area() {
             let ic_attributes = ximc
