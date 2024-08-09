@@ -7,5 +7,5 @@ Gleam support is available through the [Gleam extension](https://github.com/zed-
 
 See also:
 
-- [Elixir](docs/languages/elixir)
-- [Erlang](docs/languages/erlang)
+- [Elixir](./elixir.md)
+- [Erlang](./erlang.md)

@@ -51,7 +51,7 @@ This script starts one to four instances of Zed, depending on the `-2`, `-3` or 
 
 If you want to run your own version of the zed collaboration service, you can, but note that this is still under development, and there is no good support for authentication nor extensions.
 
-Configuration is done through environment variables. By default it will read the configuration from [`.env.toml`](../../crates/collab/.env.toml) and you should use that as a guide for setting this up.
+Configuration is done through environment variables. By default it will read the configuration from [`.env.toml`](https://github.com/zed-industries/zed/blob/main/crates/collab/.env.toml) and you should use that as a guide for setting this up.
 
 By default Zed assumes that the DATABASE_URL is a Postgres database, but you can make it use Sqlite by compiling with `--features sqlite` and using a sqlite DATABASE_URL with `?mode=rwc`.
 

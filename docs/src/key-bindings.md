@@ -103,7 +103,7 @@ Each key binding includes a `context` which determes when the key binding is act
 TBD: Improve keybinding contexts documentation https://github.com/zed-industries/zed/issues/14718
 -->
 
-See also: [vim context docs](/docs/vim#contexts)
+See also: [vim context docs](./vim.md#contexts)
 
 ### Remapping keys
 
@@ -156,7 +156,7 @@ For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ct
 ### Task Key bindings
 
 You can also bind keys to launch Zed Tasks defined in your tasks.json.
-See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more.
+See the [tasks documentation](tasks.md#custom-keybindings-for-tasks) for more.
 
 ### All key bindings
 

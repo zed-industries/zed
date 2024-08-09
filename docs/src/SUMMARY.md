@@ -69,6 +69,7 @@
 - [JavaScript](./languages/javascript.md)
 - [Julia](./languages/julia.md)
 - [JSON](./languages/json.md)
+- [Kotlin](./languages/kotlin.md)
 - [Lua](./languages/lua.md)
 - [Luau](./languages/luau.md)
 - [Makefile](./languages/makefile.md)

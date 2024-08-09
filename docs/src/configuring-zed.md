@@ -227,7 +227,7 @@ There are two options to choose from:
 
 - Description: A list of globs representing files that inline completions should be disabled for.
 - Setting: `disabled_globs`
-- Default: [".env"]
+- Default: `[".env"]`
 
 **Options**
 

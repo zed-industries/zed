@@ -59,4 +59,4 @@ You can find a lot of themes at [zed-themes.com](https://zed-themes.com).
 
 ## Theme Development
 
-See: [Developing Zed Themes](./development/themes.md)
+See: [Developing Zed Themes](./extensions/themes.md)

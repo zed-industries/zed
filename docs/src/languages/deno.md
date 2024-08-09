@@ -13,5 +13,3 @@ TBD: Deno Typescript REPL instructions [docs/repl#typescript-deno](../repl.md#ty
 
 - [TypeScript](./typescript.md)
 - [JavaScript](./javascript.md)
-- [TSX](./tsx.md)
-- [JSDoc](./jsdoc.md)

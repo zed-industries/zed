@@ -106,7 +106,7 @@ Solargraph has formatting and diagnostics disabled by default. We can tell Zed t
 }
 ```
 
-To use Solargraph in the context of the bundle, you can use [folder-specific settings](../configuring-zed#settings-files) and specify the absolute path to the [`binstub`](https://bundler.io/v2.5/man/bundle-binstubs.1.html) of Solargraph:
+To use Solargraph in the context of the bundle, you can use [folder-specific settings](../configuring-zed.md#settings-files) and specify the absolute path to the [`binstub`](https://bundler.io/v2.5/man/bundle-binstubs.1.html) of Solargraph:
 
 ```json
 {
@@ -174,7 +174,7 @@ Rubocop has unsafe autocorrection disabled by default. We can tell Zed to enable
 }
 ```
 
-To use Rubocop in the context of the bundle, you can use [folder-specific settings](../configuring-zed#settings-files) and specify the absolute path to the [`binstub`](https://bundler.io/v2.5/man/bundle-binstubs.1.html) of Rubocop:
+To use Rubocop in the context of the bundle, you can use [folder-specific settings](../configuring-zed.md#settings-files) and specify the absolute path to the [`binstub`](https://bundler.io/v2.5/man/bundle-binstubs.1.html) of Rubocop:
 
 ```json
 {

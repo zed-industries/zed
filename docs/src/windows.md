@@ -4,7 +4,7 @@ Zed is not supported on Windows (yet). We have limited developer bandwidth, and 
 new platform is a large undertaking. However, the community has developed
 a build of Zed on Windows, and you can compile it yourself with these instructions:
 
-- [Building for Windows](./development/windows)
+- [Building for Windows](./development/windows.md)
 
 Zed Employees are not currently working on the Windows build.
 However, we welcome contributions from the community to improve Windows support.

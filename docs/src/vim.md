@@ -116,7 +116,7 @@ For vim-specific shortcuts, you may find the following template a good place to 
 ]
 ```
 
-If you would like to emulate vim's `map` (`nmap` etc.) commands you can bind to the [`workspace::SendKeystrokes`](/docs/key-bindings#remapping-keys) action in the correct context.
+If you would like to emulate vim's `map` (`nmap` etc.) commands you can bind to the [`workspace::SendKeystrokes`](./key-bindings.md#remapping-keys) action in the correct context.
 
 You can see the bindings that are enabled by default in vim mode [here](https://github.com/zed-industries/zed/blob/main/assets/keymaps/vim.json).
 
