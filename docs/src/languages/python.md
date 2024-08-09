@@ -2,7 +2,7 @@
 
 Python support is available natively in Zed.
 
-- Tree Sitter: [tree-sitter/tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)
+- Tree Sitter: [tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)
 - Language Server: [microsoft/pyright](https://github.com/microsoft/pyright)
 
 ## Configuration
@@ -99,3 +99,8 @@ You can also configure this option directly in your `settings.json` file ([pyrig
 The Pyright language server does not provide code formatting or linting. If you want to detect lint errors and reformat your Python code upon saving, you'll need to set up.
 
 A common tool for formatting Python code is [Ruff](https://docs.astral.sh/ruff/). It is another tool written in Rust, an extremely fast Python linter and code formatter. It is available through the [Ruff extension](https://github.com/zed-industries/zed/tree/main/extensions/ruff/). To configure the Ruff extension to work within Zed, see the setup documentation [here](https://docs.astral.sh/ruff/editors/setup/#zed).
+
+<!--
+TBD: Expand Python Ruff docs.
+TBD: Ruff pyproject.toml, ruff.toml docs. `ruff.configuration`.
+-->

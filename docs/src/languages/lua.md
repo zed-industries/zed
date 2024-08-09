@@ -7,9 +7,9 @@ Lua support is available through the [Lua extension](https://github.com/zed-indu
 
 ## luarc.json
 
-TBD: Add .luarc.json example configuration
+To configure LuaLS you can create a `.luarc.json` file in the root of your workspace.
 
-- https://luals.github.io/wiki/configuration/
+See [LuaLS Settings Documentation](https://luals.github.io/wiki/settings/) for all available configuration options.
 
 ```json
 {

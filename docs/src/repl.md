@@ -28,8 +28,11 @@ Zed supports running code in multiple languages. To get started, you need to ins
 **Currently supported languages:**
 
 - [Python (ipykernel)](#python)
-- [R (Ark)](#r)
 - [TypeScript (Deno)](#typescript-deno)
+- [R (Ark)](#r-ark)
+- [R (Xeus)](#r-xeus)
+- [Julia](#julia)
+- [Scala (Almond)](#scala)
 
 Once installed, you can start using the REPL in the respective language files, or other places those languages are supported, such as Markdown. If you recently added the kernels, run the `repl: refresh kernelspecs` command to make them available in the editor.
 
@@ -102,29 +105,37 @@ Install [Ark](https://github.com/posit-dev/ark/releases) by downloading the rele
 ark --install
 ```
 
-TBD: Expand R REPL (Ark Kernel) instructions
+### R (Xeus Kernel) {#r-xeus}
 
-### R (XEOS-R) {#r-xeos-r}
+- Install [Xeus-R](https://github.com/jupyter-xeus/xeus-r)
+- Install the R Extension for Zed (search for `R` in Zed Extensions)
 
-TBD: Add R REPL (XEOS-R) instructions
+<!--
+TBD: Improve R REPL (Ark Kernel) instructions
+-->
 
 ### Typescript: Deno {#typescript-deno}
 
-[Install Deno](https://docs.deno.com/runtime/manual/getting_started/installation/) and then install the Deno jupyter kernel:
+- [Install Deno](https://docs.deno.com/runtime/manual/getting_started/installation/) and then install the Deno jupyter kernel:
 
 ```sh
 deno jupyter --install
 ```
 
+<!--
+TBD: Improve R REPL (Ark Kernel) instructions
+-->
+
 ### Julia
 
-TBD: Add Julia REPL instructions
+- Download and install Julia from the [official website](https://julialang.org/downloads/).
+- Install the Julia Extension for Zed (search for `Julia` in Zed Extensions)
 
-- [/docs/languages/julia](languages/julia.md)
+<!--
+TBD: Improve Julia REPL instructions
+-->
 
 ### Scala
-
-TBD: Add Scala REPL instructions
 
 - Install Scala with `cs setup` (Coursier): https://www.scala-lang.org/download/
   - `brew install coursier/formulas/coursier && cs setup`
@@ -132,18 +143,6 @@ TBD: Add Scala REPL instructions
   - `brew install --cask temurin` (Eclipse foundation official OpenJDK binaries)
   - `brew install coursier/formulas/coursier && cs setup`
   - `coursier launch --use-bootstrap almond -- --install`
-
-### Other languages
-
-The following languages and kernels are also supported. You can help us out by expanding their installation instructions and configuration:
-
-TBD: Remove this section if Julia/Ark/Xeus-R/Scala are added
-
-- [Julia (IJulia)](https://github.com/JuliaLang/IJulia.jl)
-- R
-  - [Ark Kernel](https://github.com/posit-dev/ark) - via Positron, formerly RStudio
-  - [Xeus-R](https://github.com/jupyter-xeus/xeus-r)
-- [Scala (almond)](https://almond.sh/docs/quick-start-install)
 
 ## Changing which kernel is used per language {#changing-kernels}
 

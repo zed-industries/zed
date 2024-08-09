@@ -16,3 +16,7 @@ install.packages("lintr")
 ```
 
 - Install the [R extension](https://github.com/ocsmit/zed-r) through Zed's extensions
+
+<!--
+TBD: R REPL Docs
+-->

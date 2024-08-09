@@ -25,6 +25,7 @@ line_comments = ["# "]
 - `path_suffixes` (optional) is an array of file suffixes that should be associated with this language. This supports glob patterns like `config/**/*.toml` where `**` matches 0 or more directories and `*` matches 0 or more characters.
 - `line_comments` (optional) is an array of strings that are used to identify line comments in the language.
 
+<!--
 TBD: Document `language_name/config.toml` keys
 
 - line_comments, block_comment
@@ -39,6 +40,7 @@ TBD: Document `language_name/config.toml` keys
 - scope_opt_in_language_servers
 - increase_indent_pattern, decrease_indent_pattern
 - collapsed_placeholder
+-->
 
 ## Grammar
 
