@@ -7273,7 +7273,7 @@ impl Editor {
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, head, _| {
                 (
-                    movement::indented_line_beginning(map, head, action.stop_at_soft_wraps),
+                    movement::line_beginning(map, head, action.stop_at_soft_wraps),
                     SelectionGoal::None,
                 )
             });
