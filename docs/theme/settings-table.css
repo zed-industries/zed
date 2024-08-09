@@ -8,29 +8,48 @@
 
 .setting-container {
   padding: 12px 0;
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  display: flex;
+  flex-direction: column;
   border-bottom: 1px solid var(--table-border-color);
 }
 
 .setting-header {
   grid-column: span 2 / span 2;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 0.8rem;
   padding: 0.5em 1em 0.5rem 0;
 }
 
+.setting-line {
+  display: flex;
+  flex-direction: row;
+  gap: 2rem;
+  /* padding: 0.5em 1em; */
+}
+
 .setting-name {
   font-family: monospace;
-  font-size: 1.4rem;
+  font-size: 1.3rem;
   font-weight: bold;
   color: var(--sidebar-fg);
 }
 
 .setting-type {
   font-family: monospace;
-  font-size: 1.4rem;
+  font-size: 1.3rem;
+  color: var(--fg);
+}
+
+.setting-description {
+  font-size: 1.3rem;
+  color: var(--fg);
+  padding: 0.5em 0 0.5em 0;
+}
+
+.setting-default {
+  font-family: monospace;
+  font-size: 1.3rem;
   color: var(--fg);
 }
 
@@ -58,13 +77,11 @@
 
 .setting-label {
   font-size: 1.2rem;
-  width: 15%;
   border: none;
 }
 
 .setting-value {
   font-size: 1.4rem;
-  width: 70%;
   border: none;
 }
 

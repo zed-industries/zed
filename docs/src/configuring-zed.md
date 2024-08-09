@@ -22,6 +22,8 @@ Extensions that provide language servers may also provide default settings for t
 
 # Settings
 
+<div id="settings-container"></div>
+
 ## Active Pane Magnification
 
 - Description: Scale by which to zoom the active pane. When set to `1.0`, the active pane has the same size as others, but when set to a larger value, the active pane takes up more space.
