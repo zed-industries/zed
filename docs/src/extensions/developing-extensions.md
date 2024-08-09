@@ -4,7 +4,7 @@
 
 Extensions can add the following capabilities to Zed:
 
-- [Languages](./developing-language-extensions.md)
+- [Languages](./languages.md)
 - [Themes](./themes.md)
 
 ## Directory Structure of a Zed Extension
@@ -21,6 +21,10 @@ authors = ["Your Name <you@example.com>"]
 description = "My cool extension"
 repository = "https://github.com/your-name/my-zed-extension"
 ```
+
+<!--
+TBD: Document `slash_commands`, `indexed_docs_providers` (see: extensions/gleam/extension.toml)
+-->
 
 In addition to this, there are several other optional files and directories that can be used to add functionality to a Zed extension. An example directory structure of an extension that provides all capabilities is as follows:
 
@@ -90,9 +94,9 @@ In your PR, do the following:
 2. Add a new entry to the top-level `extensions.toml` file containing your extension:
 
 ```toml
- [my-extension]
- submodule = "extensions/my-extension"
- version = "0.0.1"
+[my-extension]
+submodule = "extensions/my-extension"
+version = "0.0.1"
 ```
 
 3. Run `pnpm sort-extensions` to ensure `extensions.toml` and `.gitmodules` are sorted
