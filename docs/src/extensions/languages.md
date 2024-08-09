@@ -160,12 +160,15 @@ Here's an example from an `outline.scm` file for JSON:
 
 This query captures object keys for the outline structure.
 
-| Capture | Description |
-|---------|-------------|
-| @name | Captures the content of object keys |
-| @item | Captures the entire key-value pair |
-| @context | Captures elements that provide context for the outline item |
-| @context.extra | Captures additional contextual information for the outline item |
+| Capture        | Description                                                                          |
+| -------------- | ------------------------------------------------------------------------------------ |
+| @name          | Captures the content of object keys                                                  |
+| @item          | Captures the entire key-value pair                                                   |
+| @context       | Captures elements that provide context for the outline item                          |
+| @context.extra | Captures additional contextual information for the outline item                      |
+| @annotation    | Captures nodes that annotate outline item (doc comments, attributes, decorators)[^1] |
+
+[^1]: These annotations are used by Assistant when generating code modification steps.
 
 ### Auto-indentation
 
