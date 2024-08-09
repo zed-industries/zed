@@ -2967,7 +2967,7 @@ impl ContextEditor {
                     Some(
                         start_symbols
                             .into_iter()
-                            .zip(end_symbols.into_iter())
+                            .zip(end_symbols)
                             .take_while(|(a, b)| a == b)
                             .map(|(a, _)| a.text)
                             .collect::<Vec<_>>()
