@@ -173,12 +173,16 @@ impl LlmDatabase {
 
             let users_in_recent_minutes = usage::Entity::find()
                 .filter(usage::Column::Timestamp.gte(minute_since.naive_utc()))
+                .select_only()
+                .column(usage::Column::UserId)
                 .group_by(usage::Column::UserId)
                 .count(&*tx)
                 .await? as usize;
 
             let users_in_recent_days = usage::Entity::find()
                 .filter(usage::Column::Timestamp.gte(day_since.naive_utc()))
+                .select_only()
+                .column(usage::Column::UserId)
                 .group_by(usage::Column::UserId)
                 .count(&*tx)
                 .await? as usize;
