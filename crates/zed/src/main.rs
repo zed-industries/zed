@@ -349,10 +349,30 @@ fn main() {
             }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    // #[cfg(not(target_os = "linux"))]
+    // {
+    //     use zed::only_instance::*;
+    //     if ensure_only_instance() != IsOnlyInstance::Yes {
+    //         println!("zed is already running");
+    //         return;
+    //     }
+    // }
     {
-        use zed::only_instance::*;
-        if ensure_only_instance() != IsOnlyInstance::Yes {
+        let app_identifier = match *release_channel::RELEASE_CHANNEL {
+            release_channel::ReleaseChannel::Dev => "Zed-Editor-Instance-Dev",
+            release_channel::ReleaseChannel::Nightly => "Zed-Editor-Instance-Nightly",
+            release_channel::ReleaseChannel::Preview => "Zed-Editor-Instance-Preview",
+            release_channel::ReleaseChannel::Stable => "Zed-Editor-Instance-Stable",
+        };
+        if !gpui::check_single_instance(app_identifier, true, |single_instance| {
+            if *db::ZED_STATELESS
+                || *release_channel::RELEASE_CHANNEL == release_channel::ReleaseChannel::Dev
+            {
+                true
+            } else {
+                single_instance
+            }
+        }) {
             println!("zed is already running");
             return;
         }

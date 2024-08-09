@@ -26,6 +26,8 @@ use crate::{
     RenderSvgParams, Scene, SharedString, Size, Task, TaskLabel, WindowContext,
     DEFAULT_WINDOW_SIZE,
 };
+use ::windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, MAX_PATH};
+use ::windows::Win32::System::Threading::CreateMutexW;
 use anyhow::Result;
 use async_task::Runnable;
 use futures::channel::oneshot;
@@ -43,7 +45,9 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+use util::ResultExt;
 use uuid::Uuid;
+use windows_core::HSTRING;
 
 pub use app_menu::*;
 pub use keystroke::*;
@@ -57,6 +61,33 @@ pub use semantic_version::SemanticVersion;
 pub(crate) use test::*;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
+
+/// TODO:
+pub fn check_single_instance<F>(app_identifier: &str, local: bool, f: F) -> bool
+where
+    F: FnOnce(bool) -> bool,
+{
+    let identifier = if local {
+        format!("Local\\{app_identifier}")
+    } else {
+        format!("Global\\{app_identifier}")
+    };
+    if identifier.len() as u32 > MAX_PATH {
+        panic!("The length of app identifier is limited to {MAX_PATH} characters.");
+    }
+    unsafe {
+        CreateMutexW(None, true, &HSTRING::from(identifier.as_str())).expect(
+            format!(
+                "Unable to create mutex!\n{:?}",
+                std::io::Error::last_os_error()
+            )
+            .as_str(),
+        );
+    }
+    let last_err = unsafe { GetLastError() };
+    let is_single_instance = last_err != ERROR_ALREADY_EXISTS;
+    f(is_single_instance)
+}
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
