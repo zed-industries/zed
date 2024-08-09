@@ -137,6 +137,7 @@
   ":"
   "::"
   ";"
+  (raw_string_delimiter)
 ] @punctuation.delimiter
 
 [
