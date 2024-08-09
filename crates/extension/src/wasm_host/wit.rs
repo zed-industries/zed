@@ -49,12 +49,10 @@ pub fn is_supported_wasm_api_version(
 /// Returns the Wasm API version range that is supported by the Wasm host.
 #[inline(always)]
 pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive<SemanticVersion> {
-    let max_version = match release_channel {
-        ReleaseChannel::Dev | ReleaseChannel::Nightly => latest::MAX_VERSION,
-        ReleaseChannel::Stable | ReleaseChannel::Preview => since_v0_0_6::MAX_VERSION,
-    };
+    // Note: The release channel can be used to stage a new version of the extension API.
+    let _ = release_channel;
 
-    since_v0_0_1::MIN_VERSION..=max_version
+    since_v0_0_1::MIN_VERSION..=latest::MAX_VERSION
 }
 
 pub enum Extension {
@@ -71,7 +69,10 @@ impl Extension {
         version: SemanticVersion,
         component: &Component,
     ) -> Result<(Self, Instance)> {
-        if release_channel == ReleaseChannel::Dev && version >= latest::MIN_VERSION {
+        // Note: The release channel can be used to stage a new version of the extension API.
+        let _ = release_channel;
+
+        if version >= latest::MIN_VERSION {
             let (extension, instance) =
                 latest::Extension::instantiate_async(store, &component, latest::linker())
                     .await
