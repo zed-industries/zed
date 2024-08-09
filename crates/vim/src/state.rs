@@ -58,6 +58,8 @@ pub enum Operator {
     Object { around: bool },
     FindForward { before: bool },
     FindBackward { after: bool },
+    Sneak { first_char: Option<char> },
+    SneakBackward { first_char: Option<char> },
     AddSurrounds { target: Option<SurroundsType> },
     ChangeSurrounds { target: Option<Object> },
     DeleteSurrounds,
@@ -313,6 +315,8 @@ impl Operator {
             Operator::Digraph { .. } => "^K",
             Operator::FindForward { before: false } => "f",
             Operator::FindForward { before: true } => "t",
+            Operator::Sneak { .. } => "z",
+            Operator::SneakBackward { .. } => "Z",
             Operator::FindBackward { after: false } => "F",
             Operator::FindBackward { after: true } => "T",
             Operator::AddSurrounds { .. } => "ys",
@@ -340,6 +344,8 @@ impl Operator {
             | Operator::Mark
             | Operator::Jump { .. }
             | Operator::FindBackward { .. }
+            | Operator::Sneak { .. }
+            | Operator::SneakBackward { .. }
             | Operator::Register
             | Operator::RecordRegister
             | Operator::ReplayRegister
