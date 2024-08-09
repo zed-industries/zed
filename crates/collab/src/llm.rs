@@ -322,25 +322,33 @@ async fn perform_completion(
 }
 
 fn normalize_model_name(provider: LanguageModelProvider, name: String) -> String {
-    match provider {
-        LanguageModelProvider::Anthropic => {
-            for prefix in &[
-                "claude-3-5-sonnet",
-                "claude-3-haiku",
-                "claude-3-opus",
-                "claude-3-sonnet",
-            ] {
-                if name.starts_with(prefix) {
-                    return prefix.to_string();
-                }
-            }
-        }
-        LanguageModelProvider::OpenAi => {}
-        LanguageModelProvider::Google => {}
-        LanguageModelProvider::Zed => {}
-    }
+    let prefixes: &[_] = match provider {
+        LanguageModelProvider::Anthropic => &[
+            "claude-3-5-sonnet",
+            "claude-3-haiku",
+            "claude-3-opus",
+            "claude-3-sonnet",
+        ],
+        LanguageModelProvider::OpenAi => &[
+            "gpt-3.5-turbo",
+            "gpt-4-turbo-preview",
+            "gpt-4o-mini",
+            "gpt-4o",
+            "gpt-4",
+        ],
+        LanguageModelProvider::Google => &[],
+        LanguageModelProvider::Zed => &[],
+    };
 
-    name
+    if let Some(prefix) = prefixes
+        .iter()
+        .filter(|&&prefix| name.starts_with(prefix))
+        .max_by_key(|&&prefix| prefix.len())
+    {
+        prefix.to_string()
+    } else {
+        name
+    }
 }
 
 async fn check_usage_limit(

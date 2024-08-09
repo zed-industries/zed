@@ -722,56 +722,116 @@ impl LanguageModel for CloudLanguageModel {
                 function.description = Some(tool_description);
                 function.parameters = Some(input_schema);
                 request.tools = vec![open_ai::ToolDefinition::Function { function }];
-                self.request_limiter
-                    .run(async move {
-                        let request = serde_json::to_string(&request)?;
-                        let response = client
-                            .request_stream(proto::StreamCompleteWithLanguageModel {
-                                provider: proto::LanguageModelProvider::OpenAi as i32,
-                                request,
-                            })
-                            .await?;
-                        // Call arguments are gonna be streamed in over multiple chunks.
-                        let mut load_state = None;
-                        let mut response = response.map(
-                            |item: Result<
-                                proto::StreamCompleteWithLanguageModelResponse,
-                                anyhow::Error,
-                            >| {
-                                Result::<open_ai::ResponseStreamEvent, anyhow::Error>::Ok(
-                                    serde_json::from_str(&item?.event)?,
-                                )
-                            },
-                        );
-                        while let Some(Ok(part)) = response.next().await {
-                            for choice in part.choices {
-                                let Some(tool_calls) = choice.delta.tool_calls else {
-                                    continue;
-                                };
 
-                                for call in tool_calls {
-                                    if let Some(func) = call.function {
-                                        if func.name.as_deref() == Some(tool_name.as_str()) {
-                                            load_state = Some((String::default(), call.index));
-                                        }
-                                        if let Some((arguments, (output, index))) =
-                                            func.arguments.zip(load_state.as_mut())
-                                        {
-                                            if call.index == *index {
-                                                output.push_str(&arguments);
+                if cx
+                    .update(|cx| cx.has_flag::<LlmServiceFeatureFlag>())
+                    .unwrap_or(false)
+                {
+                    let llm_api_token = self.llm_api_token.clone();
+                    self.request_limiter
+                        .run(async move {
+                            let response = Self::perform_llm_completion(
+                                client.clone(),
+                                llm_api_token,
+                                PerformCompletionParams {
+                                    provider: client::LanguageModelProvider::OpenAi,
+                                    model: request.model.clone(),
+                                    provider_request: RawValue::from_string(
+                                        serde_json::to_string(&request)?,
+                                    )?,
+                                },
+                            )
+                            .await?;
+
+                            let mut body = BufReader::new(response.into_body());
+                            let mut line = String::new();
+                            let mut load_state = None;
+
+                            while body.read_line(&mut line).await? > 0 {
+                                let part: open_ai::ResponseStreamEvent =
+                                    serde_json::from_str(&line)?;
+                                line.clear();
+
+                                for choice in part.choices {
+                                    let Some(tool_calls) = choice.delta.tool_calls else {
+                                        continue;
+                                    };
+
+                                    for call in tool_calls {
+                                        if let Some(func) = call.function {
+                                            if func.name.as_deref() == Some(tool_name.as_str()) {
+                                                load_state = Some((String::default(), call.index));
+                                            }
+                                            if let Some((arguments, (output, index))) =
+                                                func.arguments.zip(load_state.as_mut())
+                                            {
+                                                if call.index == *index {
+                                                    output.push_str(&arguments);
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
-                        }
-                        if let Some((arguments, _)) = load_state {
-                            return Ok(serde_json::from_str(&arguments)?);
-                        } else {
-                            bail!("tool not used");
-                        }
-                    })
-                    .boxed()
+
+                            if let Some((arguments, _)) = load_state {
+                                return Ok(serde_json::from_str(&arguments)?);
+                            } else {
+                                bail!("tool not used");
+                            }
+                        })
+                        .boxed()
+                } else {
+                    self.request_limiter
+                        .run(async move {
+                            let request = serde_json::to_string(&request)?;
+                            let response = client
+                                .request_stream(proto::StreamCompleteWithLanguageModel {
+                                    provider: proto::LanguageModelProvider::OpenAi as i32,
+                                    request,
+                                })
+                                .await?;
+                            let mut load_state = None;
+                            let mut response = response.map(
+                                |item: Result<
+                                    proto::StreamCompleteWithLanguageModelResponse,
+                                    anyhow::Error,
+                                >| {
+                                    Result::<open_ai::ResponseStreamEvent, anyhow::Error>::Ok(
+                                        serde_json::from_str(&item?.event)?,
+                                    )
+                                },
+                            );
+                            while let Some(Ok(part)) = response.next().await {
+                                for choice in part.choices {
+                                    let Some(tool_calls) = choice.delta.tool_calls else {
+                                        continue;
+                                    };
+
+                                    for call in tool_calls {
+                                        if let Some(func) = call.function {
+                                            if func.name.as_deref() == Some(tool_name.as_str()) {
+                                                load_state = Some((String::default(), call.index));
+                                            }
+                                            if let Some((arguments, (output, index))) =
+                                                func.arguments.zip(load_state.as_mut())
+                                            {
+                                                if call.index == *index {
+                                                    output.push_str(&arguments);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some((arguments, _)) = load_state {
+                                return Ok(serde_json::from_str(&arguments)?);
+                            } else {
+                                bail!("tool not used");
+                            }
+                        })
+                        .boxed()
+                }
             }
             CloudModel::Google(_) => {
                 future::ready(Err(anyhow!("tool use not implemented for Google AI"))).boxed()
@@ -793,56 +853,115 @@ impl LanguageModel for CloudLanguageModel {
                 function.description = Some(tool_description);
                 function.parameters = Some(input_schema);
                 request.tools = vec![open_ai::ToolDefinition::Function { function }];
-                self.request_limiter
-                    .run(async move {
-                        let request = serde_json::to_string(&request)?;
-                        let response = client
-                            .request_stream(proto::StreamCompleteWithLanguageModel {
-                                provider: proto::LanguageModelProvider::OpenAi as i32,
-                                request,
-                            })
-                            .await?;
-                        // Call arguments are gonna be streamed in over multiple chunks.
-                        let mut load_state = None;
-                        let mut response = response.map(
-                            |item: Result<
-                                proto::StreamCompleteWithLanguageModelResponse,
-                                anyhow::Error,
-                            >| {
-                                Result::<open_ai::ResponseStreamEvent, anyhow::Error>::Ok(
-                                    serde_json::from_str(&item?.event)?,
-                                )
-                            },
-                        );
-                        while let Some(Ok(part)) = response.next().await {
-                            for choice in part.choices {
-                                let Some(tool_calls) = choice.delta.tool_calls else {
-                                    continue;
-                                };
 
-                                for call in tool_calls {
-                                    if let Some(func) = call.function {
-                                        if func.name.as_deref() == Some(tool_name.as_str()) {
-                                            load_state = Some((String::default(), call.index));
-                                        }
-                                        if let Some((arguments, (output, index))) =
-                                            func.arguments.zip(load_state.as_mut())
-                                        {
-                                            if call.index == *index {
-                                                output.push_str(&arguments);
+                if cx
+                    .update(|cx| cx.has_flag::<LlmServiceFeatureFlag>())
+                    .unwrap_or(false)
+                {
+                    let llm_api_token = self.llm_api_token.clone();
+                    self.request_limiter
+                        .run(async move {
+                            let response = Self::perform_llm_completion(
+                                client.clone(),
+                                llm_api_token,
+                                PerformCompletionParams {
+                                    provider: client::LanguageModelProvider::Zed,
+                                    model: request.model.clone(),
+                                    provider_request: RawValue::from_string(
+                                        serde_json::to_string(&request)?,
+                                    )?,
+                                },
+                            )
+                            .await?;
+
+                            let mut body = BufReader::new(response.into_body());
+                            let mut line = String::new();
+                            let mut load_state = None;
+
+                            while body.read_line(&mut line).await? > 0 {
+                                let part: open_ai::ResponseStreamEvent =
+                                    serde_json::from_str(&line)?;
+                                line.clear();
+
+                                for choice in part.choices {
+                                    let Some(tool_calls) = choice.delta.tool_calls else {
+                                        continue;
+                                    };
+
+                                    for call in tool_calls {
+                                        if let Some(func) = call.function {
+                                            if func.name.as_deref() == Some(tool_name.as_str()) {
+                                                load_state = Some((String::default(), call.index));
+                                            }
+                                            if let Some((arguments, (output, index))) =
+                                                func.arguments.zip(load_state.as_mut())
+                                            {
+                                                if call.index == *index {
+                                                    output.push_str(&arguments);
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
-                        }
-                        if let Some((arguments, _)) = load_state {
-                            return Ok(serde_json::from_str(&arguments)?);
-                        } else {
-                            bail!("tool not used");
-                        }
-                    })
-                    .boxed()
+                            if let Some((arguments, _)) = load_state {
+                                return Ok(serde_json::from_str(&arguments)?);
+                            } else {
+                                bail!("tool not used");
+                            }
+                        })
+                        .boxed()
+                } else {
+                    self.request_limiter
+                        .run(async move {
+                            let request = serde_json::to_string(&request)?;
+                            let response = client
+                                .request_stream(proto::StreamCompleteWithLanguageModel {
+                                    provider: proto::LanguageModelProvider::OpenAi as i32,
+                                    request,
+                                })
+                                .await?;
+                            let mut load_state = None;
+                            let mut response = response.map(
+                                |item: Result<
+                                    proto::StreamCompleteWithLanguageModelResponse,
+                                    anyhow::Error,
+                                >| {
+                                    Result::<open_ai::ResponseStreamEvent, anyhow::Error>::Ok(
+                                        serde_json::from_str(&item?.event)?,
+                                    )
+                                },
+                            );
+                            while let Some(Ok(part)) = response.next().await {
+                                for choice in part.choices {
+                                    let Some(tool_calls) = choice.delta.tool_calls else {
+                                        continue;
+                                    };
+
+                                    for call in tool_calls {
+                                        if let Some(func) = call.function {
+                                            if func.name.as_deref() == Some(tool_name.as_str()) {
+                                                load_state = Some((String::default(), call.index));
+                                            }
+                                            if let Some((arguments, (output, index))) =
+                                                func.arguments.zip(load_state.as_mut())
+                                            {
+                                                if call.index == *index {
+                                                    output.push_str(&arguments);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some((arguments, _)) = load_state {
+                                return Ok(serde_json::from_str(&arguments)?);
+                            } else {
+                                bail!("tool not used");
+                            }
+                        })
+                        .boxed()
+                }
             }
         }
     }
