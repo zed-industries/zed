@@ -2992,29 +2992,18 @@ impl ContextEditor {
                         context.editor.update(cx, |editor, cx| {
                             editor.insert("\n", cx);
 
-                            let start_row =
-                                MultiBufferRow(editor.selections.newest::<Point>(cx).head().row);
-                            let anchor_before = {
-                                let snapshot = editor.buffer().read(cx).snapshot(cx);
-
-                                editor
-                                    .selections
-                                    .newest_anchor()
-                                    .head()
-                                    .bias_left(&snapshot)
-                            };
+                            let point = editor.selections.newest::<Point>(cx).head();
+                            let start_row = MultiBufferRow(point.row);
 
                             editor.insert(&text, cx);
 
-                            let anchor_after = {
-                                let snapshot = editor.buffer().read(cx).snapshot(cx);
-
-                                editor
-                                    .selections
-                                    .newest_anchor()
-                                    .head()
-                                    .bias_left(&snapshot)
-                            };
+                            let snapshot = editor.buffer().read(cx).snapshot(cx);
+                            let anchor_before = snapshot.anchor_after(point);
+                            let anchor_after = editor
+                                .selections
+                                .newest_anchor()
+                                .head()
+                                .bias_left(&snapshot);
 
                             editor.insert("\n", cx);
 
