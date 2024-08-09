@@ -33,6 +33,8 @@ actions!(
         SelectAllMatches,
         NextHistoryQuery,
         PreviousHistoryQuery,
+        NextHistory,
+        PreviousHistory,
         ReplaceAll,
         ReplaceNext,
     ]

@@ -227,6 +227,8 @@ pub struct Project {
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
+    search_included_history: SearchHistory,
+    search_excluded_history: SearchHistory,
     snippets: Model<SnippetProvider>,
     yarn: Model<YarnPathStore>,
     cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
@@ -829,6 +831,8 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
+                search_included_history: Self::new_search_included_history(),
+                search_excluded_history: Self::new_search_excluded_history(),
                 cached_shell_environments: HashMap::default(),
             }
         })
@@ -1024,6 +1028,8 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
+                search_included_history: Self::new_search_included_history(),
+                search_excluded_history: Self::new_search_excluded_history(),
                 cached_shell_environments: HashMap::default(),
             };
             this.set_role(role, cx);
@@ -1089,6 +1095,20 @@ impl Project {
     }
 
     fn new_search_history() -> SearchHistory {
+        SearchHistory::new(
+            Some(MAX_PROJECT_SEARCH_HISTORY_SIZE),
+            search_history::QueryInsertionBehavior::AlwaysInsert,
+        )
+    }
+
+    fn new_search_included_history() -> SearchHistory {
+        SearchHistory::new(
+            Some(MAX_PROJECT_SEARCH_HISTORY_SIZE),
+            search_history::QueryInsertionBehavior::AlwaysInsert,
+        )
+    }
+
+    fn new_search_excluded_history() -> SearchHistory {
         SearchHistory::new(
             Some(MAX_PROJECT_SEARCH_HISTORY_SIZE),
             search_history::QueryInsertionBehavior::AlwaysInsert,
@@ -1430,6 +1450,22 @@ impl Project {
 
     pub fn search_history_mut(&mut self) -> &mut SearchHistory {
         &mut self.search_history
+    }
+
+    pub fn search_included_history(&self) -> &SearchHistory {
+        &self.search_included_history
+    }
+
+    pub fn search_included_history_mut(&mut self) -> &mut SearchHistory {
+        &mut self.search_included_history
+    }
+
+    pub fn search_excluded_history(&self) -> &SearchHistory {
+        &self.search_excluded_history
+    }
+
+    pub fn search_excluded_history_mut(&mut self) -> &mut SearchHistory {
+        &mut self.search_excluded_history
     }
 
     pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {

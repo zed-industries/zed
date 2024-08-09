@@ -1,5 +1,5 @@
 use crate::{
-    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
+    FocusSearch, NextHistory, PreviousHistory, ReplaceAll, ReplaceNext, SearchOptions,
     SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex,
     ToggleReplace, ToggleWholeWord,
 };
@@ -124,6 +124,8 @@ struct ProjectSearch {
     no_results: Option<bool>,
     limit_reached: bool,
     search_history_cursor: SearchHistoryCursor,
+    search_included_history_cursor: SearchHistoryCursor,
+    search_excluded_history_cursor: SearchHistoryCursor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -177,6 +179,8 @@ impl ProjectSearch {
             no_results: None,
             limit_reached: false,
             search_history_cursor: Default::default(),
+            search_included_history_cursor: Default::default(),
+            search_excluded_history_cursor: Default::default(),
         }
     }
 
@@ -194,6 +198,8 @@ impl ProjectSearch {
             no_results: self.no_results,
             limit_reached: self.limit_reached,
             search_history_cursor: self.search_history_cursor.clone(),
+            search_included_history_cursor: self.search_included_history_cursor.clone(),
+            search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
         })
     }
 
@@ -202,6 +208,20 @@ impl ProjectSearch {
             project
                 .search_history_mut()
                 .add(&mut self.search_history_cursor, query.as_str().to_string());
+            let included = query.as_inner().files_to_include().sources();
+            if included.len() > 0 {
+                project.search_included_history_mut().add(
+                    &mut self.search_included_history_cursor,
+                    included[0].clone(),
+                );
+            }
+            let excluded = query.as_inner().files_to_exclude().sources();
+            if excluded.len() > 0 {
+                project.search_excluded_history_mut().add(
+                    &mut self.search_excluded_history_cursor,
+                    excluded[0].clone(),
+                );
+            }
             project.search(query.clone(), cx)
         });
         self.last_search_query_text = Some(query.as_str().to_string());
@@ -988,6 +1008,20 @@ impl ProjectSearchView {
             .update(cx, |query_editor, cx| query_editor.set_text(query, cx));
     }
 
+    fn set_search_included(&mut self, included: &str, cx: &mut ViewContext<Self>) {
+        self.included_files_editor
+            .update(cx, |included_editor, cx| {
+                included_editor.set_text(included, cx)
+            });
+    }
+
+    fn set_search_excluded(&mut self, excluded: &str, cx: &mut ViewContext<Self>) {
+        self.excluded_files_editor
+            .update(cx, |excluded_editor, cx| {
+                excluded_editor.set_text(excluded, cx)
+            });
+    }
+
     fn focus_results_editor(&mut self, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
             let cursor = query_editor.selections.newest_anchor().head();
@@ -1259,54 +1293,166 @@ impl ProjectSearchBar {
         }
     }
 
-    fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
+    fn next_history(&mut self, _: &NextHistory, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                let new_query = search_view.model.update(cx, |model, cx| {
-                    if let Some(new_query) = model.project.update(cx, |project, _| {
-                        project
-                            .search_history_mut()
-                            .next(&mut model.search_history_cursor)
-                            .map(str::to_string)
-                    }) {
-                        new_query
-                    } else {
-                        model.search_history_cursor.reset();
-                        String::new()
-                    }
-                });
-                search_view.set_query(&new_query, cx);
+                if search_view.query_editor.focus_handle(cx).is_focused(cx) {
+                    let new_query = search_view.model.update(cx, |model, cx| {
+                        if let Some(new_query) = model.project.update(cx, |project, _| {
+                            project
+                                .search_history_mut()
+                                .next(&mut model.search_history_cursor)
+                                .map(str::to_string)
+                        }) {
+                            new_query
+                        } else {
+                            model.search_history_cursor.reset();
+                            String::new()
+                        }
+                    });
+                    search_view.set_query(&new_query, cx);
+                } else if search_view
+                    .included_files_editor
+                    .focus_handle(cx)
+                    .is_focused(cx)
+                {
+                    let new_included = search_view.model.update(cx, |model, cx| {
+                        if let Some(new_included) = model.project.update(cx, |project, _| {
+                            project
+                                .search_included_history_mut()
+                                .next(&mut model.search_included_history_cursor)
+                                .map(str::to_string)
+                        }) {
+                            new_included
+                        } else {
+                            model.search_included_history_cursor.reset();
+                            String::new()
+                        }
+                    });
+                    search_view.set_search_included(&new_included, cx);
+                } else if search_view
+                    .excluded_files_editor
+                    .focus_handle(cx)
+                    .is_focused(cx)
+                {
+                    let new_excluded = search_view.model.update(cx, |model, cx| {
+                        if let Some(new_excluded) = model.project.update(cx, |project, _| {
+                            project
+                                .search_excluded_history_mut()
+                                .next(&mut model.search_excluded_history_cursor)
+                                .map(str::to_string)
+                        }) {
+                            new_excluded
+                        } else {
+                            model.search_excluded_history_cursor.reset();
+                            String::new()
+                        }
+                    });
+                    search_view.set_search_excluded(&new_excluded, cx);
+                }
             });
         }
     }
 
-    fn previous_history_query(&mut self, _: &PreviousHistoryQuery, cx: &mut ViewContext<Self>) {
+    fn previous_history(&mut self, _: &PreviousHistory, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                if search_view.query_editor.read(cx).text(cx).is_empty() {
-                    if let Some(new_query) = search_view
-                        .model
-                        .read(cx)
-                        .project
-                        .read(cx)
-                        .search_history()
-                        .current(&search_view.model.read(cx).search_history_cursor)
-                        .map(str::to_string)
-                    {
-                        search_view.set_query(&new_query, cx);
-                        return;
-                    }
-                }
-
-                if let Some(new_query) = search_view.model.update(cx, |model, cx| {
-                    model.project.update(cx, |project, _| {
-                        project
-                            .search_history_mut()
-                            .previous(&mut model.search_history_cursor)
+                if search_view.query_editor.focus_handle(cx).is_focused(cx) {
+                    if search_view.query_editor.read(cx).text(cx).is_empty() {
+                        if let Some(new_query) = search_view
+                            .model
+                            .read(cx)
+                            .project
+                            .read(cx)
+                            .search_history()
+                            .current(&search_view.model.read(cx).search_history_cursor)
                             .map(str::to_string)
-                    })
-                }) {
-                    search_view.set_query(&new_query, cx);
+                        {
+                            search_view.set_query(&new_query, cx);
+                            return;
+                        }
+                    }
+
+                    if let Some(new_query) = search_view.model.update(cx, |model, cx| {
+                        model.project.update(cx, |project, _| {
+                            project
+                                .search_history_mut()
+                                .previous(&mut model.search_history_cursor)
+                                .map(str::to_string)
+                        })
+                    }) {
+                        search_view.set_query(&new_query, cx);
+                    }
+                } else if search_view
+                    .included_files_editor
+                    .focus_handle(cx)
+                    .is_focused(cx)
+                {
+                    if search_view
+                        .included_files_editor
+                        .read(cx)
+                        .text(cx)
+                        .is_empty()
+                    {
+                        if let Some(new_included) = search_view
+                            .model
+                            .read(cx)
+                            .project
+                            .read(cx)
+                            .search_included_history()
+                            .current(&search_view.model.read(cx).search_included_history_cursor)
+                            .map(str::to_string)
+                        {
+                            search_view.set_search_included(&new_included, cx);
+                            return;
+                        }
+                    }
+
+                    if let Some(new_included) = search_view.model.update(cx, |model, cx| {
+                        model.project.update(cx, |project, _| {
+                            project
+                                .search_included_history_mut()
+                                .previous(&mut model.search_included_history_cursor)
+                                .map(str::to_string)
+                        })
+                    }) {
+                        search_view.set_search_included(&new_included, cx);
+                    }
+                } else if search_view
+                    .excluded_files_editor
+                    .focus_handle(cx)
+                    .is_focused(cx)
+                {
+                    if search_view
+                        .excluded_files_editor
+                        .read(cx)
+                        .text(cx)
+                        .is_empty()
+                    {
+                        if let Some(new_excluded) = search_view
+                            .model
+                            .read(cx)
+                            .project
+                            .read(cx)
+                            .search_excluded_history()
+                            .current(&search_view.model.read(cx).search_excluded_history_cursor)
+                            .map(str::to_string)
+                        {
+                            search_view.set_search_excluded(&new_excluded, cx);
+                            return;
+                        }
+                    }
+
+                    if let Some(new_excluded) = search_view.model.update(cx, |model, cx| {
+                        model.project.update(cx, |project, _| {
+                            project
+                                .search_excluded_history_mut()
+                                .previous(&mut model.search_excluded_history_cursor)
+                                .map(str::to_string)
+                        })
+                    }) {
+                        search_view.set_search_excluded(&new_excluded, cx);
+                    }
                 }
             });
         }
@@ -1376,8 +1522,8 @@ impl Render for ProjectSearchBar {
             .min_w(rems(MIN_INPUT_WIDTH_REMS))
             .max_w(rems(MAX_INPUT_WIDTH_REMS))
             .on_action(cx.listener(|this, action, cx| this.confirm(action, cx)))
-            .on_action(cx.listener(|this, action, cx| this.previous_history_query(action, cx)))
-            .on_action(cx.listener(|this, action, cx| this.next_history_query(action, cx)))
+            .on_action(cx.listener(|this, action, cx| this.previous_history(action, cx)))
+            .on_action(cx.listener(|this, action, cx| this.next_history(action, cx)))
             .child(self.render_text_input(&search.query_editor, cx))
             .child(
                 h_flex()
@@ -1562,6 +1708,10 @@ impl Render for ProjectSearchBar {
                         .border_1()
                         .border_color(search.border_color_for(InputPanel::Include, cx))
                         .rounded_lg()
+                        .on_action(
+                            cx.listener(|this, action, cx| this.previous_history(action, cx)),
+                        )
+                        .on_action(cx.listener(|this, action, cx| this.next_history(action, cx)))
                         .child(self.render_text_input(&search.included_files_editor, cx)),
                 )
                 .child(
@@ -1575,6 +1725,10 @@ impl Render for ProjectSearchBar {
                         .border_1()
                         .border_color(search.border_color_for(InputPanel::Exclude, cx))
                         .rounded_lg()
+                        .on_action(
+                            cx.listener(|this, action, cx| this.previous_history(action, cx)),
+                        )
+                        .on_action(cx.listener(|this, action, cx| this.next_history(action, cx)))
                         .child(self.render_text_input(&search.excluded_files_editor, cx)),
                 )
                 .child(
@@ -2615,7 +2769,8 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.next_history_query(&NextHistoryQuery, cx);
+                    search_bar.focus_search(cx);
+                    search_bar.next_history(&NextHistory, cx);
                 })
             })
             .unwrap();
@@ -2630,7 +2785,8 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.next_history_query(&NextHistoryQuery, cx);
+                    search_bar.focus_search(cx);
+                    search_bar.next_history(&NextHistory, cx);
                 })
             })
             .unwrap();
@@ -2647,7 +2803,8 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                    search_bar.focus_search(cx);
+                    search_bar.previous_history(&PreviousHistory, cx);
                 });
             })
             .unwrap();
@@ -2664,7 +2821,8 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                    search_bar.focus_search(cx);
+                    search_bar.previous_history(&PreviousHistory, cx);
                 });
             })
             .unwrap();
@@ -2681,7 +2839,8 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                    search_bar.focus_search(cx);
+                    search_bar.previous_history(&PreviousHistory, cx);
                 });
             })
             .unwrap();
@@ -2696,7 +2855,8 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                    search_bar.focus_search(cx);
+                    search_bar.previous_history(&PreviousHistory, cx);
                 });
             })
             .unwrap();
@@ -2713,7 +2873,8 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.next_history_query(&NextHistoryQuery, cx);
+                    search_bar.focus_search(cx);
+                    search_bar.next_history(&NextHistory, cx);
                 });
             })
             .unwrap();
@@ -2750,7 +2911,8 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                    search_bar.focus_search(cx);
+                    search_bar.previous_history(&PreviousHistory, cx);
                 });
             })
             .unwrap();
@@ -2765,7 +2927,8 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                    search_bar.focus_search(cx);
+                    search_bar.previous_history(&PreviousHistory, cx);
                 });
             })
             .unwrap();
@@ -2780,7 +2943,8 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.next_history_query(&NextHistoryQuery, cx);
+                    search_bar.focus_search(cx);
+                    search_bar.next_history(&NextHistory, cx);
                 });
             })
             .unwrap();
@@ -2795,7 +2959,8 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.next_history_query(&NextHistoryQuery, cx);
+                    search_bar.focus_search(cx);
+                    search_bar.next_history(&NextHistory, cx);
                 });
             })
             .unwrap();
@@ -2810,7 +2975,8 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.next_history_query(&NextHistoryQuery, cx);
+                    search_bar.focus_search(cx);
+                    search_bar.next_history(&NextHistory, cx);
                 });
             })
             .unwrap();
@@ -2961,7 +3127,8 @@ pub mod tests {
                 window
                     .update(cx, |_, cx| {
                         search_bar.update(cx, |search_bar, cx| {
-                            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
+                            search_bar.focus_search(cx);
+                            search_bar.previous_history(&PreviousHistory, cx);
                         })
                     })
                     .unwrap();
@@ -2972,7 +3139,8 @@ pub mod tests {
                 window
                     .update(cx, |_, cx| {
                         search_bar.update(cx, |search_bar, cx| {
-                            search_bar.next_history_query(&NextHistoryQuery, cx);
+                            search_bar.focus_search(cx);
+                            search_bar.next_history(&NextHistory, cx);
                         })
                     })
                     .unwrap();
