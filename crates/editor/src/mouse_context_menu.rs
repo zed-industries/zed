@@ -2,10 +2,10 @@ use std::ops::Range;
 
 use crate::GoToDeclaration;
 use crate::{
-    selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut, DisplayPoint,
-    DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation,
-    GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode, ToDisplayPoint,
-    ToggleCodeActions,
+    selections_collection::SelectionsCollection, Copy, CopyFileLocation, CopyPermalinkToLine, Cut,
+    DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDefinition,
+    GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode,
+    ToDisplayPoint, ToggleCodeActions,
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
@@ -186,7 +186,8 @@ pub fn deploy_context_menu(
                     builder.action("Reveal in File Manager", Box::new(RevealInFileManager))
                 })
                 .action("Open in Terminal", Box::new(OpenInTerminal))
-                .action("Copy Permalink", Box::new(CopyPermalinkToLine));
+                .action("Copy Permalink", Box::new(CopyPermalinkToLine))
+                .action("Copy File:Line", Box::new(CopyFileLocation));
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,
