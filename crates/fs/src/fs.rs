@@ -17,6 +17,7 @@ use rope::Rope;
 use smol::io::AsyncWriteExt;
 use std::{
     io::{self, Write},
+    os::unix::fs::FileTypeExt,
     path::{Component, Path, PathBuf},
     pin::Pin,
     sync::Arc,
@@ -149,6 +150,7 @@ pub struct Metadata {
     pub mtime: SystemTime,
     pub is_symlink: bool,
     pub is_dir: bool,
+    pub is_fifo: bool,
 }
 
 #[derive(Default)]
@@ -423,6 +425,7 @@ impl Fs for RealFs {
             mtime: metadata.modified().unwrap(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
+            is_fifo: metadata.file_type().is_fifo(),
         }))
     }
 
@@ -1528,12 +1531,14 @@ impl Fs for FakeFs {
                     mtime: *mtime,
                     is_dir: false,
                     is_symlink,
+                    is_fifo: false,
                 },
                 FakeFsEntry::Dir { inode, mtime, .. } => Metadata {
                     inode: *inode,
                     mtime: *mtime,
                     is_dir: true,
                     is_symlink,
+                    is_fifo: false,
                 },
                 FakeFsEntry::Symlink { .. } => unreachable!(),
             }))
