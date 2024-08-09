@@ -1897,7 +1897,20 @@ impl ContextEditor {
                 }) => {
                     output.push_str("Resolution:\n");
                     output.push_str(&format!("  {:?}\n", title));
-                    output.push_str(&format!("  {:?}\n", suggestions));
+                    for (buffer, suggestions) in suggestions {
+                        let path = buffer
+                            .read(cx)
+                            .file()
+                            .and_then(|file| file.path().to_str())
+                            .unwrap_or("untitled");
+                        writeln!(output, "  Path: {path}").ok();
+                        if !suggestions.is_empty() {
+                            writeln!(output, "  Suggestions:").ok();
+                            for suggestion in suggestions {
+                                writeln!(output, "    {suggestion:?}").ok();
+                            }
+                        }
+                    }
                 }
                 crate::WorkflowStepStatus::Pending(_) => {
                     output.push_str("Resolution: Pending\n");
