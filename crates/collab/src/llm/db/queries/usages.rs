@@ -11,7 +11,9 @@ pub struct Usage {
     pub requests_this_minute: usize,
     pub tokens_this_minute: usize,
     pub tokens_this_day: usize,
-    pub tokens_this_month: usize,
+    pub input_tokens_this_month: usize,
+    pub output_tokens_this_month: usize,
+    pub spending_this_month: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -87,14 +89,20 @@ impl LlmDatabase {
                 self.get_usage_for_measure(&usages, now, UsageMeasure::TokensPerMinute)?;
             let tokens_this_day =
                 self.get_usage_for_measure(&usages, now, UsageMeasure::TokensPerDay)?;
-            let tokens_this_month =
-                self.get_usage_for_measure(&usages, now, UsageMeasure::TokensPerMonth)?;
+            let input_tokens_this_month =
+                self.get_usage_for_measure(&usages, now, UsageMeasure::InputTokensPerMonth)?;
+            let output_tokens_this_month =
+                self.get_usage_for_measure(&usages, now, UsageMeasure::OutputTokensPerMonth)?;
+            let spending_this_month =
+                calculate_spending(model, input_tokens_this_month, output_tokens_this_month);
 
             Ok(Usage {
                 requests_this_minute,
                 tokens_this_minute,
                 tokens_this_day,
-                tokens_this_month,
+                input_tokens_this_month,
+                output_tokens_this_month,
+                spending_this_month,
             })
         })
         .await
@@ -105,7 +113,8 @@ impl LlmDatabase {
         user_id: i32,
         provider: LanguageModelProvider,
         model_name: &str,
-        token_count: usize,
+        input_token_count: usize,
+        output_token_count: usize,
         now: DateTimeUtc,
     ) -> Result<Usage> {
         self.transaction(|tx| async move {
@@ -138,7 +147,7 @@ impl LlmDatabase {
                     &usages,
                     UsageMeasure::TokensPerMinute,
                     now,
-                    token_count,
+                    input_token_count + output_token_count,
                     &tx,
                 )
                 .await?;
@@ -149,27 +158,42 @@ impl LlmDatabase {
                     &usages,
                     UsageMeasure::TokensPerDay,
                     now,
-                    token_count,
+                    input_token_count + output_token_count,
                     &tx,
                 )
                 .await?;
-            let tokens_this_month = self
+            let input_tokens_this_month = self
                 .update_usage_for_measure(
                     user_id,
                     model.id,
                     &usages,
-                    UsageMeasure::TokensPerMonth,
+                    UsageMeasure::InputTokensPerMonth,
                     now,
-                    token_count,
+                    input_token_count,
                     &tx,
                 )
                 .await?;
+            let output_tokens_this_month = self
+                .update_usage_for_measure(
+                    user_id,
+                    model.id,
+                    &usages,
+                    UsageMeasure::OutputTokensPerMonth,
+                    now,
+                    output_token_count,
+                    &tx,
+                )
+                .await?;
+            let spending_this_month =
+                calculate_spending(model, input_tokens_this_month, output_tokens_this_month);
 
             Ok(Usage {
                 requests_this_minute,
                 tokens_this_minute,
                 tokens_this_day,
-                tokens_this_month,
+                input_tokens_this_month,
+                output_tokens_this_month,
+                spending_this_month,
             })
         })
         .await
@@ -303,6 +327,18 @@ impl LlmDatabase {
     }
 }
 
+fn calculate_spending(
+    model: &model::Model,
+    input_tokens_this_month: usize,
+    output_tokens_this_month: usize,
+) -> usize {
+    let input_token_cost =
+        input_tokens_this_month * model.price_per_million_input_tokens as usize / 1_000_000;
+    let output_token_cost =
+        output_tokens_this_month * model.price_per_million_output_tokens as usize / 1_000_000;
+    input_token_cost + output_token_cost
+}
+
 const MINUTE_BUCKET_COUNT: usize = 12;
 const DAY_BUCKET_COUNT: usize = 48;
 const MONTH_BUCKET_COUNT: usize = 30;
@@ -313,7 +349,8 @@ impl UsageMeasure {
             UsageMeasure::RequestsPerMinute => MINUTE_BUCKET_COUNT,
             UsageMeasure::TokensPerMinute => MINUTE_BUCKET_COUNT,
             UsageMeasure::TokensPerDay => DAY_BUCKET_COUNT,
-            UsageMeasure::TokensPerMonth => MONTH_BUCKET_COUNT,
+            UsageMeasure::InputTokensPerMonth => MONTH_BUCKET_COUNT,
+            UsageMeasure::OutputTokensPerMonth => MONTH_BUCKET_COUNT,
         }
     }
 
@@ -322,7 +359,8 @@ impl UsageMeasure {
             UsageMeasure::RequestsPerMinute => Duration::minutes(1),
             UsageMeasure::TokensPerMinute => Duration::minutes(1),
             UsageMeasure::TokensPerDay => Duration::hours(24),
-            UsageMeasure::TokensPerMonth => Duration::days(30),
+            UsageMeasure::InputTokensPerMonth => Duration::days(30),
+            UsageMeasure::OutputTokensPerMonth => Duration::days(30),
         }
     }
 

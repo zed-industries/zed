@@ -14,7 +14,9 @@ pub struct LlmUsageEventRow {
     pub requests_this_minute: u64,
     pub tokens_this_minute: u64,
     pub tokens_this_day: u64,
-    pub tokens_this_month: u64,
+    pub input_tokens_this_month: u64,
+    pub output_tokens_this_month: u64,
+    pub spending_this_month: u64,
 }
 
 pub async fn report_llm_usage(client: &clickhouse::Client, row: LlmUsageEventRow) -> Result<()> {
