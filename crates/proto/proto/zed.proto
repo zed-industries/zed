@@ -1814,6 +1814,7 @@ message Entry {
     bool is_ignored = 7;
     bool is_external = 8;
     optional GitStatus git_status = 9;
+    bool is_fifo = 10;
 }
 
 message RepositoryEntry {
