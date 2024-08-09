@@ -85,11 +85,6 @@ spec:
                 secretKeyRef:
                   name: database
                   key: url
-            - name: LLM_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: llm-database
-                  key: url
             - name: DATABASE_MAX_CONNECTIONS
               value: "${DATABASE_MAX_CONNECTIONS}"
             - name: API_TOKEN
@@ -102,6 +97,13 @@ spec:
                 secretKeyRef:
                   name: llm-token
                   key: secret
+            - name: LLM_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: llm-database
+                  key: url
+            - name: LLM_DATABASE_MAX_CONNECTIONS
+              value: "${LLM_DATABASE_MAX_CONNECTIONS}"
             - name: ZED_CLIENT_CHECKSUM_SEED
               valueFrom:
                 secretKeyRef:
