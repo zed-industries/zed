@@ -107,7 +107,7 @@ impl LlmDatabase {
         model_name: &str,
         token_count: usize,
         now: DateTimeUtc,
-    ) -> Result<()> {
+    ) -> Result<Usage> {
         self.transaction(|tx| async move {
             let model = self.model(provider, model_name)?;
 
@@ -120,48 +120,57 @@ impl LlmDatabase {
                 .all(&*tx)
                 .await?;
 
-            self.update_usage_for_measure(
-                user_id,
-                model.id,
-                &usages,
-                UsageMeasure::RequestsPerMinute,
-                now,
-                1,
-                &tx,
-            )
-            .await?;
-            self.update_usage_for_measure(
-                user_id,
-                model.id,
-                &usages,
-                UsageMeasure::TokensPerMinute,
-                now,
-                token_count,
-                &tx,
-            )
-            .await?;
-            self.update_usage_for_measure(
-                user_id,
-                model.id,
-                &usages,
-                UsageMeasure::TokensPerDay,
-                now,
-                token_count,
-                &tx,
-            )
-            .await?;
-            self.update_usage_for_measure(
-                user_id,
-                model.id,
-                &usages,
-                UsageMeasure::TokensPerMonth,
-                now,
-                token_count,
-                &tx,
-            )
-            .await?;
+            let requests_this_minute = self
+                .update_usage_for_measure(
+                    user_id,
+                    model.id,
+                    &usages,
+                    UsageMeasure::RequestsPerMinute,
+                    now,
+                    1,
+                    &tx,
+                )
+                .await?;
+            let tokens_this_minute = self
+                .update_usage_for_measure(
+                    user_id,
+                    model.id,
+                    &usages,
+                    UsageMeasure::TokensPerMinute,
+                    now,
+                    token_count,
+                    &tx,
+                )
+                .await?;
+            let tokens_this_day = self
+                .update_usage_for_measure(
+                    user_id,
+                    model.id,
+                    &usages,
+                    UsageMeasure::TokensPerDay,
+                    now,
+                    token_count,
+                    &tx,
+                )
+                .await?;
+            let tokens_this_month = self
+                .update_usage_for_measure(
+                    user_id,
+                    model.id,
+                    &usages,
+                    UsageMeasure::TokensPerMonth,
+                    now,
+                    token_count,
+                    &tx,
+                )
+                .await?;
 
-            Ok(())
+            Ok(Usage {
+                requests_this_minute,
+                tokens_this_minute,
+                tokens_this_day,
+                tokens_this_month,
+            })
         })
         .await
     }
@@ -205,7 +214,7 @@ impl LlmDatabase {
         now: DateTimeUtc,
         usage_to_add: usize,
         tx: &DatabaseTransaction,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let now = now.naive_utc();
         let measure_id = *self
             .usage_measure_ids
@@ -230,6 +239,7 @@ impl LlmDatabase {
         }
 
         *buckets.last_mut().unwrap() += usage_to_add as i64;
+        let total_usage = buckets.iter().sum::<i64>() as usize;
 
         let mut model = usage::ActiveModel {
             user_id: ActiveValue::set(user_id),
@@ -249,7 +259,7 @@ impl LlmDatabase {
                 .await?;
         }
 
-        Ok(())
+        Ok(total_usage)
     }
 
     fn get_usage_for_measure(
