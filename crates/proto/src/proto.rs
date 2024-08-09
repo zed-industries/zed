@@ -408,6 +408,8 @@ messages!(
     (UpdateContext, Foreground),
     (SynchronizeContexts, Foreground),
     (SynchronizeContextsResponse, Foreground),
+    (LspExtSwitchSourceHeader, Background),
+    (LspExtSwitchSourceHeaderResponse, Background),
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
 );
@@ -534,6 +536,7 @@ request_messages!(
     (OpenContext, OpenContextResponse),
     (CreateContext, CreateContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
+    (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
 );
 
@@ -603,6 +606,7 @@ entity_messages!(
     CreateContext,
     UpdateContext,
     SynchronizeContexts,
+    LspExtSwitchSourceHeader
 );
 
 entity_messages!(
