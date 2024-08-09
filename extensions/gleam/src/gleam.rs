@@ -107,8 +107,11 @@ impl zed::Extension for GleamExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
+        let command = zed::CommandType::Other(
+            self.language_server_binary_path(language_server_id, worktree)?,
+        );
         Ok(zed::Command {
-            command: self.language_server_binary_path(language_server_id, worktree)?,
+            command,
             args: vec!["lsp".to_string()],
             env: Default::default(),
         })

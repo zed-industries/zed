@@ -205,6 +205,14 @@ impl nodejs::Host for WasmState {
             .await
             .to_wasmtime_result()
     }
+
+    async fn node_environment_path(&mut self) -> wasmtime::Result<Result<String, String>> {
+        self.host
+            .node_runtime
+            .environment_path()
+            .await
+            .to_wasmtime_result()
+    }
 }
 
 #[async_trait]
@@ -456,5 +464,9 @@ impl ExtensionImports for WasmState {
 
         #[cfg(not(unix))]
         Ok(Ok(()))
+    }
+
+    async fn node_environment_path(&mut self) -> wasmtime::Result<Result<String, String>> {
+        super::latest::nodejs::Host::node_environment_path(self).await
     }
 }

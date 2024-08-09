@@ -68,9 +68,16 @@ impl LspAdapter for ExtensionLspAdapter {
                 })
                 .await?;
 
-            let path = self
-                .host
-                .path_from_extension(&self.extension.manifest.id, command.command.as_ref());
+            let path = match command.command {
+                crate::wit::CommandType::Shell(shell) => match shell {
+                    crate::wit::WindowsShell::Powershell => "powershell.exe",
+                    crate::wit::WindowsShell::Cmd => "cmd.exe",
+                }
+                .into(),
+                crate::wit::CommandType::Other(other) => self
+                    .host
+                    .path_from_extension(&self.extension.manifest.id, other.as_ref()),
+            };
 
             // TODO: This should now be done via the `zed::make_file_executable` function in
             // Zed extension API, but we're leaving these existing usages in place temporarily

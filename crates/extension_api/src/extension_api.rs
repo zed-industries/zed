@@ -21,15 +21,15 @@ pub use wit::{
     },
     zed::extension::http_client::{fetch, HttpRequest, HttpResponse},
     zed::extension::nodejs::{
-        node_binary_path, npm_install_package, npm_package_installed_version,
-        npm_package_latest_version,
+        node_binary_path, node_environment_path, npm_install_package,
+        npm_package_installed_version, npm_package_latest_version,
     },
     zed::extension::platform::{current_platform, Architecture, Os},
     zed::extension::slash_command::{
         SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
     },
-    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    KeyValueStore, LanguageServerInstallationStatus, Range, Worktree,
+    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, CommandType, DownloadedFileType,
+    EnvVars, KeyValueStore, LanguageServerInstallationStatus, Range, WindowsShell, Worktree,
 };
 
 // Undocumented WIT re-exports.

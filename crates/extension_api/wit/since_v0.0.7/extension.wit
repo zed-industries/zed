@@ -59,10 +59,24 @@ world extension {
     /// A list of environment variables.
     type env-vars = list<tuple<string, string>>;
 
+    /// The shell to execute a command.
+    enum windows-shell {
+        powershell,
+        cmd,
+    }
+
+    /// The executable used to run the command.
+    variant command-type {
+        /// Used only on Windows for now, use either powershell or cmd to execute the command.
+        shell(windows-shell),
+        /// The path to the executable.
+        other(string),
+    }
+
     /// A command.
     record command {
         /// The command to execute.
-        command: string,
+        command: command-type,
         /// The arguments to pass to the command.
         args: list<string>,
         /// The environment variables to set for the command.
@@ -137,4 +151,7 @@ world extension {
 
     /// Indexes the docs for the specified package.
     export index-docs: func(provider-name: string, package-name: string, database: borrow<key-value-store>) -> result<_, string>;
+
+    /// Retrieve `PATH` environment variable with `npm` included.
+    import node-environment-path: func() -> result<string, string>;
 }

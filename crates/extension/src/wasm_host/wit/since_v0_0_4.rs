@@ -60,7 +60,7 @@ impl From<LanguageServerInstallationStatus> for latest::LanguageServerInstallati
 impl From<Command> for latest::Command {
     fn from(value: Command) -> Self {
         Self {
-            command: value.command,
+            command: super::CommandType::Other(value.command),
             args: value.args,
             env: value.env,
         }
