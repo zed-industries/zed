@@ -997,5 +997,17 @@
   //     ]
   //   }
   // ]
-  "ssh_connections": null
+  "ssh_connections": null,
+  // override the NodeJS path to prevent it from being downloaded
+  // Examples:
+  // {
+  //  "node": "/nix/store/..nodejs-22.4.1/bin/node",
+  //  "npm": "/nix/store/..nodejs-22.4.1/bin/npm",
+  //  "cache": "/home/user/.cache/zed/node"
+  // }
+  "node_runtime": {
+    "node": null,
+    "npm": null,
+    "cache": null
+  }
 }
