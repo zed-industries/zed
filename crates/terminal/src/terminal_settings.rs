@@ -1,3 +1,6 @@
+use alacritty_terminal::vte::ansi::{
+    CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
+};
 use collections::HashMap;
 use gpui::{
     px, AbsoluteLength, AppContext, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString,
@@ -43,6 +46,7 @@ pub struct TerminalSettings {
     pub detect_venv: VenvSettings,
     pub max_scroll_history_lines: Option<usize>,
     pub toolbar: Toolbar,
+    pub cursor_style: CursorStyle,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -177,6 +181,10 @@ pub struct TerminalSettingsContent {
     pub max_scroll_history_lines: Option<usize>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
+    /// Sets the cursor style in the terminal.
+    ///
+    /// Default: block
+    pub cursor_style: Option<CursorStyle>,
 }
 
 impl settings::Settings for TerminalSettings {
@@ -280,4 +288,41 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub title: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorStyle {
+    /// Cursor is a block like `█`.
+    #[default]
+    Block,
+    /// Cursor is an underscore like `_`.
+    Underline,
+    /// Cursor is a vertical bar like `⎸`.
+    Beam,
+    /// Cursor is a box like `▯`.
+    HollowBlock,
+    /// Invisible cursor.
+    Hidden,
+}
+
+impl From<CursorStyle> for AlacCursorShape {
+    fn from(value: CursorStyle) -> Self {
+        match value {
+            CursorStyle::Block => AlacCursorShape::Block,
+            CursorStyle::Underline => AlacCursorShape::Underline,
+            CursorStyle::Beam => AlacCursorShape::Beam,
+            CursorStyle::HollowBlock => AlacCursorShape::HollowBlock,
+            CursorStyle::Hidden => AlacCursorShape::Hidden,
+        }
+    }
+}
+
+impl From<CursorStyle> for AlacCursorStyle {
+    fn from(value: CursorStyle) -> Self {
+        AlacCursorStyle {
+            shape: value.into(),
+            blinking: false,
+        }
+    }
 }
