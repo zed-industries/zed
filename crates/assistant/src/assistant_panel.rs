@@ -1874,7 +1874,10 @@ impl ContextEditor {
         cx.propagate();
     }
 
-    fn debug_workflow_steps(&mut self, _: &DebugWorkflowSteps, cx: &mut ViewContext<Self>) {
+    fn update_debug_editor(&self, cx: &mut ViewContext<Self>) {
+        let Some(editor) = &self.debug_editor else {
+            return;
+        };
         let mut output = String::new();
         for (i, step) in self.context.read(cx).workflow_steps().iter().enumerate() {
             output.push_str(&format!("Step {}:\n", i + 1));
@@ -1905,7 +1908,11 @@ impl ContextEditor {
             }
             output.push('\n');
         }
-
+        editor.update(cx, |this, cx| {
+            this.set_text(output, cx);
+        });
+    }
+    fn debug_workflow_steps(&mut self, _: &DebugWorkflowSteps, cx: &mut ViewContext<Self>) {
         let editor = self
             .workspace
             .update(cx, |workspace, cx| Editor::new_in_workspace(workspace, cx));
@@ -1919,11 +1926,12 @@ impl ContextEditor {
                         editor.buffer().update(cx, |this, cx| {
                             this.set_title("Assistant Output".into(), cx);
                         });
-                        editor.set_text(output, cx);
                     })
                     .ok();
-                this.update(&mut cx, |this, _| {
+
+                this.update(&mut cx, |this, cx| {
                     this.debug_editor = Some(editor);
+                    this.update_debug_editor(cx);
                 })
             })
             .detach_and_notify_err(cx);
@@ -2059,10 +2067,12 @@ impl ContextEditor {
             }
             ContextEvent::WorkflowStepsRemoved(removed) => {
                 self.remove_workflow_steps(removed, cx);
+                self.update_debug_editor(cx);
                 cx.notify();
             }
             ContextEvent::WorkflowStepUpdated(updated) => {
                 self.update_workflow_step(updated.clone(), cx);
+                self.update_debug_editor(cx);
                 cx.notify();
             }
             ContextEvent::SummaryChanged => {
@@ -2506,11 +2516,12 @@ impl ContextEditor {
             }
 
             if let Some(editor) = &self.debug_editor {
-                let is_closed = self
+                let is_active = self
                     .workspace
                     .update(cx, |this, cx| this.activate_item(editor, true, false, cx))
                     .unwrap_or_default();
-                if is_closed {
+
+                if !is_active {
                     self.debug_editor.take();
                 }
             } else if let Some(new_step) = new_step.clone() {
