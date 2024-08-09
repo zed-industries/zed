@@ -1177,7 +1177,6 @@ impl Context {
             removed.extend(
                 self.workflow_steps
                     .drain(intersecting_range)
-                    .into_iter()
                     .map(|step| step.tagged_range),
             );
         }
