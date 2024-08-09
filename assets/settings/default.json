@@ -997,5 +997,6 @@
   //     ]
   //   }
   // ]
-  "ssh_connections": null
+  "ssh_connections": null,
+  "max_tabs": 0
 }

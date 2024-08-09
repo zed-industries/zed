@@ -12,6 +12,7 @@ pub struct WorkspaceSettings {
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
+    pub max_tabs: usize,
     pub restore_on_startup: RestoreOnStartupBehavior,
     pub drop_target_size: f32,
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
@@ -75,6 +76,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: off
     pub autosave: Option<AutosaveSetting>,
+    // Maximum open tabs in a pane. Will not close an unsaved
+    // tab. Set to `0` for unlimited tabs.
+    //
+    // Default: `5`
+    pub max_tabs: Option<usize>,
     /// Controls previous session restoration in freshly launched Zed instance.
     /// Values: none, last_workspace, last_session
     /// Default: last_session
