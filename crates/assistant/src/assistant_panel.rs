@@ -64,13 +64,13 @@ use std::{
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use text::OffsetRangeExt;
-use ui::TintColor;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
     Avatar, AvatarShape, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
+use ui::{TintColor, ToggleButton};
 use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -1587,7 +1587,7 @@ impl WorkflowStepStatus {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ActiveWorkflowStep {
     range: Range<language::Anchor>,
     resolved: bool,
@@ -1617,6 +1617,7 @@ pub struct ContextEditor {
     active_workflow_step: Option<ActiveWorkflowStep>,
     assistant_panel: WeakView<AssistantPanel>,
     error_message: Option<SharedString>,
+    debug_editor: Option<View<Editor>>,
 }
 
 const DEFAULT_TAB_TITLE: &str = "New Context";
@@ -1676,6 +1677,7 @@ impl ContextEditor {
             active_workflow_step: None,
             assistant_panel,
             error_message: None,
+            debug_editor: None,
         };
         this.update_message_headers(cx);
         this.insert_slash_command_output_sections(sections, cx);
@@ -1909,9 +1911,20 @@ impl ContextEditor {
             .update(cx, |workspace, cx| Editor::new_in_workspace(workspace, cx));
 
         if let Ok(editor) = editor {
-            cx.spawn(|_, mut cx| async move {
+            cx.spawn(|this, mut cx| async move {
                 let editor = editor.await?;
-                editor.update(&mut cx, |editor, cx| editor.set_text(output, cx))
+                editor
+                    .update(&mut cx, |editor, cx| {
+                        editor.set_read_only(true);
+                        editor.buffer().update(cx, |this, cx| {
+                            this.set_title("Assistant Output".into(), cx);
+                        });
+                        editor.set_text(output, cx);
+                    })
+                    .ok();
+                this.update(&mut cx, |this, _| {
+                    this.debug_editor = Some(editor);
+                })
             })
             .detach_and_notify_err(cx);
         }
@@ -2492,8 +2505,18 @@ impl ContextEditor {
                 self.hide_workflow_step(old_step.range, cx);
             }
 
-            if let Some(new_step) = new_step {
+            if let Some(editor) = &self.debug_editor {
+                let is_closed = self
+                    .workspace
+                    .update(cx, |this, cx| this.activate_item(editor, true, false, cx))
+                    .unwrap_or_default();
+                if is_closed {
+                    self.debug_editor.take();
+                }
+            } else if let Some(new_step) = new_step.clone() {
                 self.show_workflow_step(new_step.range.clone(), cx);
+            }
+            if let Some(new_step) = new_step {
                 self.active_workflow_step = Some(new_step);
             }
         }
@@ -3660,6 +3683,61 @@ impl Render for ContextEditorToolbarItem {
 
         let right_side = h_flex()
             .gap_2()
+            .child(
+                IconButton::new("toggle-debug-mode", IconName::Microscope)
+                    .tooltip(|cx| Tooltip::text("Inspect LLM responses", cx))
+                    .visible_on_hover("toolbar")
+                    .selected(self.active_context_editor.as_ref().map_or(false, |this| {
+                        this.update(cx, |this, cx| {
+                            if let Some(debug_editor) = &this.debug_editor {
+                                this.workspace
+                                    .update(cx, |this, cx| {
+                                        this.active_item(cx).map_or(false, |item| {
+                                            item.item_id() == debug_editor.entity_id()
+                                        })
+                                    })
+                                    .unwrap_or_default()
+                            } else {
+                                false
+                            }
+                        })
+                        .unwrap_or_default()
+                    }))
+                    .on_click(cx.listener(|this, _, cx| {
+                        this.active_context_editor.as_ref().map(|editor| {
+                            editor
+                                .update(cx, |this, cx| {
+                                    if let Some(debug_editor) = &this.debug_editor {
+                                        let activated = this
+                                            .workspace
+                                            .update(cx, |this, cx| {
+                                                if this.active_item(cx).map_or(false, |item| {
+                                                    item.item_id() != debug_editor.entity_id()
+                                                }) {
+                                                    this.activate_item(
+                                                        debug_editor,
+                                                        true,
+                                                        false,
+                                                        cx,
+                                                    )
+                                                } else {
+                                                    true
+                                                }
+                                            })
+                                            .ok()
+                                            .unwrap_or_default();
+                                        if !activated {
+                                            this.debug_editor.take();
+                                        }
+                                    }
+                                    if this.debug_editor.is_none() {
+                                        this.debug_workflow_steps(&Default::default(), cx);
+                                    }
+                                })
+                                .ok();
+                        });
+                    })),
+            )
             .child(ModelSelector::new(
                 self.fs.clone(),
                 ButtonLike::new("active-model")
