@@ -59,17 +59,21 @@ The remote machine must be able to run Zed. The following platforms should work,
 
 > **Note:** This may change as the alpha program continues.
 
+<!--
+TBD: Remote user settings need a name. Perhaps `zed: remote user settings`?
+-->
+
 You can edit the settings file on the remote instance. To do so, add a new project to your server in the directory `~/.config/zed`. You can create a file called `settings.json` if it does not yet exist.
 
 Note that this is most useful for configuring language servers, as any UI related settings do not apply.
 
 If you'd like to install language-server extensions, you can add them to the list of `auto_installed_extensions`. Again you don't need to do this to get syntax highlighting (which is handled by the local zed).
 
-```
+```json
 {
   "auto_install_extensions": {
     "java": true
-  },
+  }
 }
 ```
 
@@ -93,13 +97,13 @@ We are working on a direct SSH connection feature, which you can try out if you'
 
 To try this out you can either from the command line run:
 
-```
+```sh
 zed ssh://user@host:port/path/to/project
 ```
 
 Or you can (in your settings file) add:
 
-```
+```json
 "ssh_connections": []
 ```
 

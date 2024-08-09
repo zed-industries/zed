@@ -25,3 +25,38 @@ By default, Zed maintains two themes: one for light mode and one for dark mode. 
   }
 }
 ```
+
+## Theme Overrides
+
+You can also override specific attributes of a theme, by using the `experimental.theme_overrides` setting.
+
+For example, to override the background color of the editor and the font style of comments, you can add the following to your `settings.json` file:
+
+```json
+{
+  "experimental.theme_overrides": {
+    "editor.background": "#333",
+    "syntax": {
+      "comment": {
+        "font_style": "italic"
+      }
+    }
+  }
+}
+```
+
+You can see which attributes are available to override by looking at the JSON format of your theme. For example, [here is the JSON format for the `One` themes](https://github.com/zed-industries/zed/blob/main/assets/themes/one/one.json).
+
+## Local Themes
+
+You can store new themes locally, by placing them in the `~/.config/zed/themes` directory.
+
+For example, to create a new theme called `my-cool-theme`, you can create a file called `my-cool-theme.json` in that directory.
+
+It will be available in the theme selector the next time Zed loads.
+
+You can find a lot of themes at [zed-themes.com](https://zed-themes.com).
+
+## Theme Development
+
+See: [Developing Zed Themes](./extensions/themes.md)
