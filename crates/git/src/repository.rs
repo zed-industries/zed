@@ -20,6 +20,10 @@ pub struct Branch {
     pub name: Box<str>,
     /// Timestamp of most recent commit, normalized to Unix Epoch format.
     pub unix_timestamp: Option<i64>,
+    pub last_commit_sha: String,
+    pub last_commit_summary: String,
+    pub author_name: String,
+    pub author_email: String
 }
 
 pub trait GitRepository: Send + Sync {
@@ -144,7 +148,21 @@ impl GitRepository for RealGitRepository {
                 branch.ok().and_then(|(branch, _)| {
                     let is_head = branch.is_head();
                     let name = branch.name().ok().flatten().map(Box::from)?;
-                    let timestamp = branch.get().peel_to_commit().ok()?.time();
+
+                    let branch_ref = branch.get();
+                    let commit = match branch_ref.peel_to_commit() {
+                        Ok(commit) => commit,
+                        Err(_) => return None,
+                    };
+
+                    let timestamp = commit.time();
+                    let last_commit_sha = commit.id().to_string();
+                    let last_commit_summary = commit.summary().unwrap_or_default().to_string();
+
+                    let author = commit.author();
+                    let author_name = author.name().unwrap_or_default().to_string();
+                    let author_email = author.email().unwrap_or_default().to_string();
+                    
                     let unix_timestamp = timestamp.seconds();
                     let timezone_offset = timestamp.offset_minutes();
                     let utc_offset =
@@ -155,6 +173,10 @@ impl GitRepository for RealGitRepository {
                         is_head,
                         name,
                         unix_timestamp: Some(unix_timestamp.to_offset(utc_offset).unix_timestamp()),
+                        last_commit_sha,
+                        last_commit_summary,
+                        author_name,
+                        author_email
                     })
                 })
             })
