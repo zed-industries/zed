@@ -2,7 +2,7 @@
 
 Zed supports supports two sources for completions:
 
-1. "Code Completions" provided by Lanaguage servers (LSPs) automatically installed by Zed or via [Zed Language Extensions](languages.md).
+1. "Code Completions" provided by Language Servers (LSPs) automatically installed by Zed or via [Zed Language Extensions](languages.md).
 2. "Inline Completions" provided by external APIs like [GitHub Copilot](#github-copilot) or [Supermaven](#supermaven).
 
 ## Code Completions
