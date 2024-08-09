@@ -12,6 +12,7 @@
 # Configuration
 
 - [Configuring Zed](./configuring-zed.md)
+- [Configuring Languages](./configuring-languages.md)
 - [Key bindings](./key-bindings.md)
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
@@ -22,7 +23,7 @@
 
 - [Multibuffers](./multibuffers.md)
 - [Language model integration](./language-model-integration.md)
-<!-- - [AI Completions](./ai-completions.md) -->
+- [Code Completions](./completions.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
 - [Git](./git.md)

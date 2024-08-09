@@ -20,7 +20,7 @@ In this guide, we'll cover:
 
 By the end of this guide, you should know how to configure and customize supported languages in Zed.
 
-For a comprehensive list of languages supported by Zed and their specific configurations, see our [Supported Languages](./languages.md) page. To go further, you could explore developing your own extensions to add support for additional languages or enhance existing functionality. For more information on creating language extensions, see our [Language Extensions](./language-extensions.md) guide.
+For a comprehensive list of languages supported by Zed and their specific configurations, see our [Supported Languages](./languages.md) page. To go further, you could explore developing your own extensions to add support for additional languages or enhance existing functionality. For more information on creating language extensions, see our [Language Extensions](./extensions/languages.md) guide.
 
 ## Language-specific Settings
 
@@ -353,7 +353,7 @@ Create custom themes by creating a JSON file in `~/.config/zed/themes/`. Zed wil
 
 Zed supports theme extensions. Browse and install theme extensions from the Extensions panel (Cmd+Shift+E).
 
-To create your own theme extension, refer to the [Developing Theme Extensions](./development/themes.md) guide.
+To create your own theme extension, refer to the [Developing Theme Extensions](./extensions/themes.md) guide.
 
 ## Using Language Server Features
 

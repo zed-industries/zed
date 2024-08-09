@@ -15,8 +15,8 @@ Languages which can be used with Tailwind CSS in Zed
 
 - [Astro](./astro.md)
 - [CSS](./css.md)
-- [ERB](./ruby.md#ERB)
-- [HEEx](./elixir.md#HEEx)
+- [ERB](./ruby.md)
+- [HEEx](./elixir.md#heex)
 - [HTML](./html.md)
 - [TypeScript](./typescript.md)
 - [JavaScript](./javascript.md)

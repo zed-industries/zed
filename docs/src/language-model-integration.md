@@ -13,7 +13,7 @@ The assistant panel provides you with a way to interact with large language mode
 - [Ollama Setup Instructions](#ollama)
 - [Anthropic API Setup Instructions](#anthropic)
 - [Google Gemini API Setup Instructions](#google-gemini)
-- [GitHub Copilot Chat](#github-copliot)
+- [GitHub Copilot Chat](#github-copilot)
 
 ### Having a conversation
 
@@ -249,8 +249,6 @@ You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the m
 
 You can obtain an API key [here](https://aistudio.google.com/app/apikey).
 
-<!--
 ### GitHub Copilot
 
-TBD: Add Github Copilot Chat setup instructions
--->
+You can use GitHub Copilot chat with the Zed assistant by choosing it via the model dropdown in the assistant panel.
