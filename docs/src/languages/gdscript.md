@@ -18,6 +18,10 @@ Report issues to: [https://github.com/grndctrl/zed-gdscript/issues](https://gith
    4. Close settings to save.
 5. In Godot double click on a \*.gd script and Zed will launch
 
+<!--
+TBD: GDScript Linux setup
+-->
+
 ## Usage
 
 When Godot is running, the GDScript extension will connect to the language server provided by the Godot runtime and will provide `jump to definition`, hover states when you hold cmd and other language server features.

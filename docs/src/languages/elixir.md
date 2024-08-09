@@ -97,6 +97,6 @@ See [ElixirLS configuration settings](https://github.com/elixir-lsp/elixir-ls#el
 
 ### HEEx
 
-TBD: Document HEEx Template support
+Zed also supports HEEx templates. HEEx is a mix of [EEx](https://hexdocs.pm/eex/1.12.3/EEx.html) (Embedded Elixir) and HTML, and is used in Phoenix LiveView applications.
 
 - Tree Sitter: [phoenixframework/tree-sitter-heex](https://github.com/phoenixframework/tree-sitter-heex)

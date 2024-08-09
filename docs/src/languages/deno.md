@@ -2,13 +2,14 @@
 
 Deno support is available through the [Deno extension](https://github.com/zed-industries/zed/tree/main/extensions/deno).
 
-TBD: Explain how to configure usage of Deno
-
 - Language server: [Deno Language Server](https://docs.deno.com/runtime/manual/advanced/language_server/overview/)
 
+<!--
+TBD: Document Deno configuration
 TBD: Deno Typescript REPL instructions [docs/repl#typescript-deno](../repl.md#typescript-deno)
+-->
 
-Cross link languages which Deno is used with:
+## See also:
 
 - [TypeScript](./typescript.md)
 - [JavaScript](./javascript.md)
