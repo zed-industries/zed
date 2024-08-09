@@ -5,15 +5,27 @@ use util::ResultExt;
 impl Database {
     /// Initializes the different kinds of notifications by upserting records for them.
     pub async fn initialize_notification_kinds(&mut self) -> Result<()> {
-        notification_kind::Entity::insert_many(Notification::all_variant_names().iter().map(
-            |kind| notification_kind::ActiveModel {
+        let all_kinds = Notification::all_variant_names();
+        let existing_kinds = notification_kind::Entity::find().all(&self.pool).await?;
+
+        let kinds_to_create: Vec<_> = all_kinds
+            .iter()
+            .filter(|&kind| {
+                !existing_kinds
+                    .iter()
+                    .any(|existing| existing.name == **kind)
+            })
+            .map(|kind| notification_kind::ActiveModel {
                 name: ActiveValue::Set(kind.to_string()),
                 ..Default::default()
-            },
-        ))
-        .on_conflict(OnConflict::new().do_nothing().to_owned())
-        .exec_without_returning(&self.pool)
-        .await?;
+            })
+            .collect();
+
+        if !kinds_to_create.is_empty() {
+            notification_kind::Entity::insert_many(kinds_to_create)
+                .exec_without_returning(&self.pool)
+                .await?;
+        }
 
         let mut rows = notification_kind::Entity::find().stream(&self.pool).await?;
         while let Some(row) = rows.next().await {
