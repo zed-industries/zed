@@ -27,6 +27,7 @@ use windows::{
             Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
         },
         Security::Credentials::*,
+        Storage::EnhancedStorage::PKEY_Title,
         System::{
             Com::*,
             DataExchange::{
@@ -43,6 +44,8 @@ use windows::{
     },
     UI::ViewManagement::UISettings,
 };
+use PropertiesSystem::IPropertyStore;
+use Common::{IObjectCollection, IObjectArray};
 
 use crate::*;
 
@@ -180,6 +183,40 @@ impl WindowsPlatform {
         lock.remove(index);
 
         lock.is_empty()
+    }
+
+    fn add_task(&self, items: Vec<MenuItem>) {
+        let collection: IObjectCollection = unsafe { CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER).unwrap() };
+        let jump_list: ICustomDestinationList = unsafe { CoCreateInstance(&DestinationList, None, CLSCTX_INPROC_SERVER).unwrap() };
+        unsafe { jump_list.BeginList::<IObjectArray>(&mut 10).unwrap() };
+        for item in items {
+        match item {
+            MenuItem::Action { ref name, ref action, os_action } => {
+                let link: IShellLinkW = unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).unwrap() };
+                let mut path = self.app_path().expect("Unable to get app path");
+                let mut encoded_path: Vec<u16> = path.as_mut_os_str().encode_wide().collect();
+                encoded_path.push(0);
+                let path_pwstr = PWSTR(encoded_path.as_mut_ptr());
+                unsafe { link.SetPath(path_pwstr).expect("unable to set app path"); }
+                let args = "";
+                let mut cmd_line = String::from(args).encode_utf16().collect::<Vec<u16>>();
+                cmd_line.push(u16::try_from('\0').unwrap());
+                let command_pwstr = PWSTR(cmd_line.as_mut_ptr());
+                unsafe { link.SetArguments(command_pwstr).expect("unable to set working dir"); }
+                unsafe { link.SetWorkingDirectory(None).expect("unable to set arguments"); }
+                let property_store: IPropertyStore = link.cast::<IPropertyStore>().unwrap();
+                let mut name_string = name.to_string();
+                let title = name_string.as_str();
+                let p_variant: *const PROPVARIANT = &PROPVARIANT::from(title);
+                unsafe { property_store.SetValue(&PKEY_Title, p_variant).unwrap(); }
+                unsafe { property_store.Commit().unwrap(); };
+                unsafe { collection.AddObject(&link).unwrap(); }
+                }
+            _ => {}
+            }  
+        }
+        unsafe { jump_list.AddUserTasks(&collection).unwrap() };
+        unsafe { jump_list.CommitList().unwrap() };
     }
 }
 
@@ -490,7 +527,9 @@ impl Platform for WindowsPlatform {
 
     // todo(windows)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
-    fn set_dock_menu(&self, menus: Vec<MenuItem>, keymap: &Keymap) {}
+    fn set_dock_menu(&self, menus: Vec<MenuItem>, keymap: &Keymap) {
+        self.add_task(menus)
+    }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
