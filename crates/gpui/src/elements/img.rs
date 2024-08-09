@@ -508,8 +508,13 @@ impl Asset for Image {
                 let pixmap =
                     svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(scale_factor))?;
 
-                let buffer =
+                let mut buffer =
                     ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
+
+                // Convert from RGBA to BGRA.
+                for pixel in buffer.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
 
                 ImageData::new(SmallVec::from_elem(Frame::new(buffer), 1))
             };
