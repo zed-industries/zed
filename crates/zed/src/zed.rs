@@ -11,6 +11,7 @@ use assistant::PromptBuilder;
 use breadcrumbs::Breadcrumbs;
 use client::ZED_URL_SCHEME;
 use collections::VecDeque;
+use debugger_ui::debugger_panel::DebugPanel;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem, PromptLevel,
@@ -259,6 +260,7 @@ pub fn initialize_workspace(
                 workspace_handle.clone(),
                 cx.clone(),
             );
+            let debug_panel = DebugPanel::load(workspace_handle.clone(), cx.clone());
 
             let (
                 project_panel,
@@ -268,6 +270,7 @@ pub fn initialize_workspace(
                 channels_panel,
                 chat_panel,
                 notification_panel,
+                debug_panel,
             ) = futures::try_join!(
                 project_panel,
                 outline_panel,
@@ -276,6 +279,7 @@ pub fn initialize_workspace(
                 channels_panel,
                 chat_panel,
                 notification_panel,
+                debug_panel
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
@@ -286,6 +290,7 @@ pub fn initialize_workspace(
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
+                workspace.add_panel(debug_panel, cx);
                 cx.focus_self();
             })
         })
@@ -3493,6 +3498,7 @@ mod tests {
                 cx,
             );
             tasks_ui::init(cx);
+            debugger_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             app_state
         })

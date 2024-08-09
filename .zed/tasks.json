@@ -3,5 +3,10 @@
     "label": "clippy",
     "command": "./script/clippy",
     "args": []
+  },
+  {
+    "label": "Run Zed Tests",
+    "command": "cargo nextest run --workspace --no-fail-fast",
+    "args": []
   }
 ]

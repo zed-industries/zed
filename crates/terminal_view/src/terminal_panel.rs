@@ -79,7 +79,7 @@ impl TerminalPanel {
                 workspace.project().clone(),
                 Default::default(),
                 None,
-                NewTerminal.boxed_clone(),
+                Some(NewTerminal.boxed_clone()),
                 cx,
             );
             pane.set_can_split(false, cx);

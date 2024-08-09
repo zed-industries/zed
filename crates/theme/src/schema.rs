@@ -375,6 +375,10 @@ pub struct ThemeColorsContent {
     #[serde(rename = "editor.highlighted_line.background")]
     pub editor_highlighted_line_background: Option<String>,
 
+    /// Background of active line of debugger
+    #[serde(rename = "editor.debugger_active_line.background")]
+    pub editor_debugger_active_line_background: Option<String>,
+
     /// Text Color. Used for the text of the line number in the editor gutter.
     #[serde(rename = "editor.line_number")]
     pub editor_line_number: Option<String>,
@@ -754,6 +758,10 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             editor_highlighted_line_background: self
                 .editor_highlighted_line_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            editor_debugger_active_line_background: self
+                .editor_debugger_active_line_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             editor_line_number: self

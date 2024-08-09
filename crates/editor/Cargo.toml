@@ -37,6 +37,7 @@ clock.workspace = true
 collections.workspace = true
 convert_case = "0.6.0"
 db.workspace = true
+dap.workspace = true
 emojis.workspace = true
 file_icons.workspace = true
 futures.workspace = true

@@ -147,6 +147,8 @@ pub struct ThemeColors {
     pub editor_subheader_background: Hsla,
     pub editor_active_line_background: Hsla,
     pub editor_highlighted_line_background: Hsla,
+    /// Line color of the line a debugger is currently stopped at
+    pub editor_debugger_active_line_background: Hsla,
     /// Text Color. Used for the text of the line number in the editor gutter.
     pub editor_line_number: Hsla,
     /// Text Color. Used for the text of the line number in the editor gutter when the line is highlighted.

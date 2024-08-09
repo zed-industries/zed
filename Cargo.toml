@@ -20,6 +20,8 @@ members = [
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/copilot",
+    "crates/dap",
+    "crates/debugger_ui",
     "crates/db",
     "crates/dev_server_projects",
     "crates/diagnostics",
@@ -190,7 +192,9 @@ collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
+dap = { path = "crates/dap" }
 db = { path = "crates/db" }
+debugger_ui = { path = "crates/debugger_ui" }
 dev_server_projects = { path = "crates/dev_server_projects" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }

@@ -407,7 +407,8 @@ impl EditorElement {
         register_action(view, cx, Editor::accept_partial_inline_completion);
         register_action(view, cx, Editor::accept_inline_completion);
         register_action(view, cx, Editor::revert_selected_hunks);
-        register_action(view, cx, Editor::open_active_item_in_terminal)
+        register_action(view, cx, Editor::open_active_item_in_terminal);
+        register_action(view, cx, Editor::toggle_breakpoint);
     }
 
     fn register_key_listeners(&self, cx: &mut WindowContext, layout: &EditorLayout) {
@@ -707,6 +708,16 @@ impl EditorElement {
         let modifiers = event.modifiers;
         let gutter_hovered = gutter_hitbox.is_hovered(cx);
         editor.set_gutter_hovered(gutter_hovered, cx);
+
+        if gutter_hovered {
+            let point_for_position =
+                position_map.point_for_position(text_hitbox.bounds, event.position);
+            let position = point_for_position.previous_valid;
+            editor.gutter_breakpoint_indicator = Some(position);
+            cx.notify();
+        } else {
+            editor.gutter_breakpoint_indicator = None;
+        }
 
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_hitbox.is_hovered(cx) {
@@ -1558,6 +1569,100 @@ impl EditorElement {
         }
 
         (offset_y, length)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_breakpoints(
+        &self,
+        line_height: Pixels,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        gutter_dimensions: &GutterDimensions,
+        gutter_hitbox: &Hitbox,
+        rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
+        snapshot: &EditorSnapshot,
+        cx: &mut WindowContext,
+    ) -> Vec<AnyElement> {
+        self.editor.update(cx, |editor, cx| {
+            let Some(breakpoints) = &editor.breakpoints else {
+                return vec![];
+            };
+
+            let Some(active_buffer) = editor.buffer().read(cx).as_singleton() else {
+                return vec![];
+            };
+
+            let active_buffer_id = active_buffer.read(cx).remote_id();
+            let read_guard = breakpoints.read();
+
+            let mut breakpoints_to_render = if let Some(breakpoint_set) =
+                read_guard.get(&active_buffer_id)
+            {
+                breakpoint_set
+                    .iter()
+                    .filter_map(|breakpoint| {
+                        let point = breakpoint
+                            .position
+                            .to_display_point(&snapshot.display_snapshot);
+
+                        let row = MultiBufferRow { 0: point.row().0 };
+
+                        if snapshot.is_line_folded(row) {
+                            return None;
+                        }
+
+                        let button = editor.render_breakpoint(breakpoint.position, point.row(), cx);
+
+                        let button = prepaint_gutter_button(
+                            button,
+                            point.row(),
+                            line_height,
+                            gutter_dimensions,
+                            scroll_pixel_position,
+                            gutter_hitbox,
+                            rows_with_hunk_bounds,
+                            cx,
+                        );
+                        Some(button)
+                    })
+                    .collect_vec()
+            } else {
+                vec![]
+            };
+
+            drop(read_guard);
+
+            // See if a user is hovered over a gutter line & if they are display
+            // a breakpoint indicator that they can click to add a breakpoint
+            // TODO: We should figure out a way to display this side by side with
+            // the code action button. They currently overlap
+            if let Some(gutter_breakpoint) = editor.gutter_breakpoint_indicator {
+                let gutter_anchor = snapshot.display_point_to_anchor(gutter_breakpoint, Bias::Left);
+
+                let button = IconButton::new("gutter_breakpoint_indicator", ui::IconName::Play)
+                    .icon_size(IconSize::XSmall)
+                    .size(ui::ButtonSize::None)
+                    .icon_color(Color::Hint)
+                    .on_click(cx.listener(move |editor, _e, cx| {
+                        editor.focus(cx);
+                        editor.toggle_breakpoint_at_row(gutter_anchor, cx) //TODO handle folded
+                    }));
+
+                let button = prepaint_gutter_button(
+                    button,
+                    gutter_breakpoint.row(),
+                    line_height,
+                    gutter_dimensions,
+                    scroll_pixel_position,
+                    gutter_hitbox,
+                    rows_with_hunk_bounds,
+                    cx,
+                );
+
+                breakpoints_to_render.push(button);
+            }
+
+            breakpoints_to_render
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3285,6 +3390,9 @@ impl EditorElement {
                 }
             });
 
+            for breakpoint in layout.breakpoints.iter_mut() {
+                breakpoint.paint(cx);
+            }
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(cx);
             }
@@ -5442,6 +5550,16 @@ impl Element for EditorElement {
                         }
                     }
 
+                    let breakpoints = self.layout_breakpoints(
+                        line_height,
+                        scroll_pixel_position,
+                        &gutter_dimensions,
+                        &gutter_hitbox,
+                        &rows_with_hunk_bounds,
+                        &snapshot,
+                        cx,
+                    );
+
                     let test_indicators = if gutter_settings.runnables {
                         self.layout_run_indicators(
                             line_height,
@@ -5577,6 +5695,7 @@ impl Element for EditorElement {
                         selections,
                         mouse_context_menu,
                         test_indicators,
+                        breakpoints,
                         close_indicators,
                         code_actions_indicator,
                         gutter_fold_toggles,
@@ -5719,6 +5838,7 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
+    breakpoints: Vec<AnyElement>,
     close_indicators: Vec<AnyElement>,
     gutter_fold_toggles: Vec<Option<AnyElement>>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,

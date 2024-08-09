@@ -24,6 +24,10 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use dap::{
+    client::{Breakpoint, DebugAdapterClient, DebugAdapterClientId},
+    transport::Payload,
+};
 use debounced_delay::DebouncedDelay;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
@@ -68,7 +72,8 @@ use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 use paths::{
-    local_settings_file_relative_path, local_tasks_file_relative_path,
+    local_debug_file_relative_path, local_settings_file_relative_path,
+    local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
     local_vscode_tasks_file_relative_path,
 };
 use postage::watch;
@@ -110,7 +115,8 @@ use std::{
 };
 use task::{
     static_source::{StaticSource, TrackedFile},
-    HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate, TaskVariables, VariableName,
+    DebugAdapterConfig, HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate,
+    TaskVariables, VariableName,
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
@@ -175,6 +181,8 @@ pub struct Project {
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
+    debug_adapters: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
+    pub breakpoints: Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     last_formatting_failure: Option<String>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
@@ -183,6 +191,7 @@ pub struct Project {
         HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     client: Arc<client::Client>,
     next_entry_id: Arc<AtomicUsize>,
+    next_debugger_id: AtomicUsize,
     join_project_response_message_id: u32,
     next_diagnostic_group_id: usize,
     diagnostic_summaries:
@@ -315,6 +324,11 @@ pub enum Event {
     Notification(String),
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Model<Buffer>),
+    DebugClientStarted(DebugAdapterClientId),
+    DebugClientEvent {
+        client_id: DebugAdapterClientId,
+        payload: Payload,
+    },
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded,
@@ -378,6 +392,11 @@ pub struct LanguageServerProgress {
     pub percentage: Option<usize>,
     #[serde(skip_serializing)]
     pub last_update_at: Instant,
+}
+
+pub enum DebugAdapterClientState {
+    Starting(Task<Option<Arc<DebugAdapterClient>>>),
+    Running(Arc<DebugAdapterClient>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -802,11 +821,14 @@ impl Project {
                 fs,
                 ssh_session: None,
                 next_entry_id: Default::default(),
+                next_debugger_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
                 diagnostics: Default::default(),
                 diagnostic_summaries: Default::default(),
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
+                debug_adapters: Default::default(),
+                breakpoints: Default::default(),
                 language_server_ids: HashMap::default(),
                 language_server_statuses: Default::default(),
                 last_formatting_failure: None,
@@ -965,6 +987,7 @@ impl Project {
                 fs,
                 ssh_session: None,
                 next_entry_id: Default::default(),
+                next_debugger_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
                 diagnostic_summaries: Default::default(),
                 diagnostics: Default::default(),
@@ -1000,6 +1023,8 @@ impl Project {
                         )
                     })
                     .collect(),
+                debug_adapters: Default::default(),
+                breakpoints: Default::default(),
                 last_formatting_failure: None,
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_watched_paths: HashMap::default(),
@@ -1106,6 +1131,218 @@ impl Project {
                     project_id: *remote_id,
                 });
                 self.disconnected_from_host_internal(cx);
+            }
+        }
+    }
+
+    pub fn running_debug_adapters(&self) -> impl Iterator<Item = Arc<DebugAdapterClient>> + '_ {
+        self.debug_adapters
+            .values()
+            .filter_map(|state| match state {
+                DebugAdapterClientState::Starting(_) => None,
+                DebugAdapterClientState::Running(client) => Some(client.clone()),
+            })
+    }
+
+    pub fn debug_adapter_by_id(&self, id: DebugAdapterClientId) -> Option<Arc<DebugAdapterClient>> {
+        self.debug_adapters.get(&id).and_then(|state| match state {
+            DebugAdapterClientState::Starting(_) => None,
+            DebugAdapterClientState::Running(client) => Some(client.clone()),
+        })
+    }
+
+    pub fn send_breakpoints(
+        &self,
+        client: Arc<DebugAdapterClient>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        cx.spawn(|project, mut cx| async move {
+            let task = project.update(&mut cx, |project, cx| {
+                let mut tasks = Vec::new();
+
+                for (buffer_id, breakpoints) in project.breakpoints.read().iter() {
+                    let buffer = maybe!({
+                        let buffer = project.buffer_for_id(*buffer_id, cx)?;
+                        Some(buffer.read(cx))
+                    });
+
+                    if buffer.is_none() {
+                        continue;
+                    }
+                    let buffer = buffer.as_ref().unwrap();
+
+                    let res = maybe!({
+                        let project_path = buffer.project_path(cx)?;
+                        let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
+                        let path = worktree.read(cx).absolutize(&project_path.path).ok()?;
+
+                        Some((path, breakpoints))
+                    });
+
+                    if let Some((path, breakpoints)) = res {
+                        tasks.push(
+                            client.set_breakpoints(
+                                path.clone(),
+                                Some(
+                                    breakpoints
+                                        .iter()
+                                        .map(|b| b.to_source_breakpoint(buffer))
+                                        .collect::<Vec<_>>(),
+                                ),
+                            ),
+                        );
+                    }
+                }
+
+                try_join_all(tasks)
+            })?;
+
+            task.await?;
+
+            Ok(())
+        })
+    }
+
+    pub fn has_active_debugger(&self) -> bool {
+        self.debug_adapters
+            .values()
+            .any(|c| matches!(c, DebugAdapterClientState::Starting(_)))
+    }
+
+    pub fn start_debug_adapter_client_from_task(
+        &mut self,
+        debug_task: task::ResolvedTask,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let debug_template = debug_task.original_task();
+        let cwd = debug_template
+            .cwd
+            .clone()
+            .expect("Debug tasks need to know what directory to open");
+        let adapter_config = debug_task
+            .debug_adapter_config()
+            .expect("Debug tasks need to specify adapter configuration");
+
+        let debug_template = debug_template.clone();
+        let command = debug_template.command.clone();
+        let args = debug_template.args.clone();
+        let request_args = adapter_config.request_args.as_ref().map(|a| a.args.clone());
+
+        self.start_debug_adapter_client(
+            adapter_config,
+            command,
+            args,
+            cwd.into(),
+            request_args,
+            cx,
+        );
+    }
+
+    pub fn start_debug_adapter_client(
+        &mut self,
+        config: DebugAdapterConfig,
+        command: String,
+        args: Vec<String>,
+        cwd: PathBuf,
+        request_args: Option<serde_json::Value>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let id = DebugAdapterClientId(self.next_debugger_id());
+        let task = cx.spawn(|this, mut cx| async move {
+            let project = this.clone();
+            let client = DebugAdapterClient::new(
+                id,
+                config,
+                &command,
+                &args,
+                &cwd,
+                request_args,
+                move |event, cx| {
+                    project
+                        .update(cx, |_, cx| {
+                            cx.emit(Event::DebugClientEvent {
+                                client_id: id,
+                                payload: event,
+                            })
+                        })
+                        .log_err();
+                },
+                &mut cx,
+            )
+            .await
+            .log_err()?;
+
+            this.update(&mut cx, |this, cx| {
+                let handle = this
+                    .debug_adapters
+                    .get_mut(&id)
+                    .with_context(|| "Failed to find debug adapter with given id")?;
+                *handle = DebugAdapterClientState::Running(client.clone());
+
+                cx.emit(Event::DebugClientStarted(id));
+
+                anyhow::Ok(())
+            })
+            .log_err();
+
+            Some(client)
+        });
+
+        self.debug_adapters
+            .insert(id, DebugAdapterClientState::Starting(task));
+    }
+
+    pub fn update_file_breakpoints(&self, buffer_id: BufferId, cx: &mut ModelContext<Self>) {
+        let clients = self
+            .debug_adapters
+            .iter()
+            .filter_map(|(_, state)| match state {
+                DebugAdapterClientState::Starting(_) => None,
+                DebugAdapterClientState::Running(client) => Some(client.clone()),
+            })
+            .collect::<Vec<_>>();
+
+        let Some(buffer) = self.buffer_for_id(buffer_id, cx) else {
+            return;
+        };
+
+        let buffer = buffer.read(cx);
+
+        let file_path = maybe!({
+            let project_path = buffer.project_path(cx)?;
+            let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+            let path = worktree.read(cx).absolutize(&project_path.path).ok()?;
+
+            Some(path)
+        });
+
+        let Some(file_path) = file_path else {
+            return;
+        };
+
+        let read_guard = self.breakpoints.read();
+
+        let breakpoints_locations = read_guard.get(&buffer_id);
+
+        if let Some(breakpoints_locations) = breakpoints_locations {
+            let breakpoints_locations = Some(
+                breakpoints_locations
+                    .iter()
+                    .map(|bp| bp.to_source_breakpoint(&buffer))
+                    .collect(),
+            );
+
+            // TODO: Send correct value for sourceModified
+            for client in clients {
+                let bps = breakpoints_locations.clone();
+                let file_path = file_path.clone();
+                cx.background_executor()
+                    .spawn(async move {
+                        client.set_breakpoints(file_path, bps).await?;
+
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx)
             }
         }
     }
@@ -8173,17 +8410,35 @@ impl Project {
                                 abs_path,
                                 id_base: "local_vscode_tasks_for_worktree".into(),
                             },
-                            |tx, cx| {
-                                StaticSource::new(TrackedFile::new_convertible::<
-                                    task::VsCodeTaskFile,
-                                >(
-                                    tasks_file_rx, tx, cx
-                                ))
-                            },
+                            |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
                             cx,
                         );
                     }
                 })
+            } else if path.ends_with(local_debug_file_relative_path()) {
+                self.task_inventory().update(cx, |task_inventory, cx| {
+                    if removed {
+                        task_inventory.remove_local_static_source(&abs_path);
+                    } else {
+                        let fs = self.fs.clone();
+                        let debug_task_file_rx =
+                            watch_config_file(&cx.background_executor(), fs, abs_path.clone());
+
+                        task_inventory.add_source(
+                            TaskSourceKind::Worktree {
+                                id: remote_worktree_id,
+                                abs_path,
+                                id_base: "local_debug_file_for_worktree".into(),
+                            },
+                            |tx, cx| {
+                                StaticSource::new(TrackedFile::new(debug_task_file_rx, tx, cx))
+                            },
+                            cx,
+                        );
+                    }
+                });
+            } else if path.ends_with(local_vscode_launch_file_relative_path()) {
+                // TODO: handle vscode launch file (.vscode/launch.json)
             }
         }
 
@@ -8415,6 +8670,37 @@ impl Project {
             }
         }
 
+        None
+    }
+
+    pub fn project_path_for_absolute_path(
+        &self,
+        abs_path: &Path,
+        cx: &AppContext,
+    ) -> Option<ProjectPath> {
+        self.find_local_worktree(abs_path, cx)
+            .map(|(worktree, relative_path)| ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: relative_path.into(),
+            })
+    }
+
+    pub fn find_local_worktree(
+        &self,
+        abs_path: &Path,
+        cx: &AppContext,
+    ) -> Option<(Model<Worktree>, PathBuf)> {
+        let trees = self.worktrees(cx);
+
+        for tree in trees {
+            if let Some(relative_path) = tree
+                .read(cx)
+                .as_local()
+                .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
+            {
+                return Some((tree.clone(), relative_path.into()));
+            }
+        }
         None
     }
 
@@ -10317,6 +10603,10 @@ impl Project {
         }
     }
 
+    fn next_debugger_id(&mut self) -> usize {
+        self.next_debugger_id.fetch_add(1, SeqCst)
+    }
+
     pub fn task_context_for_location(
         &self,
         captured_variables: TaskVariables,
@@ -10560,6 +10850,7 @@ impl Project {
                         hide,
                         shell,
                         tags: proto_template.tags,
+                        ..Default::default()
                     };
                     Some((task_source_kind, task_template))
                 })

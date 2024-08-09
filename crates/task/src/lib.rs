@@ -13,7 +13,10 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-pub use task_template::{HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates};
+pub use task_template::{
+    DebugAdapterConfig, DebugConnectionType, DebugRequestType, HideStrategy, RevealStrategy,
+    TCPHost, TaskTemplate, TaskTemplates, TaskType,
+};
 pub use vscode_format::VsCodeTaskFile;
 
 /// Task identifier, unique within the application.
@@ -77,6 +80,17 @@ impl ResolvedTask {
     /// A task template before the resolution.
     pub fn original_task(&self) -> &TaskTemplate {
         &self.original_task
+    }
+
+    /// Get the task type that determines what this task is used for
+    /// And where is it shown in the UI
+    pub fn task_type(&self) -> TaskType {
+        self.original_task.task_type.clone()
+    }
+
+    /// Get the configuration for the debug adapter that should be used for this task.
+    pub fn debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
+        self.original_task.debug_adapter.clone()
     }
 
     /// Variables that were substituted during the task template resolution.
