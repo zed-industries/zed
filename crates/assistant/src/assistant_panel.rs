@@ -2987,7 +2987,7 @@ impl ContextEditor {
 
             if let Some((line_comment_prefix, outline_text)) = line_comment_prefix.zip(outline_text)
             {
-                let breadcrumb = format!("Excerpt from: {line_comment_prefix}{outline_text}\n");
+                let breadcrumb = format!("{line_comment_prefix}Excerpt from: {outline_text}\n");
                 format!("{fence}{breadcrumb}{selected_text}\n```")
             } else {
                 format!("{fence}{selected_text}\n```")
