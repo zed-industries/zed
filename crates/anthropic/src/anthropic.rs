@@ -53,7 +53,7 @@ impl Model {
             Model::Claude3_5Sonnet => "claude-3-5-sonnet-20240620",
             Model::Claude3Opus => "claude-3-opus-20240229",
             Model::Claude3Sonnet => "claude-3-sonnet-20240229",
-            Model::Claude3Haiku => "claude-3-opus-20240307",
+            Model::Claude3Haiku => "claude-3-haiku-20240307",
             Self::Custom { name, .. } => name,
         }
     }
