@@ -7,7 +7,9 @@ Tailwind CSS support is built into Zed.
 
 ## Configuration
 
+<!--
 TBD: Document Tailwind CSS Configuration
+-->
 
 Languages which can be used with Tailwind CSS in Zed
 

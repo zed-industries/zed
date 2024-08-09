@@ -7,12 +7,14 @@ TOML support is available through the [TOML extension](https://github.com/zed-in
 
 ## Configuration
 
-TBD: Mention Taplo
-TBD: Mention Taplo TOML schema support
-TBD: Add Add example `.taplo.toml` configuration
+You can control the behavior of the Taplo TOML language server by adding a `.taplo.toml` file to the root of your project. See the [Taplo Configuration File](https://taplo.tamasfe.dev/configuration/file.html#configuration-file) and [Taplo Formatter Options](https://taplo.tamasfe.dev/configuration/formatter-options.html) documentation for more.
 
-- https://taplo.tamasfe.dev/configuration/file.html#configuration-file
-- Configure taplo formatting options
-  - https://taplo.tamasfe.dev/configuration/formatter-options.html
-- Add example taplo schema directive
-  - https://taplo.tamasfe.dev/configuration/directives.html#the-schema-directive
+```toml
+# .taplo.toml
+include = ["Cargo.toml", "some_directory/**/*.toml"]
+# exclude = ["Cargo.toml"]
+
+[formatting]
+align_entries = true
+reorder_keys = true
+```

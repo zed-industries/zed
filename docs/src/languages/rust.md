@@ -5,9 +5,11 @@ Rust support is available natively in Zed.
 - Tree Sitter: [tree-sitter/tree-sitter-rust](https://github.com/tree-sitter/tree-sitter-rust)
 - Language Server: [rust-lang/rust-analyzer](https://github.com/rust-lang/rust-analyzer)
 
-## Introduction
-
-TBD: Add a brief introcuction enumerating the features supported by Zed.
+<!--
+TBD: Polish Rust Docs. Zed is a good rust editor, good Rust docs make it look like we care about Rust (we do!)
+TBD: Users may not know what inlayHints, don't start there.
+TBD: Provide explicit examples not just `....`
+-->
 
 ## Inlay Hints
 
@@ -25,8 +27,6 @@ The following configuration can be used to enable inlay hints for rust:
   }
 }
 ```
-
-TBD: Fix the below section, fix `....`
 
 to make the language server send back inlay hints when Zed has them enabled in the settings.
 
@@ -101,7 +101,9 @@ To use a binary that is on your `$PATH`, add the following to your `settings.jso
 
 ## More server configuration
 
+<!--
 TBD: Is it possible to specify RUSTFLAGS? https://github.com/zed-industries/zed/issues/14334
+-->
 
 Rust-analyzer [manual](https://rust-analyzer.github.io/manual.html) describes various features and configuration options for rust-analyzer language server.
 Rust-analyzer in Zed runs with the default parameters.

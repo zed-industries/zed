@@ -5,9 +5,11 @@ Svelte support is available through the [Svelte extension](https://github.com/ze
 - Tree Sitter: [Himujjal/tree-sitter-svelte](https://github.com/Himujjal/tree-sitter-svelte)
 - Language Server: [sveltejs/language-tools](https://github.com/sveltejs/language-tools)
 
-## Inlay Hints
+<!--
+TBD: Rewrite Svelte docs so it doesn't beging with a json block assuming you know what inlayHints are.
+-->
 
-TBD: Rewrite this so it's not a json file and template setting without an example of how to change the settings.
+## Inlay Hints
 
 Zed sets the following initialization options for inlay Hints:
 

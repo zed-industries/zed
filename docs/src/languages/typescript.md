@@ -6,9 +6,12 @@ TypeScript and TSX support are available natively in Zed.
 - Language Server: [yioneko/vtsls](https://github.com/yioneko/vtsls)
 - Alternate Language Server: [typescript-language-server/typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
 
+<!--
+TBD: Add some english prose Typescript documentation instead of starting with JSON inlayHints
 TBD: Document the difference between Language servers
-TBD: Include instructions for configuring vtsls.
-TBD: Mention something about TSX support / configuration
+TBD: Add vtsls configuration instructions.
+TBD: Document TSX support / configuration
+-->
 
 ## Inlay Hints
 

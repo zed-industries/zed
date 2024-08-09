@@ -8,8 +8,6 @@ Report issues to: [https://github.com/scalameta/metals-zed/issues](https://githu
 
 ## Setup
 
-TBD: Document Scala setup on MacOS
-
 - Install Scala with `cs setup` (Coursier): https://www.scala-lang.org/download/
   - `brew install coursier/formulas/coursier && cs setup`
 - REPL (Almond) Setup Instructions https://almond.sh/docs/quick-start-install
@@ -19,8 +17,13 @@ TBD: Document Scala setup on MacOS
 
 ## Configuration
 
-TBD: Document Scala configuration https://scalameta.org/metals/docs/editors/user-configuration
+Behavior of the Metals language server can be controlled with:
 
-## REPL
+- `.scalafix.conf` file - See [Scalafix Configuration](https://scalacenter.github.io/scalafix/docs/users/configuration.html)
+- `.scalafmt.conf` file - See [Scalafmt Configuration](https://scalameta.org/scalafmt/docs/configuration.html)
 
-See also: [Julia REPL Setup Instructions](../repl.md#julia)
+You can place these files in the root of your project or specifying their location in the Metals configuration. See [Metals User Configuration](https://scalameta.org/metals/docs/editors/user-configuration) for more.
+
+<!--
+TBD: Provide LSP configuration example for metals in Zed settings.json. metals.{javaHome,excludedPackages,customProjectRoot} etc.
+-->
