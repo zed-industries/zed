@@ -6,6 +6,7 @@ use crate::{
     slash_command::{
         default_command::DefaultSlashCommand,
         docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
+        file_command::codeblock_fence_for_path,
         SlashCommandCompletionProvider, SlashCommandRegistry,
     },
     terminal_inline_assistant::TerminalInlineAssistant,
@@ -2929,6 +2930,11 @@ impl ContextEditor {
         let buffer = editor.buffer().read(cx).snapshot(cx);
         let range = editor::ToOffset::to_offset(&selection.start, &buffer)
             ..editor::ToOffset::to_offset(&selection.end, &buffer);
+        let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
+        if selected_text.is_empty() {
+            return;
+        }
+
         let start_language = buffer.language_at(range.start);
         let end_language = buffer.language_at(range.end);
         let language_name = if start_language == end_language {
@@ -2938,19 +2944,35 @@ impl ContextEditor {
         };
         let language_name = language_name.as_deref().unwrap_or("");
 
-        let selected_text = buffer.text_for_range(range).collect::<String>();
-        let text = if selected_text.is_empty() {
-            None
+        let filename = buffer
+            .file_at(selection.start)
+            .map(|file| file.full_path(cx));
+
+        let text = if language_name == "markdown" {
+            selected_text
+                .lines()
+                .map(|line| format!("> {}", line))
+                .collect::<Vec<_>>()
+                .join("\n")
         } else {
-            Some(if language_name == "markdown" {
-                selected_text
-                    .lines()
-                    .map(|line| format!("> {}", line))
-                    .collect::<Vec<_>>()
-                    .join("\n")
+            let fence = codeblock_fence_for_path(
+                filename.as_deref(),
+                Some(selection.start.row..selection.end.row),
+            );
+
+            format!("{fence}{selected_text}\n```")
+        };
+
+        let crease_title = if let Some(path) = filename {
+            let start_line = selection.start.row + 1;
+            let end_line = selection.end.row + 1;
+            if start_line == end_line {
+                format!("{}, Line {}", path.display(), start_line)
             } else {
-                format!("```{language_name}\n{selected_text}\n```")
-            })
+                format!("{}, Lines {} to {}", path.display(), start_line, end_line)
+            }
+        } else {
+            "Quoted selection".to_string()
         };
 
         // Activate the panel
@@ -2958,24 +2980,66 @@ impl ContextEditor {
             workspace.toggle_panel_focus::<AssistantPanel>(cx);
         }
 
-        if let Some(text) = text {
-            panel.update(cx, |_, cx| {
-                // Wait to create a new context until the workspace is no longer
-                // being updated.
-                cx.defer(move |panel, cx| {
-                    if let Some(context) = panel
-                        .active_context_editor(cx)
-                        .or_else(|| panel.new_context(cx))
-                    {
-                        context.update(cx, |context, cx| {
-                            context
-                                .editor
-                                .update(cx, |editor, cx| editor.insert(&text, cx))
-                        });
-                    };
-                });
+        panel.update(cx, |_, cx| {
+            // Wait to create a new context until the workspace is no longer
+            // being updated.
+            cx.defer(move |panel, cx| {
+                if let Some(context) = panel
+                    .active_context_editor(cx)
+                    .or_else(|| panel.new_context(cx))
+                {
+                    context.update(cx, |context, cx| {
+                        context.editor.update(cx, |editor, cx| {
+                            editor.insert("\n", cx);
+
+                            let start_row =
+                                MultiBufferRow(editor.selections.newest::<Point>(cx).head().row);
+                            let anchor_before = {
+                                let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+                                editor
+                                    .selections
+                                    .newest_anchor()
+                                    .head()
+                                    .bias_left(&snapshot)
+                            };
+
+                            editor.insert(&text, cx);
+
+                            let anchor_after = {
+                                let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+                                editor
+                                    .selections
+                                    .newest_anchor()
+                                    .head()
+                                    .bias_left(&snapshot)
+                            };
+
+                            editor.insert("\n", cx);
+
+                            let fold_placeholder = quote_selection_fold_placeholder(
+                                crease_title,
+                                cx.view().downgrade(),
+                            );
+                            let crease = Crease::new(
+                                anchor_before..anchor_after,
+                                fold_placeholder,
+                                render_quote_selection_output_toggle,
+                                |_, _, _| Empty.into_any(),
+                            );
+                            editor.insert_creases(vec![crease], cx);
+                            editor.fold_at(
+                                &FoldAt {
+                                    buffer_row: start_row,
+                                },
+                                cx,
+                            );
+                        })
+                    });
+                };
             });
-        }
+        });
     }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
@@ -4026,6 +4090,47 @@ fn render_slash_command_output_toggle(
     .selected(is_folded)
     .on_click(move |_e, cx| fold(!is_folded, cx))
     .into_any_element()
+}
+
+fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> FoldPlaceholder {
+    FoldPlaceholder {
+        render: Arc::new({
+            move |fold_id, fold_range, _cx| {
+                let editor = editor.clone();
+                ButtonLike::new(fold_id)
+                    .style(ButtonStyle::Filled)
+                    .layer(ElevationIndex::ElevatedSurface)
+                    .child(Icon::new(IconName::FileText))
+                    .child(Label::new(title.clone()).single_line())
+                    .on_click(move |_, cx| {
+                        editor
+                            .update(cx, |editor, cx| {
+                                let buffer_start = fold_range
+                                    .start
+                                    .to_point(&editor.buffer().read(cx).read(cx));
+                                let buffer_row = MultiBufferRow(buffer_start.row);
+                                editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                            })
+                            .ok();
+                    })
+                    .into_any_element()
+            }
+        }),
+        constrain_width: false,
+        merge_adjacent: false,
+    }
+}
+
+fn render_quote_selection_output_toggle(
+    row: MultiBufferRow,
+    is_folded: bool,
+    fold: ToggleFold,
+    _cx: &mut WindowContext,
+) -> AnyElement {
+    Disclosure::new(("quote-selection-indicator", row.0 as u64), !is_folded)
+        .selected(is_folded)
+        .on_click(move |_e, cx| fold(!is_folded, cx))
+        .into_any_element()
 }
 
 fn render_pending_slash_command_gutter_decoration(
