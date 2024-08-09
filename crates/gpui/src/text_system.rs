@@ -89,6 +89,7 @@ impl TextSystem {
                 .iter()
                 .map(|font| font.family.to_string()),
         );
+        names.insert(".SystemUIFont".into());
         names.into_iter().collect()
     }
 
