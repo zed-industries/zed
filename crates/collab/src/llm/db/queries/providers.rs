@@ -4,9 +4,9 @@ use std::str::FromStr;
 use strum::IntoEnumIterator as _;
 
 pub struct ModelRateLimits {
-    pub max_requests_per_minute: i32,
-    pub max_tokens_per_minute: i32,
-    pub max_tokens_per_day: i32,
+    pub max_requests_per_minute: i64,
+    pub max_tokens_per_minute: i64,
+    pub max_tokens_per_day: i64,
 }
 
 impl LlmDatabase {
