@@ -10815,10 +10815,17 @@ async fn search_snapshots(
                     abs_path.clear();
                     abs_path.push(&snapshot.abs_path());
                     abs_path.push(&entry.path);
-                    if let Some(file) = fs.open_sync(&abs_path).await.log_err() {
-                        query.detect(file).unwrap_or(false)
-                    } else {
+
+                    let metadata = fs.metadata(&abs_path).await.ok().flatten();
+
+                    if metadata.is_some() && metadata.unwrap().is_fifo {
                         false
+                    } else {
+                        if let Some(file) = fs.open_sync(&abs_path).await.log_err() {
+                            query.detect(file).unwrap_or(false)
+                        } else {
+                            false
+                        }
                     }
                 } else {
                     false
