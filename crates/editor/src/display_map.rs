@@ -74,8 +74,6 @@ pub enum FoldStatus {
 
 pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
 
-const UNNECESSARY_CODE_FADE: f32 = 0.3;
-
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
@@ -691,7 +689,7 @@ impl DisplaySnapshot {
             let mut diagnostic_highlight = HighlightStyle::default();
 
             if chunk.is_unnecessary {
-                diagnostic_highlight.fade_out = Some(UNNECESSARY_CODE_FADE);
+                diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
             }
 
             if let Some(severity) = chunk.diagnostic_severity {
