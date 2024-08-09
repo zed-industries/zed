@@ -204,13 +204,58 @@ impl PartialOrd for ProjectPanelOrdMatch {
 #[derive(Debug, Default)]
 struct Matches {
     separate_history: bool,
+    opened_path: Option<FoundPath>,
     matches: Vec<Match>,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Clone)]
+struct HistoryEntry {
+    path: FoundPath,
+    panel_match: Option<ProjectPanelOrdMatch>,
+}
+
+#[derive(Debug, Eq, Clone)]
 enum Match {
-    History(FoundPath, Option<ProjectPanelOrdMatch>),
+    History(HistoryEntry, usize),
     Search(ProjectPanelOrdMatch),
+}
+
+impl PartialOrd for Match {
+    fn partial_cmp(&self, other: &Match) -> Option<cmp::Ordering> {
+        Some(self.cmp(&other))
+    }
+}
+
+impl Ord for Match {
+    fn cmp(&self, other: &Match) -> cmp::Ordering {
+        match (self, other) {
+            (Match::History(entry_a, _), Match::History(entry_b, _)) => entry_a.cmp(&entry_b),
+            (Match::Search(a), Match::Search(b)) => a.cmp(&b),
+            (Match::History(_, _), Match::Search(_)) => cmp::Ordering::Less,
+            (Match::Search(_), Match::History(_, _)) => cmp::Ordering::Greater,
+        }
+    }
+}
+
+impl PartialEq for Match {
+    fn eq(&self, other: &Match) -> bool {
+        match (self, other) {
+            (Match::History(entry_a, _), Match::History(entry_b, _)) => entry_a.eq(&entry_b),
+            (Match::Search(a), Match::Search(b)) => a.eq(&b),
+            (Match::History(_, _), Match::Search(_)) => false,
+            (Match::Search(_), Match::History(_, _)) => false,
+        }
+    }
+}
+
+impl Match {
+    fn history_score(&self) -> usize {
+        let no_history_score = 0;
+        match self {
+            Match::Search(_) => no_history_score,
+            Match::History(_, history_score) => *history_score,
+        }
+    }
 }
 
 impl Matches {
@@ -222,6 +267,14 @@ impl Matches {
         self.matches.get(index)
     }
 
+    fn position(&self, entry: &Match) -> Option<usize> {
+        self.matches
+            .binary_search_by(|m| {
+                Self::cmp_matches(self.separate_history, self.opened_path.as_ref(), &m, &entry)
+            })
+            .ok()
+    }
+
     fn push_new_matches<'a>(
         &'a mut self,
         history_items: impl IntoIterator<Item = &'a FoundPath> + Clone,
@@ -230,19 +283,16 @@ impl Matches {
         new_search_matches: impl Iterator<Item = ProjectPanelOrdMatch>,
         extend_old_matches: bool,
     ) {
-        let no_history_score = 0;
         let matching_history_paths =
             matching_history_item_paths(history_items.clone(), currently_opened, query);
         let new_search_matches = new_search_matches
             .filter(|path_match| !matching_history_paths.contains_key(&path_match.0.path))
-            .map(Match::Search)
-            .map(|m| (no_history_score, m));
+            .map(Match::Search);
         let old_search_matches = self
             .matches
             .drain(..)
             .filter(|_| extend_old_matches)
-            .filter(|m| matches!(m, Match::Search(_)))
-            .map(|m| (no_history_score, m));
+            .filter(|m| matches!(m, Match::Search(_)));
         let history_matches = history_items
             .into_iter()
             .chain(currently_opened)
@@ -256,47 +306,57 @@ impl Matches {
                 } else {
                     query_match.flatten()
                 };
-                Some((i + 1, Match::History(history_item.clone(), query_match)))
+                Some(Match::History(
+                    HistoryEntry {
+                        path: history_item.clone(),
+                        panel_match: query_match,
+                    },
+                    i + 1,
+                ))
             });
+
+        self.opened_path = currently_opened.cloned();
 
         let mut unique_matches = BTreeSet::new();
         self.matches = old_search_matches
             .chain(history_matches)
             .chain(new_search_matches)
-            .filter(|(_, m)| unique_matches.insert(m.clone()))
-            .sorted_by(|(history_score_a, a), (history_score_b, b)| {
-                match (a, b) {
-                    // bubble currently opened files to the top
-                    (Match::History(path, _), _) if Some(path) == currently_opened => {
-                        cmp::Ordering::Less
-                    }
-                    (_, Match::History(path, _)) if Some(path) == currently_opened => {
-                        cmp::Ordering::Greater
-                    }
-
-                    (Match::History(_, _), Match::Search(_)) if self.separate_history => {
-                        cmp::Ordering::Less
-                    }
-                    (Match::Search(_), Match::History(_, _)) if self.separate_history => {
-                        cmp::Ordering::Greater
-                    }
-
-                    (Match::History(_, match_a), Match::History(_, match_b)) => {
-                        match_b.cmp(match_a)
-                    }
-                    (Match::History(_, match_a), Match::Search(match_b)) => {
-                        Some(match_b).cmp(&match_a.as_ref())
-                    }
-                    (Match::Search(match_a), Match::History(_, match_b)) => {
-                        match_b.as_ref().cmp(&Some(match_a))
-                    }
-                    (Match::Search(match_a), Match::Search(match_b)) => match_b.cmp(match_a),
-                }
-                .then(history_score_a.cmp(history_score_b))
-            })
+            .filter(|m| unique_matches.insert(m.clone()))
+            .sorted_by(|a, b| Self::cmp_matches(self.separate_history, currently_opened, &a, &b))
             .take(100)
-            .map(|(_, m)| m)
             .collect();
+    }
+
+    fn cmp_matches(
+        separate_history: bool,
+        currently_opened: Option<&FoundPath>,
+        a: &Match,
+        b: &Match,
+    ) -> cmp::Ordering {
+        match (&a, &b) {
+            // bubble currently opened files to the top
+            (Match::History(entry, _), _) if Some(&entry.path) == currently_opened => {
+                cmp::Ordering::Less
+            }
+            (_, Match::History(entry, _)) if Some(&entry.path) == currently_opened => {
+                cmp::Ordering::Greater
+            }
+
+            (Match::History(_, _), Match::Search(_)) if separate_history => cmp::Ordering::Less,
+            (Match::Search(_), Match::History(_, _)) if separate_history => cmp::Ordering::Greater,
+
+            (Match::History(entry_a, _), Match::History(entry_b, _)) => {
+                entry_b.panel_match.cmp(&entry_a.panel_match)
+            }
+            (Match::History(entry_a, _), Match::Search(match_b)) => {
+                Some(match_b).cmp(&entry_a.panel_match.as_ref())
+            }
+            (Match::Search(match_a), Match::History(entry_b, _)) => {
+                entry_b.panel_match.as_ref().cmp(&Some(match_a))
+            }
+            (Match::Search(match_a), Match::Search(match_b)) => match_b.cmp(match_a),
+        }
+        .then(a.history_score().cmp(&b.history_score()))
     }
 }
 
@@ -523,12 +583,19 @@ impl FileFinderDelegate {
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
-            let extend_old_matches = self.latest_search_did_cancel
-                && Some(query.path_query())
-                    == self
-                        .latest_search_query
-                        .as_ref()
-                        .map(|query| query.path_query());
+            let query_changed = Some(query.path_query())
+                != self
+                    .latest_search_query
+                    .as_ref()
+                    .map(|query| query.path_query());
+            let extend_old_matches = self.latest_search_did_cancel && !query_changed;
+
+            let selected_match = if query_changed {
+                None
+            } else {
+                self.matches.get(self.selected_index).cloned()
+            };
+
             self.matches.push_new_matches(
                 &self.history_items,
                 self.currently_opened_path.as_ref(),
@@ -536,9 +603,15 @@ impl FileFinderDelegate {
                 matches.into_iter(),
                 extend_old_matches,
             );
+
+            self.selected_index = selected_match.map_or_else(
+                || self.calculate_selected_index(),
+                |m| self.matches.position(&m).unwrap_or(0),
+            );
+
             self.latest_search_query = Some(query);
             self.latest_search_did_cancel = did_cancel;
-            self.selected_index = self.calculate_selected_index();
+
             cx.notify();
         }
     }
@@ -549,10 +622,10 @@ impl FileFinderDelegate {
         cx: &AppContext,
         ix: usize,
     ) -> (String, Vec<usize>, String, Vec<usize>) {
-        let (file_name, file_name_positions, full_path, full_path_positions) = match path_match {
-            Match::History(found_path, found_path_match) => {
-                let worktree_id = found_path.project.worktree_id;
-                let project_relative_path = &found_path.project.path;
+        let (file_name, file_name_positions, full_path, full_path_positions) = match &path_match {
+            Match::History(entry, _) => {
+                let worktree_id = entry.path.project.worktree_id;
+                let project_relative_path = &entry.path.project.path;
                 let has_worktree = self
                     .project
                     .read(cx)
@@ -560,7 +633,7 @@ impl FileFinderDelegate {
                     .is_some();
 
                 if !has_worktree {
-                    if let Some(absolute_path) = &found_path.absolute {
+                    if let Some(absolute_path) = &entry.path.absolute {
                         return (
                             absolute_path
                                 .file_name()
@@ -578,7 +651,7 @@ impl FileFinderDelegate {
 
                 let mut path = Arc::clone(project_relative_path);
                 if project_relative_path.as_ref() == Path::new("") {
-                    if let Some(absolute_path) = &found_path.absolute {
+                    if let Some(absolute_path) = &entry.path.absolute {
                         path = Arc::from(absolute_path.as_path());
                     }
                 }
@@ -591,7 +664,7 @@ impl FileFinderDelegate {
                     path_prefix: "".into(),
                     distance_to_relative_ancestor: usize::MAX,
                 };
-                if let Some(found_path_match) = found_path_match {
+                if let Some(found_path_match) = &entry.panel_match {
                     path_match
                         .positions
                         .extend(found_path_match.0.positions.iter())
@@ -715,14 +788,17 @@ impl FileFinderDelegate {
 
     /// Skips first history match (that is displayed topmost) if it's currently opened.
     fn calculate_selected_index(&self) -> usize {
-        if let Some(Match::History(path, _)) = self.matches.get(0) {
-            if Some(path) == self.currently_opened_path.as_ref() {
-                let elements_after_first = self.matches.len() - 1;
-                if elements_after_first > 0 {
-                    return 1;
+        if let Some(m) = self.matches.get(0) {
+            if let Match::History(entry, _) = &m {
+                if Some(&entry.path) == self.currently_opened_path.as_ref() {
+                    let elements_after_first = self.matches.len() - 1;
+                    if elements_after_first > 0 {
+                        return 1;
+                    }
                 }
             }
         }
+
         0
     }
 }
@@ -840,9 +916,9 @@ impl PickerDelegate for FileFinderDelegate {
                                 )
                             }
                         };
-                    match m {
-                        Match::History(history_match, _) => {
-                            let worktree_id = history_match.project.worktree_id;
+                    match &m {
+                        Match::History(entry, _) => {
+                            let worktree_id = entry.path.project.worktree_id;
                             if workspace
                                 .project()
                                 .read(cx)
@@ -853,12 +929,12 @@ impl PickerDelegate for FileFinderDelegate {
                                     workspace,
                                     ProjectPath {
                                         worktree_id,
-                                        path: Arc::clone(&history_match.project.path),
+                                        path: Arc::clone(&entry.path.project.path),
                                     },
                                     cx,
                                 )
                             } else {
-                                match history_match.absolute.as_ref() {
+                                match entry.path.absolute.as_ref() {
                                     Some(abs_path) => {
                                         if secondary {
                                             workspace.split_abs_path(
@@ -878,7 +954,7 @@ impl PickerDelegate for FileFinderDelegate {
                                         workspace,
                                         ProjectPath {
                                             worktree_id,
-                                            path: Arc::clone(&history_match.project.path),
+                                            path: Arc::clone(&entry.path.project.path),
                                         },
                                         cx,
                                     ),
@@ -954,7 +1030,7 @@ impl PickerDelegate for FileFinderDelegate {
             .expect("Invalid matches state: no element for index {ix}");
 
         let icon = match &path_match {
-            Match::History(_, _) => Icon::new(IconName::HistoryRerun)
+            Match::History { .. } => Icon::new(IconName::HistoryRerun)
                 .color(Color::Muted)
                 .size(IconSize::Small)
                 .into_any_element(),
