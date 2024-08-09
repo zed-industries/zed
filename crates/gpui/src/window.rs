@@ -3491,12 +3491,6 @@ impl<'a> WindowContext<'a> {
                 }
             }
 
-            global_listeners.extend(
-                self.global_action_listeners
-                    .remove(&action.as_any().type_id())
-                    .unwrap_or_default(),
-            );
-
             self.global_action_listeners
                 .insert(action.as_any().type_id(), global_listeners);
         }
@@ -3557,12 +3551,6 @@ impl<'a> WindowContext<'a> {
                     break;
                 }
             }
-
-            global_listeners.extend(
-                self.global_action_listeners
-                    .remove(&action.as_any().type_id())
-                    .unwrap_or_default(),
-            );
 
             self.global_action_listeners
                 .insert(action.as_any().type_id(), global_listeners);

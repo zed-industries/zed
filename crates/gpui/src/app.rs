@@ -1201,7 +1201,7 @@ impl AppContext {
     fn dispatch_global_action(&mut self, action: &dyn Action) {
         self.propagate_event = true;
 
-        if let Some(mut global_listeners) = self
+        if let Some(global_listeners) = self
             .global_action_listeners
             .remove(&action.as_any().type_id())
         {
@@ -1212,18 +1212,12 @@ impl AppContext {
                 }
             }
 
-            global_listeners.extend(
-                self.global_action_listeners
-                    .remove(&action.as_any().type_id())
-                    .unwrap_or_default(),
-            );
-
             self.global_action_listeners
                 .insert(action.as_any().type_id(), global_listeners);
         }
 
         if self.propagate_event {
-            if let Some(mut global_listeners) = self
+            if let Some(global_listeners) = self
                 .global_action_listeners
                 .remove(&action.as_any().type_id())
             {
@@ -1233,12 +1227,6 @@ impl AppContext {
                         break;
                     }
                 }
-
-                global_listeners.extend(
-                    self.global_action_listeners
-                        .remove(&action.as_any().type_id())
-                        .unwrap_or_default(),
-                );
 
                 self.global_action_listeners
                     .insert(action.as_any().type_id(), global_listeners);
