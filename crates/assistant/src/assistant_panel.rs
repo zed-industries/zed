@@ -2955,12 +2955,43 @@ impl ContextEditor {
                 .collect::<Vec<_>>()
                 .join("\n")
         } else {
+            let start_symbols = buffer
+                .symbols_containing(selection.start, None)
+                .map(|(_, symbols)| symbols);
+            let end_symbols = buffer
+                .symbols_containing(selection.end, None)
+                .map(|(_, symbols)| symbols);
+
+            let outline_text =
+                if let Some((start_symbols, end_symbols)) = start_symbols.zip(end_symbols) {
+                    Some(
+                        start_symbols
+                            .into_iter()
+                            .zip(end_symbols.into_iter())
+                            .take_while(|(a, b)| a == b)
+                            .map(|(a, _)| a.text)
+                            .collect::<Vec<_>>()
+                            .join(" > "),
+                    )
+                } else {
+                    None
+                };
+
+            let line_comment_prefix = start_language
+                .and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
+
             let fence = codeblock_fence_for_path(
                 filename.as_deref(),
                 Some(selection.start.row..selection.end.row),
             );
 
-            format!("{fence}{selected_text}\n```")
+            if let Some((line_comment_prefix, outline_text)) = line_comment_prefix.zip(outline_text)
+            {
+                let breadcrumb = format!("Excerpt from: {line_comment_prefix}{outline_text}\n");
+                format!("{fence}{breadcrumb}{selected_text}\n```")
+            } else {
+                format!("{fence}{selected_text}\n```")
+            }
         };
 
         let crease_title = if let Some(path) = filename {
