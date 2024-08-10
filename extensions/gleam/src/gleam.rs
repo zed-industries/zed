@@ -202,6 +202,10 @@ impl zed::Extension for GleamExtension {
                             String::new()
                         }
                     ),
+                    headers: vec![(
+                        "User-Agent".to_string(),
+                        "Zed (Gleam Extension)".to_string(),
+                    )],
                 })?;
 
                 let (markdown, _modules) = convert_hexdocs_to_markdown(response.body.as_bytes())?;

@@ -130,17 +130,21 @@ impl common::Host for WasmState {}
 impl http_client::Host for WasmState {
     async fn fetch(
         &mut self,
-        req: http_client::HttpRequest,
+        extension_request: http_client::HttpRequest,
     ) -> wasmtime::Result<Result<http_client::HttpResponse, String>> {
         maybe!(async {
-            let url = &req.url;
+            let url = &extension_request.url;
 
-            let mut response = self
-                .host
-                .http_client
-                .get(url, AsyncBody::default(), true)
-                .await?;
+            // Build an internal request from extension request
+            let mut request = ::http_client::Request::builder()
+                .method(::http_client::Method::GET)
+                .uri(url);
+            for (key, value) in &extension_request.headers {
+                request = request.header(key, value);
+            }
+            let request = request.body(AsyncBody::default())?;
 
+            let mut response = self.host.http_client.send(request).await?;
             if response.status().is_client_error() || response.status().is_server_error() {
                 bail!("failed to fetch '{url}': status code {}", response.status())
             }
@@ -151,9 +155,15 @@ impl http_client::Host for WasmState {
                 .read_to_end(&mut body)
                 .await
                 .with_context(|| format!("failed to read response body from '{url}'"))?;
+            let headers = response
+                .headers()
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("").to_string()))
+                .collect::<Vec<(String, String)>>();
 
             Ok(http_client::HttpResponse {
                 body: String::from_utf8(body)?,
+                headers,
             })
         })
         .await

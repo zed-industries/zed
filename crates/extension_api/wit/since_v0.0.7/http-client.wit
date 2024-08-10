@@ -3,12 +3,16 @@ interface http-client {
     record http-request {
         /// The URL to which the request should be made.
         url: string,
+        /// Headers for the request.
+        headers: list<tuple<string, string>>,
     }
 
     /// An HTTP response.
     record http-response {
         /// The response body.
         body: string,
+        /// The response headers.
+        headers: list<tuple<string, string>>,
     }
 
     /// Performs an HTTP request and returns the response.

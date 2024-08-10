@@ -13,8 +13,14 @@ use html_to_markdown::{
 use zed_extension_api::{self as zed, HttpRequest, KeyValueStore, Result};
 
 pub fn index(package: String, database: &KeyValueStore) -> Result<()> {
+    let headers = vec![(
+        "User-Agent".to_string(),
+        "Zed (Gleam Extension)".to_string(),
+    )];
+
     let response = zed::fetch(&HttpRequest {
         url: format!("https://hexdocs.pm/{package}"),
+        headers: headers.clone(),
     })?;
 
     let (package_root_markdown, modules) = convert_hexdocs_to_markdown(response.body.as_bytes())?;
@@ -24,6 +30,7 @@ pub fn index(package: String, database: &KeyValueStore) -> Result<()> {
     for module in modules {
         let response = zed::fetch(&HttpRequest {
             url: format!("https://hexdocs.pm/{package}/{module}.html"),
+            headers: headers.clone(),
         })?;
 
         let (markdown, _modules) = convert_hexdocs_to_markdown(response.body.as_bytes())?;
