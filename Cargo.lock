@@ -2341,7 +2341,6 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "http_client",
- "lazy_static",
  "log",
  "once_cell",
  "parking_lot",
@@ -2543,7 +2542,6 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
- "lazy_static",
  "menu",
  "notifications",
  "parking_lot",
@@ -3272,7 +3270,6 @@ dependencies = [
  "anyhow",
  "gpui",
  "indoc",
- "lazy_static",
  "log",
  "paths",
  "release_channel",
@@ -3552,7 +3549,6 @@ dependencies = [
  "indoc",
  "itertools 0.11.0",
  "language",
- "lazy_static",
  "linkify",
  "log",
  "lsp",
@@ -4180,7 +4176,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "nanorand",
- "spin 0.9.8",
+ "spin",
 ]
 
 [[package]]
@@ -4331,7 +4327,6 @@ dependencies = [
  "git",
  "git2",
  "gpui",
- "lazy_static",
  "libc",
  "notify",
  "objc",
@@ -4657,7 +4652,6 @@ dependencies = [
  "git2",
  "gpui",
  "http_client",
- "lazy_static",
  "log",
  "parking_lot",
  "pretty_assertions",
@@ -4856,7 +4850,6 @@ dependencies = [
  "http_client",
  "image",
  "itertools 0.11.0",
- "lazy_static",
  "linkme",
  "log",
  "media",
@@ -5953,7 +5946,6 @@ dependencies = [
  "http_client",
  "indoc",
  "itertools 0.11.0",
- "lazy_static",
  "log",
  "lsp",
  "parking_lot",
@@ -6085,7 +6077,6 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
- "lazy_static",
  "log",
  "lsp",
  "node_runtime",
@@ -6126,11 +6117,11 @@ dependencies = [
 
 [[package]]
 name = "lazy_static"
-version = "1.4.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
+checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
- "spin 0.5.2",
+ "spin",
 ]
 
 [[package]]
@@ -8928,7 +8919,7 @@ dependencies = [
  "cc",
  "getrandom 0.2.10",
  "libc",
- "spin 0.9.8",
+ "spin",
  "untrusted",
  "windows-sys 0.48.0",
 ]
@@ -9734,7 +9725,6 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "indoc",
- "lazy_static",
  "log",
  "paths",
  "pretty_assertions",
@@ -10089,12 +10079,6 @@ dependencies = [
 
 [[package]]
 name = "spin"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
-
-[[package]]
-name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
@@ -10145,7 +10129,6 @@ dependencies = [
  "collections",
  "futures 0.3.30",
  "indoc",
- "lazy_static",
  "libsqlite3-sys",
  "parking_lot",
  "smol",
@@ -10158,7 +10141,6 @@ dependencies = [
 name = "sqlez_macros"
 version = "0.1.0"
 dependencies = [
- "lazy_static",
  "sqlez",
  "sqlformat",
  "syn 1.0.109",
@@ -10981,7 +10963,6 @@ dependencies = [
  "env_logger",
  "gpui",
  "http_client",
- "lazy_static",
  "log",
  "parking_lot",
  "postage",
@@ -12181,7 +12162,6 @@ dependencies = [
  "indoc",
  "itertools 0.11.0",
  "language",
- "lazy_static",
  "log",
  "lsp",
  "multi_buffer",
@@ -13490,7 +13470,6 @@ dependencies = [
  "http_client",
  "itertools 0.11.0",
  "language",
- "lazy_static",
  "log",
  "node_runtime",
  "parking_lot",

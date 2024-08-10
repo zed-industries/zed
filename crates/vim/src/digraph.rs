@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use gpui::AppContext;
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 use settings::Settings;
 use ui::WindowContext;
 
@@ -10,17 +10,15 @@ use crate::{Vim, VimSettings};
 
 mod default;
 
-lazy_static! {
-    static ref DEFAULT_DIGRAPHS_MAP: HashMap<String, Arc<str>> = {
-        let mut map = HashMap::default();
-        for &(a, b, c) in default::DEFAULT_DIGRAPHS {
-            let key = format!("{a}{b}");
-            let value = char::from_u32(c).unwrap().to_string().into();
-            map.insert(key, value);
-        }
-        map
-    };
-}
+static DEFAULT_DIGRAPHS_MAP: LazyLock<HashMap<String, Arc<str>>> = LazyLock::new(|| {
+    let mut map = HashMap::default();
+    for &(a, b, c) in default::DEFAULT_DIGRAPHS {
+        let key = format!("{a}{b}");
+        let value = char::from_u32(c).unwrap().to_string().into();
+        map.insert(key, value);
+    }
+    map
+});
 
 fn lookup_digraph(a: char, b: char, cx: &AppContext) -> Arc<str> {
     let custom_digraphs = &VimSettings::get_global(cx).custom_digraphs;
