@@ -134,41 +134,68 @@ impl http_client::Host for WasmState {
     ) -> wasmtime::Result<Result<http_client::HttpResponse, String>> {
         maybe!(async {
             let url = &extension_request.url;
-
-            // Build an internal request from extension request
-            let mut request = ::http_client::Request::builder()
-                .method(::http_client::Method::GET)
-                .uri(url);
-            for (key, value) in &extension_request.headers {
-                request = request.header(key, value);
-            }
-            let request = request.body(AsyncBody::default())?;
-
+            let request = convert_request(&extension_request)?;
             let mut response = self.host.http_client.send(request).await?;
             if response.status().is_client_error() || response.status().is_server_error() {
                 bail!("failed to fetch '{url}': status code {}", response.status())
             }
-
-            let mut body = Vec::new();
-            response
-                .body_mut()
-                .read_to_end(&mut body)
-                .await
-                .with_context(|| format!("failed to read response body from '{url}'"))?;
-            let headers = response
-                .headers()
-                .iter()
-                .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("").to_string()))
-                .collect::<Vec<(String, String)>>();
-
-            Ok(http_client::HttpResponse {
-                body: String::from_utf8(body)?,
-                headers,
-            })
+            let extension_response = convert_response(&mut response).await?;
+            Ok(extension_response)
         })
         .await
         .to_wasmtime_result()
     }
+}
+
+fn convert_method(method: http_client::HttpMethod) -> ::http_client::Method {
+    match method {
+        http_client::HttpMethod::Get => ::http_client::Method::GET,
+        http_client::HttpMethod::Post => ::http_client::Method::POST,
+        http_client::HttpMethod::Put => ::http_client::Method::PUT,
+        http_client::HttpMethod::Delete => ::http_client::Method::DELETE,
+        http_client::HttpMethod::Head => ::http_client::Method::HEAD,
+        http_client::HttpMethod::Options => ::http_client::Method::OPTIONS,
+        http_client::HttpMethod::Patch => ::http_client::Method::PATCH,
+    }
+}
+
+fn convert_request(
+    extension_request: &http_client::HttpRequest,
+) -> Result<::http_client::Request<AsyncBody>, anyhow::Error> {
+    let mut request = ::http_client::Request::builder()
+        .method(convert_method(extension_request.method))
+        .uri(&extension_request.url);
+    for (key, value) in &extension_request.headers {
+        request = request.header(key, value);
+    }
+    let body = extension_request
+        .body
+        .clone()
+        .map(AsyncBody::from)
+        .unwrap_or_default();
+    request.body(body).map_err(anyhow::Error::from)
+}
+
+async fn convert_response(
+    response: &mut ::http_client::Response<AsyncBody>,
+) -> Result<http_client::HttpResponse, anyhow::Error> {
+    let mut extension_response = http_client::HttpResponse {
+        body: Vec::new(),
+        headers: Vec::new(),
+    };
+
+    for (key, value) in response.headers() {
+        extension_response
+            .headers
+            .push((key.to_string(), value.to_str().unwrap_or("").to_string()));
+    }
+
+    response
+        .body_mut()
+        .read_to_end(&mut extension_response.body)
+        .await?;
+
+    Ok(extension_response)
 }
 
 #[async_trait]
