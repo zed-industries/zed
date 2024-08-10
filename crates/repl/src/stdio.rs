@@ -19,6 +19,9 @@ pub struct TerminalOutput {
     handler: alacritty_terminal::Term<ZedListener>,
 }
 
+const DEFAULT_NUM_LINES: usize = 32;
+const DEFAULT_NUM_COLUMNS: usize = 128;
+
 pub fn terminal_size(cx: &mut WindowContext) -> terminal::TerminalSize {
     let text_style = cx.text_style();
     let text_system = cx.text_system();
@@ -33,8 +36,8 @@ pub fn terminal_size(cx: &mut WindowContext) -> terminal::TerminalSize {
         .unwrap()
         .width;
 
-    let num_lines = 200;
-    let columns = 120;
+    let num_lines = DEFAULT_NUM_LINES;
+    let columns = DEFAULT_NUM_COLUMNS;
 
     // Reversed math from terminal::TerminalSize to get pixel width according to terminal width
     let width = columns as f32 * cell_width;
