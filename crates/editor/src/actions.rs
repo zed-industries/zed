@@ -133,10 +133,7 @@ pub struct ShowCompletions {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct HandleInput {
-    #[serde(default)]
-    pub(super) text: String,
-}
+pub struct HandleInput(pub String);
 
 impl_actions!(
     editor,

@@ -231,11 +231,11 @@ impl EditorElement {
         register_action(view, cx, |editor, _: &HalfPageDown, cx| {
             editor.scroll_screen(&ScrollAmount::Page(0.5), cx)
         });
-        register_action(view, cx, |editor, input: &HandleInput, cx| {
-            if input.text.is_empty() {
+        register_action(view, cx, |editor, HandleInput(text): &HandleInput, cx| {
+            if text.is_empty() {
                 return;
             }
-            editor.handle_input(&input.text, cx);
+            editor.handle_input(&text, cx);
         });
         register_action(view, cx, |editor, _: &HalfPageUp, cx| {
             editor.scroll_screen(&ScrollAmount::Page(-0.5), cx)
