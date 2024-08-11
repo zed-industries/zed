@@ -18,7 +18,7 @@ if [ "$1" = "link" ]; then
     fi
     ln -sf "$(pwd)/../zed_prompts/assets/prompts" ~/.config/zed/prompt_overrides
     else
-        ln -sf "$(pwd)/../prompts/assets/prompts" ~/.config/zed/prompt_overrides
+        ln -sf "$(pwd)/assets/prompts" ~/.config/zed/prompt_overrides
     fi
 elif [ "$1" = "unlink" ]; then
     # Remove symbolic link
