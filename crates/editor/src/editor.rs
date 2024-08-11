@@ -566,7 +566,7 @@ pub struct Editor {
     _scroll_cursor_center_top_bottom_task: Task<()>,
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug,  PartialEq, Eq, Default)]
 enum NextScollCursorCenterTopBottom {
     #[default]
     Center,

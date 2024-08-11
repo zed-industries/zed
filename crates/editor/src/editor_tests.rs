@@ -13149,6 +13149,75 @@ async fn test_input_text(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_scroll_cursor_center_top_bottom(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        r#"let foo = 1;
+let foo = 2;
+let foo = 3;
+let fooˇ = 4;
+let foo = 5;
+let foo = 6;
+let foo = 7;
+let foo = 8;
+let foo = 9;
+let foo = 10;
+let foo = 11;
+let foo = 12;
+let foo = 13;
+let foo = 14;
+let foo = 15;"#,
+    );
+
+    cx.update_editor(|e, cx| {
+        assert_eq!(
+            e.next_scroll_direction,
+            NextScollCursorCenterTopBottom::Center
+        );
+    });
+    cx.update_editor(|e, cx| {
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
+    });
+    cx.update_editor(|e, cx| {
+        assert_eq!(
+            e.next_scroll_direction,
+            NextScollCursorCenterTopBottom::Top
+        );
+    });
+
+    // TODO kb add asynchrosity and test that the position gets reset
+
+    cx.update_editor(|e, cx| {
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
+    });
+    cx.update_editor(|e, cx| {
+        assert_eq!(e.next_scroll_direction, NextScollCursorCenterTopBottom::Bottom);
+    });
+
+    cx.update_editor(|e, cx| {
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
+    });
+    cx.update_editor(|e, cx| {
+        assert_eq!(
+            e.next_scroll_direction,
+            NextScollCursorCenterTopBottom::Bottom
+        );
+    });
+
+    cx.update_editor(|e, cx| {
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
+    });
+    cx.update_editor(|e, cx| {
+        assert_eq!(
+            e.next_scroll_direction,
+            NextScollCursorCenterTopBottom::Center
+        );
+    });
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(DisplayRow(row as u32), column as u32);
     point..point
