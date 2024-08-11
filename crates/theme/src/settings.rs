@@ -655,7 +655,6 @@ impl settings::Settings for ThemeSettings {
                 schema.instance_type = Some(InstanceType::Object.into());
             },
         );
-        println!("{:#?}", root_schema.schema.object().properties);
 
         root_schema
     }

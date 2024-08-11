@@ -64,8 +64,6 @@ pub fn adjust_schema_properties<F>(
 
         match schema {
             Schema::Object(schema) => {
-                // schema.metadata().default = None;
-                // schema.reference = Some(definition.to_string());
                 f(schema, definition);
             }
             Schema::Bool(_) => {
