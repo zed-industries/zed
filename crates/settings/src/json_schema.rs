@@ -61,6 +61,7 @@ pub fn add_references_to_properties(
 
         match schema {
             Schema::Object(schema) => {
+                schema.metadata().default = None;
                 schema.reference = Some(definition.to_string());
             }
             Schema::Bool(_) => {

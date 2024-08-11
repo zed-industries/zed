@@ -634,6 +634,7 @@ impl settings::Settings for ThemeSettings {
                 ("ui_font_fallbacks", "#/definitions/FontFallbacks"),
             ],
         );
+        println!("{:#?}", root_schema.schema.object().properties);
 
         root_schema
     }
