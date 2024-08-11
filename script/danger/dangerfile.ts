@@ -57,7 +57,7 @@ if (includesIssueUrl) {
     [
       "This PR includes links to the following GitHub Issues: " +
         issues.map((issue) => `#${issue}`).join(", "),
-      "If this pull requests aims to close an issue, please include a `Closes #ISSUE` line at the top of the PR body.",
+      "If this PR aims to close an issue, please include a `Closes #ISSUE` line at the top of the PR body.",
     ].join("\n"),
   );
 }
