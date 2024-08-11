@@ -14,7 +14,7 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{add_references_to_properties, Settings, SettingsJsonSchemaParams, SettingsSources};
+use settings::{adjust_schema_properties, Settings, SettingsJsonSchemaParams, SettingsSources};
 use std::sync::Arc;
 use util::ResultExt as _;
 
@@ -625,14 +625,35 @@ impl settings::Settings for ThemeSettings {
             ("FontFallbacks".into(), params.font_fallback_schema()),
         ]);
 
-        add_references_to_properties(
+        adjust_schema_properties(
             &mut root_schema,
             &[
                 ("buffer_font_family", "#/definitions/FontFamilies"),
-                ("buffer_font_fallbacks", "#/definitions/FontFallbacks"),
                 ("ui_font_family", "#/definitions/FontFamilies"),
+            ],
+            |schema, definition| {
+                schema.metadata().default = None;
+                schema.reference = Some(definition.to_string());
+            },
+        );
+        adjust_schema_properties(
+            &mut root_schema,
+            &[
+                ("buffer_font_fallbacks", "#/definitions/FontFallbacks"),
                 ("ui_font_fallbacks", "#/definitions/FontFallbacks"),
             ],
+            |schema, definition| {
+                schema.metadata().default = None;
+                schema.reference = Some(definition.to_string());
+            },
+        );
+        adjust_schema_properties(
+            &mut root_schema,
+            &[("buffer_font_features", ""), ("ui_font_features", "")],
+            |schema, _| {
+                schema.metadata().default = None;
+                schema.instance_type = Some(InstanceType::Object.into());
+            },
         );
         println!("{:#?}", root_schema.schema.object().properties);
 

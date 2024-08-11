@@ -4,7 +4,7 @@ use gpui::{
 };
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde_derive::{Deserialize, Serialize};
-use settings::{add_references_to_properties, SettingsJsonSchemaParams, SettingsSources};
+use settings::{adjust_schema_properties, SettingsJsonSchemaParams, SettingsSources};
 use std::path::PathBuf;
 use task::Shell;
 
@@ -202,12 +202,16 @@ impl settings::Settings for TerminalSettings {
             ("FontFallbacks".into(), params.font_fallback_schema()),
         ]);
 
-        add_references_to_properties(
+        adjust_schema_properties(
             &mut root_schema,
             &[
                 ("font_family", "#/definitions/FontFamilies"),
                 ("font_fallbacks", "#/definitions/FontFallbacks"),
             ],
+            |schema, definition| {
+                schema.metadata().default = None;
+                schema.reference = Some(definition.to_string());
+            },
         );
 
         root_schema

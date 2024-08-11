@@ -49,10 +49,13 @@ type ReferencePath<'a> = &'a str;
 ///     ("property_b", "#/definitions/DefinitionB"),
 /// ])
 /// ```
-pub fn add_references_to_properties(
+pub fn adjust_schema_properties<F>(
     root_schema: &mut RootSchema,
     properties_with_references: &[(PropertyName, ReferencePath)],
-) {
+    f: F,
+) where
+    F: Fn(&mut SchemaObject, &str),
+{
     for (property, definition) in properties_with_references {
         let Some(schema) = root_schema.schema.object().properties.get_mut(*property) else {
             log::warn!("property '{property}' not found in JSON schema");
@@ -61,8 +64,9 @@ pub fn add_references_to_properties(
 
         match schema {
             Schema::Object(schema) => {
-                schema.metadata().default = None;
-                schema.reference = Some(definition.to_string());
+                // schema.metadata().default = None;
+                // schema.reference = Some(definition.to_string());
+                f(schema, definition);
             }
             Schema::Bool(_) => {
                 // Boolean schemas can't have references.
