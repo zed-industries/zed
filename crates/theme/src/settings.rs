@@ -629,17 +629,8 @@ impl settings::Settings for ThemeSettings {
             &mut root_schema,
             &[
                 ("buffer_font_family", "#/definitions/FontFamilies"),
-                ("ui_font_family", "#/definitions/FontFamilies"),
-            ],
-            |schema, definition| {
-                schema.metadata().default = None;
-                schema.reference = Some(definition.to_string());
-            },
-        );
-        adjust_schema_properties(
-            &mut root_schema,
-            &[
                 ("buffer_font_fallbacks", "#/definitions/FontFallbacks"),
+                ("ui_font_family", "#/definitions/FontFamilies"),
                 ("ui_font_fallbacks", "#/definitions/FontFallbacks"),
             ],
             |schema, definition| {
