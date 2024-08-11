@@ -37,7 +37,7 @@ if (!hasReleaseNotes) {
 }
 
 const ISSUE_LINK_PATTERN = new RegExp(
-  "(?:^|\\s)(?:#(\\d+)|https:\\/\\/github\\.com\\/zed-industries\\/zed\\/issues\\/(\\d+))",
+  "(?:https://github\\.com/[\\w-]+/[\\w-]+/issues/\\d+|#\\d+)",
   "g",
 );
 
