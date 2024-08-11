@@ -36,6 +36,8 @@ if (!hasReleaseNotes) {
   );
 }
 
+// Test
+
 const ISSUE_LINK_PATTERN = new RegExp(
   "(?:https://github\\.com/[\\w-]+/[\\w-]+/issues/\\d+|#\\d+)",
   "g",
