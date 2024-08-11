@@ -1,5 +1,6 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
+    context_inspector::ContextInspector,
     humanize_token_count,
     prompt_library::open_prompt_library,
     prompts::PromptBuilder,
@@ -1618,6 +1619,7 @@ pub struct ContextEditor {
     active_workflow_step: Option<ActiveWorkflowStep>,
     assistant_panel: WeakView<AssistantPanel>,
     error_message: Option<SharedString>,
+    debug_inspector: Option<ContextInspector>,
 }
 
 const DEFAULT_TAB_TITLE: &str = "New Context";
@@ -1677,6 +1679,7 @@ impl ContextEditor {
             active_workflow_step: None,
             assistant_panel,
             error_message: None,
+            debug_inspector: None,
         };
         this.update_message_headers(cx);
         this.insert_slash_command_output_sections(sections, cx);
@@ -2405,7 +2408,15 @@ impl ContextEditor {
                                     } else {
                                         theme.info_border
                                     };
-
+                                    let debug_header = weak_self
+                                        .update(&mut **cx, |this, cx| {
+                                            if let Some(inspector) = this.debug_inspector.as_mut() {
+                                                Some(inspector.is_active(&step_range))
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .unwrap_or_default();
                                     div()
                                         .w_full()
                                         .px(cx.gutter_dimensions.full_width())
@@ -2415,14 +2426,52 @@ impl ContextEditor {
                                                 .border_b_1()
                                                 .border_color(border_color)
                                                 .pb_1()
-                                                .justify_end()
+                                                .justify_between()
                                                 .gap_2()
+                                                .children(debug_header.map(|is_active| {
+                                                    h_flex().justify_start().child(
+                                                        Button::new("dbg stuffie", "Debug")
+                                                            .icon_color(Color::Hidden)
+                                                            .color(Color::Hidden)
+                                                            .selected_icon_color(Color::Default)
+                                                            .selected_label_color(Color::Default)
+                                                            .icon(IconName::Update)
+                                                            .icon_position(IconPosition::Start)
+                                                            .icon_size(IconSize::Small)
+                                                            .label_size(LabelSize::Small)
+                                                            .selected(is_active)
+                                                            .on_click({
+                                                                let weak_self = weak_self.clone();
+                                                                let step_range = step_range.clone();
+                                                                move |_, cx| {
+                                                                    weak_self
+                                                                        .update(cx, |this, cx| {
+                                                                            if let Some(inspector) =
+                                                                                this.debug_inspector
+                                                                                    .as_mut()
+                                                                            {
+                                                                                if is_active {
+                                                                                    dbg!("Deactivating");
+                                                                                    inspector.deactivate_for(&step_range, cx)
+                                                                                } else {
+                                                                                    inspector.activate_for_step(step_range.clone(), cx);
+                                                                                }
+                                                                            }
+                                                                        })
+                                                                        .ok();
+                                                                }
+                                                            }),
+                                                    )
+                                                    // .child(h_flex().w_full())
+                                                }))
                                                 .children(current_status.as_ref().map(|status| {
-                                                    status.into_element(
-                                                        step_range.clone(),
-                                                        editor_focus_handle.clone(),
-                                                        weak_self.clone(),
-                                                        cx,
+                                                    h_flex().w_full().justify_end().child(
+                                                        status.into_element(
+                                                            step_range.clone(),
+                                                            editor_focus_handle.clone(),
+                                                            weak_self.clone(),
+                                                            cx,
+                                                        ),
                                                     )
                                                 })),
                                         )
@@ -3738,12 +3787,41 @@ impl Render for ContextEditorToolbarItem {
                     )
                     .child(self.model_summary_editor.clone())
             });
-
+        let debug_enabled = self
+            .active_context_editor
+            .as_ref()
+            .map(|this| {
+                this.update(cx, |this, _| this.debug_inspector.is_some())
+                    .ok()
+            })
+            .flatten()
+            .unwrap_or_default();
         let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
 
         let right_side = h_flex()
             .gap_2()
+            .child(
+                IconButton::new("enable-debug-context", IconName::Trash)
+                    .visible_on_hover("toolbar")
+                    .selected(debug_enabled)
+                    .on_click(cx.listener(move |this, _, cx| {
+                        if let Some(view) = this.active_context_editor.as_ref() {
+                            view.update(cx, |this, cx| {
+                                if let Some(mut state) = this.debug_inspector.take() {
+                                    state.deactivate(cx);
+                                } else {
+                                    this.debug_inspector = Some(ContextInspector::new(
+                                        this.editor.clone(),
+                                        this.context.clone(),
+                                        cx,
+                                    ));
+                                }
+                            })
+                            .ok();
+                        }
+                    })),
+            )
             .child(ModelSelector::new(
                 self.fs.clone(),
                 ButtonLike::new("active-model")
@@ -4112,7 +4190,10 @@ fn render_slash_command_output_toggle(
     .into_any_element()
 }
 
-fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> FoldPlaceholder {
+pub(crate) fn quote_selection_fold_placeholder(
+    title: String,
+    editor: WeakView<Editor>,
+) -> FoldPlaceholder {
     FoldPlaceholder {
         render: Arc::new({
             move |fold_id, fold_range, _cx| {
@@ -4141,7 +4222,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> 
     }
 }
 
-fn render_quote_selection_output_toggle(
+pub(crate) fn render_quote_selection_output_toggle(
     row: MultiBufferRow,
     is_folded: bool,
     fold: ToggleFold,
