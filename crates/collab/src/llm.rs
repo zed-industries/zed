@@ -400,6 +400,11 @@ async fn check_usage_limit(
     ];
 
     for (usage, limit, resource) in checks {
+        // Temporarily bypass rate-limiting for staff members.
+        if claims.is_staff {
+            continue;
+        }
+
         if usage > limit {
             return Err(Error::http(
                 StatusCode::TOO_MANY_REQUESTS,
