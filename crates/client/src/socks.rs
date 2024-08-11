@@ -38,13 +38,13 @@ fn parse_socks_proxy(proxy: Option<&Uri>) -> Option<((String, u16), SocksVersion
     let Some(proxy_uri) = proxy else {
         return None;
     };
-    let Some(schema) = proxy_uri.scheme_str() else {
+    let Some(scheme) = proxy_uri.scheme_str() else {
         return None;
     };
-    let socks_version = if schema.starts_with("socks4") {
+    let socks_version = if scheme.starts_with("socks4") {
         // socks4
         SocksVersion::V4
-    } else if schema.starts_with("socks") {
+    } else if scheme.starts_with("socks") {
         // socks, socks5
         SocksVersion::V5
     } else {
