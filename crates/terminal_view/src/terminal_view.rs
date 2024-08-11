@@ -787,23 +787,20 @@ fn possible_open_targets(
     let row = path_position.row;
     let column = path_position.column;
     let maybe_path = path_position.path;
-    let potential_abs_paths = if maybe_path.is_absolute() {
-        HashSet::from_iter([maybe_path])
+
+    let abs_path = if maybe_path.is_absolute() {
+        Some(maybe_path)
     } else if maybe_path.starts_with("~") {
-        if let Some(abs_path) = maybe_path
+        maybe_path
             .strip_prefix("~")
             .ok()
             .and_then(|maybe_path| Some(dirs::home_dir()?.join(maybe_path)))
-        {
-            HashSet::from_iter([abs_path])
-        } else {
-            HashSet::default()
-        }
     } else {
-        // First check cwd and then workspace
         let mut potential_cwd_and_workspace_paths = HashSet::default();
         if let Some(cwd) = cwd {
-            potential_cwd_and_workspace_paths.insert(Path::join(cwd, &maybe_path));
+            let abs_path = Path::join(cwd, &maybe_path);
+            let canonicalized_path = abs_path.canonicalize().unwrap_or(abs_path);
+            potential_cwd_and_workspace_paths.insert(canonicalized_path);
         }
         if let Some(workspace) = workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
@@ -815,10 +812,25 @@ fn possible_open_targets(
                 }
             });
         }
-        potential_cwd_and_workspace_paths
+
+        return possible_open_paths_metadata(
+            fs,
+            row,
+            column,
+            potential_cwd_and_workspace_paths,
+            cx,
+        );
     };
 
-    possible_open_paths_metadata(fs, row, column, potential_abs_paths, cx)
+    let canonicalized_paths = match abs_path {
+        Some(abs_path) => match abs_path.canonicalize() {
+            Ok(path) => HashSet::from_iter([path]),
+            Err(_) => HashSet::default(),
+        },
+        None => HashSet::default(),
+    };
+
+    possible_open_paths_metadata(fs, row, column, canonicalized_paths, cx)
 }
 
 fn regex_to_literal(regex: &str) -> String {
