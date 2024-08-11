@@ -2435,7 +2435,7 @@ impl ContextEditor {
                                                             .color(Color::Hidden)
                                                             .selected_icon_color(Color::Default)
                                                             .selected_label_color(Color::Default)
-                                                            .icon(IconName::Update)
+                                                            .icon(IconName::Microscope)
                                                             .icon_position(IconPosition::Start)
                                                             .icon_size(IconSize::Small)
                                                             .label_size(LabelSize::Small)
@@ -2451,7 +2451,7 @@ impl ContextEditor {
                                                                                     .as_mut()
                                                                             {
                                                                                 if is_active {
-                                                                                    dbg!("Deactivating");
+
                                                                                     inspector.deactivate_for(&step_range, cx)
                                                                                 } else {
                                                                                     inspector.activate_for_step(step_range.clone(), cx);
@@ -3802,7 +3802,7 @@ impl Render for ContextEditorToolbarItem {
         let right_side = h_flex()
             .gap_2()
             .child(
-                IconButton::new("enable-debug-context", IconName::Trash)
+                IconButton::new("enable-debug-context", IconName::Microscope)
                     .visible_on_hover("toolbar")
                     .selected(debug_enabled)
                     .on_click(cx.listener(move |this, _, cx| {

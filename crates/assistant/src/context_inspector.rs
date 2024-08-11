@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use collections::{HashMap, HashSet};
 use editor::{
@@ -9,7 +9,8 @@ use editor::{
 use gpui::{Empty, Model, View};
 use multi_buffer::MultiBufferRow;
 use rope::Point;
-use ui::{Element as _, WindowContext};
+use text::{ToOffset, ToPoint};
+use ui::{Element as _, ViewContext, WindowContext};
 
 use crate::{
     assistant_panel::{quote_selection_fold_placeholder, render_quote_selection_output_toggle},
@@ -44,26 +45,25 @@ impl ContextInspector {
         self.active_debug_views.contains_key(range)
     }
     pub(crate) fn activate_for_step(&mut self, range: StepRange, cx: &mut WindowContext<'_>) {
-        let info = self.editor.update(cx, |editor, cx| {
-            editor.insert("\n", cx);
+        self.editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).as_singleton()?;
+            let text = "\nI really think creases are great\n";
+            let snapshot = buffer.update(cx, |this, cx| {
+                this.edit([(range.end..range.end, text)], None, cx);
+                this.text_snapshot()
+            });
+            let start_offset = range.end.to_offset(&snapshot);
+            let end_offset = start_offset + text.len();
+            let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+            let anchor_before = multibuffer_snapshot.anchor_after(start_offset);
+            let anchor_after = multibuffer_snapshot.anchor_before(end_offset);
 
-            let point = editor.selections.newest::<Point>(cx).head();
-            let start_row = MultiBufferRow(point.row);
-
-            editor.insert("I really think creases are great", cx);
-
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let anchor_before = snapshot.anchor_after(point);
-            let anchor_after = editor
-                .selections
-                .newest_anchor()
-                .head()
-                .bias_left(&snapshot);
-
-            editor.insert("\n", cx);
+            let start_row =
+                MultiBufferRow(multibuffer_snapshot.offset_to_point(start_offset).row + 1);
 
             let fold_placeholder =
-                quote_selection_fold_placeholder("Inspect debug".into(), cx.view().downgrade());
+                quote_selection_fold_placeholder("Inspect".into(), cx.view().downgrade());
+
             let crease = Crease::new(
                 anchor_before..anchor_after,
                 fold_placeholder,
@@ -81,33 +81,35 @@ impl ContextInspector {
                 },
                 cx,
             );
-            DebugInfo {
+
+            let info = DebugInfo {
                 range: anchor_before..anchor_after,
                 crease_id,
-            }
+            };
+            self.active_debug_views.insert(range, info);
+            Some(())
         });
-
-        self.active_debug_views.insert(range, info);
     }
 
-    fn remove_creases(&self, ids: impl Iterator<Item = CreaseId>, cx: &mut WindowContext<'_>) {
-        self.editor.update(cx, |this, cx| {
-            this.remove_creases(ids, cx);
-            cx.notify();
-        })
+    fn deactivate_impl(editor: &mut Editor, debug_data: DebugInfo, cx: &mut ViewContext<Editor>) {
+        editor.remove_creases([debug_data.crease_id], cx);
+        editor.edit([(debug_data.range, Arc::<str>::default())], cx)
     }
     pub(crate) fn deactivate_for(&mut self, range: &StepRange, cx: &mut WindowContext<'_>) {
         if let Some(debug_data) = self.active_debug_views.remove(range) {
-            self.remove_creases([debug_data.crease_id].into_iter(), cx)
+            self.editor.update(cx, |this, cx| {
+                Self::deactivate_impl(this, debug_data, cx);
+            });
         }
     }
 
     pub(crate) fn deactivate(&mut self, cx: &mut WindowContext<'_>) {
         let steps_to_disable = std::mem::take(&mut self.active_debug_views);
 
-        self.remove_creases(
-            steps_to_disable.into_iter().map(|(_, info)| info.crease_id),
-            cx,
-        );
+        self.editor.update(cx, move |editor, cx| {
+            for (_, debug_data) in steps_to_disable {
+                Self::deactivate_impl(editor, debug_data, cx);
+            }
+        });
     }
 }
