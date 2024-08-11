@@ -44,10 +44,16 @@ type ReferencePath<'a> = &'a str;
 ///
 /// ```
 /// # let root_schema = RootSchema::default();
-/// add_references_to_properties(&mut root_schema, &[
-///     ("property_a", "#/definitions/DefinitionA"),
-///     ("property_b", "#/definitions/DefinitionB"),
-/// ])
+/// adjust_schema_properties(
+///     &mut root_schema,
+///     &[
+///         ("property_a", "#/definitions/DefinitionA"),
+///         ("property_b", "#/definitions/DefinitionB"),
+///     ],
+///     |schema, definition| {
+///         schema.reference = Some(definition.to_string());
+///     },
+/// );
 /// ```
 pub fn adjust_schema_properties<F>(
     root_schema: &mut RootSchema,
