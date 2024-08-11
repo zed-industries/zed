@@ -5,8 +5,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
-use futures::AsyncReadExt;
 use futures::{io::BufReader, FutureExt as _};
+use futures::{lock::Mutex, AsyncReadExt};
 use indexed_docs::IndexedDocsDatabase;
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
@@ -28,9 +28,11 @@ wasmtime::component::bindgen!({
     async: true,
     trappable_imports: true,
     path: "../extension_api/wit/since_v0.0.7",
+    world: "extension",
     with: {
          "worktree": ExtensionWorktree,
-         "key-value-store": ExtensionKeyValueStore
+         "key-value-store": ExtensionKeyValueStore,
+         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream
     },
 });
 
@@ -41,8 +43,8 @@ mod settings {
 }
 
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
-
 pub type ExtensionKeyValueStore = Arc<IndexedDocsDatabase>;
+pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
 
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
@@ -144,6 +146,74 @@ impl http_client::Host for WasmState {
         })
         .await
         .to_wasmtime_result()
+    }
+
+    async fn fetch_stream(
+        &mut self,
+        extension_request: http_client::HttpRequest,
+    ) -> wasmtime::Result<Result<Resource<ExtensionHttpResponseStream>, String>> {
+        let request = convert_request(&extension_request)?;
+        let response = self.host.http_client.send(request);
+        maybe!(async {
+            let response = response.await?;
+            let stream = Arc::new(Mutex::new(response));
+            let resource = self.table.push(stream)?;
+            Ok(resource)
+        })
+        .await
+        .to_wasmtime_result()
+    }
+}
+
+impl http_client::HostHttpResponseStream for WasmState {
+    #[doc = " Retrieves the next chunk of data from the response stream."]
+    #[doc = " Returns None if the stream has ended."]
+    #[must_use]
+    #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]
+    fn next_chunk<'life0, 'async_trait>(
+        &'life0 mut self,
+        self_: wasmtime::component::Resource<ExtensionHttpResponseStream>,
+    ) -> ::core::pin::Pin<
+        Box<
+            dyn ::core::future::Future<
+                    Output = wasmtime::Result<
+                        Result<
+                            Option<wasmtime::component::__internal::Vec<u8>>,
+                            wasmtime::component::__internal::String,
+                        >,
+                    >,
+                > + ::core::marker::Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let stream = self.table.get(&self_)?.clone();
+            maybe!(async move {
+                let mut response = stream.lock().await;
+                let mut buffer = vec![0; 8192]; // 8KB buffer
+                let bytes_read = response.body_mut().read(&mut buffer).await?;
+                if bytes_read == 0 {
+                    Ok(None)
+                } else {
+                    buffer.truncate(bytes_read);
+                    Ok(Some(buffer))
+                }
+            })
+            .await
+            .to_wasmtime_result()
+        })
+    }
+
+    fn drop(
+        &mut self,
+        rep: wasmtime::component::Resource<ExtensionHttpResponseStream>,
+    ) -> wasmtime::Result<()> {
+        self.table.delete(rep)?;
+        Ok(())
     }
 }
 

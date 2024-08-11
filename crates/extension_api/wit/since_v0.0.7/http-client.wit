@@ -32,4 +32,14 @@ interface http-client {
 
     /// Performs an HTTP request and returns the response.
     fetch: func(req: http-request) -> result<http-response, string>;
+
+    /// An HTTP response stream.
+    resource http-response-stream {
+        /// Retrieves the next chunk of data from the response stream.
+        /// Returns None if the stream has ended.
+        next-chunk: func() -> result<option<list<u8>>, string>;
+    }
+
+    /// Performs an HTTP request and returns a response stream.
+    fetch-stream: func(req: http-request) -> result<http-response-stream, string>;
 }
