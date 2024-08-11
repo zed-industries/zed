@@ -95,7 +95,7 @@ impl LayoutCell {
 
             Point::new(
                 (origin.x + point.column as f32 * dimensions.cell_width).floor(),
-                origin.y + point.line as f32 * dimensions.line_height,
+                (origin.y + point.line as f32 * dimensions.line_height).floor(),
             )
         };
 
@@ -132,12 +132,12 @@ impl LayoutRect {
             let alac_point = self.point;
             point(
                 (origin.x + alac_point.column as f32 * dimensions.cell_width).floor(),
-                origin.y + alac_point.line as f32 * dimensions.line_height,
+                (origin.y + alac_point.line as f32 * dimensions.line_height).floor(),
             )
         };
         let size = point(
             (dimensions.cell_width * self.num_of_cells as f32).ceil(),
-            dimensions.line_height,
+            dimensions.line_height.ceil(),
         )
         .into();
 
@@ -296,6 +296,16 @@ impl TerminalElement {
                             layout_cell,
                         ))
                     };
+
+                    if let Some(rect) = cur_rect.as_mut() {
+                        rect.num_of_cells += 1;
+                    } else {
+                        cur_rect = Some(LayoutRect::new(
+                            AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
+                            1,
+                            convert_color(&bg, &theme),
+                        ));
+                    }
                 }
             }
 

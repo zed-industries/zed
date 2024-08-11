@@ -223,6 +223,8 @@ pub enum TerminalLineHeight {
     /// Use a standard line height, 1.3. This option is useful for TUIs,
     /// particularly if they use box characters
     Standard,
+    /// Use a line height of exactly 1.0 to be even tighter than standard for box characters.
+    Compact,
     /// Use a custom line height.
     Custom(f32),
 }
@@ -232,6 +234,7 @@ impl TerminalLineHeight {
         let value = match self {
             TerminalLineHeight::Comfortable => 1.618,
             TerminalLineHeight::Standard => 1.3,
+            TerminalLineHeight::Compact => 1.0,
             TerminalLineHeight::Custom(line_height) => f32::max(*line_height, 1.),
         };
         px(value).into()
