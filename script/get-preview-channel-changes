@@ -118,7 +118,7 @@ function getCreditString(pullRequestNumber, contributor, isStaff) {
     credit += pullRequestMarkdownLink;
   }
 
-  if (contributor && isStaff) {
+  if (contributor && !isStaff) {
     const contributorMarkdownLink = `[${contributor}](${GITHUB_URL}/${contributor})`;
     credit += `; thanks ${contributorMarkdownLink}`;
   }
