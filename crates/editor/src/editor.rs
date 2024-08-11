@@ -561,6 +561,27 @@ pub struct Editor {
     file_header_size: u32,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
+    // TODO kb recheck names
+    next_scroll_direction: NextScollCursorCenterTopBottom, 
+    _scroll_cursor_center_top_bottom_task: Task<()>,
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+enum NextScollCursorCenterTopBottom {
+    #[default]
+    Center,
+    Top,
+    Bottom,
+}
+
+impl NextScollCursorCenterTopBottom {
+    fn next(&self) -> Self {
+        match self {
+            Self::Center => Self::Top,
+            Self::Top => Self::Bottom,
+            Self::Bottom => Self::Center,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1895,6 +1916,8 @@ impl Editor {
             previous_search_ranges: None,
             breadcrumb_header: None,
             focused_block: None,
+            next_scroll_direction: Default::default(),
+            _scroll_cursor_center_top_bottom_task: Task::ready(()),
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
