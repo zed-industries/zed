@@ -16,8 +16,8 @@ use settings::SettingsStore;
 use std::{
     env,
     ops::Range,
-    time::{Duration, Instant},
     sync::LazyLock,
+    time::{Duration, Instant},
 };
 use text::network::Network;
 use text::{BufferId, LineEnding, LineIndent};

@@ -40,10 +40,9 @@ use std::{
     future::Future,
     marker::PhantomData,
     path::PathBuf,
-    sync::LazyLock,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Weak,
+        Arc, LazyLock, Weak,
     },
     time::{Duration, Instant},
 };

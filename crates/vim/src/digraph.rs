@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use gpui::AppContext;
-use std::sync::LazyLock;
 use settings::Settings;
+use std::sync::LazyLock;
 use ui::WindowContext;
 
 use crate::{Vim, VimSettings};

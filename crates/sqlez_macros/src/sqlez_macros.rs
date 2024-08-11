@@ -1,10 +1,16 @@
 use proc_macro::{Delimiter, Span, TokenStream, TokenTree};
-use sqlez::thread_safe_connection::{locking_queue, ThreadSafeConnection};
-use std::sync::LazyLock;
 use syn::Error;
 
-static SQLITE: LazyLock<ThreadSafeConnection> =
-    LazyLock::new(|| ThreadSafeConnection::new(":memory:", false, None, Some(locking_queue())));
+#[cfg(not(target_os = "linux"))]
+static SQLITE: std::sync::LazyLock<sqlez::thread_safe_connection::ThreadSafeConnection> =
+    std::sync::LazyLock::new(|| {
+        sqlez::thread_safe_connection::ThreadSafeConnection::new(
+            ":memory:",
+            false,
+            None,
+            Some(sqlez::thread_safe_connection::locking_queue()),
+        )
+    });
 
 #[proc_macro]
 pub fn sql(tokens: TokenStream) -> TokenStream {
