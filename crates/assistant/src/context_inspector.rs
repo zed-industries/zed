@@ -50,15 +50,16 @@ impl ContextInspector {
         let mut output = String::from("\n\n");
         match &step.status {
             crate::WorkflowStepStatus::Resolved(ResolvedWorkflowStep { title, suggestions }) => {
-                output.push_str("Resolution:\n");
-                output.push_str(&format!("  {:?}\n", title));
-                output.push_str(&format!("  {:?}\n", suggestions));
+                writeln!(output, "Resolution:").ok()?;
+                writeln!(output, "  {title:?}").ok()?;
+                writeln!(output, "  {suggestions:?}").ok()?;
             }
             crate::WorkflowStepStatus::Pending(_) => {
-                output.push_str("Resolution: Pending\n");
+                writeln!(output, "Resolution: Pending").ok()?;
             }
             crate::WorkflowStepStatus::Error(error) => {
-                writeln!(output, "Resolution: Error\n{:?}", error).unwrap();
+                writeln!(output, "Resolution: Error").ok()?;
+                writeln!(output, "{error:?}").ok()?;
             }
         }
         output.push('\n');
