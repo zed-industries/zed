@@ -8,7 +8,7 @@ use anthropic::AnthropicError;
 use anyhow::{anyhow, bail, Context as _, Result};
 use client::{Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME};
 use collections::BTreeMap;
-use feature_flags::{FeatureFlagAppExt, LanguageModels};
+use feature_flags::FeatureFlagAppExt;
 use futures::{future::BoxFuture, stream::BoxStream, AsyncBufReadExt, FutureExt, StreamExt};
 use gpui::{
     AnyElement, AnyView, AppContext, AsyncAppContext, FontWeight, Model, ModelContext,
@@ -168,13 +168,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
-        let is_user = !cx.has_flag::<LanguageModels>();
-        if is_user {
-            models.insert(
-                anthropic::Model::Claude3_5Sonnet.id().to_string(),
-                CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet),
-            );
-        } else {
+        if cx.is_staff() {
             for model in anthropic::Model::iter() {
                 if !matches!(model, anthropic::Model::Custom { .. }) {
                     models.insert(model.id().to_string(), CloudModel::Anthropic(model));
@@ -218,6 +212,11 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 };
                 models.insert(model.id().to_string(), model.clone());
             }
+        } else {
+            models.insert(
+                anthropic::Model::Claude3_5Sonnet.id().to_string(),
+                CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet),
+            );
         }
 
         models
