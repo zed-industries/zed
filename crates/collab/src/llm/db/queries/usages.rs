@@ -108,6 +108,7 @@ impl LlmDatabase {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_usage(
         &self,
         user_id: i32,
