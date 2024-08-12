@@ -59,7 +59,7 @@ The keys can be any single unicode codepoint that your keyboard generates (for e
 
 A few examples:
 
-```
+```json
  "bindings": {
    "cmd-k cmd-s": "zed::OpenKeymap", // matches ⌘-k then ⌘-s
    "space e": "editor::Complete", // type space then e
@@ -73,6 +73,37 @@ The `shift-` modifier can only be used in combination with a letter to indicate 
 The `alt-` modifier can be used on many layouts to generate a different key. For example on macOS US keyboard the combination `alt-c` types `ç`. You can match against either in your keymap file, though by convention Zed spells this combination as `alt-c`.
 
 It is possible to match against typing a modifier key on its own. For example `shift shift` can be used to implement JetBrains search everywhere shortcut. In this case the binding happens on key release instead of key press.
+
+### Contexts
+
+Each key binding includes a `context` which determes when the key binding is active. If no context key is present it is considered to be in the `Global` context. The context is a boolean expression that can include the following:
+
+- Pane
+- Workspace
+- Editor
+- Menu
+- Terminal
+- Assistant
+- ProjectPanel
+- ProjectSearch
+- BufferSearch
+- Search
+- Dock
+- EmptyPane
+- SharedScreen
+- VimControl
+- vim_mode == normal
+- vim_mode == visual
+- vim_mode == insert
+- vim_mode == replace
+- vim_mode == operator
+- vim_mode == waiting
+
+<!--
+TBD: Improve keybinding contexts documentation https://github.com/zed-industries/zed/issues/14718
+-->
+
+See also: [vim context docs](./vim.md#contexts)
 
 ### Remapping keys
 
@@ -102,7 +133,7 @@ A common request is to be able to map from one sequence of keys to another. As o
 There are some limitations to this, notably:
 
 - Any asynchronous operation will not happen until after all your key bindings have been dispatched. For example this means that while you can use a binding to open a file (as in the `cmd-alt-r` example) you cannot send further keystrokes and hope to have them interpreted by the new view.
-- - Other examples of asynchronous things are: communicating with a language server, changing the language of a buffer, anything that hits the network.
+- Other examples of asynchronous things are: communicating with a language server, changing the language of a buffer, anything that hits the network.
 - There is a limit of 100 simulated keys at a time, this is to avoid accidental infinite recursion if you trigger SendKeystrokes again inside your bindings.
 
 The argument to `SendKeystrokes` is a space-separated list of keystrokes (using the same syntax as above). Due to the way that keystrokes are parsed, any segment that is not recognized as a keypress will be sent verbatim to the currently focused input field.
@@ -125,11 +156,14 @@ For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ct
 ### Task Key bindings
 
 You can also bind keys to launch Zed Tasks defined in your tasks.json.
-See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more.
+See the [tasks documentation](tasks.md#custom-keybindings-for-tasks) for more.
 
 ### All key bindings
 
 #### Global
+
+TBD: Update these to reflect current bindings
+TBD: Add Column with Linux shortcuts
 
 | **Command**               | **Target**   | **Default Shortcut**    |
 | ------------------------- | ------------ | ----------------------- |

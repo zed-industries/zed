@@ -1,5 +1,5 @@
 use crate::{
-    llm::db::{queries::providers::ModelRateLimits, queries::usages::Usage, LlmDatabase},
+    llm::db::{queries::providers::ModelParams, queries::usages::Usage, LlmDatabase},
     test_llm_db,
 };
 use chrono::{Duration, Utc};
@@ -13,15 +13,15 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
     let model = "claude-3-5-sonnet";
 
     db.initialize().await.unwrap();
-    db.insert_models(&[(
+    db.insert_models(&[ModelParams {
         provider,
-        model.to_string(),
-        ModelRateLimits {
-            max_requests_per_minute: 5,
-            max_tokens_per_minute: 10_000,
-            max_tokens_per_day: 50_000,
-        },
-    )])
+        name: model.to_string(),
+        max_requests_per_minute: 5,
+        max_tokens_per_minute: 10_000,
+        max_tokens_per_day: 50_000,
+        price_per_million_input_tokens: 50,
+        price_per_million_output_tokens: 50,
+    }])
     .await
     .unwrap();
 
@@ -29,12 +29,12 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
     let user_id = 123;
 
     let now = t0;
-    db.record_usage(user_id, provider, model, 1000, now)
+    db.record_usage(user_id, provider, model, 1000, 0, now)
         .await
         .unwrap();
 
     let now = t0 + Duration::seconds(10);
-    db.record_usage(user_id, provider, model, 2000, now)
+    db.record_usage(user_id, provider, model, 2000, 0, now)
         .await
         .unwrap();
 
@@ -45,7 +45,9 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             requests_this_minute: 2,
             tokens_this_minute: 3000,
             tokens_this_day: 3000,
-            tokens_this_month: 3000,
+            input_tokens_this_month: 3000,
+            output_tokens_this_month: 0,
+            spending_this_month: 0,
         }
     );
 
@@ -57,12 +59,14 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             requests_this_minute: 1,
             tokens_this_minute: 2000,
             tokens_this_day: 3000,
-            tokens_this_month: 3000,
+            input_tokens_this_month: 3000,
+            output_tokens_this_month: 0,
+            spending_this_month: 0,
         }
     );
 
     let now = t0 + Duration::seconds(60);
-    db.record_usage(user_id, provider, model, 3000, now)
+    db.record_usage(user_id, provider, model, 3000, 0, now)
         .await
         .unwrap();
 
@@ -73,7 +77,9 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             requests_this_minute: 2,
             tokens_this_minute: 5000,
             tokens_this_day: 6000,
-            tokens_this_month: 6000,
+            input_tokens_this_month: 6000,
+            output_tokens_this_month: 0,
+            spending_this_month: 0,
         }
     );
 
@@ -86,11 +92,13 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             requests_this_minute: 0,
             tokens_this_minute: 0,
             tokens_this_day: 5000,
-            tokens_this_month: 6000,
+            input_tokens_this_month: 6000,
+            output_tokens_this_month: 0,
+            spending_this_month: 0,
         }
     );
 
-    db.record_usage(user_id, provider, model, 4000, now)
+    db.record_usage(user_id, provider, model, 4000, 0, now)
         .await
         .unwrap();
 
@@ -101,7 +109,9 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             requests_this_minute: 1,
             tokens_this_minute: 4000,
             tokens_this_day: 9000,
-            tokens_this_month: 10000,
+            input_tokens_this_month: 10000,
+            output_tokens_this_month: 0,
+            spending_this_month: 0,
         }
     );
 
@@ -114,7 +124,9 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             requests_this_minute: 0,
             tokens_this_minute: 0,
             tokens_this_day: 0,
-            tokens_this_month: 9000,
+            input_tokens_this_month: 9000,
+            output_tokens_this_month: 0,
+            spending_this_month: 0,
         }
     );
 }

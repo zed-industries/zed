@@ -3,10 +3,14 @@ use sea_orm::QueryOrder;
 use std::str::FromStr;
 use strum::IntoEnumIterator as _;
 
-pub struct ModelRateLimits {
-    pub max_requests_per_minute: i32,
-    pub max_tokens_per_minute: i32,
-    pub max_tokens_per_day: i32,
+pub struct ModelParams {
+    pub provider: LanguageModelProvider,
+    pub name: String,
+    pub max_requests_per_minute: i64,
+    pub max_tokens_per_minute: i64,
+    pub max_tokens_per_day: i64,
+    pub price_per_million_input_tokens: i32,
+    pub price_per_million_output_tokens: i32,
 }
 
 impl LlmDatabase {
@@ -75,20 +79,23 @@ impl LlmDatabase {
         Ok(())
     }
 
-    pub async fn insert_models(
-        &mut self,
-        models: &[(LanguageModelProvider, String, ModelRateLimits)],
-    ) -> Result<()> {
+    pub async fn insert_models(&mut self, models: &[ModelParams]) -> Result<()> {
         let all_provider_ids = &self.provider_ids;
         self.transaction(|tx| async move {
-            model::Entity::insert_many(models.into_iter().map(|(provider, name, rate_limits)| {
-                let provider_id = all_provider_ids[&provider];
+            model::Entity::insert_many(models.into_iter().map(|model_params| {
+                let provider_id = all_provider_ids[&model_params.provider];
                 model::ActiveModel {
                     provider_id: ActiveValue::set(provider_id),
-                    name: ActiveValue::set(name.clone()),
-                    max_requests_per_minute: ActiveValue::set(rate_limits.max_requests_per_minute),
-                    max_tokens_per_minute: ActiveValue::set(rate_limits.max_tokens_per_minute),
-                    max_tokens_per_day: ActiveValue::set(rate_limits.max_tokens_per_day),
+                    name: ActiveValue::set(model_params.name.clone()),
+                    max_requests_per_minute: ActiveValue::set(model_params.max_requests_per_minute),
+                    max_tokens_per_minute: ActiveValue::set(model_params.max_tokens_per_minute),
+                    max_tokens_per_day: ActiveValue::set(model_params.max_tokens_per_day),
+                    price_per_million_input_tokens: ActiveValue::set(
+                        model_params.price_per_million_input_tokens,
+                    ),
+                    price_per_million_output_tokens: ActiveValue::set(
+                        model_params.price_per_million_output_tokens,
+                    ),
                     ..Default::default()
                 }
             }))

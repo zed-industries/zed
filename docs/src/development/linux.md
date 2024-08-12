@@ -8,13 +8,13 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 - Install [Rust](https://www.rust-lang.org/tools/install). If it's already installed, make sure it's up-to-date:
 
-  ```bash
+  ```sh
   rustup update
   ```
 
 - Install the necessary system libraries:
 
-  ```bash
+  ```sh
   script/linux
   ```
 
@@ -41,19 +41,19 @@ Once the dependencies are installed, you can build Zed using [Cargo](https://doc
 
 For a debug build of the editor:
 
-```
+```sh
 cargo run
 ```
 
 And to run the tests:
 
-```
+```sh
 cargo test --workspace
 ```
 
 In release mode, the primary user interface is the `cli` crate. You can run it in development with:
 
-```
+```sh
 cargo run -p cli
 ```
 
@@ -61,7 +61,7 @@ cargo run -p cli
 
 You can install a local build on your machine with:
 
-```
+```sh
 ./script/install-linux
 ```
 

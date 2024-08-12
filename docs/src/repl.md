@@ -28,8 +28,11 @@ Zed supports running code in multiple languages. To get started, you need to ins
 **Currently supported languages:**
 
 - [Python (ipykernel)](#python)
-- [R (Ark)](#r)
 - [TypeScript (Deno)](#typescript-deno)
+- [R (Ark)](#r-ark)
+- [R (Xeus)](#r-xeus)
+- [Julia](#julia)
+- [Scala (Almond)](#scala)
 
 Once installed, you can start using the REPL in the respective language files, or other places those languages are supported, such as Markdown. If you recently added the kernels, run the `repl: refresh kernelspecs` command to make them available in the editor.
 
@@ -73,14 +76,14 @@ On MacOS, your system Python will _not_ work. Either set up [pyenv](https://gith
 
 To setup your current python to have an available kernel, run:
 
-```
+```sh
 pip install ipykernel
 python -m ipykernel install --user
 ```
 
 #### Conda Environment
 
-```
+```sh
 source activate myenv
 conda install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
@@ -88,37 +91,58 @@ python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 
 #### Virtualenv with pip
 
-```
+```sh
 source activate myenv
 pip install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
 
-### R
+### R (Ark Kernel) {#r-ark}
 
 Install [Ark](https://github.com/posit-dev/ark/releases) by downloading the release for your operating system. E.g. for macOS just unpack `ark` binary and put it into `/usr/local/bin`. Then run:
 
-```
+```sh
 ark --install
 ```
 
+### R (Xeus Kernel) {#r-xeus}
+
+- Install [Xeus-R](https://github.com/jupyter-xeus/xeus-r)
+- Install the R Extension for Zed (search for `R` in Zed Extensions)
+
+<!--
+TBD: Improve R REPL (Ark Kernel) instructions
+-->
+
 ### Typescript: Deno {#typescript-deno}
 
-[Install Deno](https://docs.deno.com/runtime/manual/getting_started/installation/) and then install the Deno jupyter kernel:
+- [Install Deno](https://docs.deno.com/runtime/manual/getting_started/installation/) and then install the Deno jupyter kernel:
 
-```
+```sh
 deno jupyter --install
 ```
 
-### Other languages
+<!--
+TBD: Improve R REPL (Ark Kernel) instructions
+-->
 
-The following languages and kernels are also supported. You can help us out by expanding their installation instructions and configuration:
+### Julia
 
-- [Julia (IJulia)](https://github.com/JuliaLang/IJulia.jl)
-- R
-  - [Ark Kernel](https://github.com/posit-dev/ark) - via Positron, formerly RStudio
-  - [Xeus-R](https://github.com/jupyter-xeus/xeus-r)
-- [Scala (almond)](https://almond.sh/docs/quick-start-install)
+- Download and install Julia from the [official website](https://julialang.org/downloads/).
+- Install the Julia Extension for Zed (search for `Julia` in Zed Extensions)
+
+<!--
+TBD: Improve Julia REPL instructions
+-->
+
+### Scala
+
+- Install Scala with `cs setup` (Coursier): https://www.scala-lang.org/download/
+  - `brew install coursier/formulas/coursier && cs setup`
+- REPL (Almond) Setup Instructions https://almond.sh/docs/quick-start-install
+  - `brew install --cask temurin` (Eclipse foundation official OpenJDK binaries)
+  - `brew install coursier/formulas/coursier && cs setup`
+  - `coursier launch --use-bootstrap almond -- --install`
 
 ## Changing which kernel is used per language {#changing-kernels}
 
@@ -144,7 +168,7 @@ Available kernels are shown via the `repl: sessions` command. To refresh the ker
 
 If you have `jupyter` installed, you can run `jupyter kernelspec list` to see the available kernels.
 
-```
+```sh
 $ jupyter kernelspec list
 Available kernels:
   ark                   /Users/z/Library/Jupyter/kernels/ark

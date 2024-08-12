@@ -623,7 +623,7 @@ pub trait InputHandler: 'static {
     );
 
     /// Replace the text in the given document range with the given text,
-    /// and mark the given text as part of of an IME 'composing' state
+    /// and mark the given text as part of an IME 'composing' state
     /// Corresponds to [setMarkedText(_:selectedRange:replacementRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438246-setmarkedtext)
     ///
     /// range_utf16 is in terms of UTF-16 characters

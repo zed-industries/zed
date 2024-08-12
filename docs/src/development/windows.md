@@ -10,13 +10,13 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 - Install [Rust](https://www.rust-lang.org/tools/install). If it's already installed, make sure it's up-to-date:
 
-  ```bash
+  ```sh
   rustup update
   ```
 
 - Install the Rust wasm toolchain:
 
-  ```bash
+  ```sh
   rustup target add wasm32-wasi
   ```
 
@@ -44,34 +44,36 @@ Once you have the dependencies installed, you can build Zed using [Cargo](https:
 
 For a debug build:
 
-```
+```sh
 cargo run
 ```
 
 For a release build:
 
-```
+```sh
 cargo run --release
 ```
 
 And to run the tests:
 
-```
+```sh
 cargo test --workspace
 ```
 
 ## Installing from msys2
 
-[MSYS2](https://msys2.org/) distribution provides Zed as a package. To download the prebuilt binary, run
+[MSYS2](https://msys2.org/) distribution provides Zed as a package [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed). To download the prebuilt binary, run
 
-```
+```sh
 pacman -Syu
 pacman -S mingw-w64-ucrt-x86_64-zed
 ```
 
 then you can run `zed` in a UCRT64 shell.
 
-> Please, report any issue in https://github.com/msys2/MINGW-packages/issues first.
+You can see the [build script](https://github.com/msys2/MINGW-packages/blob/master/mingw-w64-zed/PKGBUILD) for more details.
+
+> Please, report any issue in [msys2/MINGW-packages/issues](https://github.com/msys2/MINGW-packages/issues?q=is%3Aissue+is%3Aopen+zed) first.
 
 ## Troubleshooting
 

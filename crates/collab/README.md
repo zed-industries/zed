@@ -10,7 +10,7 @@ It contains our back-end logic for collaboration, to which we connect from the Z
 
 Before you can run the collab server locally, you'll need to set up a zed Postgres database.
 
-```
+```sh
 script/bootstrap
 ```
 
@@ -32,13 +32,13 @@ To use a different set of admin users, create `crates/collab/seed.json`.
 
 In one terminal, run Zed's collaboration server and the livekit dev server:
 
-```
+```sh
 foreman start
 ```
 
 In a second terminal, run two or more instances of Zed.
 
-```
+```sh
 script/zed-local -2
 ```
 
@@ -64,7 +64,7 @@ You can tell what is currently deployed with `./script/what-is-deployed`.
 
 To create a new migration:
 
-```
+```sh
 ./script/create-migration <name>
 ```
 

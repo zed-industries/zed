@@ -54,7 +54,7 @@ impl PromptBuilder {
         cx: &gpui::AppContext,
         handlebars: Arc<Mutex<Handlebars<'static>>>,
     ) {
-        let templates_dir = paths::prompt_templates_dir();
+        let templates_dir = paths::prompt_overrides_dir();
 
         cx.background_executor()
             .spawn(async move {
