@@ -3,25 +3,27 @@ use std::{ops::Range, sync::Arc};
 use collections::{HashMap, HashSet};
 use editor::{
     actions::FoldAt,
-    display_map::{Crease, CreaseId},
+    display_map::{
+        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CreaseId, CustomBlockId,
+    },
     Editor,
 };
 use gpui::{Empty, Model, View};
 use multi_buffer::MultiBufferRow;
 use text::ToOffset;
-use ui::{Element as _, ViewContext, WindowContext};
-
-use crate::{
-    assistant_panel::{quote_selection_fold_placeholder, render_quote_selection_output_toggle},
-    Context, ResolvedWorkflowStep,
+use ui::{
+    div, h_flex, Color, Element as _, ParentElement as _, Styled, ViewContext, WindowContext,
 };
+
+use crate::{Context, ResolvedWorkflowStep};
 
 type StepRange = Range<language::Anchor>;
 
 struct DebugInfo {
     range: Range<editor::Anchor>,
-    crease_id: CreaseId,
+    block_id: CustomBlockId,
 }
+
 pub(crate) struct ContextInspector {
     active_debug_views: HashMap<Range<language::Anchor>, DebugInfo>,
     context: Model<Context>,
@@ -78,33 +80,35 @@ impl ContextInspector {
             let anchor_before = multibuffer_snapshot.anchor_after(start_offset);
             let anchor_after = multibuffer_snapshot.anchor_before(end_offset);
 
-            let start_row =
-                MultiBufferRow(multibuffer_snapshot.offset_to_point(start_offset + 1).row + 1);
-
-            let fold_placeholder =
-                quote_selection_fold_placeholder("Inspect".into(), cx.view().downgrade());
-
-            let crease = Crease::new(
-                anchor_before..anchor_after,
-                fold_placeholder,
-                render_quote_selection_output_toggle,
-                |_, _, _| Empty.into_any(),
-            );
-            let crease_id = editor
-                .insert_creases(vec![crease], cx)
+            let block_id = editor
+                .insert_blocks(
+                    [BlockProperties {
+                        position: anchor_after,
+                        height: 0,
+                        style: BlockStyle::Sticky,
+                        render: Box::new(move |cx| {
+                            div()
+                                .w_full()
+                                .px(cx.gutter_dimensions.full_width())
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .border_t_1()
+                                        .border_color(Color::Warning.color(cx)),
+                                )
+                                .into_any()
+                        }),
+                        disposition: BlockDisposition::Below,
+                        priority: 0,
+                    }],
+                    None,
+                    cx,
+                )
                 .into_iter()
-                .next()
-                .unwrap();
-            editor.fold_at(
-                &FoldAt {
-                    buffer_row: start_row,
-                },
-                cx,
-            );
-
+                .next()?;
             let info = DebugInfo {
                 range: anchor_before..anchor_after,
-                crease_id,
+                block_id,
             };
             self.active_debug_views.insert(range, info);
             Some(())
@@ -112,7 +116,7 @@ impl ContextInspector {
     }
 
     fn deactivate_impl(editor: &mut Editor, debug_data: DebugInfo, cx: &mut ViewContext<Editor>) {
-        editor.remove_creases([debug_data.crease_id], cx);
+        editor.remove_blocks(HashSet::from_iter([debug_data.block_id]), None, cx);
         editor.edit([(debug_data.range, Arc::<str>::default())], cx)
     }
     pub(crate) fn deactivate_for(&mut self, range: &StepRange, cx: &mut WindowContext<'_>) {

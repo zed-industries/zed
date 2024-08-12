@@ -4189,10 +4189,7 @@ fn render_slash_command_output_toggle(
     .into_any_element()
 }
 
-pub(crate) fn quote_selection_fold_placeholder(
-    title: String,
-    editor: WeakView<Editor>,
-) -> FoldPlaceholder {
+fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> FoldPlaceholder {
     FoldPlaceholder {
         render: Arc::new({
             move |fold_id, fold_range, _cx| {
@@ -4221,7 +4218,7 @@ pub(crate) fn quote_selection_fold_placeholder(
     }
 }
 
-pub(crate) fn render_quote_selection_output_toggle(
+fn render_quote_selection_output_toggle(
     row: MultiBufferRow,
     is_folded: bool,
     fold: ToggleFold,
