@@ -29,12 +29,12 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
     let user_id = 123;
 
     let now = t0;
-    db.record_usage(user_id, provider, model, 1000, 0, now)
+    db.record_usage(user_id, false, provider, model, 1000, 0, now)
         .await
         .unwrap();
 
     let now = t0 + Duration::seconds(10);
-    db.record_usage(user_id, provider, model, 2000, 0, now)
+    db.record_usage(user_id, false, provider, model, 2000, 0, now)
         .await
         .unwrap();
 
@@ -66,7 +66,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
     );
 
     let now = t0 + Duration::seconds(60);
-    db.record_usage(user_id, provider, model, 3000, 0, now)
+    db.record_usage(user_id, false, provider, model, 3000, 0, now)
         .await
         .unwrap();
 
@@ -98,7 +98,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
         }
     );
 
-    db.record_usage(user_id, provider, model, 4000, 0, now)
+    db.record_usage(user_id, false, provider, model, 4000, 0, now)
         .await
         .unwrap();
 
