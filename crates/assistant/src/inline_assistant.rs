@@ -169,6 +169,7 @@ impl InlineAssistant {
                 Codegen::new(
                     editor.read(cx).buffer().clone(),
                     range.clone(),
+                    vec![range.clone()],
                     None,
                     self.telemetry.clone(),
                     self.prompt_builder.clone(),
@@ -275,6 +276,7 @@ impl InlineAssistant {
             Codegen::new(
                 editor.read(cx).buffer().clone(),
                 range.clone(),
+                vec![range.clone()],
                 initial_transaction_id,
                 self.telemetry.clone(),
                 self.prompt_builder.clone(),
@@ -2119,6 +2121,7 @@ impl Codegen {
     pub fn new(
         buffer: Model<MultiBuffer>,
         transform_range: Range<Anchor>,
+        selection_ranges: Vec<Range<Anchor>>,
         initial_transaction_id: Option<TransactionId>,
         telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
@@ -2161,7 +2164,7 @@ impl Codegen {
             initial_transaction_id,
             builder,
             transform_range: transform_range.clone(),
-            selection_ranges: vec![transform_range],
+            selection_ranges,
         }
     }
 
@@ -2834,6 +2837,7 @@ mod tests {
             Codegen::new(
                 buffer.clone(),
                 range.clone(),
+                vec![range.clone()],
                 None,
                 None,
                 prompt_builder,
@@ -2906,6 +2910,7 @@ mod tests {
             Codegen::new(
                 buffer.clone(),
                 range.clone(),
+                vec![range.clone()],
                 None,
                 None,
                 prompt_builder,
@@ -2981,6 +2986,7 @@ mod tests {
             Codegen::new(
                 buffer.clone(),
                 range.clone(),
+                vec![range.clone()],
                 None,
                 None,
                 prompt_builder,
@@ -3055,6 +3061,7 @@ mod tests {
             Codegen::new(
                 buffer.clone(),
                 range.clone(),
+                vec![range.clone()],
                 None,
                 None,
                 prompt_builder,
