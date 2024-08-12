@@ -175,6 +175,7 @@ pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub fn render_parsed_markdown(
     element_id: impl Into<ElementId>,
@@ -562,11 +563,11 @@ pub struct Editor {
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
     // TODO kb recheck names
-    next_scroll_direction: NextScollCursorCenterTopBottom, 
+    next_scroll_direction: NextScollCursorCenterTopBottom,
     _scroll_cursor_center_top_bottom_task: Task<()>,
 }
 
-#[derive(Copy, Clone, Debug,  PartialEq, Eq, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 enum NextScollCursorCenterTopBottom {
     #[default]
     Center,
@@ -1916,7 +1917,7 @@ impl Editor {
             previous_search_ranges: None,
             breadcrumb_header: None,
             focused_block: None,
-            next_scroll_direction: Default::default(),
+            next_scroll_direction: NextScollCursorCenterTopBottom::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));

@@ -13175,45 +13175,47 @@ let foo = 15;"#,
     cx.update_editor(|e, cx| {
         assert_eq!(
             e.next_scroll_direction,
-            NextScollCursorCenterTopBottom::Center
+            NextScollCursorCenterTopBottom::Center,
+            "Default next scroll direction is center",
         );
-    });
-    cx.update_editor(|e, cx| {
+
         e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
-    });
-    cx.update_editor(|e, cx| {
         assert_eq!(
             e.next_scroll_direction,
-            NextScollCursorCenterTopBottom::Top
+            NextScollCursorCenterTopBottom::Top,
+            "After center, next scroll direction should be top",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
+        assert_eq!(
+            e.next_scroll_direction,
+            NextScollCursorCenterTopBottom::Bottom,
+            "After top, next scroll direction should be bottom",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
+        assert_eq!(
+            e.next_scroll_direction,
+            NextScollCursorCenterTopBottom::Center,
+            "After bottom, scrolling should start over",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
+        assert_eq!(
+            e.next_scroll_direction,
+            NextScollCursorCenterTopBottom::Top,
+            "Scrolling continues if retriggered fast enough"
         );
     });
 
-    // TODO kb add asynchrosity and test that the position gets reset
-
-    cx.update_editor(|e, cx| {
-        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
-    });
-    cx.update_editor(|e, cx| {
-        assert_eq!(e.next_scroll_direction, NextScollCursorCenterTopBottom::Bottom);
-    });
-
-    cx.update_editor(|e, cx| {
-        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
-    });
-    cx.update_editor(|e, cx| {
+    cx.executor()
+        .advance_clock(SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT + Duration::from_millis(200));
+    cx.executor().run_until_parked();
+    cx.update_editor(|e, _| {
         assert_eq!(
             e.next_scroll_direction,
-            NextScollCursorCenterTopBottom::Bottom
-        );
-    });
-
-    cx.update_editor(|e, cx| {
-        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
-    });
-    cx.update_editor(|e, cx| {
-        assert_eq!(
-            e.next_scroll_direction,
-            NextScollCursorCenterTopBottom::Center
+            NextScollCursorCenterTopBottom::Center,
+            "If scrolling is not triggered fast enough, it should reset"
         );
     });
 }

@@ -1,9 +1,8 @@
-use std::time::Duration;
-
 use super::Axis;
 use crate::{
     Autoscroll, Bias, Editor, EditorMode, NextScollCursorCenterTopBottom, NextScreen, ScrollAnchor,
     ScrollCursorBottom, ScrollCursorCenter, ScrollCursorCenterTopBottom, ScrollCursorTop,
+    SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT,
 };
 use gpui::{Point, ViewContext};
 
@@ -87,9 +86,11 @@ impl Editor {
         self.next_scroll_direction = self.next_scroll_direction.next();
         self._scroll_cursor_center_top_bottom_task =
             cx.spawn(|editor, mut cx: gpui::AsyncWindowContext| async move {
-                cx.background_executor().timer(Duration::from_secs(1)).await;
+                cx.background_executor()
+                    .timer(SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT)
+                    .await;
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(&mut cx, |editor, _| {
                         editor.next_scroll_direction = NextScollCursorCenterTopBottom::default();
                     })
                     .ok();
