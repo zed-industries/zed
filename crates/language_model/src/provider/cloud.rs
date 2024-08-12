@@ -4,7 +4,8 @@ use crate::{
     LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, ZedModel,
 };
-use anyhow::{anyhow, bail, Result};
+use anthropic::AnthropicError;
+use anyhow::{anyhow, bail, Context as _, Result};
 use client::{Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME};
 use collections::BTreeMap;
 use feature_flags::{FeatureFlagAppExt, LanguageModels};
@@ -446,16 +447,23 @@ impl LanguageModel for CloudLanguageModel {
                         match body.read_line(&mut buffer).await {
                             Ok(0) => Ok(None),
                             Ok(_) => {
-                                let event: anthropic::Event = serde_json::from_str(&buffer)?;
+                                let event: anthropic::Event = serde_json::from_str(&buffer)
+                                    .context("failed to parse Anthropic event")?;
                                 Ok(Some((event, body)))
                             }
-                            Err(e) => Err(e.into()),
+                            Err(err) => Err(AnthropicError::Other(err.into())),
                         }
                     });
 
                     Ok(anthropic::extract_text_from_events(stream))
                 });
-                async move { Ok(future.await?.boxed()) }.boxed()
+                async move {
+                    Ok(future
+                        .await?
+                        .map(|result| result.map_err(|err| anyhow!(err)))
+                        .boxed())
+                }
+                .boxed()
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
