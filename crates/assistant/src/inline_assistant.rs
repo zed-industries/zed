@@ -866,12 +866,7 @@ impl InlineAssistant {
         assist
             .codegen
             .update(cx, |codegen, cx| {
-                codegen.start(
-                    assist.range.clone(),
-                    user_prompt,
-                    assistant_panel_context,
-                    cx,
-                )
+                codegen.start(user_prompt, assistant_panel_context, cx)
             })
             .log_err();
 
@@ -2062,12 +2057,9 @@ impl InlineAssist {
             return future::ready(Err(anyhow!("no user prompt"))).boxed();
         };
         let assistant_panel_context = self.assistant_panel_context(cx);
-        self.codegen.read(cx).count_tokens(
-            self.range.clone(),
-            user_prompt,
-            assistant_panel_context,
-            cx,
-        )
+        self.codegen
+            .read(cx)
+            .count_tokens(user_prompt, assistant_panel_context, cx)
     }
 }
 
@@ -2098,6 +2090,8 @@ pub struct Codegen {
     telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
     builder: Arc<PromptBuilder>,
+    transform_range: Range<Anchor>,
+    selection_ranges: Vec<Range<Anchor>>,
 }
 
 enum CodegenStatus {
@@ -2124,7 +2118,7 @@ impl EventEmitter<CodegenEvent> for Codegen {}
 impl Codegen {
     pub fn new(
         buffer: Model<MultiBuffer>,
-        range: Range<Anchor>,
+        transform_range: Range<Anchor>,
         initial_transaction_id: Option<TransactionId>,
         telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
@@ -2134,7 +2128,7 @@ impl Codegen {
 
         let (old_buffer, _, _) = buffer
             .read(cx)
-            .range_to_buffer_ranges(range.clone(), cx)
+            .range_to_buffer_ranges(transform_range.clone(), cx)
             .pop()
             .unwrap();
         let old_buffer = cx.new_model(|cx| {
@@ -2166,6 +2160,8 @@ impl Codegen {
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
             initial_transaction_id,
             builder,
+            transform_range: transform_range.clone(),
+            selection_ranges: vec![transform_range],
         }
     }
 
@@ -2190,13 +2186,12 @@ impl Codegen {
 
     pub fn count_tokens(
         &self,
-        edit_range: Range<Anchor>,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
         if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-            let request = self.build_request(user_prompt, assistant_panel_context, edit_range, cx);
+            let request = self.build_request(user_prompt, assistant_panel_context, cx);
             match request {
                 Ok(request) => model.count_tokens(request, cx),
                 Err(error) => futures::future::ready(Err(error)).boxed(),
@@ -2208,7 +2203,6 @@ impl Codegen {
 
     pub fn start(
         &mut self,
-        edit_range: Range<Anchor>,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &mut ModelContext<Self>,
@@ -2223,24 +2217,20 @@ impl Codegen {
             });
         }
 
-        self.edit_position = Some(edit_range.start.bias_right(&self.snapshot));
+        self.edit_position = Some(self.transform_range.start.bias_right(&self.snapshot));
 
         let telemetry_id = model.telemetry_id();
-        let chunks: LocalBoxFuture<Result<BoxStream<Result<String>>>> = if user_prompt
-            .trim()
-            .to_lowercase()
-            == "delete"
-        {
-            async { Ok(stream::empty().boxed()) }.boxed_local()
-        } else {
-            let request =
-                self.build_request(user_prompt, assistant_panel_context, edit_range.clone(), cx)?;
+        let chunks: LocalBoxFuture<Result<BoxStream<Result<String>>>> =
+            if user_prompt.trim().to_lowercase() == "delete" {
+                async { Ok(stream::empty().boxed()) }.boxed_local()
+            } else {
+                let request = self.build_request(user_prompt, assistant_panel_context, cx)?;
 
-            let chunks =
-                cx.spawn(|_, cx| async move { model.stream_completion(request, &cx).await });
-            async move { Ok(chunks.await?.boxed()) }.boxed_local()
-        };
-        self.handle_stream(telemetry_id, edit_range, chunks, cx);
+                let chunks =
+                    cx.spawn(|_, cx| async move { model.stream_completion(request, &cx).await });
+                async move { Ok(chunks.await?.boxed()) }.boxed_local()
+            };
+        self.handle_stream(telemetry_id, self.transform_range.clone(), chunks, cx);
         Ok(())
     }
 
@@ -2248,11 +2238,10 @@ impl Codegen {
         &self,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
-        edit_range: Range<Anchor>,
         cx: &AppContext,
     ) -> Result<LanguageModelRequest> {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let language = buffer.language_at(edit_range.start);
+        let language = buffer.language_at(self.transform_range.start);
         let language_name = if let Some(language) = language.as_ref() {
             if Arc::ptr_eq(language, &language::PLAIN_TEXT) {
                 None
@@ -2277,8 +2266,8 @@ impl Codegen {
         };
 
         let language_name = language_name.as_deref();
-        let start = buffer.point_to_buffer_offset(edit_range.start);
-        let end = buffer.point_to_buffer_offset(edit_range.end);
+        let start = buffer.point_to_buffer_offset(self.transform_range.start);
+        let end = buffer.point_to_buffer_offset(self.transform_range.end);
         let (buffer, range) = if let Some((start, end)) = start.zip(end) {
             let (start_buffer, start_buffer_offset) = start;
             let (end_buffer, end_buffer_offset) = end;
