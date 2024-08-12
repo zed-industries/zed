@@ -973,25 +973,64 @@ impl Default for CursorStyle {
 
 /// A clipboard item that should be copied to the clipboard
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ClipboardItem {
-    /// The clipboard item is a plaintext string
+pub struct ClipboardItem {
+    entries: Vec<ClipboardEntry>,
+}
+
+/// Either a ClipboardString or a ClipboardImage
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClipboardEntry {
+    /// A string entry
     String(ClipboardString),
-    /// The clipboard item is an image
+    /// An image entry
     Image(Image),
 }
 
 impl ClipboardItem {
     /// Create a new ClipboardItem::String with no associated metadata
     pub fn new_string(text: String) -> Self {
-        Self::String(ClipboardString::new(text))
+        Self {
+            entries: vec![ClipboardEntry::String(ClipboardString::new(text))],
+        }
     }
 
-    /// If this is a ClipboardItem::String, return that string's text
-    pub fn text(&self) -> Option<&str> {
-        match self {
-            Self::String(ClipboardString { text, metadata: _ }) => Some(text),
-            _ => None,
+    /// Create a new ClipboardItem::String with the given text and associated metadata
+    pub fn new_string_with_metadata<T: Serialize>(text: String, metadata: T) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::String(
+                ClipboardString::new(text).with_metadata(metadata),
+            )],
         }
+    }
+
+    /// Concatenates together all the ClipboardString entries in the item.
+    /// Returns None if there were no ClipboardString entries.
+    pub fn text(&self) -> Option<String> {
+        let mut answer = String::new();
+        let mut any_entries = false;
+
+        for entry in self.entries.iter() {
+            if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry {
+                answer.push_str(text);
+                any_entries = true;
+            }
+        }
+
+        if any_entries {
+            Some(answer)
+        } else {
+            None
+        }
+    }
+
+    /// Get the item's entries
+    pub fn entries(&self) -> &[ClipboardEntry] {
+        &self.entries
+    }
+
+    /// Get owned versions of the item's entries
+    pub fn into_entries(self) -> impl Iterator<Item = ClipboardEntry> {
+        self.entries.into_iter()
     }
 }
 
@@ -1125,7 +1164,7 @@ impl ClipboardString {
         }
     }
 
-    /// Create a new clipboard item with the given text and metadata
+    /// Return a new clipboard item with the metadata replaced by the given metadata
     pub fn with_metadata<T: Serialize>(mut self, metadata: T) -> Self {
         self.metadata = Some(serde_json::to_string(&metadata).unwrap());
         self

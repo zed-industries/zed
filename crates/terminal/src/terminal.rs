@@ -659,11 +659,13 @@ impl Terminal {
                 cx.write_to_clipboard(ClipboardItem::new_string(data.to_string()))
             }
             AlacTermEvent::ClipboardLoad(_, format) => {
-                self.write_to_pty(match &cx.read_from_clipboard() {
-                    // The terminal only supports pasting strings
-                    Some(ClipboardItem::String(string)) => format(string.text()),
-                    _ => format(""),
-                })
+                self.write_to_pty(
+                    match &cx.read_from_clipboard().and_then(|item| item.text()) {
+                        // The terminal only supports pasting strings, not images.
+                        Some(text) => format(text),
+                        _ => format(""),
+                    },
+                )
             }
             AlacTermEvent::PtyWrite(out) => self.write_to_pty(out.clone()),
             AlacTermEvent::TextAreaSizeRequest(format) => {

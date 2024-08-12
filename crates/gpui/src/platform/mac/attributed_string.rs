@@ -13,7 +13,6 @@ pub trait NSAttributedString: Sized {
     }
 
     unsafe fn init_attributed_string(self, string: id) -> id;
-    unsafe fn initWithAttachment_(self, attachment: id) -> id;
     unsafe fn appendAttributedString_(self, attr_string: id);
     unsafe fn RTFDFromRange_documentAttributes_(self, range: NSRange, attrs: id) -> id;
     unsafe fn RTFFromRange_documentAttributes_(self, range: NSRange, attrs: id) -> id;
@@ -23,10 +22,6 @@ pub trait NSAttributedString: Sized {
 impl NSAttributedString for id {
     unsafe fn init_attributed_string(self, string: id) -> id {
         msg_send![self, initWithString: string]
-    }
-
-    unsafe fn initWithAttachment_(self, attachment: id) -> id {
-        msg_send![self, initWithAttachment: attachment]
     }
 
     unsafe fn appendAttributedString_(self, attr_string: id) {
@@ -51,15 +46,9 @@ pub trait NSTextAttachment: Sized {
     unsafe fn alloc(_: Self) -> id {
         msg_send![class!(NSTextAttachment), alloc]
     }
-
-    unsafe fn setValue_forKey_(self, value: id, key: id);
 }
 
-impl NSTextAttachment for id {
-    unsafe fn setValue_forKey_(self, value: id, key: id) {
-        let _: () = msg_send![self, setValue: value forKey: key];
-    }
-}
+impl NSTextAttachment for id {}
 
 pub trait NSMutableAttributedString: NSAttributedString {
     unsafe fn alloc(_: Self) -> id {

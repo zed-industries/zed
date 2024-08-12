@@ -34,11 +34,11 @@ use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
     canvas, div, img, percentage, point, size, Action, Animation, AnimationExt, AnyElement,
-    AnyView, AppContext, AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty,
-    Entity, EntityId, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
-    IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render, RenderImage, SharedString, Size,
-    StatefulInteractiveElement, Styled, Subscription, Task, Transformation, UpdateGlobal, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem, Context as _,
+    DismissEvent, Empty, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, FontWeight,
+    InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render, RenderImage,
+    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
+    UpdateGlobal, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -3100,7 +3100,24 @@ impl ContextEditor {
     }
 
     fn paste(&mut self, _: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
-        if let Some(ClipboardItem::Image(image)) = cx.read_from_clipboard() {
+        let images = if let Some(item) = cx.read_from_clipboard() {
+            item.into_entries()
+                .filter_map(|entry| {
+                    if let ClipboardEntry::Image(image) = entry {
+                        Some(image)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        if images.is_empty() {
+            // If we didn't find any valid image data to paste, propagate to let normal pasting happen.
+            cx.propagate();
+        } else {
             let mut image_positions = Vec::new();
             self.editor.update(cx, |editor, cx| {
                 editor.transact(cx, |editor, cx| {
@@ -3119,14 +3136,14 @@ impl ContextEditor {
             });
 
             self.context.update(cx, |context, cx| {
-                let image_id = image.id();
-                context.insert_image(image, cx);
-                for image_position in image_positions {
-                    context.insert_image_anchor(image_id, image_position.text_anchor, cx);
+                for image in images {
+                    let image_id = image.id();
+                    context.insert_image(image, cx);
+                    for image_position in image_positions.iter() {
+                        context.insert_image_anchor(image_id, image_position.text_anchor, cx);
+                    }
                 }
             });
-        } else {
-            cx.propagate();
         }
     }
 

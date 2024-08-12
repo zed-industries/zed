@@ -55,7 +55,7 @@ impl CopilotCodeVerification {
     ) -> impl IntoElement {
         let copied = cx
             .read_from_clipboard()
-            .map(|item| item.text() == Some(&data.user_code))
+            .map(|item| item.text().as_ref() == Some(&data.user_code))
             .unwrap_or(false);
         h_flex()
             .w_full()
