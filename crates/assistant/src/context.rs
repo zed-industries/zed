@@ -33,7 +33,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp,
+    cmp::{self, Ordering},
     fmt::Debug,
     iter, mem,
     ops::Range,
@@ -618,6 +618,7 @@ pub struct Context {
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
     workflow_steps: Vec<WorkflowStep>,
+    edits_since_last_workflow_step_prune: language::Subscription,
     project: Option<Model<Project>>,
     prompt_builder: Arc<PromptBuilder>,
 }
@@ -667,6 +668,8 @@ impl Context {
         });
         let edits_since_last_slash_command_parse =
             buffer.update(cx, |buffer, _| buffer.subscribe());
+        let edits_since_last_workflow_step_prune =
+            buffer.update(cx, |buffer, _| buffer.subscribe());
         let mut this = Self {
             id,
             timestamp: clock::Lamport::new(replica_id),
@@ -693,6 +696,7 @@ impl Context {
             project,
             language_registry,
             workflow_steps: Vec::new(),
+            edits_since_last_workflow_step_prune,
             prompt_builder,
         };
 
@@ -1058,7 +1062,9 @@ impl Context {
             language::Event::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse_slash_commands(cx);
-                self.prune_invalid_workflow_steps(cx);
+                // Use `inclusive = true` to invalidate a step when an edit occurs
+                // at the start/end of a parsed step.
+                self.prune_invalid_workflow_steps(true, cx);
                 cx.emit(ContextEvent::MessagesEdited);
             }
             _ => {}
@@ -1165,22 +1171,60 @@ impl Context {
         }
     }
 
-    fn prune_invalid_workflow_steps(&mut self, cx: &mut ModelContext<Self>) {
-        let buffer = self.buffer.read(cx);
-        let prev_len = self.workflow_steps.len();
+    fn prune_invalid_workflow_steps(&mut self, inclusive: bool, cx: &mut ModelContext<Self>) {
         let mut removed = Vec::new();
-        self.workflow_steps.retain(|step| {
-            if step.tagged_range.start.is_valid(buffer) && step.tagged_range.end.is_valid(buffer) {
-                true
-            } else {
-                removed.push(step.tagged_range.clone());
-                false
-            }
-        });
-        if self.workflow_steps.len() != prev_len {
+
+        for edit_range in self.edits_since_last_workflow_step_prune.consume() {
+            let intersecting_range = self.find_intersecting_steps(edit_range.new, inclusive, cx);
+            removed.extend(
+                self.workflow_steps
+                    .drain(intersecting_range)
+                    .map(|step| step.tagged_range),
+            );
+        }
+
+        if !removed.is_empty() {
             cx.emit(ContextEvent::WorkflowStepsRemoved(removed));
             cx.notify();
         }
+    }
+
+    fn find_intersecting_steps(
+        &self,
+        range: Range<usize>,
+        inclusive: bool,
+        cx: &AppContext,
+    ) -> Range<usize> {
+        let buffer = self.buffer.read(cx);
+        let start_ix = match self.workflow_steps.binary_search_by(|probe| {
+            probe
+                .tagged_range
+                .end
+                .to_offset(buffer)
+                .cmp(&range.start)
+                .then(if inclusive {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                })
+        }) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let end_ix = match self.workflow_steps.binary_search_by(|probe| {
+            probe
+                .tagged_range
+                .start
+                .to_offset(buffer)
+                .cmp(&range.end)
+                .then(if inclusive {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                })
+        }) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        start_ix..end_ix
     }
 
     fn parse_workflow_steps_in_range(
@@ -1248,8 +1292,12 @@ impl Context {
             self.workflow_steps.insert(index, step);
             self.resolve_workflow_step(step_range, project.clone(), cx);
         }
+
+        // Delete <step> tags, making sure we don't accidentally invalidate
+        // the step we just parsed.
         self.buffer
             .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        self.edits_since_last_workflow_step_prune.consume();
     }
 
     pub fn resolve_workflow_step(
@@ -1629,6 +1677,8 @@ impl Context {
                                 message_start_offset..message_new_end_offset
                             });
                             if let Some(project) = this.project.clone() {
+                                // Use `inclusive = false` as edits might occur at the end of a parsed step.
+                                this.prune_invalid_workflow_steps(false, cx);
                                 this.parse_workflow_steps_in_range(message_range, project, cx);
                             }
                             cx.emit(ContextEvent::StreamedCompletion);
