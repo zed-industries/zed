@@ -2,7 +2,6 @@ use crate::{
     slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssist, InlineAssistant,
 };
 use anyhow::{anyhow, Result};
-use assets::Assets;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
 use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
@@ -12,8 +11,8 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    actions, point, size, transparent_black, AppContext, AssetSource, BackgroundExecutor, Bounds,
-    EventEmitter, Global, HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
+    actions, point, size, transparent_black, AppContext, BackgroundExecutor, Bounds, EventEmitter,
+    Global, HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
     TitlebarOptions, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{
@@ -1465,17 +1464,6 @@ impl PromptStore {
 
     fn first(&self) -> Option<PromptMetadata> {
         self.metadata_cache.read().metadata.first().cloned()
-    }
-
-    pub fn step_resolution_prompt(&self) -> Result<String> {
-        let path = "prompts/step_resolution.md";
-
-        Ok(String::from_utf8(
-            Assets
-                .load(path)?
-                .ok_or_else(|| anyhow!("{path} not found"))?
-                .to_vec(),
-        )?)
     }
 }
 

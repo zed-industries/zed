@@ -187,13 +187,13 @@ pub fn prompts_dir() -> &'static PathBuf {
 /// Returns the path to the prompt templates directory.
 ///
 /// This is where the prompt templates for core features can be overridden with templates.
-pub fn prompt_templates_dir() -> &'static PathBuf {
+pub fn prompt_overrides_dir() -> &'static PathBuf {
     static PROMPT_TEMPLATES_DIR: OnceLock<PathBuf> = OnceLock::new();
     PROMPT_TEMPLATES_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
-            config_dir().join("prompts").join("templates")
+            config_dir().join("prompt_overrides")
         } else {
-            support_dir().join("prompts").join("templates")
+            support_dir().join("prompt_overrides")
         }
     })
 }

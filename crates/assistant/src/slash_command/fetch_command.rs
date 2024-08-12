@@ -150,6 +150,10 @@ impl SlashCommand for FetchSlashCommand {
         let url = SharedString::from(url);
         cx.foreground_executor().spawn(async move {
             let text = text.await?;
+            if text.trim().is_empty() {
+                bail!("no textual content found");
+            }
+
             let range = 0..text.len();
             Ok(SlashCommandOutput {
                 text,

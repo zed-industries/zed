@@ -235,7 +235,8 @@ impl Config {
 }
 
 /// The service mode that collab should run in.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display)]
+#[strum(serialize_all = "snake_case")]
 pub enum ServiceMode {
     Api,
     Collab,

@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", allow(unused, dead_code))]
+
 pub mod assistant_panel;
 pub mod assistant_settings;
 mod context;
@@ -17,6 +19,7 @@ use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
 pub use context_store::*;
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
@@ -25,6 +28,7 @@ use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
 pub(crate) use model_selector::*;
+pub use prompts::PromptBuilder;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
@@ -52,7 +56,7 @@ actions!(
         DeployPromptLibrary,
         ConfirmCommand,
         ToggleModelSelector,
-        DebugEditSteps
+        DebugWorkflowSteps
     ]
 );
 
@@ -163,7 +167,7 @@ impl Assistant {
     }
 }
 
-pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
+pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) -> Arc<PromptBuilder> {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
 
@@ -196,19 +200,25 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
     prompt_library::init(cx);
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);
-    register_slash_commands(cx);
     assistant_panel::init(cx);
 
-    if let Some(prompt_builder) = prompts::PromptBuilder::new(Some((fs.clone(), cx))).log_err() {
-        let prompt_builder = Arc::new(prompt_builder);
-        inline_assistant::init(
-            fs.clone(),
-            prompt_builder.clone(),
-            client.telemetry().clone(),
-            cx,
-        );
-        terminal_inline_assistant::init(fs.clone(), prompt_builder, client.telemetry().clone(), cx);
-    }
+    let prompt_builder = prompts::PromptBuilder::new(Some((fs.clone(), cx)))
+        .log_err()
+        .map(Arc::new)
+        .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
+    register_slash_commands(Some(prompt_builder.clone()), cx);
+    inline_assistant::init(
+        fs.clone(),
+        prompt_builder.clone(),
+        client.telemetry().clone(),
+        cx,
+    );
+    terminal_inline_assistant::init(
+        fs.clone(),
+        prompt_builder.clone(),
+        client.telemetry().clone(),
+        cx,
+    );
     IndexedDocsRegistry::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
@@ -226,6 +236,8 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
         });
     })
     .detach();
+
+    prompt_builder
 }
 
 fn init_language_model_settings(cx: &mut AppContext) {
@@ -256,22 +268,44 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
     });
 }
 
-fn register_slash_commands(cx: &mut AppContext) {
+fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
     slash_command_registry.register_command(active_command::ActiveSlashCommand, true);
     slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
     slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
     slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
-    slash_command_registry.register_command(search_command::SearchSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
     slash_command_registry.register_command(term_command::TermSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, true);
     slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
-    slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
-    slash_command_registry.register_command(workflow_command::WorkflowSlashCommand, true);
+    if let Some(prompt_builder) = prompt_builder {
+        slash_command_registry.register_command(
+            workflow_command::WorkflowSlashCommand::new(prompt_builder),
+            true,
+        );
+    }
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
+
+    cx.observe_flag::<docs_command::DocsSlashCommandFeatureFlag, _>({
+        let slash_command_registry = slash_command_registry.clone();
+        move |is_enabled, _cx| {
+            if is_enabled {
+                slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
+            }
+        }
+    })
+    .detach();
+    cx.observe_flag::<search_command::SearchSlashCommandFeatureFlag, _>({
+        let slash_command_registry = slash_command_registry.clone();
+        move |is_enabled, _cx| {
+            if is_enabled {
+                slash_command_registry.register_command(search_command::SearchSlashCommand, true);
+            }
+        }
+    })
+    .detach();
 }
 
 pub fn humanize_token_count(count: usize) -> String {

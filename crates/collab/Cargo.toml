@@ -58,6 +58,7 @@ serde_derive.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
+strum.workspace = true
 subtle.workspace = true
 rustc-demangle.workspace = true
 telemetry_events.workspace = true

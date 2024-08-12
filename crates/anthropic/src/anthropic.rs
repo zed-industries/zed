@@ -16,13 +16,13 @@ pub const ANTHROPIC_API_URL: &'static str = "https://api.anthropic.com";
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[default]
-    #[serde(alias = "claude-3-5-sonnet", rename = "claude-3-5-sonnet-20240620")]
+    #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-20240620")]
     Claude3_5Sonnet,
-    #[serde(alias = "claude-3-opus", rename = "claude-3-opus-20240229")]
+    #[serde(rename = "claude-3-opus", alias = "claude-3-opus-20240229")]
     Claude3Opus,
-    #[serde(alias = "claude-3-sonnet", rename = "claude-3-sonnet-20240229")]
+    #[serde(rename = "claude-3-sonnet", alias = "claude-3-sonnet-20240229")]
     Claude3Sonnet,
-    #[serde(alias = "claude-3-haiku", rename = "claude-3-haiku-20240307")]
+    #[serde(rename = "claude-3-haiku", alias = "claude-3-haiku-20240307")]
     Claude3Haiku,
     #[serde(rename = "custom")]
     Custom {
@@ -53,7 +53,7 @@ impl Model {
             Model::Claude3_5Sonnet => "claude-3-5-sonnet-20240620",
             Model::Claude3Opus => "claude-3-opus-20240229",
             Model::Claude3Sonnet => "claude-3-sonnet-20240229",
-            Model::Claude3Haiku => "claude-3-opus-20240307",
+            Model::Claude3Haiku => "claude-3-haiku-20240307",
             Self::Custom { name, .. } => name,
         }
     }

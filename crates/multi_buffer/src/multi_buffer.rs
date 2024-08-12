@@ -1762,6 +1762,23 @@ impl MultiBuffer {
         cx.notify();
     }
 
+    /// Preserve preview tabs containing this multibuffer until additional edits occur.
+    pub fn refresh_preview(&self, cx: &mut ModelContext<Self>) {
+        for buffer_state in self.buffers.borrow().values() {
+            buffer_state
+                .buffer
+                .update(cx, |buffer, _cx| buffer.refresh_preview());
+        }
+    }
+
+    /// Whether we should preserve the preview status of a tab containing this multi-buffer.
+    pub fn preserve_preview(&self, cx: &AppContext) -> bool {
+        self.buffers
+            .borrow()
+            .values()
+            .all(|state| state.buffer.read(cx).preserve_preview())
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self, cx: &AppContext) -> bool {
         self.as_singleton().unwrap().read(cx).is_parsing()

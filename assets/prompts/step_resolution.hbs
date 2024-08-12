@@ -1,4 +1,4 @@
-Your task is to map a step from the conversation above to operations on symbols inside the provided source files.
+Your task is to map a step from the conversation above to suggestions on symbols inside the provided source files.
 
 Guidelines:
 - There's no need to describe *what* to do, just *where* to do it.
@@ -6,13 +6,13 @@ Guidelines:
 - Don't create and then update a file.
 - We'll create it in one shot.
 - Prefer updating symbols lower in the syntax tree if possible.
-- Never include operations on a parent symbol and one of its children in the same operations block.
-- Never nest an operation with another operation or include CDATA or other content. All operations are leaf nodes.
+- Never include suggestions on a parent symbol and one of its children in the same suggestions block.
+- Never nest an operation with another operation or include CDATA or other content. All suggestions are leaf nodes.
 - Include a description attribute for each operation with a brief, one-line description of the change to perform.
-- Descriptions are required for all operations except delete.
-- When generating multiple operations, ensure the descriptions are specific to each individual operation.
+- Descriptions are required for all suggestions except delete.
+- When generating multiple suggestions, ensure the descriptions are specific to each individual operation.
 - Avoid referring to the location in the description. Focus on the change to be made, not the location where it's made. That's implicit with the symbol you provide.
-- Don't generate multiple operations at the same location. Instead, combine them together in a single operation with a succinct combined description.
+- Don't generate multiple suggestions at the same location. Instead, combine them together in a single operation with a succinct combined description.
 
 Example 1:
 
@@ -33,12 +33,12 @@ impl Rectangle {
 <step>Add new methods 'calculate_area' and 'calculate_perimeter' to the Rectangle struct</step>
 <step>Implement the 'Display' trait for the Rectangle struct</step>
 
-What are the operations for the step: <step>Add a new method 'calculate_area' to the Rectangle struct</step>
+What are the suggestions for the step: <step>Add a new method 'calculate_area' to the Rectangle struct</step>
 
 A (wrong):
 {
   "title": "Add Rectangle methods",
-  "operations": [
+  "suggestions": [
     {
       "kind": "AppendChild",
       "path": "src/shapes.rs",
@@ -59,7 +59,7 @@ This demonstrates what NOT to do. NEVER append multiple children at the same loc
 A (corrected):
 {
   "title": "Add Rectangle methods",
-  "operations": [
+  "suggestions": [
     {
       "kind": "AppendChild",
       "path": "src/shapes.rs",
@@ -70,12 +70,12 @@ A (corrected):
 }
 
 User:
-What are the operations for the step: <step>Implement the 'Display' trait for the Rectangle struct</step>
+What are the suggestions for the step: <step>Implement the 'Display' trait for the Rectangle struct</step>
 
 A:
 {
   "title": "Implement Display for Rectangle",
-  "operations": [
+  "suggestions": [
     {
       "kind": "InsertSiblingAfter",
       "path": "src/shapes.rs",
@@ -109,12 +109,12 @@ impl User {
 <step>Update the 'print_info' method to use formatted output</step>
 <step>Remove the 'email' field from the User struct</step>
 
-What are the operations for the step: <step>Update the 'print_info' method to use formatted output</step>
+What are the suggestions for the step: <step>Update the 'print_info' method to use formatted output</step>
 
 A:
 {
   "title": "Use formatted output",
-  "operations": [
+  "suggestions": [
     {
       "kind": "Update",
       "path": "src/user.rs",
@@ -125,12 +125,12 @@ A:
 }
 
 User:
-What are the operations for the step: <step>Remove the 'email' field from the User struct</step>
+What are the suggestions for the step: <step>Remove the 'email' field from the User struct</step>
 
 A:
 {
   "title": "Remove email field",
-  "operations": [
+  "suggestions": [
       {
         "kind": "Delete",
         "path": "src/user.rs",
@@ -163,12 +163,12 @@ impl Vehicle {
 <step>Add a 'use std::fmt;' statement at the beginning of the file</step>
 <step>Add a new method 'start_engine' in the Vehicle impl block</step>
 
-What are the operations for the step: <step>Add a 'use std::fmt;' statement at the beginning of the file</step>
+What are the suggestions for the step: <step>Add a 'use std::fmt;' statement at the beginning of the file</step>
 
 A:
 {
   "title": "Add use std::fmt statement",
-  "operations": [
+  "suggestions": [
     {
       "kind": "PrependChild",
       "path": "src/vehicle.rs",
@@ -178,12 +178,12 @@ A:
 }
 
 User:
-What are the operations for the step: <step>Add a new method 'start_engine' in the Vehicle impl block</step>
+What are the suggestions for the step: <step>Add a new method 'start_engine' in the Vehicle impl block</step>
 
 A:
 {
   "title": "Add start_engine method",
-  "operations": [
+  "suggestions": [
     {
       "kind": "InsertSiblingAfter",
       "path": "src/vehicle.rs",
@@ -222,12 +222,12 @@ impl Employee {
 
 <step>Make salary an f32</step>
 
-What are the operations for the step: <step>Make salary an f32</step>
+What are the suggestions for the step: <step>Make salary an f32</step>
 
 A (wrong):
 {
   "title": "Change salary to f32",
-  "operations": [
+  "suggestions": [
     {
       "kind": "Update",
       "path": "src/employee.rs",
@@ -248,7 +248,7 @@ This example demonstrates what not to do. `struct Employee salary` is a child of
 A (corrected):
 {
   "title": "Change salary to f32",
-  "operations": [
+  "suggestions": [
     {
       "kind": "Update",
       "path": "src/employee.rs",
@@ -259,12 +259,12 @@ A (corrected):
 }
 
 User:
-What are the correct operations for the step: <step>Remove the 'department' field and update the 'print_details' method</step>
+What are the correct suggestions for the step: <step>Remove the 'department' field and update the 'print_details' method</step>
 
 A:
 {
   "title": "Remove department",
-  "operations": [
+  "suggestions": [
     {
       "kind": "Delete",
       "path": "src/employee.rs",
@@ -311,7 +311,7 @@ impl Game {
 A:
 {
   "title": "Add level field to Player",
-  "operations": [
+  "suggestions": [
     {
       "kind": "InsertSiblingAfter",
       "path": "src/game.rs",
@@ -349,7 +349,7 @@ impl Config {
 A:
 {
   "title": "Add load_from_file method",
-  "operations": [
+  "suggestions": [
     {
       "kind": "PrependChild",
       "path": "src/config.rs",
@@ -389,7 +389,7 @@ impl Database {
 A:
 {
   "title": "Add error handling to query",
-  "operations": [
+  "suggestions": [
     {
       "kind": "PrependChild",
       "path": "src/database.rs",
@@ -410,4 +410,4 @@ A:
   ]
 }
 
-Now generate the operations for the following step:
+Now generate the suggestions for the following step:

@@ -279,10 +279,13 @@ impl MarkdownPreviewView {
     }
 
     pub fn is_markdown_file<V>(editor: &View<Editor>, cx: &mut ViewContext<V>) -> bool {
-        let language = editor.read(cx).buffer().read(cx).language_at(0, cx);
-        language
-            .map(|l| l.name().as_ref() == "Markdown")
-            .unwrap_or(false)
+        let buffer = editor.read(cx).buffer().read(cx);
+        if let Some(buffer) = buffer.as_singleton() {
+            if let Some(language) = buffer.read(cx).language() {
+                return language.name().as_ref() == "Markdown";
+            }
+        }
+        false
     }
 
     fn set_editor(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {

@@ -4,7 +4,6 @@
     "bindings": {
       "i": ["vim::PushOperator", { "Object": { "around": false } }],
       "a": ["vim::PushOperator", { "Object": { "around": true } }],
-      ":": "command_palette::Toggle",
       "h": "vim::Left",
       "left": "vim::Left",
       "backspace": "vim::Backspace",
@@ -200,16 +199,11 @@
     }
   },
   {
-    "context": "VimControl && VimCount",
-    "bindings": {
-      "0": ["vim::Number", 0]
-    }
-  },
-  {
     "context": "vim_mode == normal",
     "bindings": {
       "escape": "editor::Cancel",
       "ctrl-[": "editor::Cancel",
+      ":": "command_palette::Toggle",
       ".": "vim::Repeat",
       "c": ["vim::PushOperator", "Change"],
       "shift-c": "vim::ChangeToEndOfLine",
@@ -258,8 +252,16 @@
     }
   },
   {
+    "context": "VimControl && VimCount",
+    "bindings": {
+      "0": ["vim::Number", 0],
+      ":": "vim::CountCommand"
+    }
+  },
+  {
     "context": "vim_mode == visual",
     "bindings": {
+      ":": "vim::VisualCommand",
       "u": "vim::ConvertToLowerCase",
       "U": "vim::ConvertToUpperCase",
       "o": "vim::OtherEnd",

@@ -37,7 +37,7 @@ wasmtime::component::bindgen!({
 pub use self::zed::extension::*;
 
 mod settings {
-    include!("../../../../extension_api/wit/since_v0.0.7/settings.rs");
+    include!(concat!(env!("OUT_DIR"), "/since_v0.0.7/settings.rs"));
 }
 
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
