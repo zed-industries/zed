@@ -10,7 +10,10 @@ use gpui::{
     TextStyle, TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
-use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
+use parser::{
+    parse_links_only, parse_markdown, safe_markdown_slice, MarkdownEvent, MarkdownTag,
+    MarkdownTagEnd,
+};
 
 use std::{iter, mem, ops::Range, rc::Rc, sync::Arc};
 use theme::SyntaxTheme;
@@ -695,7 +698,10 @@ impl Element for MarkdownElement {
                     _ => log::error!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    let (safe_text, start_index) =
+                        safe_markdown_slice(&parsed_markdown.source, range.clone());
+
+                    builder.push_text(safe_text, start_index);
                 }
                 MarkdownEvent::Code => {
                     builder.push_text_style(self.style.inline_code.clone());
