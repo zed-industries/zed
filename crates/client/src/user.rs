@@ -692,12 +692,12 @@ impl UserStore {
         self.current_user.clone()
     }
 
-    pub fn current_user_accepted_tos(&self) -> Option<bool> {
+    pub fn current_user_accepted_terms(&self) -> Option<bool> {
         self.accepted_tos_at
             .map(|accepted_tos_at| accepted_tos_at.is_some())
     }
 
-    pub fn accept_tos(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn accept_terms_of_service(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if self.current_user().is_none() {
             return Task::ready(Err(anyhow!("no current user")));
         };
@@ -706,7 +706,7 @@ impl UserStore {
         cx.spawn(move |this, mut cx| async move {
             if let Some(client) = client.upgrade() {
                 let response = client
-                    .request(proto::AcceptTos {})
+                    .request(proto::AcceptTermsOfService {})
                     .await
                     .context("error accepting tos")?;
 

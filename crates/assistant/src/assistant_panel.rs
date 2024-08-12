@@ -490,6 +490,7 @@ impl AssistantPanel {
                     }
                     language_model::Event::ProviderStateChanged => {
                         this.ensure_authenticated(cx);
+                        cx.notify()
                     }
                     language_model::Event::AddedProvider(_)
                     | language_model::Event::RemovedProvider(_) => {
@@ -1712,6 +1713,7 @@ pub struct ContextEditor {
     assistant_panel: WeakView<AssistantPanel>,
     error_message: Option<SharedString>,
     debug_inspector: Option<ContextInspector>,
+    show_accept_terms: bool,
 }
 
 const DEFAULT_TAB_TITLE: &str = "New Context";
@@ -1772,6 +1774,7 @@ impl ContextEditor {
             assistant_panel,
             error_message: None,
             debug_inspector: None,
+            show_accept_terms: false,
         };
         this.update_message_headers(cx);
         this.insert_slash_command_output_sections(sections, cx);
@@ -1804,6 +1807,16 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        if provider
+            .as_ref()
+            .map_or(false, |provider| provider.must_accept_terms(cx))
+        {
+            self.show_accept_terms = true;
+            cx.notify();
+            return;
+        }
+
         if !self.apply_active_workflow_step(cx) {
             self.error_message = None;
             self.send_to_model(cx);
@@ -3388,7 +3401,14 @@ impl ContextEditor {
             None => (ButtonStyle::Filled, None),
         };
 
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let disabled = self.show_accept_terms
+            && provider
+                .as_ref()
+                .map_or(false, |provider| provider.must_accept_terms(cx));
+
         ButtonLike::new("send_button")
+            .disabled(disabled)
             .style(style)
             .when_some(tooltip, |button, tooltip| {
                 button.tooltip(move |_| tooltip.clone())
@@ -3437,6 +3457,15 @@ impl EventEmitter<SearchEvent> for ContextEditor {}
 
 impl Render for ContextEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let accept_terms = if self.show_accept_terms {
+            provider
+                .as_ref()
+                .and_then(|provider| provider.render_accept_terms(cx))
+        } else {
+            None
+        };
+
         v_flex()
             .key_context("ContextEditor")
             .capture_action(cx.listener(ContextEditor::cancel))
@@ -3455,6 +3484,21 @@ impl Render for ContextEditor {
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )
+            .when_some(accept_terms, |this, element| {
+                this.child(
+                    div()
+                        .absolute()
+                        .right_4()
+                        .bottom_10()
+                        .max_w_96()
+                        .py_2()
+                        .px_3()
+                        .elevation_2(cx)
+                        .bg(cx.theme().colors().surface_background)
+                        .occlude()
+                        .child(element),
+                )
+            })
             .child(
                 h_flex().flex_none().relative().child(
                     h_flex()

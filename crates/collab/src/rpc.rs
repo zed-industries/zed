@@ -605,7 +605,7 @@ impl Server {
             .add_message_handler(user_message_handler(update_followers))
             .add_request_handler(user_handler(get_private_user_info))
             .add_request_handler(user_handler(get_llm_api_token))
-            .add_request_handler(user_handler(accept_tos))
+            .add_request_handler(user_handler(accept_terms_of_service))
             .add_message_handler(user_message_handler(acknowledge_channel_message))
             .add_message_handler(user_message_handler(acknowledge_buffer_version))
             .add_request_handler(user_handler(get_supermaven_api_key))
@@ -4890,9 +4890,9 @@ async fn get_private_user_info(
 }
 
 /// Accept the terms of service (tos) on behalf of the current user
-async fn accept_tos(
-    _request: proto::AcceptTos,
-    response: Response<proto::AcceptTos>,
+async fn accept_terms_of_service(
+    _request: proto::AcceptTermsOfService,
+    response: Response<proto::AcceptTermsOfService>,
     session: UserSession,
 ) -> Result<()> {
     let db = session.db().await;
@@ -4901,7 +4901,7 @@ async fn accept_tos(
     db.set_user_accepted_tos_at(session.user_id(), Some(accepted_tos_at.naive_utc()))
         .await?;
 
-    response.send(proto::AcceptTosResponse {
+    response.send(proto::AcceptTermsOfServiceResponse {
         accepted_tos_at: accepted_tos_at.timestamp() as u64,
     })?;
     Ok(())

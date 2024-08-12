@@ -9,7 +9,10 @@ use client::{Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADE
 use collections::BTreeMap;
 use feature_flags::{FeatureFlagAppExt, LanguageModels};
 use futures::{future::BoxFuture, stream::BoxStream, AsyncBufReadExt, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, AsyncAppContext, Model, ModelContext, Subscription, Task};
+use gpui::{
+    AnyElement, AnyView, AppContext, AsyncAppContext, FontWeight, Model, ModelContext,
+    Subscription, Task,
+};
 use http_client::{AsyncBody, HttpClient, Method, Response};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -62,6 +65,7 @@ pub struct State {
     client: Arc<Client>,
     user_store: Model<UserStore>,
     status: client::Status,
+    accept_terms: Option<Task<Result<()>>>,
     _subscription: Subscription,
 }
 
@@ -78,14 +82,24 @@ impl State {
         })
     }
 
-    fn accept_tos(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn has_accepted_terms_of_service(&self, cx: &AppContext) -> bool {
+        self.user_store
+            .read(cx)
+            .current_user_accepted_terms()
+            .unwrap_or(false)
+    }
+
+    fn accept_terms_of_service(&mut self, cx: &mut ModelContext<Self>) {
         let user_store = self.user_store.clone();
-        cx.spawn(move |this, mut cx| async move {
+        self.accept_terms = Some(cx.spawn(move |this, mut cx| async move {
             let _ = user_store
-                .update(&mut cx, |store, cx| store.accept_tos(cx))?
+                .update(&mut cx, |store, cx| store.accept_terms_of_service(cx))?
                 .await;
-            this.update(&mut cx, |_, cx| cx.notify())
-        })
+            this.update(&mut cx, |this, cx| {
+                this.accept_terms = None;
+                cx.notify()
+            })
+        }));
     }
 }
 
@@ -98,6 +112,7 @@ impl CloudLanguageModelProvider {
             client: client.clone(),
             user_store,
             status,
+            accept_terms: None,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
@@ -228,10 +243,60 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
         cx.new_view(|_cx| ConfigurationView {
-            accept_tos_task: None,
             state: self.state.clone(),
         })
         .into()
+    }
+
+    fn must_accept_terms(&self, cx: &AppContext) -> bool {
+        !self.state.read(cx).has_accepted_terms_of_service(cx)
+    }
+
+    fn render_accept_terms(&self, cx: &mut WindowContext) -> Option<AnyElement> {
+        let state = self.state.read(cx);
+
+        let terms = [(
+            "anthropic_terms_of_service",
+            "Anthropic Terms of Service",
+            "https://www.anthropic.com/legal/consumer-terms",
+        )]
+        .map(|(id, label, url)| {
+            Button::new(id, label)
+                .style(ButtonStyle::Subtle)
+                .icon(IconName::ExternalLink)
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .on_click(move |_, cx| cx.open_url(url))
+        });
+
+        if state.has_accepted_terms_of_service(cx) {
+            None
+        } else {
+            let disabled = state.accept_terms.is_some();
+            Some(
+                v_flex()
+                    .child(Label::new("Terms & Conditions").weight(FontWeight::SEMIBOLD))
+                    .child("Please read and accept the terms and conditions of Zed AI and our provider partners to continue.")
+                    .child(v_flex().m_2().gap_1().children(terms))
+                    .child(
+                        h_flex().justify_end().mt_1().child(
+                            Button::new("accept_terms", "Accept")
+                                .disabled(disabled)
+                                .on_click({
+                                    let state = self.state.downgrade();
+                                    move |_, cx| {
+                                        state
+                                            .update(cx, |state, cx| {
+                                                state.accept_terms_of_service(cx)
+                                            })
+                                            .ok();
+                                    }
+                                }),
+                        ),
+                    )
+                    .into_any(),
+            )
+        }
     }
 
     fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {
@@ -759,7 +824,6 @@ impl LlmApiToken {
 
 struct ConfigurationView {
     state: gpui::Model<State>,
-    accept_tos_task: Option<Task<Result<()>>>,
 }
 
 impl ConfigurationView {
@@ -768,24 +832,6 @@ impl ConfigurationView {
             state.authenticate(cx).detach_and_log_err(cx);
         });
         cx.notify();
-    }
-
-    fn accept_tos(&mut self, cx: &mut ViewContext<Self>) {
-        let state = self.state.clone();
-        let task = cx.spawn(|this, mut cx| async move {
-            let result = state
-                .update(&mut cx, |state, cx| state.accept_tos(cx))?
-                .await;
-
-            this.update(&mut cx, |this, cx| {
-                this.accept_tos_task = None;
-                cx.notify()
-            })?;
-
-            result
-        });
-
-        self.accept_tos_task = Some(task);
     }
 }
 
@@ -796,13 +842,7 @@ impl Render for ConfigurationView {
 
         let is_connected = !self.state.read(cx).is_signed_out();
         let plan = self.state.read(cx).user_store.read(cx).current_plan();
-        let accepted_tos = self
-            .state
-            .read(cx)
-            .user_store
-            .read(cx)
-            .current_user_accepted_tos()
-            .unwrap_or(false);
+        let must_accept_terms = !self.state.read(cx).has_accepted_terms_of_service(cx);
 
         let is_pro = plan == Some(proto::Plan::ZedPro);
 
@@ -810,20 +850,10 @@ impl Render for ConfigurationView {
             v_flex()
                 .gap_3()
                 .max_w_4_5()
-                .child(Label::new(
-                if accepted_tos {
-                    "You have accepted the terms of service."
-                } else {
-                    "You have NOT accepted the terms of service"
-                }
-                ))
-                .when(!accepted_tos, |this| {
-                    this.child(Button::new("accept_tos", "Accept Terms of Service")
-                        .disabled(self.accept_tos_task.is_some())
-                        .style(ButtonStyle::Filled)
-                        .on_click(cx.listener(move |this, _, cx| {
-                            this.accept_tos(cx);
-                        })))
+                .when(must_accept_terms, |this| {
+                    this.child(Label::new(
+                        "You must accept the terms of service to use this provider.",
+                    ))
                 })
                 .child(Label::new(
                     if is_pro {
