@@ -298,10 +298,6 @@ messages!(
     (PrepareRename, Background),
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
-    (CompleteWithLanguageModel, Background),
-    (CompleteWithLanguageModelResponse, Background),
-    (StreamCompleteWithLanguageModel, Background),
-    (StreamCompleteWithLanguageModelResponse, Background),
     (CountLanguageModelTokens, Background),
     (CountLanguageModelTokensResponse, Background),
     (RefreshInlayHints, Foreground),
@@ -476,11 +472,6 @@ request_messages!(
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
     (PrepareRename, PrepareRenameResponse),
-    (CompleteWithLanguageModel, CompleteWithLanguageModelResponse),
-    (
-        StreamCompleteWithLanguageModel,
-        StreamCompleteWithLanguageModelResponse
-    ),
     (CountLanguageModelTokens, CountLanguageModelTokensResponse),
     (RefreshInlayHints, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),
