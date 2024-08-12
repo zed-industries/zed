@@ -8,7 +8,7 @@ use anthropic::AnthropicError;
 use anyhow::{anyhow, bail, Context as _, Result};
 use client::{Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME};
 use collections::BTreeMap;
-use feature_flags::FeatureFlagAppExt;
+use feature_flags::{FeatureFlagAppExt, ZedPro};
 use futures::{future::BoxFuture, stream::BoxStream, AsyncBufReadExt, FutureExt, StreamExt};
 use gpui::{
     AnyElement, AnyView, AppContext, AsyncAppContext, FontWeight, Model, ModelContext,
@@ -868,34 +868,39 @@ impl Render for ConfigurationView {
                     if is_pro {
                         "You have full access to Zed's hosted models from Anthropic, OpenAI, Google with faster speeds and higher limits through Zed Pro."
                     } else {
-                        "You have basic access to models from Anthropic, OpenAI, Google and more through the Zed AI Free plan."
+                        "You have basic access to models from Anthropic through the Zed AI Free plan."
                     }))
-                .child(
-                    if is_pro {
+                .children(if is_pro {
+                    Some(
                         h_flex().child(
-                        Button::new("manage_settings", "Manage Subscription")
-                            .style(ButtonStyle::Filled)
-                            .on_click(cx.listener(|_, _, cx| {
-                                cx.open_url(ACCOUNT_SETTINGS_URL)
-                            })))
-                    } else {
+                            Button::new("manage_settings", "Manage Subscription")
+                                .style(ButtonStyle::Filled)
+                                .on_click(
+                                    cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL)),
+                                ),
+                        ),
+                    )
+                } else if cx.has_flag::<ZedPro>() {
+                    Some(
                         h_flex()
                             .gap_2()
                             .child(
-                        Button::new("learn_more", "Learn more")
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(|_, _, cx| {
-                                cx.open_url(ZED_AI_URL)
-                            })))
+                                Button::new("learn_more", "Learn more")
+                                    .style(ButtonStyle::Subtle)
+                                    .on_click(cx.listener(|_, _, cx| cx.open_url(ZED_AI_URL))),
+                            )
                             .child(
-                        Button::new("upgrade", "Upgrade")
-                            .style(ButtonStyle::Subtle)
-                            .color(Color::Accent)
-                            .on_click(cx.listener(|_, _, cx| {
-                                cx.open_url(ACCOUNT_SETTINGS_URL)
-                            })))
-                    },
-                )
+                                Button::new("upgrade", "Upgrade")
+                                    .style(ButtonStyle::Subtle)
+                                    .color(Color::Accent)
+                                    .on_click(
+                                        cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL)),
+                                    ),
+                            ),
+                    )
+                } else {
+                    None
+                })
         } else {
             v_flex()
                 .gap_6()
