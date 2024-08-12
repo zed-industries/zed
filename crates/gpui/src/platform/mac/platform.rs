@@ -4,10 +4,11 @@ use super::{
     BoolExt,
 };
 use crate::{
-    hash, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString, CursorStyle,
-    ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher, MacDisplay, MacTextSystem,
-    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem,
-    PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowParams,
+    hash, Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
+    ClipboardString, CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher,
+    MacDisplay, MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
+    WindowAppearance, WindowParams,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -857,53 +858,105 @@ impl Platform for MacPlatform {
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        let state = self.0.lock();
+        use crate::ClipboardEntry;
+
         unsafe {
-            state.pasteboard.clearContents();
-
-            match item {
-                ClipboardItem::String(string) => {
-                    let text_bytes = NSData::dataWithBytes_length_(
-                        nil,
-                        string.text.as_ptr() as *const c_void,
-                        string.text.len() as u64,
-                    );
-                    state
-                        .pasteboard
-                        .setData_forType(text_bytes, NSPasteboardTypeString);
-
-                    if let Some(metadata) = string.metadata.as_ref() {
-                        let hash_bytes = ClipboardString::text_hash(&string.text).to_be_bytes();
-                        let hash_bytes = NSData::dataWithBytes_length_(
-                            nil,
-                            hash_bytes.as_ptr() as *const c_void,
-                            hash_bytes.len() as u64,
-                        );
-                        state
-                            .pasteboard
-                            .setData_forType(hash_bytes, state.text_hash_pasteboard_type);
-
-                        let metadata_bytes = NSData::dataWithBytes_length_(
-                            nil,
-                            metadata.as_ptr() as *const c_void,
-                            metadata.len() as u64,
-                        );
-                        state
-                            .pasteboard
-                            .setData_forType(metadata_bytes, state.metadata_pasteboard_type);
+            if item.entries.len() <= 1 {
+                // We only want to do the whole
+                match item.entries.first() {
+                    Some(entry) => match entry {
+                        ClipboardEntry::String(string) => {
+                            self.write_plaintext_to_clipboard(string);
+                        }
+                        ClipboardEntry::Image(image) => {
+                            self.write_image_to_clipboard(image);
+                        }
+                    },
+                    None => {
+                        // Write an empty list of entries just clears the clipboard.
+                        let state = self.0.lock();
+                        state.pasteboard.clearContents();
                     }
                 }
-                ClipboardItem::Image(image) => {
-                    let bytes = NSData::dataWithBytes_length_(
-                        nil,
-                        image.bytes.as_ptr() as *const c_void,
-                        image.bytes.len() as u64,
-                    );
+            } else {
+                let mut any_images = false;
+                let attributed_string = {
+                    let mut buf = NSMutableAttributedString::alloc(nil)
+                        // TODO can we skip this? Or at least part of it?
+                        .init_attributed_string(NSString::alloc(nil).init_str(""));
 
-                    state
-                        .pasteboard
-                        .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut());
+                    for entry in item.entries {
+                        let to_append;
+
+                        match entry {
+                            ClipboardEntry::String(ClipboardString { text, metadata: _ }) => {
+                                to_append = NSAttributedString::alloc(nil)
+                                    .init_attributed_string(NSString::alloc(nil).init_str(&text));
+                            }
+                            ClipboardEntry::Image(Image { format, bytes, id }) => {
+                                use cocoa::appkit::NSImage;
+
+                                any_images = true;
+
+                                // Create an attachment from the image
+                                let attachment = {
+                                    // Initialize the NSImage
+                                    let image = {
+                                        let image: id = msg_send![class!(NSImage), alloc];
+
+                                        NSImage::initWithContentsOfFile_(
+                                            image,
+                                            NSString::alloc(nil)
+                                                .init_str("/Users/rtfeldman/Downloads/test.jpeg"), // TODO read from clipboard bytes
+                                        );
+                                    };
+
+                                    let attachment = NSTextAttachment::alloc(nil);
+                                    let _: () = msg_send![attachment, setImage: image];
+                                    attachment
+                                };
+
+                                // Make a NSAttributedString with the attachment
+                                to_append = msg_send![class!(NSAttributedString), attributedStringWithAttachment: attachment];
+                            }
+                        }
+
+                        buf.appendAttributedString_(to_append);
+                    }
+
+                    buf
+                };
+
+                let state = self.0.lock();
+                state.pasteboard.clearContents();
+
+                // Only set rich text clipboard types if we actually have 1+ images to include.
+                if any_images {
+                    let rtfd_data = attributed_string.RTFDFromRange_documentAttributes_(
+                        NSRange::new(0, msg_send![attributed_string, length]),
+                        nil,
+                    );
+                    if rtfd_data != nil {
+                        state
+                            .pasteboard
+                            .setData_forType(rtfd_data, NSPasteboardTypeRTFD);
+                    }
+
+                    let rtf_data = attributed_string.RTFFromRange_documentAttributes_(
+                        NSRange::new(0, attributed_string.length()),
+                        nil,
+                    );
+                    if rtf_data != nil {
+                        state
+                            .pasteboard
+                            .setData_forType(rtf_data, NSPasteboardTypeRTF);
+                    }
                 }
+
+                let plain_text = attributed_string.string();
+                state
+                    .pasteboard
+                    .setString_forType(plain_text, NSPasteboardTypeString);
             }
         }
     }
@@ -924,16 +977,12 @@ impl Platform for MacPlatform {
                 } else if data.bytes().is_null() {
                     // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
                     // "If the length of the NSData object is 0, this property returns nil."
-                    return Some(ClipboardItem::String(
-                        self.read_string_from_clipboard(&state, &[]),
-                    ));
+                    return Some(self.read_string_from_clipboard(&state, &[]));
                 } else {
                     let bytes =
                         slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize);
 
-                    return Some(ClipboardItem::String(
-                        self.read_string_from_clipboard(&state, bytes),
-                    ));
+                    return Some(self.read_string_from_clipboard(&state, bytes));
                 }
             }
 
@@ -1066,7 +1115,7 @@ impl MacPlatform {
         &self,
         state: &MacPlatformState,
         text_bytes: &[u8],
-    ) -> ClipboardString {
+    ) -> ClipboardItem {
         let text = String::from_utf8_lossy(text_bytes).to_string();
         let hash_bytes = self
             .read_from_pasteboard(state.pasteboard, state.text_hash_pasteboard_type)
@@ -1087,10 +1136,57 @@ impl MacPlatform {
             opt_metadata = None;
         }
 
-        ClipboardString {
-            text,
-            metadata: opt_metadata,
+        ClipboardItem::new_string_with_metadata(text, opt_metadata)
+    }
+
+    unsafe fn write_plaintext_to_clipboard(&self, string: &ClipboardString) {
+        let state = self.0.lock();
+        state.pasteboard.clearContents();
+
+        let text_bytes = NSData::dataWithBytes_length_(
+            nil,
+            string.text.as_ptr() as *const c_void,
+            string.text.len() as u64,
+        );
+        state
+            .pasteboard
+            .setData_forType(text_bytes, NSPasteboardTypeString);
+
+        if let Some(metadata) = string.metadata.as_ref() {
+            let hash_bytes = ClipboardString::text_hash(&string.text).to_be_bytes();
+            let hash_bytes = NSData::dataWithBytes_length_(
+                nil,
+                hash_bytes.as_ptr() as *const c_void,
+                hash_bytes.len() as u64,
+            );
+            state
+                .pasteboard
+                .setData_forType(hash_bytes, state.text_hash_pasteboard_type);
+
+            let metadata_bytes = NSData::dataWithBytes_length_(
+                nil,
+                metadata.as_ptr() as *const c_void,
+                metadata.len() as u64,
+            );
+            state
+                .pasteboard
+                .setData_forType(metadata_bytes, state.metadata_pasteboard_type);
         }
+    }
+
+    unsafe fn write_image_to_clipboard(&self, image: &Image) {
+        let state = self.0.lock();
+        state.pasteboard.clearContents();
+
+        let bytes = NSData::dataWithBytes_length_(
+            nil,
+            image.bytes.as_ptr() as *const c_void,
+            image.bytes.len() as u64,
+        );
+
+        state
+            .pasteboard
+            .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut());
     }
 }
 
@@ -1108,117 +1204,16 @@ fn try_clipboard_image(pasteboard: id, format: ImageFormat) -> Option<ClipboardI
                     data.bytes() as *mut u8,
                     data.length() as usize,
                 ));
-
                 let id = hash(&bytes);
 
-                {
-                    // write some images and text to the clip
-                    // let image1 = ns_image(&bytes).unwrap();
-                    // let image2 = ns_image(&bytes).unwrap();
-                    let image1 = NSImage::initWithPasteboard_(nil, pasteboard);
-                    let image2 = NSImage::initWithPasteboard_(nil, pasteboard);
-                    // let attributed_string = text_and_images([image1, image2]);
-                    // text_and_images([NSImage::initWithPasteboard_(, pasteboard), ns_image(&bytes).unwrap()]);
-                    let attributed_string = unsafe {
-                        use cocoa::appkit::NSImage;
-
-                        let image: id = msg_send![class!(NSImage), alloc];
-                        NSImage::initWithContentsOfFile_(
-                            image,
-                            NSString::alloc(nil).init_str("/Users/rtfeldman/Downloads/test.jpeg"),
-                        );
-                        let size = image.size();
-
-                        let string = NSString::alloc(nil).init_str("Test String");
-                        let attr_string =
-                            NSMutableAttributedString::alloc(nil).init_attributed_string(string);
-                        let hello_string = NSString::alloc(nil).init_str("Hello World");
-                        let hello_attr_string =
-                            NSAttributedString::alloc(nil).init_attributed_string(hello_string);
-                        attr_string.appendAttributedString_(hello_attr_string);
-
-                        let attachment = NSTextAttachment::alloc(nil);
-                        let _: () = msg_send![attachment, setImage: image];
-                        let image_attr_string = msg_send![class!(NSAttributedString), attributedStringWithAttachment: attachment];
-                        attr_string.appendAttributedString_(image_attr_string);
-
-                        let another_string = NSString::alloc(nil).init_str("Another String");
-                        let another_attr_string =
-                            NSAttributedString::alloc(nil).init_attributed_string(another_string);
-                        attr_string.appendAttributedString_(another_attr_string);
-
-                        attr_string
-                    };
-
-                    pasteboard.clearContents();
-
-                    let rtfd_data = attributed_string.RTFDFromRange_documentAttributes_(
-                        NSRange::new(0, msg_send![attributed_string, length]),
-                        nil,
-                    );
-                    if rtfd_data != nil {
-                        pasteboard.setData_forType(rtfd_data, NSPasteboardTypeRTFD);
-                    }
-
-                    // let rtf_data = attributed_string.RTFFromRange_documentAttributes_(
-                    //     NSRange::new(0, attributed_string.length()),
-                    //     nil,
-                    // );
-                    // if rtf_data != nil {
-                    //     pasteboard.setData_forType(rtf_data, NSPasteboardTypeRTF);
-                    // }
-
-                    // let plain_text = attributed_string.string();
-                    // pasteboard.setString_forType(plain_text, NSPasteboardTypeString);
-                }
-
-                Some(ClipboardItem::Image(Image { format, bytes, id }))
+                Some(ClipboardItem {
+                    entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
+                })
             }
         } else {
             None
         }
     }
-}
-
-unsafe fn ns_image(bytes: &[u8]) -> Option<id> {
-    let data =
-        NSData::dataWithBytes_length_(nil, bytes.as_ptr() as *const c_void, bytes.len() as u64)
-            .autorelease();
-    let image = NSImage::initWithData_(nil, data).autorelease();
-
-    if image == nil {
-        None
-    } else {
-        Some(image)
-    }
-}
-
-unsafe fn text_and_images(images: impl IntoIterator<Item = id>) -> id {
-    let attributed_string = NSMutableAttributedString::alloc(nil).init().autorelease();
-    let text_before = "text before";
-    let text_after = "text after";
-
-    for image in images {
-        let before_text = NSAttributedString::alloc(nil)
-            .initWithString_(ns_string(text_before))
-            .autorelease();
-        attributed_string.appendAttributedString_(before_text);
-
-        let text_attachment = NSTextAttachment::alloc(nil).init().autorelease();
-        let _: () = msg_send![text_attachment, setImage: image];
-
-        let image_attributed_string = NSAttributedString::alloc(nil)
-            .initWithAttachment_(text_attachment)
-            .autorelease();
-        attributed_string.appendAttributedString_(image_attributed_string);
-
-        let after_text = NSAttributedString::alloc(nil)
-            .initWithString_(ns_string(text_after))
-            .autorelease();
-        attributed_string.appendAttributedString_(after_text);
-    }
-
-    attributed_string
 }
 
 unsafe fn path_from_objc(path: id) -> PathBuf {
@@ -1476,8 +1471,11 @@ mod tests {
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
-        let item =
-            ClipboardItem::String(ClipboardString::new("2".to_string()).with_metadata(vec![3, 4]));
+        let item = ClipboardItem {
+            entries: vec![ClipboardEntry::String(
+                ClipboardString::new("2".to_string()).with_metadata(vec![3, 4]),
+            )],
+        };
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 

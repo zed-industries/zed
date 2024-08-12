@@ -6,10 +6,10 @@ use collections::HashSet;
 use editor::{actions::SelectAll, scroll::Autoscroll, Editor};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
-    anchored, deferred, div, impl_actions, AnyElement, AppContext, ClipboardItem, DismissEvent,
-    EventEmitter, FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model,
-    MouseButton, MouseDownEvent, Pixels, Render, ScrollWheelEvent, Styled, Subscription, Task,
-    View, VisualContext, WeakView,
+    anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
+    FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
+    MouseDownEvent, Pixels, Render, ScrollWheelEvent, Styled, Subscription, Task, View,
+    VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -488,9 +488,9 @@ impl TerminalView {
 
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
-        if let Some(ClipboardItem::String(clipboard_string)) = cx.read_from_clipboard() {
+        if let Some(clipboard_string) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.terminal
-                .update(cx, |terminal, _cx| terminal.paste(clipboard_string.text()));
+                .update(cx, |terminal, _cx| terminal.paste(&clipboard_string));
         }
     }
 

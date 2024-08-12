@@ -26,8 +26,8 @@ use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, AppContext, ClipboardItem, EntityId, FocusableView, Global,
-    KeystrokeEvent, Subscription, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
+    actions, impl_actions, Action, AppContext, EntityId, FocusableView, Global, KeystrokeEvent,
+    Subscription, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{CursorShape, Point, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
@@ -584,12 +584,9 @@ impl Vim {
                 self.workspace_state.last_yank.replace(content.text.clone());
                 cx.write_to_clipboard(content.clone().into());
             } else {
-                self.workspace_state.last_yank = match cx.read_from_clipboard() {
-                    Some(ClipboardItem::String(clipboard_string)) => {
-                        Some(clipboard_string.into_text().into())
-                    }
-                    _ => None,
-                }
+                self.workspace_state.last_yank = cx
+                    .read_from_clipboard()
+                    .and_then(|item| item.text().map(|string| string.into()))
             }
 
             self.workspace_state.registers.insert('"', content.clone());
@@ -666,7 +663,7 @@ impl Vim {
     fn system_clipboard_is_newer(&self, cx: &mut AppContext) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
             if let Some(last_state) = &self.workspace_state.last_yank {
-                Some(last_state.as_ref()) != item.text()
+                Some(last_state.as_ref()) != item.text().as_deref()
             } else {
                 true
             }

@@ -69,8 +69,8 @@ use git::blame::GitBlame;
 use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
-    AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
-    ClipboardString, Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle,
+    AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardEntry,
+    ClipboardItem, Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle,
     FocusOutEvent, FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText,
     KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
     SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
@@ -6546,8 +6546,9 @@ impl Editor {
                 s.select(selections);
             });
             this.insert("", cx);
-            cx.write_to_clipboard(ClipboardItem::String(
-                ClipboardString::new(text).with_metadata(clipboard_selections),
+            cx.write_to_clipboard(ClipboardItem::new_string_with_metadata(
+                text,
+                clipboard_selections,
             ));
         });
     }
@@ -6587,8 +6588,9 @@ impl Editor {
             }
         }
 
-        cx.write_to_clipboard(ClipboardItem::String(
-            ClipboardString::new(text).with_metadata(clipboard_selections),
+        cx.write_to_clipboard(ClipboardItem::new_string_with_metadata(
+            text,
+            clipboard_selections,
         ));
     }
 
@@ -6672,13 +6674,21 @@ impl Editor {
     }
 
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
-        if let Some(ClipboardItem::String(clipboard_string)) = cx.read_from_clipboard() {
-            self.do_paste(
-                clipboard_string.text(),
-                clipboard_string.metadata::<Vec<ClipboardSelection>>(),
-                true,
-                cx,
-            )
+        if let Some(item) = cx.read_from_clipboard() {
+            let entries = item.entries();
+
+            match entries.first() {
+                // For now, we only support applying metadata if there's one string. In the future, we can incorporate all the selections
+                // of all the pasted entries.
+                Some(ClipboardEntry::String(clipboard_string)) if entries.len() == 1 => self
+                    .do_paste(
+                        clipboard_string.text(),
+                        clipboard_string.metadata::<Vec<ClipboardSelection>>(),
+                        true,
+                        cx,
+                    ),
+                _ => self.do_paste(&item.text().unwrap_or_default(), None, true, cx),
+            }
         }
     }
 
