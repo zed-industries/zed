@@ -635,31 +635,6 @@ impl Server {
                 move |request, response, session| {
                     let app_state = app_state.clone();
                     async move {
-                        complete_with_language_model(request, response, session, &app_state.config)
-                            .await
-                    }
-                }
-            })
-            .add_streaming_request_handler({
-                let app_state = app_state.clone();
-                move |request, response, session| {
-                    let app_state = app_state.clone();
-                    async move {
-                        stream_complete_with_language_model(
-                            request,
-                            response,
-                            session,
-                            &app_state.config,
-                        )
-                        .await
-                    }
-                }
-            })
-            .add_request_handler({
-                let app_state = app_state.clone();
-                move |request, response, session| {
-                    let app_state = app_state.clone();
-                    async move {
                         count_language_model_tokens(request, response, session, &app_state.config)
                             .await
                     }
