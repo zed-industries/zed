@@ -37,7 +37,6 @@ use rope::Rope;
 use settings::Settings;
 use smol::future::FutureExt;
 use std::{
-    cmp,
     future::{self, Future},
     mem,
     ops::{Range, RangeInclusive},
@@ -110,66 +109,73 @@ impl InlineAssistant {
     ) {
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
 
-        let mut selections = Vec::<Selection<Point>>::new();
-        let mut newest_selection = None;
-        for mut selection in editor.read(cx).selections.all::<Point>(cx) {
-            if selection.end > selection.start {
-                selection.start.column = 0;
-                // If the selection ends at the start of the line, we don't want to include it.
-                if selection.end.column == 0 {
-                    selection.end.row -= 1;
-                }
-                selection.end.column = snapshot.line_len(MultiBufferRow(selection.end.row));
-            }
+        struct CodegenRange {
+            transform_range: Range<Point>,
+            selection_ranges: Vec<Range<Point>>,
+            focus_assist: bool,
+        }
 
-            if let Some(prev_selection) = selections.last_mut() {
-                if selection.start <= prev_selection.end {
-                    prev_selection.end = selection.end;
+        let newest_selection = editor.read(cx).selections.newest::<Point>(cx);
+        let mut codegen_ranges: Vec<CodegenRange> = Vec::new();
+        for selection in editor.read(cx).selections.all::<Point>(cx) {
+            let selection_is_newest = selection.id == newest_selection.id;
+            let mut transform_range = selection.start..selection.end;
+
+            // Expand the transform range to start/end of lines.
+            // If a non-empty selection ends at the start of the last line, clip at the end of the penultimate line.
+            transform_range.start.column = 0;
+            if transform_range.end.column == 0 && transform_range.end > transform_range.start {
+                transform_range.end.row -= 1;
+            }
+            transform_range.end.column = snapshot.line_len(MultiBufferRow(transform_range.end.row));
+
+            // If we intersect the previous transform range,
+            if let Some(CodegenRange {
+                transform_range: prev_transform_range,
+                selection_ranges,
+                focus_assist,
+            }) = codegen_ranges.last_mut()
+            {
+                if transform_range.start <= prev_transform_range.end {
+                    prev_transform_range.end = transform_range.end;
+                    selection_ranges.push(selection.start..selection.end);
+                    *focus_assist |= selection_is_newest;
                     continue;
                 }
             }
 
-            let latest_selection = newest_selection.get_or_insert_with(|| selection.clone());
-            if selection.id > latest_selection.id {
-                *latest_selection = selection.clone();
-            }
-            selections.push(selection);
-        }
-        let newest_selection = newest_selection.unwrap();
-
-        let mut codegen_ranges = Vec::new();
-        for (excerpt_id, buffer, buffer_range) in
-            snapshot.excerpts_in_ranges(selections.iter().map(|selection| {
-                snapshot.anchor_before(selection.start)..snapshot.anchor_after(selection.end)
-            }))
-        {
-            let start = Anchor {
-                buffer_id: Some(buffer.remote_id()),
-                excerpt_id,
-                text_anchor: buffer.anchor_before(buffer_range.start),
-            };
-            let end = Anchor {
-                buffer_id: Some(buffer.remote_id()),
-                excerpt_id,
-                text_anchor: buffer.anchor_after(buffer_range.end),
-            };
-            codegen_ranges.push(start..end);
+            codegen_ranges.push(CodegenRange {
+                transform_range,
+                selection_ranges: vec![selection.start..selection.end],
+                focus_assist: selection_is_newest,
+            })
         }
 
         let assist_group_id = self.next_assist_group_id.post_inc();
         let prompt_buffer =
             cx.new_model(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx));
         let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
-
         let mut assists = Vec::new();
         let mut assist_to_focus = None;
-        for range in codegen_ranges {
-            let assist_id = self.next_assist_id.post_inc();
+
+        for CodegenRange {
+            transform_range,
+            selection_ranges,
+            focus_assist,
+        } in codegen_ranges
+        {
+            let transform_range = snapshot.anchor_before(transform_range.start)
+                ..snapshot.anchor_after(transform_range.end);
+            let selection_ranges = selection_ranges
+                .iter()
+                .map(|range| snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end))
+                .collect::<Vec<_>>();
+
             let codegen = cx.new_model(|cx| {
                 Codegen::new(
                     editor.read(cx).buffer().clone(),
-                    range.clone(),
-                    vec![range.clone()],
+                    transform_range.clone(),
+                    selection_ranges,
                     None,
                     self.telemetry.clone(),
                     self.prompt_builder.clone(),
@@ -177,6 +183,7 @@ impl InlineAssistant {
                 )
             });
 
+            let assist_id = self.next_assist_id.post_inc();
             let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
             let prompt_editor = cx.new_view(|cx| {
                 PromptEditor::new(
@@ -193,23 +200,16 @@ impl InlineAssistant {
                 )
             });
 
-            if assist_to_focus.is_none() {
-                let focus_assist = if newest_selection.reversed {
-                    range.start.to_point(&snapshot) == newest_selection.start
-                } else {
-                    range.end.to_point(&snapshot) == newest_selection.end
-                };
-                if focus_assist {
-                    assist_to_focus = Some(assist_id);
-                }
+            if focus_assist {
+                assist_to_focus = Some(assist_id);
             }
 
             let [prompt_block_id, end_block_id] =
-                self.insert_assist_blocks(editor, &range, &prompt_editor, cx);
+                self.insert_assist_blocks(editor, &transform_range, &prompt_editor, cx);
 
             assists.push((
                 assist_id,
-                range,
+                transform_range,
                 prompt_editor,
                 prompt_block_id,
                 end_block_id,
@@ -2082,6 +2082,8 @@ pub struct Codegen {
     buffer: Model<MultiBuffer>,
     old_buffer: Model<Buffer>,
     snapshot: MultiBufferSnapshot,
+    transform_range: Range<Anchor>,
+    selection_ranges: Vec<Range<Anchor>>,
     edit_position: Option<Anchor>,
     last_equal_ranges: Vec<Range<Anchor>>,
     initial_transaction_id: Option<TransactionId>,
@@ -2092,8 +2094,6 @@ pub struct Codegen {
     telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
     builder: Arc<PromptBuilder>,
-    transform_range: Range<Anchor>,
-    selection_ranges: Vec<Range<Anchor>>,
 }
 
 enum CodegenStatus {
@@ -2356,84 +2356,88 @@ impl Codegen {
                                 let mut diff = StreamingDiff::new(selected_text.to_string());
                                 let mut line_diff = LineDiff::default();
 
-                                let mut new_text = String::new();
-                                let mut base_indent = None;
-                                let mut line_indent = None;
-                                let mut first_line = true;
+                                // let mut new_text = String::new();
+                                // let mut base_indent: Option<()> = None;
+                                // let mut line_indent: Option<()> = None;
+                                // let mut first_line = true;
 
                                 while let Some(chunk) = chunks.next().await {
                                     if response_latency.is_none() {
                                         response_latency = Some(request_start.elapsed());
                                     }
                                     let chunk = chunk?;
+                                    let char_ops = diff.push_new(&chunk);
+                                    line_diff.push_char_operations(&char_ops, &selected_text);
+                                    diff_tx
+                                        .send((char_ops, line_diff.line_operations()))
+                                        .await?;
 
-                                    let mut lines = chunk.split('\n').peekable();
-                                    while let Some(line) = lines.next() {
-                                        new_text.push_str(line);
-                                        if line_indent.is_none() {
-                                            if let Some(non_whitespace_ch_ix) =
-                                                new_text.find(|ch: char| !ch.is_whitespace())
-                                            {
-                                                line_indent = Some(non_whitespace_ch_ix);
-                                                base_indent = base_indent.or(line_indent);
+                                    // let mut lines = chunk.split('\n').peekable();
+                                    // while let Some(line) = lines.next() {
+                                    //     new_text.push_str(line);
+                                    //     if line_indent.is_none() {
+                                    //         if let Some(non_whitespace_ch_ix) =
+                                    //             new_text.find(|ch: char| !ch.is_whitespace())
+                                    //         {
+                                    //             line_indent = Some(non_whitespace_ch_ix);
+                                    //             base_indent = base_indent.or(line_indent);
 
-                                                let line_indent = line_indent.unwrap();
-                                                let base_indent = base_indent.unwrap();
-                                                let indent_delta =
-                                                    line_indent as i32 - base_indent as i32;
-                                                let mut corrected_indent_len = cmp::max(
-                                                    0,
-                                                    suggested_line_indent.len as i32 + indent_delta,
-                                                )
-                                                    as usize;
-                                                if first_line {
-                                                    corrected_indent_len = corrected_indent_len
-                                                        .saturating_sub(
-                                                            selection_start.column as usize,
-                                                        );
-                                                }
+                                    //             let line_indent = line_indent.unwrap();
+                                    //             let base_indent = base_indent.unwrap();
+                                    //             let indent_delta =
+                                    //                 line_indent as i32 - base_indent as i32;
+                                    //             let mut corrected_indent_len = cmp::max(
+                                    //                 0,
+                                    //                 suggested_line_indent.len as i32 + indent_delta,
+                                    //             )
+                                    //                 as usize;
+                                    //             if first_line {
+                                    //                 corrected_indent_len = corrected_indent_len
+                                    //                     .saturating_sub(
+                                    //                         selection_start.column as usize,
+                                    //                     );
+                                    //             }
 
-                                                let indent_char = suggested_line_indent.char();
-                                                let mut indent_buffer = [0; 4];
-                                                let indent_str =
-                                                    indent_char.encode_utf8(&mut indent_buffer);
-                                                new_text.replace_range(
-                                                    ..line_indent,
-                                                    &indent_str.repeat(corrected_indent_len),
-                                                );
-                                            }
-                                        }
+                                    //             let indent_char = suggested_line_indent.char();
+                                    //             let mut indent_buffer = [0; 4];
+                                    //             let indent_str =
+                                    //                 indent_char.encode_utf8(&mut indent_buffer);
+                                    //             new_text.replace_range(
+                                    //                 ..line_indent,
+                                    //                 &indent_str.repeat(corrected_indent_len),
+                                    //             );
+                                    //         }
+                                    //     }
 
-                                        if line_indent.is_some() {
-                                            let char_ops = diff.push_new(&new_text);
-                                            line_diff
-                                                .push_char_operations(&char_ops, &selected_text);
-                                            diff_tx
-                                                .send((char_ops, line_diff.line_operations()))
-                                                .await?;
-                                            new_text.clear();
-                                        }
+                                    //     if line_indent.is_some() {
+                                    //         let char_ops = diff.push_new(&new_text);
+                                    //         line_diff
+                                    //             .push_char_operations(&char_ops, &selected_text);
+                                    //         diff_tx
+                                    //             .send((char_ops, line_diff.line_operations()))
+                                    //             .await?;
+                                    //         new_text.clear();
+                                    //     }
 
-                                        if lines.peek().is_some() {
-                                            let char_ops = diff.push_new("\n");
-                                            line_diff
-                                                .push_char_operations(&char_ops, &selected_text);
-                                            diff_tx
-                                                .send((char_ops, line_diff.line_operations()))
-                                                .await?;
-                                            if line_indent.is_none() {
-                                                // Don't write out the leading indentation in empty lines on the next line
-                                                // This is the case where the above if statement didn't clear the buffer
-                                                new_text.clear();
-                                            }
-                                            line_indent = None;
-                                            first_line = false;
-                                        }
-                                    }
+                                    //     if lines.peek().is_some() {
+                                    //         let char_ops = diff.push_new("\n");
+                                    //         line_diff
+                                    //             .push_char_operations(&char_ops, &selected_text);
+                                    //         diff_tx
+                                    //             .send((char_ops, line_diff.line_operations()))
+                                    //             .await?;
+                                    //         if line_indent.is_none() {
+                                    //             // Don't write out the leading indentation in empty lines on the next line
+                                    //             // This is the case where the above if statement didn't clear the buffer
+                                    //             new_text.clear();
+                                    //         }
+                                    //         line_indent = None;
+                                    //         first_line = false;
+                                    //     }
+                                    // }
                                 }
 
-                                let mut char_ops = diff.push_new(&new_text);
-                                char_ops.extend(diff.finish());
+                                let char_ops = diff.finish();
                                 line_diff.push_char_operations(&char_ops, &selected_text);
                                 line_diff.finish(&selected_text);
                                 diff_tx
@@ -2804,7 +2808,7 @@ mod tests {
     use rand::prelude::*;
     use serde::Serialize;
     use settings::SettingsStore;
-    use std::{future, sync::Arc};
+    use std::{cmp, future, sync::Arc};
 
     #[derive(Serialize)]
     pub struct DummyCompletionRequest {
