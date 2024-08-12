@@ -31,6 +31,7 @@ use axum::{
     routing::get,
     Extension, Router, TypedHeader,
 };
+use chrono::Utc;
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
@@ -604,6 +605,7 @@ impl Server {
             .add_message_handler(user_message_handler(update_followers))
             .add_request_handler(user_handler(get_private_user_info))
             .add_request_handler(user_handler(get_llm_api_token))
+            .add_request_handler(user_handler(accept_terms_of_service))
             .add_message_handler(user_message_handler(acknowledge_channel_message))
             .add_message_handler(user_message_handler(acknowledge_buffer_version))
             .add_request_handler(user_handler(get_supermaven_api_key))
@@ -4882,6 +4884,25 @@ async fn get_private_user_info(
         metrics_id,
         staff: user.admin,
         flags,
+        accepted_tos_at: user.accepted_tos_at.map(|t| t.and_utc().timestamp() as u64),
+    })?;
+    Ok(())
+}
+
+/// Accept the terms of service (tos) on behalf of the current user
+async fn accept_terms_of_service(
+    _request: proto::AcceptTermsOfService,
+    response: Response<proto::AcceptTermsOfService>,
+    session: UserSession,
+) -> Result<()> {
+    let db = session.db().await;
+
+    let accepted_tos_at = Utc::now();
+    db.set_user_accepted_tos_at(session.user_id(), Some(accepted_tos_at.naive_utc()))
+        .await?;
+
+    response.send(proto::AcceptTermsOfServiceResponse {
+        accepted_tos_at: accepted_tos_at.timestamp() as u64,
     })?;
     Ok(())
 }

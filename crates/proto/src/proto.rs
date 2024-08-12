@@ -187,6 +187,8 @@ impl fmt::Display for PeerId {
 }
 
 messages!(
+    (AcceptTermsOfService, Foreground),
+    (AcceptTermsOfServiceResponse, Foreground),
     (Ack, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
@@ -409,6 +411,7 @@ messages!(
 );
 
 request_messages!(
+    (AcceptTermsOfService, AcceptTermsOfServiceResponse),
     (ApplyCodeAction, ApplyCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
