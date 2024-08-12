@@ -225,6 +225,26 @@ impl Database {
         .await
     }
 
+    /// Sets "accepted_tos_at" on the user to the given timestamp.
+    pub async fn set_user_accepted_tos_at(
+        &self,
+        id: UserId,
+        accepted_tos_at: Option<DateTime>,
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            user::Entity::update_many()
+                .filter(user::Column::Id.eq(id))
+                .set(user::ActiveModel {
+                    accepted_tos_at: ActiveValue::set(accepted_tos_at),
+                    ..Default::default()
+                })
+                .exec(&*tx)
+                .await?;
+            Ok(())
+        })
+        .await
+    }
+
     /// hard delete the user.
     pub async fn destroy_user(&self, id: UserId) -> Result<()> {
         self.transaction(|tx| async move {

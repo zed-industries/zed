@@ -77,6 +77,16 @@ impl State {
             this.update(&mut cx, |_, cx| cx.notify())
         })
     }
+
+    fn accept_tos(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let user_store = self.user_store.clone();
+        cx.spawn(move |this, mut cx| async move {
+            let _ = user_store
+                .update(&mut cx, |store, cx| store.accept_tos(cx))?
+                .await;
+            this.update(&mut cx, |_, cx| cx.notify())
+        })
+    }
 }
 
 impl CloudLanguageModelProvider {
@@ -218,6 +228,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
         cx.new_view(|_cx| ConfigurationView {
+            accept_tos_task: None,
             state: self.state.clone(),
         })
         .into()
@@ -748,6 +759,7 @@ impl LlmApiToken {
 
 struct ConfigurationView {
     state: gpui::Model<State>,
+    accept_tos_task: Option<Task<Result<()>>>,
 }
 
 impl ConfigurationView {
@@ -756,6 +768,24 @@ impl ConfigurationView {
             state.authenticate(cx).detach_and_log_err(cx);
         });
         cx.notify();
+    }
+
+    fn accept_tos(&mut self, cx: &mut ViewContext<Self>) {
+        let state = self.state.clone();
+        let task = cx.spawn(|this, mut cx| async move {
+            let result = state
+                .update(&mut cx, |state, cx| state.accept_tos(cx))?
+                .await;
+
+            this.update(&mut cx, |this, cx| {
+                this.accept_tos_task = None;
+                cx.notify()
+            })?;
+
+            result
+        });
+
+        self.accept_tos_task = Some(task);
     }
 }
 
@@ -766,6 +796,13 @@ impl Render for ConfigurationView {
 
         let is_connected = !self.state.read(cx).is_signed_out();
         let plan = self.state.read(cx).user_store.read(cx).current_plan();
+        let accepted_tos = self
+            .state
+            .read(cx)
+            .user_store
+            .read(cx)
+            .current_user_accepted_tos()
+            .unwrap_or(false);
 
         let is_pro = plan == Some(proto::Plan::ZedPro);
 
@@ -773,6 +810,21 @@ impl Render for ConfigurationView {
             v_flex()
                 .gap_3()
                 .max_w_4_5()
+                .child(Label::new(
+                if accepted_tos {
+                    "You have accepted the terms of service."
+                } else {
+                    "You have NOT accepted the terms of service"
+                }
+                ))
+                .when(!accepted_tos, |this| {
+                    this.child(Button::new("accept_tos", "Accept Terms of Service")
+                        .disabled(self.accept_tos_task.is_some())
+                        .style(ButtonStyle::Filled)
+                        .on_click(cx.listener(move |this, _, cx| {
+                            this.accept_tos(cx);
+                        })))
+                })
                 .child(Label::new(
                     if is_pro {
                         "You have full access to Zed's hosted models from Anthropic, OpenAI, Google with faster speeds and higher limits through Zed Pro."
