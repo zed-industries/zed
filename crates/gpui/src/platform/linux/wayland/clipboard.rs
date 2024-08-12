@@ -112,13 +112,17 @@ impl Clipboard {
     }
 
     pub fn send(&self, _mime_type: String, fd: OwnedFd) {
-        if let Some(text) = &self.contents.and_then(|contents| contents.text()) {
+        if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
             self.send_internal(fd, text.as_bytes().to_owned());
         }
     }
 
     pub fn send_primary(&self, _mime_type: String, fd: OwnedFd) {
-        if let Some(text) = &self.primary_contents.and_then(|contents| contents.text()) {
+        if let Some(text) = self
+            .primary_contents
+            .as_ref()
+            .and_then(|contents| contents.text())
+        {
             self.send_internal(fd, text.as_bytes().to_owned());
         }
     }

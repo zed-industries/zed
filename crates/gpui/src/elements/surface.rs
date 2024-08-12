@@ -77,10 +77,10 @@ impl Element for Surface {
     fn paint(
         &mut self,
         _global_id: Option<&GlobalElementId>,
-        bounds: Bounds<Pixels>,
+        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        cx: &mut WindowContext,
+        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] cx: &mut WindowContext,
     ) {
         match &self.source {
             #[cfg(target_os = "macos")]
