@@ -2407,11 +2407,11 @@ impl ContextEditor {
                 });
             });
 
-            let image = Arc::new(image);
-
             self.context.update(cx, |context, cx| {
+                let image_id = image.id();
+                context.insert_image(image, cx);
                 for image_position in image_positions {
-                    context.insert_image(image_position.text_anchor, image.clone(), cx);
+                    context.insert_image_anchor(image_id, image_position.text_anchor, cx);
                 }
             });
         } else {
@@ -2431,34 +2431,28 @@ impl ContextEditor {
                 .filter_map(|image| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
                     let anchor = buffer.anchor_in_excerpt(excerpt_id, image.anchor).unwrap();
-                    let image = image.data.clone();
+                    let image = image.render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         position: anchor,
                         height: MAX_HEIGHT_IN_LINES,
                         style: BlockStyle::Sticky,
                         render: Box::new(move |cx| {
-                            image
-                                .clone()
-                                .use_render_image(cx.context)
-                                .map(|image| {
-                                    let image_size = size_for_image(
-                                        &image,
-                                        size(
-                                            cx.max_width - cx.gutter_dimensions.full_width(),
-                                            MAX_HEIGHT_IN_LINES as f32 * cx.line_height,
-                                        ),
-                                    );
-                                    h_flex()
-                                        .pl(cx.gutter_dimensions.full_width())
-                                        .child(
-                                            img(image.clone())
-                                                .object_fit(gpui::ObjectFit::ScaleDown)
-                                                .w(image_size.width)
-                                                .h(image_size.height),
-                                        )
-                                        .into_any_element()
-                                })
-                                .unwrap_or_else(|| Empty.into_any_element())
+                            let image_size = size_for_image(
+                                &image,
+                                size(
+                                    cx.max_width - cx.gutter_dimensions.full_width(),
+                                    MAX_HEIGHT_IN_LINES as f32 * cx.line_height,
+                                ),
+                            );
+                            h_flex()
+                                .pl(cx.gutter_dimensions.full_width())
+                                .child(
+                                    img(image.clone())
+                                        .object_fit(gpui::ObjectFit::ScaleDown)
+                                        .w(image_size.width)
+                                        .h(image_size.height),
+                                )
+                                .into_any_element()
                         }),
                         disposition: BlockDisposition::Above,
                     })

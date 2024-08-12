@@ -361,7 +361,8 @@ mod test {
             Mode::Normal,
         );
         assert_eq!(
-            cx.read_from_clipboard().map(|item| item.text().clone()),
+            cx.read_from_clipboard()
+                .map(|item| item.text().map(ToOwned::to_owned).unwrap()),
             Some("jumps".into())
         );
         cx.simulate_keystrokes("d d p");
@@ -373,7 +374,8 @@ mod test {
             Mode::Normal,
         );
         assert_eq!(
-            cx.read_from_clipboard().map(|item| item.text().clone()),
+            cx.read_from_clipboard()
+                .map(|item| item.text().map(ToOwned::to_owned).unwrap()),
             Some("jumps".into())
         );
         cx.write_to_clipboard(ClipboardItem::new_string("test-copy".to_string()));

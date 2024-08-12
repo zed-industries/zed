@@ -1034,6 +1034,11 @@ impl Hash for Image {
 }
 
 impl Image {
+    /// Get this image's ID
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
     /// Use the GPUI `use_asset` API to make this image renderable
     pub fn use_render_image(self: Arc<Self>, cx: &mut WindowContext) -> Option<Arc<RenderImage>> {
         ImageSource::Image(self).use_data(cx)

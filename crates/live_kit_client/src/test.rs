@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{btree_map::Entry as BTreeEntry, hash_map::Entry, BTreeMap, HashMap, HashSet};
 use futures::Stream;
-use gpui::{BackgroundExecutor, ImageSource, SurfaceSource};
+use gpui::{BackgroundExecutor, SurfaceSource};
 use live_kit_server::{proto, token};
 
 use parking_lot::Mutex;

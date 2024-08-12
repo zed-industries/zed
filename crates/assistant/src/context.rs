@@ -16,8 +16,8 @@ use futures::{
     FutureExt, StreamExt,
 };
 use gpui::{
-    AppContext, Context as _, EventEmitter, Image, Model, ModelContext, Subscription, Task,
-    UpdateGlobal, View, WeakView,
+    AppContext, Context as _, EventEmitter, Image, Model, ModelContext, RenderImage, Subscription,
+    Task, UpdateGlobal, View, WeakView,
 };
 use language::{
     AnchorRangeExt, Bias, Buffer, BufferSnapshot, LanguageRegistry, OffsetRangeExt, ParseStatus,
@@ -319,9 +319,23 @@ pub struct MessageMetadata {
     timestamp: clock::Lamport,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
+pub struct MessageImage {
+    image_id: u64,
+    image: Shared<Task<Option<LanguageModelImage>>>,
+}
+
+impl PartialEq for MessageImage {
+    fn eq(&self, other: &Self) -> bool {
+        self.image_id == other.image_id
+    }
+}
+
+impl Eq for MessageImage {}
+
+#[derive(Clone, Debug)]
 pub struct Message {
-    pub image_offsets: SmallVec<[(usize, Arc<Image>); 1]>,
+    pub image_offsets: SmallVec<[(usize, MessageImage); 1]>,
     pub offset_range: Range<usize>,
     pub index_range: Range<usize>,
     pub id: MessageId,
@@ -335,7 +349,7 @@ impl Message {
         let mut content = Vec::new();
 
         let mut range_start = self.offset_range.start;
-        for (image_offset, image) in self.image_offsets.iter() {
+        for (image_offset, message_image) in self.image_offsets.iter() {
             if *image_offset != range_start {
                 content.push(
                     buffer
@@ -344,8 +358,8 @@ impl Message {
                         .into(),
                 )
             }
-            if let Some(image) = LanguageModelImage::from_image(image.as_ref()) {
-                // TODO: Cache the results of this image encoding. Currently, we re-encode from BRGA to png every time.
+
+            if let Some(image) = message_image.image.clone().now_or_never().flatten() {
                 content.push(language_model::MessageContent::Image(image));
             }
 
@@ -367,10 +381,18 @@ impl Message {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ImageAnchor {
     pub anchor: language::Anchor,
-    pub data: Arc<Image>,
+    pub image_id: u64,
+    pub render_image: Arc<RenderImage>,
+    pub image: Shared<Task<Option<LanguageModelImage>>>,
+}
+
+impl PartialEq for ImageAnchor {
+    fn eq(&self, other: &Self) -> bool {
+        self.image_id == other.image_id
+    }
 }
 
 struct PendingCompletion {
@@ -633,6 +655,7 @@ pub struct Context {
     finished_slash_commands: HashSet<SlashCommandId>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
+    images: HashMap<u64, (Arc<RenderImage>, Shared<Task<Option<LanguageModelImage>>>)>,
     image_anchors: Vec<ImageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     summary: Option<ContextSummary>,
@@ -699,6 +722,7 @@ impl Context {
             operations: Vec::new(),
             message_anchors: Default::default(),
             image_anchors: Default::default(),
+            images: Default::default(),
             messages_metadata: Default::default(),
             pending_slash_commands: Vec::new(),
             finished_slash_commands: HashSet::default(),
@@ -1781,12 +1805,26 @@ impl Context {
         }
     }
 
-    pub fn insert_image(
+    pub fn insert_image(&mut self, image: Image, cx: &mut ModelContext<Self>) -> Option<()> {
+        if !self.images.contains_key(&image.id()) {
+            self.images.insert(
+                image.id(),
+                (
+                    image.to_image_data(cx).log_err()?,
+                    LanguageModelImage::from_image(image, cx).shared(),
+                ),
+            );
+        }
+
+        Some(())
+    }
+
+    pub fn insert_image_anchor(
         &mut self,
+        image_id: u64,
         anchor: language::Anchor,
-        image: Arc<Image>,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> bool {
         cx.emit(ContextEvent::MessagesEdited);
 
         let buffer = self.buffer.read(cx);
@@ -1798,20 +1836,25 @@ impl Context {
             Err(ix) => ix,
         };
 
-        self.image_anchors.insert(
-            insertion_ix,
-            ImageAnchor {
-                anchor,
-                data: image,
-            },
-        )
+        if let Some((render_image, image)) = self.images.get(&image_id) {
+            self.image_anchors.insert(
+                insertion_ix,
+                ImageAnchor {
+                    anchor,
+                    image_id,
+                    image: image.clone(),
+                    render_image: render_image.clone(),
+                },
+            );
+
+            true
+        } else {
+            false
+        }
     }
 
     pub fn images<'a>(&'a self, _cx: &'a AppContext) -> impl 'a + Iterator<Item = ImageAnchor> {
-        self.image_anchors.iter().map(|image| ImageAnchor {
-            anchor: image.anchor.clone(),
-            data: image.data.clone(),
-        })
+        self.image_anchors.iter().cloned()
     }
 
     pub fn split_message(
@@ -2120,7 +2163,10 @@ impl Context {
                     if image_anchor.anchor.cmp(&message_end_anchor, buffer).is_lt() {
                         image_offsets.push((
                             image_anchor.anchor.to_offset(buffer),
-                            image_anchor.data.clone(),
+                            MessageImage {
+                                image_id: image_anchor.image_id,
+                                image: image_anchor.image.clone(),
+                            },
                         ));
                         images.next();
                     } else {

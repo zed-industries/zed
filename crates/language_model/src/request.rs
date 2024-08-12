@@ -2,70 +2,78 @@ use std::io::{Cursor, Write};
 
 use crate::role::Role;
 use base64::write::EncoderWriter;
-use gpui::{point, size, DevicePixels, Image, ObjectFit, RenderImage, Size};
-use image::{codecs::png::PngEncoder, imageops::resize, ImageDecoder};
+use gpui::{point, size, AppContext, DevicePixels, Image, ObjectFit, RenderImage, Size, Task};
+use image::{codecs::png::PngEncoder, imageops::resize, DynamicImage, ImageDecoder};
 use serde::{Deserialize, Serialize};
-use ui::px;
+use ui::{px, SharedString};
 use util::ResultExt;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
 pub struct LanguageModelImage {
     // A base64 encoded PNG image
-    source: String,
+    source: SharedString,
     size: Size<DevicePixels>,
 }
 
 const ANTHROPIC_SIZE_LIMT: f32 = 1568.0; // Anthropic wants uploaded images to be smaller than this in both dimensions
 
 impl LanguageModelImage {
-    pub fn from_image(data: &Image) -> Option<Self> {
-        match data.format() {
-            gpui::ImageFormat::Png
-            | gpui::ImageFormat::Jpeg
-            | gpui::ImageFormat::Webp
-            | gpui::ImageFormat::Gif => {}
-            _ => return None,
-        };
+    pub fn from_image(data: Image, cx: &mut AppContext) -> Task<Option<Self>> {
+        cx.background_executor().spawn(async move {
+            match data.format() {
+                gpui::ImageFormat::Png
+                | gpui::ImageFormat::Jpeg
+                | gpui::ImageFormat::Webp
+                | gpui::ImageFormat::Gif => {}
+                _ => return None,
+            };
 
-        let image = image::codecs::png::PngDecoder::new(Cursor::new(data.bytes())).log_err()?;
-        let (width, height) = image.dimensions();
-        let image_size = size(DevicePixels(width as i32), DevicePixels(height as i32));
+            let image = image::codecs::png::PngDecoder::new(Cursor::new(data.bytes())).log_err()?;
+            let (width, height) = image.dimensions();
+            let image_size = size(DevicePixels(width as i32), DevicePixels(height as i32));
 
-        if image_size.width.0 > ANTHROPIC_SIZE_LIMT as i32
-            || image_size.height.0 > ANTHROPIC_SIZE_LIMT as i32
-        {
-            let new_bounds = ObjectFit::ScaleDown.get_bounds(
-                gpui::Bounds {
-                    origin: point(px(0.0), px(0.0)),
-                    size: size(px(ANTHROPIC_SIZE_LIMT), px(ANTHROPIC_SIZE_LIMT)),
-                },
-                image_size,
-            );
+            let mut base64_image = Vec::new();
 
-            image = resize(
-                &image,
-                new_bounds.size.width.0 as u32,
-                new_bounds.size.height.0 as u32,
-                image::imageops::FilterType::Triangle,
-            );
-        }
+            {
+                let mut base64_encoder = EncoderWriter::new(
+                    Cursor::new(&mut base64_image),
+                    &base64::engine::general_purpose::STANDARD,
+                );
 
-        let mut base64_image = Vec::new();
-        {
-            let mut base64_encoder = EncoderWriter::new(
-                Cursor::new(&mut base64_image),
-                &base64::engine::general_purpose::STANDARD,
-            );
+                if image_size.width.0 > ANTHROPIC_SIZE_LIMT as i32
+                    || image_size.height.0 > ANTHROPIC_SIZE_LIMT as i32
+                {
+                    let new_bounds = ObjectFit::ScaleDown.get_bounds(
+                        gpui::Bounds {
+                            origin: point(px(0.0), px(0.0)),
+                            size: size(px(ANTHROPIC_SIZE_LIMT), px(ANTHROPIC_SIZE_LIMT)),
+                        },
+                        image_size,
+                    );
+                    let image = DynamicImage::from_decoder(image).log_err()?.resize(
+                        new_bounds.size.width.0 as u32,
+                        new_bounds.size.height.0 as u32,
+                        image::imageops::FilterType::Triangle,
+                    );
 
-            base64_encoder.write_all(data.bytes()).log_err()?;
-        }
+                    let mut png = Vec::new();
+                    image
+                        .write_with_encoder(PngEncoder::new(&mut png))
+                        .log_err()?;
 
-        // SAFETY: The base64 encoder should not produce non-UTF8
-        let source = unsafe { String::from_utf8_unchecked(base64_image) };
+                    base64_encoder.write_all(png.as_slice()).log_err()?;
+                } else {
+                    base64_encoder.write_all(data.bytes()).log_err()?;
+                }
+            }
 
-        Some(LanguageModelImage {
-            size: image_size,
-            source,
+            // SAFETY: The base64 encoder should not produce non-UTF8
+            let source = unsafe { String::from_utf8_unchecked(base64_image) };
+
+            Some(LanguageModelImage {
+                size: image_size,
+                source: source.into(),
+            })
         })
     }
 
@@ -127,7 +135,7 @@ impl LanguageModelImage {
 
         Some(LanguageModelImage {
             size: image_size,
-            source,
+            source: source.into(),
         })
     }
 
@@ -333,7 +341,7 @@ impl LanguageModelRequest {
                                     source: anthropic::ImageSource {
                                         source_type: "base64".to_string(),
                                         media_type: "image/png".to_string(),
-                                        data: i.source,
+                                        data: i.source.to_string(),
                                     },
                                 }),
                                 _ => None,
