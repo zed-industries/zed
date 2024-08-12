@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use settings::{Settings, SettingsStore};
 use smol::{
-    io::BufReader,
+    io::{AsyncReadExt, BufReader},
     lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard},
 };
 use std::{future, sync::Arc};
@@ -334,7 +334,7 @@ impl CloudLanguageModel {
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
                 .body(serde_json::to_string(&body)?.into())?;
-            let response = http_client.send(request).await?;
+            let mut response = http_client.send(request).await?;
             if response.status().is_success() {
                 break response;
             } else if !did_retry
@@ -346,8 +346,10 @@ impl CloudLanguageModel {
                 did_retry = true;
                 token = llm_api_token.refresh(&client).await?;
             } else {
+                let mut body = String::new();
+                response.body_mut().read_to_string(&mut body).await?;
                 break Err(anyhow!(
-                    "cloud language model completion failed with status {}",
+                    "cloud language model completion failed with status {}: {body}",
                     response.status()
                 ))?;
             }
