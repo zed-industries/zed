@@ -3957,7 +3957,7 @@ async fn test_clipboard(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|e, cx| e.copy(&Copy, cx));
     assert_eq!(
         cx.read_from_clipboard()
-            .and_then(|item| item.text().map(str::to_string)),
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
         Some("fox jumps over\n".to_string())
     );
 
