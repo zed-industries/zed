@@ -134,6 +134,11 @@ spec:
                 secretKeyRef:
                   name: anthropic
                   key: api_key
+            - name: ANTHROPIC_STAFF_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic
+                  key: staff_api_key
             - name: GOOGLE_AI_API_KEY
               valueFrom:
                 secretKeyRef:

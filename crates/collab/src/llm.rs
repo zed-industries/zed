@@ -171,11 +171,19 @@ async fn perform_completion(
 
     let stream = match params.provider {
         LanguageModelProvider::Anthropic => {
-            let api_key = state
-                .config
-                .anthropic_api_key
-                .as_ref()
-                .context("no Anthropic AI API key configured on the server")?;
+            let api_key = if claims.is_staff {
+                state
+                    .config
+                    .anthropic_staff_api_key
+                    .as_ref()
+                    .context("no Anthropic AI staff API key configured on the server")?
+            } else {
+                state
+                    .config
+                    .anthropic_api_key
+                    .as_ref()
+                    .context("no Anthropic AI API key configured on the server")?
+            };
 
             let mut request: anthropic::Request =
                 serde_json::from_str(&params.provider_request.get())?;
@@ -199,16 +207,22 @@ async fn perform_completion(
             )
             .await
             .map_err(|err| match err {
-                anthropic::AnthropicError::ApiError(ref api_error) => {
-                    if api_error.code() == Some(anthropic::ApiErrorCode::RateLimitError) {
-                        return Error::http(
-                            StatusCode::TOO_MANY_REQUESTS,
-                            "Upstream Anthropic rate limit exceeded.".to_string(),
-                        );
+                anthropic::AnthropicError::ApiError(ref api_error) => match api_error.code() {
+                    Some(anthropic::ApiErrorCode::RateLimitError) => Error::http(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "Upstream Anthropic rate limit exceeded.".to_string(),
+                    ),
+                    Some(anthropic::ApiErrorCode::InvalidRequestError) => {
+                        Error::http(StatusCode::BAD_REQUEST, api_error.message.clone())
                     }
-
-                    Error::Internal(anyhow!(err))
-                }
+                    Some(anthropic::ApiErrorCode::OverloadedError) => {
+                        Error::http(StatusCode::SERVICE_UNAVAILABLE, api_error.message.clone())
+                    }
+                    Some(_) => {
+                        Error::http(StatusCode::INTERNAL_SERVER_ERROR, api_error.message.clone())
+                    }
+                    None => Error::Internal(anyhow!(err)),
+                },
                 anthropic::AnthropicError::Other(err) => Error::Internal(err),
             })?;
 
@@ -473,6 +487,7 @@ impl<S> Drop for TokenCountingStream<S> {
                 .db
                 .record_usage(
                     claims.user_id as i32,
+                    claims.is_staff,
                     provider,
                     &model,
                     input_token_count,

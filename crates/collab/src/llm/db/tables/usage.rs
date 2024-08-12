@@ -15,6 +15,7 @@ pub struct Model {
     pub measure_id: UsageMeasureId,
     pub timestamp: DateTime,
     pub buckets: Vec<i64>,
+    pub is_staff: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

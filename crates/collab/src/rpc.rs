@@ -4916,8 +4916,20 @@ async fn get_llm_api_token(
         Err(anyhow!("permission denied"))?
     }
 
+    let db = session.db().await;
+
+    let user_id = session.user_id();
+    let user = db
+        .get_user_by_id(user_id)
+        .await?
+        .ok_or_else(|| anyhow!("user {} not found", user_id))?;
+
+    if user.accepted_tos_at.is_none() {
+        Err(anyhow!("terms of service not accepted"))?
+    }
+
     let token = LlmTokenClaims::create(
-        session.user_id(),
+        user.id,
         session.is_staff(),
         session.current_plan().await?,
         &session.app_state.config,
