@@ -1,5 +1,6 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
+    context_inspector::ContextInspector,
     humanize_token_count,
     prompt_library::open_prompt_library,
     prompts::PromptBuilder,
@@ -402,13 +403,56 @@ impl AssistantPanel {
                                 } else {
                                     "Zoom In"
                                 };
+                                let weak_pane = cx.view().downgrade();
                                 let menu = ContextMenu::build(cx, |menu, cx| {
-                                    menu.context(pane.focus_handle(cx))
+                                    let menu = menu
+                                        .context(pane.focus_handle(cx))
                                         .action("New Context", Box::new(NewFile))
                                         .action("History", Box::new(DeployHistory))
                                         .action("Prompt Library", Box::new(DeployPromptLibrary))
                                         .action("Configure", Box::new(ShowConfiguration))
-                                        .action(zoom_label, Box::new(ToggleZoom))
+                                        .action(zoom_label, Box::new(ToggleZoom));
+
+                                    if let Some(editor) = pane
+                                        .active_item()
+                                        .and_then(|e| e.downcast::<ContextEditor>())
+                                    {
+                                        let is_enabled = editor.read(cx).debug_inspector.is_some();
+                                        menu.separator().toggleable_entry(
+                                            "Debug Workflows",
+                                            is_enabled,
+                                            IconPosition::End,
+                                            None,
+                                            move |cx| {
+                                                weak_pane
+                                                    .update(cx, |this, cx| {
+                                                        if let Some(context_editor) =
+                                                            this.active_item().and_then(|item| {
+                                                                item.downcast::<ContextEditor>()
+                                                            })
+                                                        {
+                                                            context_editor.update(cx, |this, cx| {
+                                                                if let Some(mut state) =
+                                                                    this.debug_inspector.take()
+                                                                {
+                                                                    state.deactivate(cx);
+                                                                } else {
+                                                                    this.debug_inspector = Some(
+                                                                        ContextInspector::new(
+                                                                            this.editor.clone(),
+                                                                            this.context.clone(),
+                                                                        ),
+                                                                    );
+                                                                }
+                                                            })
+                                                        }
+                                                    })
+                                                    .ok();
+                                            },
+                                        )
+                                    } else {
+                                        menu
+                                    }
                                 });
                                 cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
                                     pane.new_item_menu = None;
@@ -1667,6 +1711,7 @@ pub struct ContextEditor {
     active_workflow_step: Option<ActiveWorkflowStep>,
     assistant_panel: WeakView<AssistantPanel>,
     error_message: Option<SharedString>,
+    debug_inspector: Option<ContextInspector>,
 }
 
 const DEFAULT_TAB_TITLE: &str = "New Context";
@@ -1726,6 +1771,7 @@ impl ContextEditor {
             active_workflow_step: None,
             assistant_panel,
             error_message: None,
+            debug_inspector: None,
         };
         this.update_message_headers(cx);
         this.insert_slash_command_output_sections(sections, cx);
@@ -2389,6 +2435,9 @@ impl ContextEditor {
                 blocks_to_remove.insert(step.header_block_id);
                 blocks_to_remove.insert(step.footer_block_id);
             }
+            if let Some(debug) = self.debug_inspector.as_mut() {
+                debug.deactivate_for(step_range, cx);
+            }
         }
         self.editor.update(cx, |editor, cx| {
             editor.remove_blocks(blocks_to_remove, None, cx)
@@ -2415,6 +2464,9 @@ impl ContextEditor {
         let resolved_step = step.status.into_resolved();
         if let Some(existing_step) = self.workflow_steps.get_mut(&step_range) {
             existing_step.resolved_step = resolved_step;
+            if let Some(debug) = self.debug_inspector.as_mut() {
+                debug.refresh(&step_range, cx);
+            }
         } else {
             let start = buffer_snapshot
                 .anchor_in_excerpt(excerpt_id, step_range.start)
@@ -2454,7 +2506,15 @@ impl ContextEditor {
                                     } else {
                                         theme.info_border
                                     };
-
+                                    let debug_header = weak_self
+                                        .update(&mut **cx, |this, _| {
+                                            if let Some(inspector) = this.debug_inspector.as_mut() {
+                                                Some(inspector.is_active(&step_range))
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .unwrap_or_default();
                                     div()
                                         .w_full()
                                         .px(cx.gutter_dimensions.full_width())
@@ -2464,14 +2524,52 @@ impl ContextEditor {
                                                 .border_b_1()
                                                 .border_color(border_color)
                                                 .pb_1()
-                                                .justify_end()
+                                                .justify_between()
                                                 .gap_2()
+                                                .children(debug_header.map(|is_active| {
+                                                    h_flex().justify_start().child(
+                                                        Button::new("debug-workflows-toggle", "Debug")
+                                                            .icon_color(Color::Hidden)
+                                                            .color(Color::Hidden)
+                                                            .selected_icon_color(Color::Default)
+                                                            .selected_label_color(Color::Default)
+                                                            .icon(IconName::Microscope)
+                                                            .icon_position(IconPosition::Start)
+                                                            .icon_size(IconSize::Small)
+                                                            .label_size(LabelSize::Small)
+                                                            .selected(is_active)
+                                                            .on_click({
+                                                                let weak_self = weak_self.clone();
+                                                                let step_range = step_range.clone();
+                                                                move |_, cx| {
+                                                                    weak_self
+                                                                        .update(cx, |this, cx| {
+                                                                            if let Some(inspector) =
+                                                                                this.debug_inspector
+                                                                                    .as_mut()
+                                                                            {
+                                                                                if is_active {
+
+                                                                                    inspector.deactivate_for(&step_range, cx);
+                                                                                } else {
+                                                                                    inspector.activate_for_step(step_range.clone(), cx);
+                                                                                }
+                                                                            }
+                                                                        })
+                                                                        .ok();
+                                                                }
+                                                            }),
+                                                    )
+                                                    // .child(h_flex().w_full())
+                                                }))
                                                 .children(current_status.as_ref().map(|status| {
-                                                    status.into_element(
-                                                        step_range.clone(),
-                                                        editor_focus_handle.clone(),
-                                                        weak_self.clone(),
-                                                        cx,
+                                                    h_flex().w_full().justify_end().child(
+                                                        status.into_element(
+                                                            step_range.clone(),
+                                                            editor_focus_handle.clone(),
+                                                            weak_self.clone(),
+                                                            cx,
+                                                        ),
                                                     )
                                                 })),
                                         )
@@ -3787,7 +3885,6 @@ impl Render for ContextEditorToolbarItem {
                     )
                     .child(self.model_summary_editor.clone())
             });
-
         let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
 
