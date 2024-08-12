@@ -1,6 +1,7 @@
 use proc_macro::{Delimiter, Span, TokenStream, TokenTree};
 use syn::Error;
 
+#[cfg(not(target_os = "linux"))]
 static SQLITE: std::sync::LazyLock<sqlez::thread_safe_connection::ThreadSafeConnection> =
     std::sync::LazyLock::new(|| {
         sqlez::thread_safe_connection::ThreadSafeConnection::new(
