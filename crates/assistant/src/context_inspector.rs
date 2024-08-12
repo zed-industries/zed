@@ -52,7 +52,19 @@ impl ContextInspector {
             crate::WorkflowStepStatus::Resolved(ResolvedWorkflowStep { title, suggestions }) => {
                 writeln!(output, "Resolution:").ok()?;
                 writeln!(output, "  {title:?}").ok()?;
-                writeln!(output, "  {suggestions:?}").ok()?;
+                for (buffer, suggestion_groups) in suggestions {
+                    let buffer_path = buffer
+                        .read(cx)
+                        .file()
+                        .and_then(|file| file.path().to_str())
+                        .unwrap_or("untitled");
+                    writeln!(output, "  {buffer_path}:").ok()?;
+                    for group in suggestion_groups {
+                        for suggestion in &group.suggestions {
+                            writeln!(output, "    {suggestion:?}").ok()?;
+                        }
+                    }
+                }
             }
             crate::WorkflowStepStatus::Pending(_) => {
                 writeln!(output, "Resolution: Pending").ok()?;
@@ -62,7 +74,6 @@ impl ContextInspector {
                 writeln!(output, "{error:?}").ok()?;
             }
         }
-        output.push('\n');
 
         Some(output.into())
     }
