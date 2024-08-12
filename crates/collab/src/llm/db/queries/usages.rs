@@ -111,6 +111,7 @@ impl LlmDatabase {
     pub async fn record_usage(
         &self,
         user_id: i32,
+        is_staff: bool,
         provider: LanguageModelProvider,
         model_name: &str,
         input_token_count: usize,
@@ -132,6 +133,7 @@ impl LlmDatabase {
             let requests_this_minute = self
                 .update_usage_for_measure(
                     user_id,
+                    is_staff,
                     model.id,
                     &usages,
                     UsageMeasure::RequestsPerMinute,
@@ -143,6 +145,7 @@ impl LlmDatabase {
             let tokens_this_minute = self
                 .update_usage_for_measure(
                     user_id,
+                    is_staff,
                     model.id,
                     &usages,
                     UsageMeasure::TokensPerMinute,
@@ -154,6 +157,7 @@ impl LlmDatabase {
             let tokens_this_day = self
                 .update_usage_for_measure(
                     user_id,
+                    is_staff,
                     model.id,
                     &usages,
                     UsageMeasure::TokensPerDay,
@@ -165,6 +169,7 @@ impl LlmDatabase {
             let input_tokens_this_month = self
                 .update_usage_for_measure(
                     user_id,
+                    is_staff,
                     model.id,
                     &usages,
                     UsageMeasure::InputTokensPerMonth,
@@ -176,6 +181,7 @@ impl LlmDatabase {
             let output_tokens_this_month = self
                 .update_usage_for_measure(
                     user_id,
+                    is_staff,
                     model.id,
                     &usages,
                     UsageMeasure::OutputTokensPerMonth,
@@ -205,7 +211,11 @@ impl LlmDatabase {
             let day_since = now - Duration::days(5);
 
             let users_in_recent_minutes = usage::Entity::find()
-                .filter(usage::Column::Timestamp.gte(minute_since.naive_utc()))
+                .filter(
+                    usage::Column::Timestamp
+                        .gte(minute_since.naive_utc())
+                        .and(usage::Column::IsStaff.eq(false)),
+                )
                 .select_only()
                 .column(usage::Column::UserId)
                 .group_by(usage::Column::UserId)
@@ -213,7 +223,11 @@ impl LlmDatabase {
                 .await? as usize;
 
             let users_in_recent_days = usage::Entity::find()
-                .filter(usage::Column::Timestamp.gte(day_since.naive_utc()))
+                .filter(
+                    usage::Column::Timestamp
+                        .gte(day_since.naive_utc())
+                        .and(usage::Column::IsStaff.eq(false)),
+                )
                 .select_only()
                 .column(usage::Column::UserId)
                 .group_by(usage::Column::UserId)
@@ -232,6 +246,7 @@ impl LlmDatabase {
     async fn update_usage_for_measure(
         &self,
         user_id: i32,
+        is_staff: bool,
         model_id: ModelId,
         usages: &[usage::Model],
         usage_measure: UsageMeasure,
@@ -267,6 +282,7 @@ impl LlmDatabase {
 
         let mut model = usage::ActiveModel {
             user_id: ActiveValue::set(user_id),
+            is_staff: ActiveValue::set(is_staff),
             model_id: ActiveValue::set(model_id),
             measure_id: ActiveValue::set(measure_id),
             timestamp: ActiveValue::set(timestamp),
