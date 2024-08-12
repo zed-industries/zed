@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
 use indexed_docs::IndexedDocsDatabase;
+use isahc::config::{Configurable, RedirectPolicy};
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
 };
@@ -131,17 +132,17 @@ impl common::Host for WasmState {}
 impl http_client::Host for WasmState {
     async fn fetch(
         &mut self,
-        extension_request: http_client::HttpRequest,
+        request: http_client::HttpRequest,
     ) -> wasmtime::Result<Result<http_client::HttpResponse, String>> {
         maybe!(async {
-            let url = &extension_request.url;
-            let request = convert_request(&extension_request)?;
+            let url = &request.url;
+            let request = convert_request(&request, true)?;
             let mut response = self.host.http_client.send(request).await?;
+
             if response.status().is_client_error() || response.status().is_server_error() {
                 bail!("failed to fetch '{url}': status code {}", response.status())
             }
-            let extension_response = convert_response(&mut response).await?;
-            Ok(extension_response)
+            Ok(convert_response(&mut response).await?)
         })
         .await
         .to_wasmtime_result()
@@ -149,9 +150,9 @@ impl http_client::Host for WasmState {
 
     async fn fetch_stream(
         &mut self,
-        extension_request: http_client::HttpRequest,
+        request: http_client::HttpRequest,
     ) -> wasmtime::Result<Result<Resource<ExtensionHttpResponseStream>, String>> {
-        let request = convert_request(&extension_request)?;
+        let request = convert_request(&request, true)?;
         let response = self.host.http_client.send(request);
         maybe!(async {
             let response = response.await?;
@@ -207,10 +208,16 @@ impl From<http_client::HttpMethod> for ::http_client::Method {
 
 fn convert_request(
     extension_request: &http_client::HttpRequest,
+    follow_redirects: bool,
 ) -> Result<::http_client::Request<AsyncBody>, anyhow::Error> {
     let mut request = ::http_client::Request::builder()
         .method(::http_client::Method::from(extension_request.method))
-        .uri(&extension_request.url);
+        .uri(&extension_request.url)
+        .redirect_policy(if follow_redirects {
+            RedirectPolicy::Follow
+        } else {
+            RedirectPolicy::None
+        });
     for (key, value) in &extension_request.headers {
         request = request.header(key, value);
     }
