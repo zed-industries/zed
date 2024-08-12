@@ -1397,6 +1397,21 @@ impl WorkflowStepStatus {
         cx: &mut BlockContext<'_, '_>,
     ) -> AnyElement {
         let id = EntityId::from(cx.block_id);
+        fn display_keybind_in_tooltip(
+            step_range: &Range<language::Anchor>,
+            editor: &WeakView<ContextEditor>,
+            cx: &mut WindowContext<'_>,
+        ) -> bool {
+            editor
+                .update(cx, |this, _| {
+                    this.active_workflow_step
+                        .as_ref()
+                        .map(|step| &step.range == step_range)
+                })
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+        }
         match self {
             WorkflowStepStatus::Resolving => Icon::new(IconName::ArrowCircle)
                 .size(IconSize::Small)
@@ -1448,15 +1463,24 @@ impl WorkflowStepStatus {
                 .icon_size(IconSize::Small)
                 .label_size(LabelSize::Small)
                 .style(ButtonStyle::Tinted(TintColor::Accent))
-                .tooltip(move |cx| {
-                    cx.new_view(|cx| {
-                        Tooltip::new("Transform").key_binding(KeyBinding::for_action_in(
-                            &Assist,
-                            &focus_handle,
-                            cx,
-                        ))
-                    })
-                    .into()
+                .tooltip({
+                    let step_range = step_range.clone();
+                    let editor = editor.clone();
+                    move |cx| {
+                        cx.new_view(|cx| {
+                            let tooltip = Tooltip::new("Transform");
+                            if display_keybind_in_tooltip(&step_range, &editor, cx) {
+                                tooltip.key_binding(KeyBinding::for_action_in(
+                                    &Assist,
+                                    &focus_handle,
+                                    cx,
+                                ))
+                            } else {
+                                tooltip
+                            }
+                        })
+                        .into()
+                    }
                 })
                 .on_click({
                     let editor = editor.clone();
@@ -1476,15 +1500,24 @@ impl WorkflowStepStatus {
                 .icon_size(IconSize::Small)
                 .label_size(LabelSize::Small)
                 .style(ButtonStyle::Tinted(TintColor::Negative))
-                .tooltip(move |cx| {
-                    cx.new_view(|cx| {
-                        Tooltip::new("Stop Transformation").key_binding(KeyBinding::for_action_in(
-                            &editor::actions::Cancel,
-                            &focus_handle,
-                            cx,
-                        ))
-                    })
-                    .into()
+                .tooltip({
+                    let step_range = step_range.clone();
+                    let editor = editor.clone();
+                    move |cx| {
+                        cx.new_view(|cx| {
+                            let tooltip = Tooltip::new("Stop Transformation");
+                            if display_keybind_in_tooltip(&step_range, &editor, cx) {
+                                tooltip.key_binding(KeyBinding::for_action_in(
+                                    &editor::actions::Cancel,
+                                    &focus_handle,
+                                    cx,
+                                ))
+                            } else {
+                                tooltip
+                            }
+                        })
+                        .into()
+                    }
                 })
                 .on_click({
                     let editor = editor.clone();
@@ -1509,15 +1542,20 @@ impl WorkflowStepStatus {
                         .style(ButtonStyle::Tinted(TintColor::Negative))
                         .tooltip({
                             let focus_handle = focus_handle.clone();
+                            let editor = editor.clone();
+                            let step_range = step_range.clone();
                             move |cx| {
                                 cx.new_view(|cx| {
-                                    Tooltip::new("Reject Transformation").key_binding(
-                                        KeyBinding::for_action_in(
+                                    let tooltip = Tooltip::new("Reject Transformation");
+                                    if display_keybind_in_tooltip(&step_range, &editor, cx) {
+                                        tooltip.key_binding(KeyBinding::for_action_in(
                                             &editor::actions::Cancel,
                                             &focus_handle,
                                             cx,
-                                        ),
-                                    )
+                                        ))
+                                    } else {
+                                        tooltip
+                                    }
                                 })
                                 .into()
                             }
@@ -1541,13 +1579,24 @@ impl WorkflowStepStatus {
                         .icon_size(IconSize::Small)
                         .label_size(LabelSize::Small)
                         .style(ButtonStyle::Tinted(TintColor::Positive))
-                        .tooltip(move |cx| {
-                            cx.new_view(|cx| {
-                                Tooltip::new("Accept Transformation").key_binding(
-                                    KeyBinding::for_action_in(&Assist, &focus_handle, cx),
-                                )
-                            })
-                            .into()
+                        .tooltip({
+                            let editor = editor.clone();
+                            let step_range = step_range.clone();
+                            move |cx| {
+                                cx.new_view(|cx| {
+                                    let tooltip = Tooltip::new("Accept Transformation");
+                                    if display_keybind_in_tooltip(&step_range, &editor, cx) {
+                                        tooltip.key_binding(KeyBinding::for_action_in(
+                                            &Assist,
+                                            &focus_handle,
+                                            cx,
+                                        ))
+                                    } else {
+                                        tooltip
+                                    }
+                                })
+                                .into()
+                            }
                         })
                         .on_click({
                             let editor = editor.clone();
