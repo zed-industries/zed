@@ -85,7 +85,7 @@ impl State {
     fn has_accepted_terms_of_service(&self, cx: &AppContext) -> bool {
         self.user_store
             .read(cx)
-            .current_user_accepted_terms()
+            .current_user_has_accepted_terms()
             .unwrap_or(false)
     }
 

@@ -692,7 +692,7 @@ impl UserStore {
         self.current_user.clone()
     }
 
-    pub fn current_user_accepted_terms(&self) -> Option<bool> {
+    pub fn current_user_has_accepted_terms(&self) -> Option<bool> {
         self.accepted_tos_at
             .map(|accepted_tos_at| accepted_tos_at.is_some())
     }
