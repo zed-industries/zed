@@ -58,6 +58,13 @@ pub fn init(
     cx: &mut AppContext,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
+    cx.observe_new_views(|_, cx| {
+        let workspace = cx.view().clone();
+        InlineAssistant::update_global(cx, |inline_assistant, cx| {
+            inline_assistant.register_workspace(&workspace, cx)
+        })
+    })
+    .detach();
 }
 
 const PROMPT_HISTORY_MAX_LEN: usize = 20;
@@ -97,6 +104,29 @@ impl InlineAssistant {
             prompt_builder,
             telemetry: Some(telemetry),
             fs,
+        }
+    }
+
+    pub fn register_workspace(&mut self, workspace: &View<Workspace>, cx: &mut WindowContext) {
+        cx.subscribe(workspace, |_, event, cx| {
+            Self::update_global(cx, |this, cx| this.handle_workspace_event(event, cx));
+        })
+        .detach();
+    }
+
+    fn handle_workspace_event(&mut self, event: &workspace::Event, cx: &mut WindowContext) {
+        // When the user manually saves an editor, automatically accepts all finished transformations.
+        if let workspace::Event::UserSavedItem { item, .. } = event {
+            if let Some(editor) = item.upgrade().and_then(|item| item.act_as::<Editor>(cx)) {
+                if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
+                    for assist_id in editor_assists.assist_ids.clone() {
+                        let assist = &self.assists[&assist_id];
+                        if let CodegenStatus::Done = &assist.codegen.read(cx).status {
+                            self.finish_assist(assist_id, false, cx)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -558,14 +588,6 @@ impl InlineAssistant {
         };
 
         match event {
-            EditorEvent::Saved => {
-                for assist_id in editor_assists.assist_ids.clone() {
-                    let assist = &self.assists[&assist_id];
-                    if let CodegenStatus::Done = &assist.codegen.read(cx).status {
-                        self.finish_assist(assist_id, false, cx)
-                    }
-                }
-            }
             EditorEvent::Edited { transaction_id } => {
                 let buffer = editor.read(cx).buffer().read(cx);
                 let edited_ranges =
