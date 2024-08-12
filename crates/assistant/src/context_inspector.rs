@@ -8,13 +8,12 @@ use editor::{
 };
 use gpui::{Empty, Model, View};
 use multi_buffer::MultiBufferRow;
-use rope::Point;
-use text::{ToOffset, ToPoint};
+use text::ToOffset;
 use ui::{Element as _, ViewContext, WindowContext};
 
 use crate::{
     assistant_panel::{quote_selection_fold_placeholder, render_quote_selection_output_toggle},
-    Context,
+    Context, ResolvedWorkflowStep,
 };
 
 type StepRange = Range<language::Anchor>;
@@ -30,11 +29,7 @@ pub(crate) struct ContextInspector {
 }
 
 impl ContextInspector {
-    pub(crate) fn new(
-        editor: View<Editor>,
-        context: Model<Context>,
-        cx: &mut WindowContext<'_>,
-    ) -> Self {
+    pub(crate) fn new(editor: View<Editor>, context: Model<Context>) -> Self {
         Self {
             editor,
             context,
@@ -44,22 +39,47 @@ impl ContextInspector {
     pub(crate) fn is_active(&self, range: &StepRange) -> bool {
         self.active_debug_views.contains_key(range)
     }
+    fn crease_content(&self, range: StepRange, cx: &mut WindowContext<'_>) -> Option<Arc<str>> {
+        use std::fmt::Write;
+        let step = self.context.read(cx).workflow_step_for_range(range)?;
+        let mut output = String::from("\n\n");
+        match &step.status {
+            crate::WorkflowStepStatus::Resolved(ResolvedWorkflowStep { title, suggestions }) => {
+                output.push_str("Resolution:\n");
+                output.push_str(&format!("  {:?}\n", title));
+                output.push_str(&format!("  {:?}\n", suggestions));
+            }
+            crate::WorkflowStepStatus::Pending(_) => {
+                output.push_str("Resolution: Pending\n");
+            }
+            crate::WorkflowStepStatus::Error(error) => {
+                writeln!(output, "Resolution: Error\n{:?}", error).unwrap();
+            }
+        }
+        output.push('\n');
+
+        Some(output.into())
+    }
     pub(crate) fn activate_for_step(&mut self, range: StepRange, cx: &mut WindowContext<'_>) {
+        let text = self
+            .crease_content(range.clone(), cx)
+            .unwrap_or_else(|| Arc::from("Error fetching debug info"));
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).as_singleton()?;
-            let text = "\nI really think creases are great\n";
+
+            let text_len = text.len();
             let snapshot = buffer.update(cx, |this, cx| {
                 this.edit([(range.end..range.end, text)], None, cx);
                 this.text_snapshot()
             });
             let start_offset = range.end.to_offset(&snapshot);
-            let end_offset = start_offset + text.len();
+            let end_offset = start_offset + text_len;
             let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
             let anchor_before = multibuffer_snapshot.anchor_after(start_offset);
             let anchor_after = multibuffer_snapshot.anchor_before(end_offset);
 
             let start_row =
-                MultiBufferRow(multibuffer_snapshot.offset_to_point(start_offset).row + 1);
+                MultiBufferRow(multibuffer_snapshot.offset_to_point(start_offset + 1).row + 1);
 
             let fold_placeholder =
                 quote_selection_fold_placeholder("Inspect".into(), cx.view().downgrade());

@@ -2409,7 +2409,7 @@ impl ContextEditor {
                                         theme.info_border
                                     };
                                     let debug_header = weak_self
-                                        .update(&mut **cx, |this, cx| {
+                                        .update(&mut **cx, |this, _| {
                                             if let Some(inspector) = this.debug_inspector.as_mut() {
                                                 Some(inspector.is_active(&step_range))
                                             } else {
@@ -3814,7 +3814,6 @@ impl Render for ContextEditorToolbarItem {
                                     this.debug_inspector = Some(ContextInspector::new(
                                         this.editor.clone(),
                                         this.context.clone(),
-                                        cx,
                                     ));
                                 }
                             })
