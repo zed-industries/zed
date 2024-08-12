@@ -403,13 +403,55 @@ impl AssistantPanel {
                                 } else {
                                     "Zoom In"
                                 };
+                                let weak_pane = cx.view().downgrade();
                                 let menu = ContextMenu::build(cx, |menu, cx| {
-                                    menu.context(pane.focus_handle(cx))
+                                    let menu = menu
+                                        .context(pane.focus_handle(cx))
                                         .action("New Context", Box::new(NewFile))
                                         .action("History", Box::new(DeployHistory))
                                         .action("Prompt Library", Box::new(DeployPromptLibrary))
                                         .action("Configure", Box::new(ShowConfiguration))
-                                        .action(zoom_label, Box::new(ToggleZoom))
+                                        .action(zoom_label, Box::new(ToggleZoom));
+
+                                    if let Some(editor) = pane
+                                        .active_item()
+                                        .and_then(|e| e.downcast::<ContextEditor>())
+                                    {
+                                        let is_enabled = editor.read(cx).debug_inspector.is_some();
+                                        menu.separator().toggleable_entry(
+                                            "Debug Workflows",
+                                            is_enabled,
+                                            None,
+                                            move |cx| {
+                                                weak_pane
+                                                    .update(cx, |this, cx| {
+                                                        if let Some(context_editor) =
+                                                            this.active_item().and_then(|item| {
+                                                                item.downcast::<ContextEditor>()
+                                                            })
+                                                        {
+                                                            context_editor.update(cx, |this, cx| {
+                                                                if let Some(mut state) =
+                                                                    this.debug_inspector.take()
+                                                                {
+                                                                    state.deactivate(cx);
+                                                                } else {
+                                                                    this.debug_inspector = Some(
+                                                                        ContextInspector::new(
+                                                                            this.editor.clone(),
+                                                                            this.context.clone(),
+                                                                        ),
+                                                                    );
+                                                                }
+                                                            })
+                                                        }
+                                                    })
+                                                    .ok();
+                                            },
+                                        )
+                                    } else {
+                                        menu
+                                    }
                                 });
                                 cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
                                     pane.new_item_menu = None;
@@ -2430,7 +2472,7 @@ impl ContextEditor {
                                                 .gap_2()
                                                 .children(debug_header.map(|is_active| {
                                                     h_flex().justify_start().child(
-                                                        Button::new("dbg stuffie", "Debug")
+                                                        Button::new("debug-workflows-toggle", "Debug")
                                                             .icon_color(Color::Hidden)
                                                             .color(Color::Hidden)
                                                             .selected_icon_color(Color::Default)
@@ -3787,40 +3829,11 @@ impl Render for ContextEditorToolbarItem {
                     )
                     .child(self.model_summary_editor.clone())
             });
-        let debug_enabled = self
-            .active_context_editor
-            .as_ref()
-            .map(|this| {
-                this.update(cx, |this, _| this.debug_inspector.is_some())
-                    .ok()
-            })
-            .flatten()
-            .unwrap_or_default();
         let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
 
         let right_side = h_flex()
             .gap_2()
-            .child(
-                IconButton::new("enable-debug-context", IconName::Microscope)
-                    .visible_on_hover("toolbar")
-                    .selected(debug_enabled)
-                    .on_click(cx.listener(move |this, _, cx| {
-                        if let Some(view) = this.active_context_editor.as_ref() {
-                            view.update(cx, |this, cx| {
-                                if let Some(mut state) = this.debug_inspector.take() {
-                                    state.deactivate(cx);
-                                } else {
-                                    this.debug_inspector = Some(ContextInspector::new(
-                                        this.editor.clone(),
-                                        this.context.clone(),
-                                    ));
-                                }
-                            })
-                            .ok();
-                        }
-                    })),
-            )
             .child(ModelSelector::new(
                 self.fs.clone(),
                 ButtonLike::new("active-model")
