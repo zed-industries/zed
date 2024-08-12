@@ -28,7 +28,6 @@ wasmtime::component::bindgen!({
     async: true,
     trappable_imports: true,
     path: "../extension_api/wit/since_v0.0.7",
-    world: "extension",
     with: {
          "worktree": ExtensionWorktree,
          "key-value-store": ExtensionKeyValueStore,
