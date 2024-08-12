@@ -37,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
+    collections::hash_map,
     fmt::Debug,
     iter, mem,
     ops::Range,
@@ -1916,14 +1917,11 @@ impl Context {
     }
 
     pub fn insert_image(&mut self, image: Image, cx: &mut ModelContext<Self>) -> Option<()> {
-        if !self.images.contains_key(&image.id()) {
-            self.images.insert(
-                image.id(),
-                (
-                    image.to_image_data(cx).log_err()?,
-                    LanguageModelImage::from_image(image, cx).shared(),
-                ),
-            );
+        if let hash_map::Entry::Vacant(entry) = self.images.entry(image.id()) {
+            entry.insert((
+                image.to_image_data(cx).log_err()?,
+                LanguageModelImage::from_image(image, cx).shared(),
+            ));
         }
 
         Some(())
@@ -2372,8 +2370,6 @@ impl Context {
     }
 
     pub fn serialize_images(&self, fs: Arc<dyn Fs>, cx: &AppContext) -> Task<()> {
-        dbg!("called serialize images");
-
         let mut images_to_save = self
             .images
             .iter()

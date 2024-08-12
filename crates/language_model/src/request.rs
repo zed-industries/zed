@@ -140,8 +140,8 @@ impl LanguageModelImage {
     }
 
     pub fn estimate_tokens(&self) -> usize {
-        let width = self.size.width.0.abs() as usize;
-        let height = self.size.height.0.abs() as usize;
+        let width = self.size.width.0.unsigned_abs() as usize;
+        let height = self.size.height.0.unsigned_abs() as usize;
 
         // From: https://docs.anthropic.com/en/docs/build-with-claude/vision#calculate-image-costs
         // Note that are a lot of conditions on anthropic's API, and OpenAI doesn't use this,
