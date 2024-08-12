@@ -1062,6 +1062,8 @@ impl Context {
             language::Event::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse_slash_commands(cx);
+                // Use `inclusive = true` to invalidate a step when an edit occurs
+                // at the start/end of a parsed step.
                 self.prune_invalid_workflow_steps(true, cx);
                 cx.emit(ContextEvent::MessagesEdited);
             }
@@ -1295,7 +1297,7 @@ impl Context {
         // the step we just parsed.
         self.buffer
             .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
-        self.prune_invalid_workflow_steps(false, cx);
+        self.edits_since_last_workflow_step_prune.consume();
     }
 
     pub fn resolve_workflow_step(
@@ -1675,6 +1677,8 @@ impl Context {
                                 message_start_offset..message_new_end_offset
                             });
                             if let Some(project) = this.project.clone() {
+                                // Use `inclusive = false` as edits might occur at the end of a parsed step.
+                                this.prune_invalid_workflow_steps(false, cx);
                                 this.parse_workflow_steps_in_range(message_range, project, cx);
                             }
                             cx.emit(ContextEvent::StreamedCompletion);
