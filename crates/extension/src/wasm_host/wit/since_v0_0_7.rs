@@ -142,7 +142,7 @@ impl http_client::Host for WasmState {
             if response.status().is_client_error() || response.status().is_server_error() {
                 bail!("failed to fetch '{url}': status code {}", response.status())
             }
-            Ok(convert_response(&mut response).await?)
+            convert_response(&mut response).await
         })
         .await
         .to_wasmtime_result()
