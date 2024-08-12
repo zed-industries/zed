@@ -222,6 +222,7 @@ impl EditorElement {
         register_action(view, cx, Editor::scroll_cursor_top);
         register_action(view, cx, Editor::scroll_cursor_center);
         register_action(view, cx, Editor::scroll_cursor_bottom);
+        register_action(view, cx, Editor::scroll_cursor_center_top_bottom);
         register_action(view, cx, |editor, _: &LineDown, cx| {
             editor.scroll_screen(&ScrollAmount::Line(1.), cx)
         });

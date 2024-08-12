@@ -270,6 +270,7 @@ gpui::actions!(
         ScrollCursorBottom,
         ScrollCursorCenter,
         ScrollCursorTop,
+        ScrollCursorCenterTopBottom,
         SelectAll,
         SelectAllMatches,
         SelectDown,

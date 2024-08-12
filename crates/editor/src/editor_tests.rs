@@ -13149,6 +13149,77 @@ async fn test_input_text(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_scroll_cursor_center_top_bottom(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        r#"let foo = 1;
+let foo = 2;
+let foo = 3;
+let fooˇ = 4;
+let foo = 5;
+let foo = 6;
+let foo = 7;
+let foo = 8;
+let foo = 9;
+let foo = 10;
+let foo = 11;
+let foo = 12;
+let foo = 13;
+let foo = 14;
+let foo = 15;"#,
+    );
+
+    cx.update_editor(|e, cx| {
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Center,
+            "Default next scroll direction is center",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Top,
+            "After center, next scroll direction should be top",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Bottom,
+            "After top, next scroll direction should be bottom",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Center,
+            "After bottom, scrolling should start over",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Top,
+            "Scrolling continues if retriggered fast enough"
+        );
+    });
+
+    cx.executor()
+        .advance_clock(SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT + Duration::from_millis(200));
+    cx.executor().run_until_parked();
+    cx.update_editor(|e, _| {
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Center,
+            "If scrolling is not triggered fast enough, it should reset"
+        );
+    });
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(DisplayRow(row as u32), column as u32);
     point..point
