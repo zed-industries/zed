@@ -2385,6 +2385,9 @@ impl ContextEditor {
                 blocks_to_remove.insert(step.header_block_id);
                 blocks_to_remove.insert(step.footer_block_id);
             }
+            if let Some(debug) = self.debug_inspector.as_mut() {
+                debug.deactivate_for(step_range, cx);
+            }
         }
         self.editor.update(cx, |editor, cx| {
             editor.remove_blocks(blocks_to_remove, None, cx)
@@ -2411,6 +2414,9 @@ impl ContextEditor {
         let resolved_step = step.status.into_resolved();
         if let Some(existing_step) = self.workflow_steps.get_mut(&step_range) {
             existing_step.resolved_step = resolved_step;
+            if let Some(debug) = self.debug_inspector.as_mut() {
+                debug.refresh(&step_range, cx);
+            }
         } else {
             let start = buffer_snapshot
                 .anchor_in_excerpt(excerpt_id, step_range.start)
@@ -2494,7 +2500,7 @@ impl ContextEditor {
                                                                             {
                                                                                 if is_active {
 
-                                                                                    inspector.deactivate_for(&step_range, cx)
+                                                                                    inspector.deactivate_for(&step_range, cx);
                                                                                 } else {
                                                                                     inspector.activate_for_step(step_range.clone(), cx);
                                                                                 }

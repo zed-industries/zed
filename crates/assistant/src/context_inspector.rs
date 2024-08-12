@@ -2,14 +2,10 @@ use std::{ops::Range, sync::Arc};
 
 use collections::{HashMap, HashSet};
 use editor::{
-    actions::FoldAt,
-    display_map::{
-        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CreaseId, CustomBlockId,
-    },
+    display_map::{BlockDisposition, BlockProperties, BlockStyle, CustomBlockId},
     Editor,
 };
-use gpui::{Empty, Model, View};
-use multi_buffer::MultiBufferRow;
+use gpui::{Model, View};
 use text::ToOffset;
 use ui::{
     div, h_flex, Color, Element as _, ParentElement as _, Styled, ViewContext, WindowContext,
@@ -38,8 +34,15 @@ impl ContextInspector {
             active_debug_views: Default::default(),
         }
     }
+
     pub(crate) fn is_active(&self, range: &StepRange) -> bool {
         self.active_debug_views.contains_key(range)
+    }
+
+    pub(crate) fn refresh(&mut self, range: &StepRange, cx: &mut WindowContext<'_>) {
+        if self.deactivate_for(range, cx) {
+            self.activate_for_step(range.clone(), cx);
+        }
     }
     fn crease_content(&self, range: StepRange, cx: &mut WindowContext<'_>) -> Option<Arc<str>> {
         use std::fmt::Write;
@@ -119,11 +122,14 @@ impl ContextInspector {
         editor.remove_blocks(HashSet::from_iter([debug_data.block_id]), None, cx);
         editor.edit([(debug_data.range, Arc::<str>::default())], cx)
     }
-    pub(crate) fn deactivate_for(&mut self, range: &StepRange, cx: &mut WindowContext<'_>) {
+    pub(crate) fn deactivate_for(&mut self, range: &StepRange, cx: &mut WindowContext<'_>) -> bool {
         if let Some(debug_data) = self.active_debug_views.remove(range) {
             self.editor.update(cx, |this, cx| {
                 Self::deactivate_impl(this, debug_data, cx);
             });
+            true
+        } else {
+            false
         }
     }
 
