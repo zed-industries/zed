@@ -1,22 +1,29 @@
-use crate::Globals;
+use crate::{CursorStyle, Globals};
 use util::ResultExt;
 
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::protocol::{wl_pointer::WlPointer, wl_shm::WlShm};
 use wayland_client::Connection;
 use wayland_cursor::{CursorImageBuffer, CursorTheme};
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1;
 
 pub(crate) struct Cursor {
     theme: Option<CursorTheme>,
     theme_name: Option<String>,
     surface: WlSurface,
     size: u32,
+    hidden: bool,
     shm: WlShm,
+    shape_device: Option<WpCursorShapeDeviceV1>,
+    wl_pointer: Option<WlPointer>,
     connection: Connection,
 }
 
 impl Drop for Cursor {
     fn drop(&mut self) {
+        if let Some(shape_device) = &self.shape_device {
+            shape_device.destroy();
+        }
         self.theme.take();
         self.surface.destroy();
     }
@@ -29,9 +36,24 @@ impl Cursor {
             theme_name: None,
             surface: globals.compositor.create_surface(&globals.qh, ()),
             shm: globals.shm.clone(),
+            shape_device: None,
+            wl_pointer: None,
             connection: connection.clone(),
             size,
+            hidden: false,
         }
+    }
+
+    pub fn set_pointer(
+        &mut self,
+        wl_pointer: WlPointer,
+        shape_device: Option<WpCursorShapeDeviceV1>,
+    ) {
+        if let Some(shape_device) = self.shape_device.take() {
+            shape_device.destroy();
+        }
+        self.wl_pointer = Some(wl_pointer);
+        self.shape_device = shape_device;
     }
 
     pub fn set_theme(&mut self, theme_name: &str, size: Option<u32>) {
@@ -69,8 +91,33 @@ impl Cursor {
             .or_else(|| CursorTheme::load(&self.connection, self.shm.clone(), self.size).log_err());
     }
 
-    pub fn set_icon(&mut self, wl_pointer: &WlPointer, serial_id: u32, mut cursor_icon_name: &str) {
-        if let Some(theme) = &mut self.theme {
+    pub fn is_hidden(&self) -> bool {
+        self.hidden
+    }
+
+    pub fn hide(&mut self, serial: u32) {
+        if let Some(wl_pointer) = &self.wl_pointer {
+            self.hidden = true;
+            wl_pointer.set_cursor(serial, None, 0, 0);
+        }
+    }
+
+    pub fn unhide(&mut self, serial: u32, style: CursorStyle) {
+        self.hidden = false;
+        self.set_style(serial, style);
+    }
+
+    pub fn set_style(&mut self, serial: u32, style: CursorStyle) {
+        if let Some(shape_device) = &self.shape_device {
+            shape_device.set_shape(serial, style.to_shape());
+            return;
+        }
+        // cursor-shape-v1 isn't supported; fallback to surface method
+        self.set_style_surface(serial, &style.to_icon_name());
+    }
+
+    fn set_style_surface(&mut self, serial: u32, mut cursor_icon_name: &str) {
+        if let (Some(wl_pointer), Some(theme)) = (&self.wl_pointer, &mut self.theme) {
             let mut buffer: Option<&CursorImageBuffer>;
 
             if let Some(cursor) = theme.get_cursor(&cursor_icon_name) {
@@ -91,7 +138,7 @@ impl Cursor {
                 let (width, height) = buffer.dimensions();
                 let (hot_x, hot_y) = buffer.hotspot();
 
-                wl_pointer.set_cursor(serial_id, Some(&self.surface), hot_x as i32, hot_y as i32);
+                wl_pointer.set_cursor(serial, Some(&self.surface), hot_x as i32, hot_y as i32);
                 self.surface.attach(Some(&buffer), 0, 0);
                 self.surface.damage(0, 0, width as i32, height as i32);
                 self.surface.commit();

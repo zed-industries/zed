@@ -959,7 +959,7 @@ pub enum CursorStyle {
     /// corresponds to the CSS cursor value `context-menu`
     ContextualMenu,
 
-    /// A cursor indicating that you cannot point it.
+    /// Hides the cursor until the mouse pointer is moved or clicked
     /// corresponds to the CSS cursor value `none`
     None,
 }

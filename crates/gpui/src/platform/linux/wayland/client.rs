@@ -189,7 +189,6 @@ pub(crate) struct WaylandClientState {
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
-    cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     data_device: Option<wl_data_device::WlDataDevice>,
     primary_selection: Option<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1>,
     text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
@@ -343,9 +342,6 @@ impl Drop for WaylandClient {
         if let Some(wl_pointer) = &state.wl_pointer {
             wl_pointer.release();
         }
-        if let Some(cursor_shape_device) = &state.cursor_shape_device {
-            cursor_shape_device.destroy();
-        }
         if let Some(data_device) = &state.data_device {
             data_device.release();
         }
@@ -496,7 +492,6 @@ impl WaylandClient {
             wl_seat: seat,
             wl_pointer: None,
             wl_keyboard: None,
-            cursor_shape_device: None,
             data_device,
             primary_selection,
             text_input: None,
@@ -624,19 +619,13 @@ impl LinuxClient for WaylandClient {
 
         if need_update {
             let serial = state.serial_tracker.get(SerialKind::MouseEnter);
+            if style == CursorStyle::None {
+                state.cursor.hide(serial);
+                return;
+            }
             state.cursor_style = Some(style);
-
-            if let Some(cursor_shape_device) = &state.cursor_shape_device {
-                cursor_shape_device.set_shape(serial, style.to_shape());
-            } else if state.mouse_focused_window.is_some() {
-                // cursor-shape-v1 isn't supported, set the cursor using a surface.
-                let wl_pointer = state
-                    .wl_pointer
-                    .clone()
-                    .expect("window is focused by pointer");
-                state
-                    .cursor
-                    .set_icon(&wl_pointer, serial, &style.to_icon_name());
+            if !state.cursor.is_hidden() {
+                state.cursor.set_style(serial, style);
             }
         }
     }
@@ -1051,7 +1040,7 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
                 let pointer = seat.get_pointer(qh, ());
-                state.cursor_shape_device = state
+                let shape_device = state
                     .globals
                     .cursor_shape_manager
                     .as_ref()
@@ -1061,7 +1050,8 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
                     wl_pointer.release();
                 }
 
-                state.wl_pointer = Some(pointer);
+                state.wl_pointer = Some(pointer.clone());
+                state.cursor.set_pointer(pointer, shape_device);
             }
         }
     }
@@ -1390,7 +1380,7 @@ fn linux_button_to_gpui(button: u32) -> Option<MouseButton> {
 impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,
-        wl_pointer: &wl_pointer::WlPointer,
+        _: &wl_pointer::WlPointer,
         event: wl_pointer::Event,
         _: &(),
         _: &Connection,
@@ -1418,13 +1408,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         state.enter_token = None;
                     }
                     if let Some(style) = state.cursor_style {
-                        if let Some(cursor_shape_device) = &state.cursor_shape_device {
-                            cursor_shape_device.set_shape(serial, style.to_shape());
-                        } else {
-                            state
-                                .cursor
-                                .set_icon(&wl_pointer, serial, &style.to_icon_name());
-                        }
+                        state.cursor.set_style(serial, style);
                     }
                     drop(state);
                     window.set_hovered(true);
@@ -1451,12 +1435,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 surface_y,
                 ..
             } => {
-                if state.mouse_focused_window.is_none() {
-                    return;
-                }
-                state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
-
                 if let Some(window) = state.mouse_focused_window.clone() {
+                    if state.cursor.is_hidden() {
+                        if let Some(style) = state.cursor_style {
+                            let serial = state.serial_tracker.get(SerialKind::MouseEnter);
+                            state.cursor.unhide(serial, style);
+                        }
+                    }
+                    state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
                     if state
                         .keyboard_focused_window
                         .as_ref()
@@ -1484,6 +1470,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 let Some(button) = button else { return };
                 if state.mouse_focused_window.is_none() {
                     return;
+                }
+                if state.cursor.is_hidden() {
+                    if let Some(style) = state.cursor_style {
+                        let serial = state.serial_tracker.get(SerialKind::MouseEnter);
+                        state.cursor.unhide(serial, style);
+                    }
                 }
                 match button_state {
                     wl_pointer::ButtonState::Pressed => {
@@ -1649,6 +1641,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
             wl_pointer::Event::Frame => {
                 if state.scroll_event_received {
                     state.scroll_event_received = false;
+                    if state.cursor.is_hidden() {
+                        if let Some(style) = state.cursor_style {
+                            let serial = state.serial_tracker.get(SerialKind::MouseEnter);
+                            state.cursor.unhide(serial, style);
+                        }
+                    }
                     let continuous = state.continuous_scroll_delta.take();
                     let discrete = state.discrete_scroll_delta.take();
                     if let Some(continuous) = continuous {

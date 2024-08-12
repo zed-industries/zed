@@ -628,6 +628,7 @@ impl CursorStyle {
             CursorStyle::DragLink => Shape::Alias,
             CursorStyle::DragCopy => Shape::Copy,
             CursorStyle::ContextualMenu => Shape::ContextMenu,
+            CursorStyle::None => unreachable!(),
         }
     }
 
@@ -657,6 +658,7 @@ impl CursorStyle {
             CursorStyle::DragLink => "alias",
             CursorStyle::DragCopy => "copy",
             CursorStyle::ContextualMenu => "context-menu",
+            CursorStyle::None => unreachable!(),
         }
         .to_string()
     }
