@@ -18,6 +18,7 @@ pub struct Model {
     pub connected_once: bool,
     pub metrics_id: Uuid,
     pub created_at: DateTime,
+    pub accepted_tos_at: Option<DateTime>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

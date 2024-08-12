@@ -197,7 +197,20 @@ async fn perform_completion(
                 request,
                 None,
             )
-            .await?;
+            .await
+            .map_err(|err| match err {
+                anthropic::AnthropicError::ApiError(ref api_error) => {
+                    if api_error.code() == Some(anthropic::ApiErrorCode::RateLimitError) {
+                        return Error::http(
+                            StatusCode::TOO_MANY_REQUESTS,
+                            "Upstream Anthropic rate limit exceeded.".to_string(),
+                        );
+                    }
+
+                    Error::Internal(anyhow!(err))
+                }
+                anthropic::AnthropicError::Other(err) => Error::Internal(err),
+            })?;
 
             chunks
                 .map(move |event| {
