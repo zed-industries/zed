@@ -13,12 +13,14 @@ use editor::Editor;
 use fs::{Fs, RemoveOptions};
 use futures::{
     future::{self, Shared},
+    stream::FuturesUnordered,
     FutureExt, StreamExt,
 };
 use gpui::{
     AppContext, Context as _, EventEmitter, Image, Model, ModelContext, RenderImage, Subscription,
     Task, UpdateGlobal, View, WeakView,
 };
+
 use language::{
     AnchorRangeExt, Bias, Buffer, BufferSnapshot, LanguageRegistry, OffsetRangeExt, ParseStatus,
     Point, ToOffset,
@@ -28,7 +30,7 @@ use language_model::{
     LanguageModelTool, Role,
 };
 use open_ai::Model as OpenAiModel;
-use paths::contexts_dir;
+use paths::{context_images_dir, contexts_dir};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -798,6 +800,11 @@ impl Context {
                     id: message.id,
                     start: message.offset_range.start,
                     metadata: self.messages_metadata[&message.id].clone(),
+                    image_offsets: message
+                        .image_offsets
+                        .iter()
+                        .map(|image_offset| (image_offset.0, image_offset.1.image_id))
+                        .collect(),
                 })
                 .collect(),
             summary: self
@@ -2259,7 +2266,7 @@ impl Context {
                     }
                 }
                 let message_end_anchor = message_end.unwrap_or(language::Anchor::MAX);
-                let message_end = message_anchor.start.to_offset(buffer);
+                let message_end = message_end_anchor.to_offset(buffer);
 
                 let mut image_offsets = SmallVec::new();
                 while let Some(image_anchor) = images.peek() {
@@ -2322,6 +2329,9 @@ impl Context {
             })?;
 
             if let Some(summary) = summary {
+                this.read_with(&cx, |this, cx| this.serialize_images(fs.clone(), cx))?
+                    .await;
+
                 let context = this.read_with(&cx, |this, cx| this.serialize(cx))?;
                 let mut discriminant = 1;
                 let mut new_path;
@@ -2359,6 +2369,47 @@ impl Context {
 
             Ok(())
         });
+    }
+
+    pub fn serialize_images(&self, fs: Arc<dyn Fs>, cx: &AppContext) -> Task<()> {
+        dbg!("called serialize images");
+
+        let mut images_to_save = self
+            .images
+            .iter()
+            .map(|(id, (_, llm_image))| {
+                let fs = fs.clone();
+                let llm_image = llm_image.clone();
+                let id = *id;
+                async move {
+                    if let Some(llm_image) = llm_image.await {
+                        let path: PathBuf =
+                            context_images_dir().join(&format!("{}.png.base64", id));
+                        if fs
+                            .metadata(path.as_path())
+                            .await
+                            .log_err()
+                            .flatten()
+                            .is_none()
+                        {
+                            fs.atomic_write(path, llm_image.source.to_string())
+                                .await
+                                .log_err();
+                        }
+                    }
+                }
+            })
+            .collect::<FuturesUnordered<_>>();
+        cx.background_executor().spawn(async move {
+            if fs
+                .create_dir(context_images_dir().as_ref())
+                .await
+                .log_err()
+                .is_some()
+            {
+                while let Some(_) = images_to_save.next().await {}
+            }
+        })
     }
 
     pub(crate) fn custom_summary(&mut self, custom_summary: String, cx: &mut ModelContext<Self>) {
@@ -2414,6 +2465,9 @@ pub struct SavedMessage {
     pub id: MessageId,
     pub start: usize,
     pub metadata: MessageMetadata,
+    #[serde(default)]
+    // This is defaulted for backwards compatibility with JSON files created before August 2024. We didn't always have this field.
+    pub image_offsets: Vec<(usize, u64)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -2596,6 +2650,7 @@ impl SavedContextV0_3_0 {
                             status: metadata.status.clone(),
                             timestamp,
                         },
+                        image_offsets: Vec::new(),
                     })
                 })
                 .collect(),

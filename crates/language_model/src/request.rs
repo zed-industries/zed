@@ -11,7 +11,7 @@ use util::ResultExt;
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
 pub struct LanguageModelImage {
     // A base64 encoded PNG image
-    source: SharedString,
+    pub source: SharedString,
     size: Size<DevicePixels>,
 }
 
