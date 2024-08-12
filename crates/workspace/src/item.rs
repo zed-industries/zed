@@ -436,6 +436,7 @@ pub trait ItemHandle: 'static + Send {
 
 pub trait WeakItemHandle: Send + Sync {
     fn id(&self) -> EntityId;
+    fn boxed_clone(&self) -> Box<dyn WeakItemHandle>;
     fn upgrade(&self) -> Option<Box<dyn ItemHandle>>;
 }
 
@@ -850,6 +851,10 @@ impl Clone for Box<dyn ItemHandle> {
 impl<T: Item> WeakItemHandle for WeakView<T> {
     fn id(&self) -> EntityId {
         self.entity_id()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn WeakItemHandle> {
+        Box::new(self.clone())
     }
 
     fn upgrade(&self) -> Option<Box<dyn ItemHandle>> {
