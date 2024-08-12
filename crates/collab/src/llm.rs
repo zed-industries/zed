@@ -207,16 +207,22 @@ async fn perform_completion(
             )
             .await
             .map_err(|err| match err {
-                anthropic::AnthropicError::ApiError(ref api_error) => {
-                    if api_error.code() == Some(anthropic::ApiErrorCode::RateLimitError) {
-                        return Error::http(
-                            StatusCode::TOO_MANY_REQUESTS,
-                            "Upstream Anthropic rate limit exceeded.".to_string(),
-                        );
+                anthropic::AnthropicError::ApiError(ref api_error) => match api_error.code() {
+                    Some(anthropic::ApiErrorCode::RateLimitError) => Error::http(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "Upstream Anthropic rate limit exceeded.".to_string(),
+                    ),
+                    Some(anthropic::ApiErrorCode::InvalidRequestError) => {
+                        Error::http(StatusCode::BAD_REQUEST, api_error.message.clone())
                     }
-
-                    Error::Internal(anyhow!(err))
-                }
+                    Some(anthropic::ApiErrorCode::OverloadedError) => {
+                        Error::http(StatusCode::SERVICE_UNAVAILABLE, api_error.message.clone())
+                    }
+                    Some(_) => {
+                        Error::http(StatusCode::INTERNAL_SERVER_ERROR, api_error.message.clone())
+                    }
+                    None => Error::Internal(anyhow!(err)),
+                },
                 anthropic::AnthropicError::Other(err) => Error::Internal(err),
             })?;
 
