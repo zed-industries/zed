@@ -41,15 +41,6 @@ impl NSAttributedString for id {
     }
 }
 
-#[allow(non_snake_case)]
-pub trait NSTextAttachment: Sized {
-    unsafe fn alloc(_: Self) -> id {
-        msg_send![class!(NSTextAttachment), alloc]
-    }
-}
-
-impl NSTextAttachment for id {}
-
 pub trait NSMutableAttributedString: NSAttributedString {
     unsafe fn alloc(_: Self) -> id {
         msg_send![class!(NSMutableAttributedString), alloc]

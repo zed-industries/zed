@@ -1,5 +1,5 @@
 use super::{
-    attributed_string::{NSAttributedString, NSMutableAttributedString, NSTextAttachment},
+    attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
     BoolExt,
 };
@@ -15,9 +15,9 @@ use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-        NSEventModifierFlags, NSImage, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel,
-        NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD,
-        NSPasteboardTypeString, NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
+        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSPasteboard,
+        NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
+        NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
     },
     base::{id, nil, selector, BOOL, YES},
     foundation::{
@@ -886,42 +886,13 @@ impl Platform for MacPlatform {
                         .init_attributed_string(NSString::alloc(nil).init_str(""));
 
                     for entry in item.entries {
-                        let to_append;
+                        if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry
+                        {
+                            let to_append = NSAttributedString::alloc(nil)
+                                .init_attributed_string(NSString::alloc(nil).init_str(&text));
 
-                        match entry {
-                            ClipboardEntry::String(ClipboardString { text, metadata: _ }) => {
-                                to_append = NSAttributedString::alloc(nil)
-                                    .init_attributed_string(NSString::alloc(nil).init_str(&text));
-                            }
-                            ClipboardEntry::Image(Image { format, bytes, id }) => {
-                                use cocoa::appkit::NSImage;
-
-                                any_images = true;
-
-                                // Create an attachment from the image
-                                let attachment = {
-                                    // Initialize the NSImage
-                                    let image = {
-                                        let image: id = msg_send![class!(NSImage), alloc];
-
-                                        NSImage::initWithContentsOfFile_(
-                                            image,
-                                            NSString::alloc(nil)
-                                                .init_str("/Users/rtfeldman/Downloads/test.jpeg"), // TODO read from clipboard bytes
-                                        );
-                                    };
-
-                                    let attachment = NSTextAttachment::alloc(nil);
-                                    let _: () = msg_send![attachment, setImage: image];
-                                    attachment
-                                };
-
-                                // Make a NSAttributedString with the attachment
-                                to_append = msg_send![class!(NSAttributedString), attributedStringWithAttachment: attachment];
-                            }
+                            buf.appendAttributedString_(to_append);
                         }
-
-                        buf.appendAttributedString_(to_append);
                     }
 
                     buf
