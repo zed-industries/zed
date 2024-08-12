@@ -8,11 +8,10 @@ use editor::{
 use gpui::{AppContext, Model, View};
 use text::{ToOffset, ToPoint};
 use ui::{
-    div, h_flex, Button, Color, Element as _, IntoElement, ParentElement as _, Styled, ViewContext,
-    WindowContext,
+    div, h_flex, Color, Element as _, ParentElement as _, Styled, ViewContext, WindowContext,
 };
 
-use crate::{Context, ResolvedWorkflowStep, WorkflowStepStatus, WorkflowSuggestion};
+use crate::{Context, ResolvedWorkflowStep, WorkflowSuggestion};
 
 type StepRange = Range<language::Anchor>;
 
