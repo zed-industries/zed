@@ -165,67 +165,44 @@ impl http_client::Host for WasmState {
     }
 }
 
+#[async_trait]
 impl http_client::HostHttpResponseStream for WasmState {
-    #[doc = " Retrieves the next chunk of data from the response stream."]
-    #[doc = " Returns None if the stream has ended."]
-    #[must_use]
-    #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]
-    fn next_chunk<'life0, 'async_trait>(
-        &'life0 mut self,
-        self_: wasmtime::component::Resource<ExtensionHttpResponseStream>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = wasmtime::Result<
-                        Result<
-                            Option<wasmtime::component::__internal::Vec<u8>>,
-                            wasmtime::component::__internal::String,
-                        >,
-                    >,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        Box::pin(async move {
-            let stream = self.table.get(&self_)?.clone();
-            maybe!(async move {
-                let mut response = stream.lock().await;
-                let mut buffer = vec![0; 8192]; // 8KB buffer
-                let bytes_read = response.body_mut().read(&mut buffer).await?;
-                if bytes_read == 0 {
-                    Ok(None)
-                } else {
-                    buffer.truncate(bytes_read);
-                    Ok(Some(buffer))
-                }
-            })
-            .await
-            .to_wasmtime_result()
+    async fn next_chunk(
+        &mut self,
+        resource: Resource<ExtensionHttpResponseStream>,
+    ) -> wasmtime::Result<Result<Option<Vec<u8>>, String>> {
+        let stream = self.table.get(&resource)?.clone();
+        maybe!(async move {
+            let mut response = stream.lock().await;
+            let mut buffer = vec![0; 8192]; // 8KB buffer
+            let bytes_read = response.body_mut().read(&mut buffer).await?;
+            if bytes_read == 0 {
+                Ok(None)
+            } else {
+                buffer.truncate(bytes_read);
+                Ok(Some(buffer))
+            }
         })
+        .await
+        .to_wasmtime_result()
     }
 
-    fn drop(
-        &mut self,
-        rep: wasmtime::component::Resource<ExtensionHttpResponseStream>,
-    ) -> wasmtime::Result<()> {
-        self.table.delete(rep)?;
+    fn drop(&mut self, _resource: Resource<ExtensionHttpResponseStream>) -> Result<()> {
         Ok(())
     }
 }
 
-fn convert_method(method: http_client::HttpMethod) -> ::http_client::Method {
-    match method {
-        http_client::HttpMethod::Get => ::http_client::Method::GET,
-        http_client::HttpMethod::Post => ::http_client::Method::POST,
-        http_client::HttpMethod::Put => ::http_client::Method::PUT,
-        http_client::HttpMethod::Delete => ::http_client::Method::DELETE,
-        http_client::HttpMethod::Head => ::http_client::Method::HEAD,
-        http_client::HttpMethod::Options => ::http_client::Method::OPTIONS,
-        http_client::HttpMethod::Patch => ::http_client::Method::PATCH,
+impl From<http_client::HttpMethod> for ::http_client::Method {
+    fn from(value: http_client::HttpMethod) -> Self {
+        match value {
+            http_client::HttpMethod::Get => Self::GET,
+            http_client::HttpMethod::Post => Self::POST,
+            http_client::HttpMethod::Put => Self::PUT,
+            http_client::HttpMethod::Delete => Self::DELETE,
+            http_client::HttpMethod::Head => Self::HEAD,
+            http_client::HttpMethod::Options => Self::OPTIONS,
+            http_client::HttpMethod::Patch => Self::PATCH,
+        }
     }
 }
 
@@ -233,7 +210,7 @@ fn convert_request(
     extension_request: &http_client::HttpRequest,
 ) -> Result<::http_client::Request<AsyncBody>, anyhow::Error> {
     let mut request = ::http_client::Request::builder()
-        .method(convert_method(extension_request.method))
+        .method(::http_client::Method::from(extension_request.method))
         .uri(&extension_request.url);
     for (key, value) in &extension_request.headers {
         request = request.header(key, value);

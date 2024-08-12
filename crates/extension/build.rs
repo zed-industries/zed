@@ -13,7 +13,6 @@ fn copy_extension_api_rust_files() -> Result<(), Box<dyn std::error::Error>> {
     let input_dir = PathBuf::from("../extension_api/wit");
     let output_dir = PathBuf::from(out_dir);
 
-    //
     for entry in fs::read_dir(&input_dir)? {
         let entry = entry?;
         let path = entry.path();
