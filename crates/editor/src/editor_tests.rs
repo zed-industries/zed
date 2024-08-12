@@ -13105,6 +13105,50 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
     assert!(!snapshot.is_line_folded(MultiBufferRow(1)));
 }
 
+#[gpui::test]
+async fn test_input_text(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(
+        &r#"ˇone
+        two
+
+        three
+        fourˇ
+        five
+
+        siˇx"#
+            .unindent(),
+    );
+
+    cx.dispatch_action(HandleInput(String::new()));
+    cx.assert_editor_state(
+        &r#"ˇone
+        two
+
+        three
+        fourˇ
+        five
+
+        siˇx"#
+            .unindent(),
+    );
+
+    cx.dispatch_action(HandleInput("AAAA".to_string()));
+    cx.assert_editor_state(
+        &r#"AAAAˇone
+        two
+
+        three
+        fourAAAAˇ
+        five
+
+        siAAAAˇx"#
+            .unindent(),
+    );
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(DisplayRow(row as u32), column as u32);
     point..point

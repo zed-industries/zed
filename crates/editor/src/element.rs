@@ -22,9 +22,9 @@ use crate::{
     BlockId, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
     DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
-    HalfPageUp, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown, PageUp,
-    Point, RangeToAnchorExt, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown,
+    PageUp, Point, RangeToAnchorExt, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
+    ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
@@ -230,6 +230,12 @@ impl EditorElement {
         });
         register_action(view, cx, |editor, _: &HalfPageDown, cx| {
             editor.scroll_screen(&ScrollAmount::Page(0.5), cx)
+        });
+        register_action(view, cx, |editor, HandleInput(text): &HandleInput, cx| {
+            if text.is_empty() {
+                return;
+            }
+            editor.handle_input(&text, cx);
         });
         register_action(view, cx, |editor, _: &HalfPageUp, cx| {
             editor.scroll_screen(&ScrollAmount::Page(-0.5), cx)
