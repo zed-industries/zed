@@ -421,6 +421,7 @@ impl AssistantPanel {
                                         menu.separator().toggleable_entry(
                                             "Debug Workflows",
                                             is_enabled,
+                                            IconPosition::End,
                                             None,
                                             move |cx| {
                                                 weak_pane
