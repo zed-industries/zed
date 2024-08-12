@@ -2939,7 +2939,7 @@ impl Workspace {
                     self.update_active_view_for_followers(cx);
                 }
             }
-            pane::Event::UserSaved { item, save_intent } => cx.emit(Event::UserSavedItem {
+            pane::Event::UserSavedItem { item, save_intent } => cx.emit(Event::UserSavedItem {
                 pane: pane.downgrade(),
                 item: item.boxed_clone(),
                 save_intent: *save_intent,

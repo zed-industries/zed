@@ -184,7 +184,7 @@ pub enum Event {
     Focus,
     ZoomIn,
     ZoomOut,
-    UserSaved {
+    UserSavedItem {
         item: Box<dyn WeakItemHandle>,
         save_intent: SaveIntent,
     },
@@ -215,8 +215,8 @@ impl fmt::Debug for Event {
             Event::Focus => f.write_str("Focus"),
             Event::ZoomIn => f.write_str("ZoomIn"),
             Event::ZoomOut => f.write_str("ZoomOut"),
-            Event::UserSaved { item, save_intent } => f
-                .debug_struct("UserSaved")
+            Event::UserSavedItem { item, save_intent } => f
+                .debug_struct("UserSavedItem")
                 .field("item", &item.id())
                 .field("save_intent", save_intent)
                 .finish(),
@@ -1512,7 +1512,7 @@ impl Pane {
         }
 
         pane.update(cx, |_, cx| {
-            cx.emit(Event::UserSaved {
+            cx.emit(Event::UserSavedItem {
                 item: item.downgrade_item(),
                 save_intent,
             });
