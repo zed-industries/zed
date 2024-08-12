@@ -1,6 +1,6 @@
 use crate::{
-    size, Bounds, Element, ElementId, GlobalElementId, IntoElement, LayoutId, ObjectFit, Pixels,
-    Style, StyleRefinement, Styled, WindowContext,
+    Bounds, Element, ElementId, GlobalElementId, IntoElement, LayoutId, ObjectFit, Pixels, Style,
+    StyleRefinement, Styled, WindowContext,
 };
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
@@ -85,7 +85,7 @@ impl Element for Surface {
         match &self.source {
             #[cfg(target_os = "macos")]
             SurfaceSource::Surface(surface) => {
-                let size = size(surface.width().into(), surface.height().into());
+                let size = crate::size(surface.width().into(), surface.height().into());
                 let new_bounds = self.object_fit.get_bounds(bounds, size);
                 // TODO: Add support for corner_radii
                 cx.paint_surface(new_bounds, surface.clone());
