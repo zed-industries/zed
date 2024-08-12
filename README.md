@@ -1,3 +1,11 @@
+<h4 align="center">
+    <p>
+        <b>English</b> |
+        <a href="./docs/README_ES.md">Español</a> |
+        <a href="./docs/README_CH.md">普通话</a>
+    </p>
+</h4>
+
 # Zed
 
 [![CI](https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/ci.yml)
