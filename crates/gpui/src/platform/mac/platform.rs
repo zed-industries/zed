@@ -921,6 +921,74 @@ impl Platform for MacPlatform {
                             }
                         }
 
+                        /*
+
+
+
+
+                                        {
+                                            // write some images and text to the clip
+                                            // let image1 = ns_image(&bytes).unwrap();
+                                            // let image2 = ns_image(&bytes).unwrap();
+                                            let image1 = NSImage::initWithPasteboard_(nil, pasteboard);
+                                            let image2 = NSImage::initWithPasteboard_(nil, pasteboard);
+                                            // let attributed_string = text_and_images([image1, image2]);
+                                            // text_and_images([NSImage::initWithPasteboard_(, pasteboard), ns_image(&bytes).unwrap()]);
+                                            let attributed_string = {
+                                                use cocoa::appkit::NSImage;
+
+                                                let image: id = msg_send![class!(NSImage), alloc];
+                                                NSImage::initWithContentsOfFile_(
+                                                    image,
+                                                    NSString::alloc(nil).init_str("/Users/rtfeldman/Downloads/test.jpeg"),
+                                                );
+                                                let size = image.size();
+
+                                                let string = NSString::alloc(nil).init_str("Test String");
+                                                let attr_string =
+                                                    NSMutableAttributedString::alloc(nil).init_attributed_string(string);
+                                                let hello_string = NSString::alloc(nil).init_str("Hello World");
+                                                let hello_attr_string =
+                                                    NSAttributedString::alloc(nil).init_attributed_string(hello_string);
+                                                attr_string.appendAttributedString_(hello_attr_string);
+
+                                                let attachment = NSTextAttachment::alloc(nil);
+                                                let _: () = msg_send![attachment, setImage: image];
+                                                let image_attr_string = msg_send![class!(NSAttributedString), attributedStringWithAttachment: attachment];
+                                                attr_string.appendAttributedString_(image_attr_string);
+
+                                                let another_string = NSString::alloc(nil).init_str("Another String");
+                                                let another_attr_string =
+                                                    NSAttributedString::alloc(nil).init_attributed_string(another_string);
+                                                attr_string.appendAttributedString_(another_attr_string);
+
+                                                attr_string
+                                            };
+
+                                            pasteboard.clearContents();
+
+                                            let rtfd_data = attributed_string.RTFDFromRange_documentAttributes_(
+                                                NSRange::new(0, msg_send![attributed_string, length]),
+                                                nil,
+                                            );
+                                            if rtfd_data != nil {
+                                                pasteboard.setData_forType(rtfd_data, NSPasteboardTypeRTFD);
+                                            }
+
+                                            // let rtf_data = attributed_string.RTFFromRange_documentAttributes_(
+                                            //     NSRange::new(0, attributed_string.length()),
+                                            //     nil,
+                                            // );
+                                            // if rtf_data != nil {
+                                            //     pasteboard.setData_forType(rtf_data, NSPasteboardTypeRTF);
+                                            // }
+
+                                            // let plain_text = attributed_string.string();
+                                            // pasteboard.setString_forType(plain_text, NSPasteboardTypeString);
+                                        }
+
+                        */
+
                         buf.appendAttributedString_(to_append);
                     }
 

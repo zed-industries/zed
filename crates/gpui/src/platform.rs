@@ -26,7 +26,7 @@ use crate::{
     RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, SharedString, Size,
     SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_task::Runnable;
 use futures::channel::oneshot;
 use image::codecs::gif::GifDecoder;
@@ -987,6 +987,11 @@ pub enum ClipboardEntry {
 }
 
 impl ClipboardItem {
+    /// Create a new ClipboardItem with the given entries
+    pub fn new(entries: Vec<ClipboardEntry>) -> Self {
+        Self { entries }
+    }
+
     /// Create a new ClipboardItem::String with no associated metadata
     pub fn new_string(text: String) -> Self {
         Self {
@@ -1081,6 +1086,39 @@ impl Image {
     /// Use the GPUI `use_asset` API to make this image renderable
     pub fn use_render_image(self: Arc<Self>, cx: &mut WindowContext) -> Option<Arc<RenderImage>> {
         ImageSource::Image(self).use_data(cx)
+    }
+
+    /// Convert an `ImageData` object to a clipboard image in PNG format.
+    pub fn from_image_data(render_image: &RenderImage) -> Result<Self> {
+        // hardcode frame index 0; we don't currently support copying animated GIFs
+        if let Some(input_bytes) = render_image.as_bytes(0) {
+            let rgba_bytes = {
+                let mut buf = input_bytes.to_vec();
+
+                // Convert from BGRA to RGBA.
+                for pixel in buf.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
+
+                buf
+            };
+
+            let mut output_bytes = Vec::with_capacity(rgba_bytes.len());
+            let image_buffer = RgbaIma
+            let cursor = Cursor::new(output_bytes);
+            image::DynamicImage::ImageRgba8(rgba_bytes)
+                .write_to(&mut cursor, image::ImageOutputFormat::Png)?;
+
+            Ok(Self {
+                format: ImageFormat::Png,
+                bytes: cursor.into_inner(),
+                id: rand::random(),
+            })
+        } else {
+            Err(anyhow!(
+                "RenderImage did not have a frame 0, which should never happen."
+            ))
+        }
     }
 
     /// Convert the clipboard image to an `ImageData` object.

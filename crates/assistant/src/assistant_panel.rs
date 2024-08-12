@@ -3073,6 +3073,8 @@ impl ContextEditor {
             let selection = editor.selections.newest::<usize>(cx);
             let mut copied_text = String::new();
             let mut spanned_messages = 0;
+            let mut clipboard_entries: Vec<ClipboardEntry> = Vec::new();
+
             for message in context.messages(cx) {
                 if message.offset_range.start >= selection.range().end {
                     break;
@@ -3090,8 +3092,16 @@ impl ContextEditor {
                 }
             }
 
+            for image_anchor in context.image_anchors(cx) {
+                if let Some((render_image, _)) = context.get_image(image_anchor.image_id) {
+                    //
+                } else {
+                    log::error!("Assistant panel context had an image id of {:?} but there was no associated images entry stored for that id. This should never happen!", image_anchor.image_id);
+                }
+            }
+
             if spanned_messages > 1 {
-                cx.write_to_clipboard(ClipboardItem::new_string(copied_text));
+                cx.write_to_clipboard(ClipboardItem::new(clipboard_entries));
                 return;
             }
         }
@@ -3155,11 +3165,13 @@ impl ContextEditor {
             let new_blocks = self
                 .context
                 .read(cx)
-                .images(cx)
-                .filter_map(|image| {
+                .image_anchors(cx)
+                .filter_map(|image_anchor| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
-                    let anchor = buffer.anchor_in_excerpt(excerpt_id, image.anchor).unwrap();
-                    let image = image.render_image.clone();
+                    let anchor = buffer
+                        .anchor_in_excerpt(excerpt_id, image_anchor.anchor)
+                        .unwrap();
+                    let image = image_anchor.render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         position: anchor,
                         height: MAX_HEIGHT_IN_LINES,

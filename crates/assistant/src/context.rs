@@ -1906,8 +1906,18 @@ impl Context {
         }
     }
 
-    pub fn images<'a>(&'a self, _cx: &'a AppContext) -> impl 'a + Iterator<Item = ImageAnchor> {
+    pub fn image_anchors<'a>(
+        &'a self,
+        _cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = ImageAnchor> {
         self.image_anchors.iter().cloned()
+    }
+
+    pub fn get_image(
+        &self,
+        image_id: u64,
+    ) -> Option<&(Arc<RenderImage>, Shared<Task<Option<LanguageModelImage>>>)> {
+        self.images.get(&image_id)
     }
 
     pub fn split_message(
