@@ -203,7 +203,7 @@ async fn perform_completion(
                     if api_error.code() == Some(anthropic::ApiErrorCode::RateLimitError) {
                         return Error::http(
                             StatusCode::TOO_MANY_REQUESTS,
-                            format!("Upstream Anthropic rate limit exceeded."),
+                            "Upstream Anthropic rate limit exceeded.".to_string(),
                         );
                     }
 
