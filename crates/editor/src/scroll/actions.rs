@@ -1,8 +1,8 @@
 use super::Axis;
 use crate::{
-    Autoscroll, Bias, Editor, EditorMode, NextScollCursorCenterTopBottom, NextScreen, ScrollAnchor,
-    ScrollCursorBottom, ScrollCursorCenter, ScrollCursorCenterTopBottom, ScrollCursorTop,
-    SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT,
+    Autoscroll, Bias, Editor, EditorMode, NextScreen, NextScrollCursorCenterTopBottom,
+    ScrollAnchor, ScrollCursorBottom, ScrollCursorCenter, ScrollCursorCenterTopBottom,
+    ScrollCursorTop, SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT,
 };
 use gpui::{Point, ViewContext};
 
@@ -38,52 +38,42 @@ impl Editor {
         _: &ScrollCursorCenterTopBottom,
         cx: &mut ViewContext<Self>,
     ) {
-        // TODO kb tidy up
         let snapshot = self.snapshot(cx).display_snapshot;
         let visible_rows = if let Some(visible_rows) = self.visible_line_count() {
             visible_rows as u32
         } else {
             return;
         };
-        let scroll_margin_rows = self.vertical_scroll_margin() as u32;
 
-        let new_anchor = match self.next_scroll_direction {
-            NextScollCursorCenterTopBottom::Center => {
-                let mut new_screen_top = self.selections.newest_display(cx).head();
+        let scroll_margin_rows = self.vertical_scroll_margin() as u32;
+        let mut new_screen_top = self.selections.newest_display(cx).head();
+        *new_screen_top.column_mut() = 0;
+        match self.next_scroll_position {
+            NextScrollCursorCenterTopBottom::Center => {
                 *new_screen_top.row_mut() = new_screen_top.row().0.saturating_sub(visible_rows / 2);
-                *new_screen_top.column_mut() = 0;
-                let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
-                snapshot.buffer_snapshot.anchor_before(new_screen_top)
             }
-            NextScollCursorCenterTopBottom::Top => {
-                let mut new_screen_top = self.selections.newest_display(cx).head();
+            NextScrollCursorCenterTopBottom::Top => {
                 *new_screen_top.row_mut() =
                     new_screen_top.row().0.saturating_sub(scroll_margin_rows);
-                *new_screen_top.column_mut() = 0;
-                let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
-                snapshot.buffer_snapshot.anchor_before(new_screen_top)
             }
-            NextScollCursorCenterTopBottom::Bottom => {
-                let mut new_screen_top = self.selections.newest_display(cx).head();
+            NextScrollCursorCenterTopBottom::Bottom => {
                 *new_screen_top.row_mut() = new_screen_top
                     .row()
                     .0
                     .saturating_sub(visible_rows.saturating_sub(scroll_margin_rows));
-                *new_screen_top.column_mut() = 0;
-                let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
-                snapshot.buffer_snapshot.anchor_before(new_screen_top)
             }
-        };
-
+        }
         self.set_scroll_anchor(
             ScrollAnchor {
-                anchor: new_anchor,
+                anchor: snapshot
+                    .buffer_snapshot
+                    .anchor_before(new_screen_top.to_offset(&snapshot, Bias::Left)),
                 offset: Default::default(),
             },
             cx,
         );
 
-        self.next_scroll_direction = self.next_scroll_direction.next();
+        self.next_scroll_position = self.next_scroll_position.next();
         self._scroll_cursor_center_top_bottom_task =
             cx.spawn(|editor, mut cx: gpui::AsyncWindowContext| async move {
                 cx.background_executor()
@@ -91,7 +81,7 @@ impl Editor {
                     .await;
                 editor
                     .update(&mut cx, |editor, _| {
-                        editor.next_scroll_direction = NextScollCursorCenterTopBottom::default();
+                        editor.next_scroll_position = NextScrollCursorCenterTopBottom::default();
                     })
                     .ok();
             });

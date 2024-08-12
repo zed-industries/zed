@@ -13174,36 +13174,36 @@ let foo = 15;"#,
 
     cx.update_editor(|e, cx| {
         assert_eq!(
-            e.next_scroll_direction,
-            NextScollCursorCenterTopBottom::Center,
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Center,
             "Default next scroll direction is center",
         );
 
-        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
         assert_eq!(
-            e.next_scroll_direction,
-            NextScollCursorCenterTopBottom::Top,
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Top,
             "After center, next scroll direction should be top",
         );
 
-        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
         assert_eq!(
-            e.next_scroll_direction,
-            NextScollCursorCenterTopBottom::Bottom,
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Bottom,
             "After top, next scroll direction should be bottom",
         );
 
-        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
         assert_eq!(
-            e.next_scroll_direction,
-            NextScollCursorCenterTopBottom::Center,
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Center,
             "After bottom, scrolling should start over",
         );
 
-        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom::default(), cx);
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
         assert_eq!(
-            e.next_scroll_direction,
-            NextScollCursorCenterTopBottom::Top,
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Top,
             "Scrolling continues if retriggered fast enough"
         );
     });
@@ -13213,8 +13213,8 @@ let foo = 15;"#,
     cx.executor().run_until_parked();
     cx.update_editor(|e, _| {
         assert_eq!(
-            e.next_scroll_direction,
-            NextScollCursorCenterTopBottom::Center,
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Center,
             "If scrolling is not triggered fast enough, it should reset"
         );
     });
