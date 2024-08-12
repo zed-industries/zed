@@ -55,15 +55,24 @@ mod tests {
     use cocoa::appkit::NSImage;
     use cocoa::base::nil;
     use cocoa::foundation::NSString;
-
     #[test]
     fn test_nsattributed_string() {
+        // TODO move these to parent module once it's actually ready to be used
+        #[allow(non_snake_case)]
+        pub trait NSTextAttachment: Sized {
+            unsafe fn alloc(_: Self) -> id {
+                msg_send![class!(NSTextAttachment), alloc]
+            }
+        }
+
+        impl NSTextAttachment for id {}
+
         unsafe {
             let image: id = msg_send![class!(NSImage), alloc];
             image.initWithContentsOfFile_(
                 NSString::alloc(nil).init_str("/Users/rtfeldman/Downloads/test.jpeg"),
             );
-            let size = image.size();
+            let _size = image.size();
 
             let string = NSString::alloc(nil).init_str("Test String");
             let attr_string = NSMutableAttributedString::alloc(nil).init_attributed_string(string);
@@ -83,7 +92,7 @@ mod tests {
                 NSAttributedString::alloc(nil).init_attributed_string(another_string);
             attr_string.appendAttributedString_(another_attr_string);
 
-            let len: cocoa::foundation::NSUInteger = msg_send![attr_string, length];
+            let _len: cocoa::foundation::NSUInteger = msg_send![attr_string, length];
 
             ///////////////////////////////////////////////////
             // pasteboard.clearContents();
