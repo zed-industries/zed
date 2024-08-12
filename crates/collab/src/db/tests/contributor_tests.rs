@@ -25,30 +25,18 @@ async fn test_contributors(db: &Arc<Database>) {
     assert_eq!(db.get_contributors().await.unwrap(), Vec::<String>::new());
 
     let user1_created_at = Utc::now();
-    db.add_contributor(
-        "user1",
-        Some(1),
-        None,
-        Some(user1_created_at),
-        None,
-    )
-    .await
-    .unwrap();
+    db.add_contributor("user1", Some(1), None, Some(user1_created_at), None)
+        .await
+        .unwrap();
     assert_eq!(
         db.get_contributors().await.unwrap(),
         vec!["user1".to_string()]
     );
 
     let user2_created_at = Utc::now();
-    db.add_contributor(
-        "user2",
-        Some(2),
-        None,
-        Some(user2_created_at),
-        None,
-    )
-    .await
-    .unwrap();
+    db.add_contributor("user2", Some(2), None, Some(user2_created_at), None)
+        .await
+        .unwrap();
     assert_eq!(
         db.get_contributors().await.unwrap(),
         vec!["user1".to_string(), "user2".to_string()]
