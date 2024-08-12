@@ -1,10 +1,10 @@
 mod hexdocs;
 
-use std::fs;
+use std::{fs, io};
 use zed::lsp::CompletionKind;
 use zed::{
-    CodeLabel, CodeLabelSpan, HttpRequest, KeyValueStore, LanguageServerId, SlashCommand,
-    SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
+    CodeLabel, CodeLabelSpan, HttpMethod, HttpRequest, KeyValueStore, LanguageServerId,
+    SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
 };
 use zed_extension_api::{self as zed, Result};
 
@@ -194,6 +194,7 @@ impl zed::Extension for GleamExtension {
                 let module_path = components.map(ToString::to_string).collect::<Vec<_>>();
 
                 let response = zed::fetch(&HttpRequest {
+                    method: HttpMethod::Get,
                     url: format!(
                         "https://hexdocs.pm/{package_name}{maybe_path}",
                         maybe_path = if !module_path.is_empty() {
@@ -202,9 +203,15 @@ impl zed::Extension for GleamExtension {
                             String::new()
                         }
                     ),
+                    headers: vec![(
+                        "User-Agent".to_string(),
+                        "Zed (Gleam Extension)".to_string(),
+                    )],
+                    body: None,
                 })?;
 
-                let (markdown, _modules) = convert_hexdocs_to_markdown(response.body.as_bytes())?;
+                let (markdown, _modules) =
+                    convert_hexdocs_to_markdown(&mut io::Cursor::new(response.body))?;
 
                 let mut text = String::new();
                 text.push_str(&markdown);
