@@ -5,13 +5,14 @@ use editor::{
     display_map::{BlockDisposition, BlockProperties, BlockStyle, CustomBlockId},
     Editor,
 };
-use gpui::{Model, View};
-use text::ToOffset;
+use gpui::{AppContext, Model, View};
+use text::{ToOffset, ToPoint};
 use ui::{
-    div, h_flex, Color, Element as _, ParentElement as _, Styled, ViewContext, WindowContext,
+    div, h_flex, Button, Color, Element as _, IntoElement, ParentElement as _, Styled, ViewContext,
+    WindowContext,
 };
 
-use crate::{Context, ResolvedWorkflowStep};
+use crate::{Context, ResolvedWorkflowStep, WorkflowStepStatus, WorkflowSuggestion};
 
 type StepRange = Range<language::Anchor>;
 
@@ -44,24 +45,29 @@ impl ContextInspector {
             self.activate_for_step(range.clone(), cx);
         }
     }
-    fn crease_content(&self, range: StepRange, cx: &mut WindowContext<'_>) -> Option<Arc<str>> {
+    fn crease_content(
+        context: &Model<Context>,
+        range: StepRange,
+        cx: &mut AppContext,
+    ) -> Option<Arc<str>> {
         use std::fmt::Write;
-        let step = self.context.read(cx).workflow_step_for_range(range)?;
+        let step = context.read(cx).workflow_step_for_range(range)?;
         let mut output = String::from("\n\n");
         match &step.status {
             crate::WorkflowStepStatus::Resolved(ResolvedWorkflowStep { title, suggestions }) => {
                 writeln!(output, "Resolution:").ok()?;
                 writeln!(output, "  {title:?}").ok()?;
                 for (buffer, suggestion_groups) in suggestions {
+                    let buffer = buffer.read(cx);
                     let buffer_path = buffer
-                        .read(cx)
                         .file()
                         .and_then(|file| file.path().to_str())
                         .unwrap_or("untitled");
+                    let snapshot = buffer.text_snapshot();
                     writeln!(output, "  {buffer_path}:").ok()?;
                     for group in suggestion_groups {
                         for suggestion in &group.suggestions {
-                            writeln!(output, "    {suggestion:?}").ok()?;
+                            pretty_print_workflow_suggestion(&mut output, suggestion, &snapshot);
                         }
                     }
                 }
@@ -78,8 +84,7 @@ impl ContextInspector {
         Some(output.into())
     }
     pub(crate) fn activate_for_step(&mut self, range: StepRange, cx: &mut WindowContext<'_>) {
-        let text = self
-            .crease_content(range.clone(), cx)
+        let text = Self::crease_content(&self.context, range.clone(), cx)
             .unwrap_or_else(|| Arc::from("Error fetching debug info"));
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).as_singleton()?;
@@ -154,4 +159,66 @@ impl ContextInspector {
             }
         });
     }
+}
+fn pretty_print_anchor(
+    out: &mut String,
+    anchor: &language::Anchor,
+    snapshot: &text::BufferSnapshot,
+) {
+    use std::fmt::Write;
+    let point = anchor.to_point(snapshot);
+    write!(out, "{}:{}", point.row, point.column).ok();
+}
+fn pretty_print_range(
+    out: &mut String,
+    range: &Range<language::Anchor>,
+    snapshot: &text::BufferSnapshot,
+) {
+    use std::fmt::Write;
+    write!(out, "    Range: ").ok();
+    pretty_print_anchor(out, &range.start, snapshot);
+    write!(out, "..").ok();
+    pretty_print_anchor(out, &range.end, snapshot);
+}
+
+fn pretty_print_workflow_suggestion(
+    out: &mut String,
+    suggestion: &WorkflowSuggestion,
+    snapshot: &text::BufferSnapshot,
+) {
+    use std::fmt::Write;
+    let (range, description, position) = match suggestion {
+        WorkflowSuggestion::Update { range, description } => (Some(range), Some(description), None),
+        WorkflowSuggestion::CreateFile { description } => (None, Some(description), None),
+        WorkflowSuggestion::AppendChild {
+            position,
+            description,
+        }
+        | WorkflowSuggestion::InsertSiblingBefore {
+            position,
+            description,
+        }
+        | WorkflowSuggestion::InsertSiblingAfter {
+            position,
+            description,
+        }
+        | WorkflowSuggestion::PrependChild {
+            position,
+            description,
+        } => (None, Some(description), Some(position)),
+
+        WorkflowSuggestion::Delete { range } => (Some(range), None, None),
+    };
+    if let Some(description) = description {
+        writeln!(out, "    Description: {description}").ok();
+    }
+    if let Some(range) = range {
+        pretty_print_range(out, range, snapshot);
+    }
+    if let Some(position) = position {
+        write!(out, "    Position: ").ok();
+        pretty_print_anchor(out, position, snapshot);
+        write!(out, "\n").ok();
+    }
+    write!(out, "\n").ok();
 }
