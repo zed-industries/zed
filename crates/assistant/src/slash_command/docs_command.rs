@@ -7,7 +7,6 @@ use anyhow::{anyhow, bail, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
-use feature_flags::FeatureFlag;
 use gpui::{AppContext, BackgroundExecutor, Model, Task, WeakView};
 use indexed_docs::{
     DocsDotRsProvider, IndexedDocsRegistry, IndexedDocsStore, LocalRustdocProvider, PackageName,
@@ -18,12 +17,6 @@ use project::{Project, ProjectPath};
 use ui::prelude::*;
 use util::{maybe, ResultExt};
 use workspace::Workspace;
-
-pub(crate) struct DocsSlashCommandFeatureFlag;
-
-impl FeatureFlag for DocsSlashCommandFeatureFlag {
-    const NAME: &'static str = "docs-slash-command";
-}
 
 pub(crate) struct DocsSlashCommand;
 
