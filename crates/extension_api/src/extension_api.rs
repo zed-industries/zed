@@ -21,6 +21,7 @@ pub use wit::{
     },
     zed::extension::http_client::{
         fetch, fetch_stream, HttpMethod, HttpRequest, HttpResponse, HttpResponseStream,
+        RedirectPolicy,
     },
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,
