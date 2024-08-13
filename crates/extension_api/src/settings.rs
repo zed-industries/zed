@@ -1,4 +1,4 @@
-#[path = "../wit/since_v0.0.7/settings.rs"]
+#[path = "../wit/since_v0.1.0/settings.rs"]
 mod types;
 
 use crate::{wit, Result, SettingsLocation, Worktree};

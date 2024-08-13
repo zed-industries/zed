@@ -179,7 +179,7 @@ mod wit {
 
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.0.7",
+        path: "./wit/since_v0.1.0",
     });
 }
 
