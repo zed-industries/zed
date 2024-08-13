@@ -2377,7 +2377,7 @@ impl Codegen {
 
         messages.push(LanguageModelRequestMessage {
             role: Role::User,
-            content: prompt,
+            content: vec![prompt.into()],
         });
 
         Ok(LanguageModelRequest {

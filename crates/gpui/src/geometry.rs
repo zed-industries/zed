@@ -2447,10 +2447,24 @@ impl From<usize> for Pixels {
 /// affected by the device's scale factor, `DevicePixels` always correspond to real pixels on the
 /// display.
 #[derive(
-    Add, AddAssign, Clone, Copy, Default, Div, Eq, Hash, Ord, PartialEq, PartialOrd, Sub, SubAssign,
+    Add,
+    AddAssign,
+    Clone,
+    Copy,
+    Default,
+    Div,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Sub,
+    SubAssign,
+    Serialize,
+    Deserialize,
 )]
 #[repr(transparent)]
-pub struct DevicePixels(pub(crate) i32);
+pub struct DevicePixels(pub i32);
 
 impl DevicePixels {
     /// Converts the `DevicePixels` value to the number of bytes needed to represent it in memory.
