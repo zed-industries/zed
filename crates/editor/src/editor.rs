@@ -5933,6 +5933,22 @@ impl Editor {
         })
     }
 
+    pub fn revert_file(&mut self, _: &RevertFile, cx: &mut ViewContext<Self>) {
+        let mut revert_changes = HashMap::default();
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        for hunk in hunks_for_rows(
+            Some(MultiBufferRow(0)..multi_buffer_snapshot.max_buffer_row()).into_iter(),
+            &multi_buffer_snapshot,
+        ) {
+            Self::prepare_revert_change(&mut revert_changes, &self.buffer(), &hunk, cx);
+        }
+        if !revert_changes.is_empty() {
+            self.transact(cx, |editor, cx| {
+                editor.revert(revert_changes, cx);
+            });
+        }
+    }
+
     pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
         let revert_changes = self.gather_revert_changes(&self.selections.disjoint_anchors(), cx);
         if !revert_changes.is_empty() {
