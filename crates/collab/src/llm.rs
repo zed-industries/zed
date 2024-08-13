@@ -131,6 +131,15 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
     let state = req.extensions().get::<Arc<LlmState>>().unwrap();
     match LlmTokenClaims::validate(&token, &state.config) {
         Ok(claims) => {
+            if state.db.is_access_token_revoked(&claims.jti).await? {
+                return Err(Error::http(
+                    StatusCode::UNAUTHORIZED,
+                    "unauthorized".to_string(),
+                ));
+            }
+
+            tracing::Span::current().record("authn.jti", &claims.jti);
+
             req.extensions_mut().insert(claims);
             Ok::<_, Error>(next.run(req).await.into_response())
         }

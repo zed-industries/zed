@@ -150,6 +150,7 @@ async fn main() -> Result<()> {
                             "http_request",
                             method = ?request.method(),
                             matched_path,
+                            authn.jti = tracing::field::Empty
                         )
                     })
                     .on_response(
