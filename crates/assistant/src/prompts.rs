@@ -55,8 +55,8 @@ impl PromptBuilder {
         Ok(Self { handlebars })
     }
 
-    fn watch_fs_for_template_overrides<'a>(
-        PromptOverrideContext { dev_mode, fs, cx }: PromptOverrideContext<'a>,
+    fn watch_fs_for_template_overrides(
+        PromptOverrideContext { dev_mode, fs, cx }: PromptOverrideContext,
         handlebars: Arc<Mutex<Handlebars<'static>>>,
     ) {
         cx.background_executor()

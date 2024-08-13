@@ -2369,11 +2369,6 @@ impl Codegen {
                                 let mut diff = StreamingDiff::new(selected_text.to_string());
                                 let mut line_diff = LineDiff::default();
 
-                                // let mut new_text = String::new();
-                                // let mut base_indent: Option<()> = None;
-                                // let mut line_indent: Option<()> = None;
-                                // let mut first_line = true;
-
                                 while let Some(chunk) = chunks.next().await {
                                     if response_latency.is_none() {
                                         response_latency = Some(request_start.elapsed());
@@ -2384,70 +2379,6 @@ impl Codegen {
                                     diff_tx
                                         .send((char_ops, line_diff.line_operations()))
                                         .await?;
-
-                                    // let mut lines = chunk.split('\n').peekable();
-                                    // while let Some(line) = lines.next() {
-                                    //     new_text.push_str(line);
-                                    //     if line_indent.is_none() {
-                                    //         if let Some(non_whitespace_ch_ix) =
-                                    //             new_text.find(|ch: char| !ch.is_whitespace())
-                                    //         {
-                                    //             line_indent = Some(non_whitespace_ch_ix);
-                                    //             base_indent = base_indent.or(line_indent);
-
-                                    //             let line_indent = line_indent.unwrap();
-                                    //             let base_indent = base_indent.unwrap();
-                                    //             let indent_delta =
-                                    //                 line_indent as i32 - base_indent as i32;
-                                    //             let mut corrected_indent_len = cmp::max(
-                                    //                 0,
-                                    //                 suggested_line_indent.len as i32 + indent_delta,
-                                    //             )
-                                    //                 as usize;
-                                    //             if first_line {
-                                    //                 corrected_indent_len = corrected_indent_len
-                                    //                     .saturating_sub(
-                                    //                         selection_start.column as usize,
-                                    //                     );
-                                    //             }
-
-                                    //             let indent_char = suggested_line_indent.char();
-                                    //             let mut indent_buffer = [0; 4];
-                                    //             let indent_str =
-                                    //                 indent_char.encode_utf8(&mut indent_buffer);
-                                    //             new_text.replace_range(
-                                    //                 ..line_indent,
-                                    //                 &indent_str.repeat(corrected_indent_len),
-                                    //             );
-                                    //         }
-                                    //     }
-
-                                    //     if line_indent.is_some() {
-                                    //         let char_ops = diff.push_new(&new_text);
-                                    //         line_diff
-                                    //             .push_char_operations(&char_ops, &selected_text);
-                                    //         diff_tx
-                                    //             .send((char_ops, line_diff.line_operations()))
-                                    //             .await?;
-                                    //         new_text.clear();
-                                    //     }
-
-                                    //     if lines.peek().is_some() {
-                                    //         let char_ops = diff.push_new("\n");
-                                    //         line_diff
-                                    //             .push_char_operations(&char_ops, &selected_text);
-                                    //         diff_tx
-                                    //             .send((char_ops, line_diff.line_operations()))
-                                    //             .await?;
-                                    //         if line_indent.is_none() {
-                                    //             // Don't write out the leading indentation in empty lines on the next line
-                                    //             // This is the case where the above if statement didn't clear the buffer
-                                    //             new_text.clear();
-                                    //         }
-                                    //         line_indent = None;
-                                    //         first_line = false;
-                                    //     }
-                                    // }
                                 }
 
                                 let char_ops = diff.finish();
