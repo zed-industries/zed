@@ -230,6 +230,36 @@ impl SlashCommand for DocsSlashCommand {
                     }
 
                     let items = store.search(package).await;
+                    if items.is_empty() {
+                        if provider == DocsDotRsProvider::id() {
+                            return Ok(std::iter::once(ArgumentCompletion {
+                                label: format!(
+                                    "Enter a {package_term} name or try one of these:",
+                                    package_term = package_term(&provider)
+                                ),
+                                new_text: provider.to_string(),
+                                run_command: false,
+                            })
+                            .chain(DocsDotRsProvider::AUTO_SUGGESTED_CRATES.into_iter().map(
+                                |crate_name| ArgumentCompletion {
+                                    label: crate_name.to_string(),
+                                    new_text: format!("{provider} {crate_name}"),
+                                    run_command: true,
+                                },
+                            ))
+                            .collect());
+                        }
+
+                        return Ok(vec![ArgumentCompletion {
+                            label: format!(
+                                "Enter a {package_term} name.",
+                                package_term = package_term(&provider)
+                            ),
+                            new_text: provider.to_string(),
+                            run_command: false,
+                        }]);
+                    }
+
                     Ok(build_completions(provider, items))
                 }
                 DocsSlashCommandArgs::SearchItemDocs {
@@ -277,12 +307,10 @@ impl SlashCommand for DocsSlashCommand {
                 };
 
                 if key.trim().is_empty() {
-                    let package_term = match provider.as_ref() {
-                        "docs-rs" | "rustdoc" => "crate",
-                        _ => "package",
-                    };
-
-                    bail!("no {package_term} name provided");
+                    bail!(
+                        "no {package_term} name provided",
+                        package_term = package_term(&provider)
+                    );
                 }
 
                 let store = store?;
@@ -405,6 +433,15 @@ impl DocsSlashCommandArgs {
             }
         }
     }
+}
+
+/// Returns the term used to refer to a package.
+fn package_term(provider: &ProviderId) -> &'static str {
+    if provider == &DocsDotRsProvider::id() || provider == &LocalRustdocProvider::id() {
+        return "crate";
+    }
+
+    "package"
 }
 
 #[cfg(test)]
