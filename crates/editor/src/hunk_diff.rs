@@ -139,14 +139,7 @@ impl Editor {
                             }
                         }
                     })
-                    .entry("Revert File", Some(RevertFile.boxed_clone()), {
-                        let editor = editor_handle.clone();
-                        move |cx| {
-                            editor.update(cx, |editor, cx| {
-                                editor.revert_file(&RevertFile, cx);
-                            })
-                        }
-                    })
+                    .action("Revert File", RevertFile.boxed_clone())
             }),
             cx,
         )
