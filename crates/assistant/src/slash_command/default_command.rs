@@ -2,7 +2,7 @@ use super::{SlashCommand, SlashCommandOutput};
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
-use gpui::{AppContext, Task, WeakView};
+use gpui::{Task, WeakView};
 use language::LspAdapterDelegate;
 use std::{
     fmt::Write,
@@ -35,7 +35,7 @@ impl SlashCommand for DefaultSlashCommand {
         _query: String,
         _cancellation_flag: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }

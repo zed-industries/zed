@@ -45,7 +45,7 @@ impl SlashCommand for TerminalSlashCommand {
         _query: String,
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(vec![ArgumentCompletion {
             label: LINE_COUNT_ARG.to_string(),
