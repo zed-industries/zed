@@ -34,9 +34,9 @@ use editor::{
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use gpui::{
-    canvas, div, percentage, point, Action, Animation, AnimationExt, AnyElement, AnyView,
-    AppContext, AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty, Entity,
-    EntityId, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
+    canvas, div, percentage, point, pulsating_between, Action, Animation, AnimationExt, AnyElement,
+    AnyView, AppContext, AsyncWindowContext, ClipboardItem, Context as _, DismissEvent, Empty,
+    Entity, EntityId, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
     IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Task, Transformation, UpdateGlobal, View,
     ViewContext, VisualContext, WeakView, WindowContext,
@@ -2953,13 +2953,38 @@ impl ContextEditor {
                         let context = self.context.clone();
                         move |cx| {
                             let message_id = message.id;
+                            let show_spinner = message.role == Role::Assistant
+                                && message.status == MessageStatus::Pending;
+
+                            let label = match message.role {
+                                Role::User => {
+                                    Label::new("You").color(Color::Default).into_any_element()
+                                }
+                                Role::Assistant => {
+                                    let label = Label::new("Assistant").color(Color::Info);
+                                    if show_spinner {
+                                        label
+                                            .with_animation(
+                                                "pulsating-label",
+                                                Animation::new(Duration::from_secs(2))
+                                                    .repeat()
+                                                    .with_easing(pulsating_between(0.2, 1.0)),
+                                                |label, delta| label.alpha(delta),
+                                            )
+                                            .into_any_element()
+                                    } else {
+                                        label.into_any_element()
+                                    }
+                                }
+
+                                Role::System => Label::new("System")
+                                    .color(Color::Warning)
+                                    .into_any_element(),
+                            };
+
                             let sender = ButtonLike::new("role")
                                 .style(ButtonStyle::Filled)
-                                .child(match message.role {
-                                    Role::User => Label::new("You").color(Color::Default),
-                                    Role::Assistant => Label::new("Assistant").color(Color::Info),
-                                    Role::System => Label::new("System").color(Color::Warning),
-                                })
+                                .child(label)
                                 .tooltip(|cx| {
                                     Tooltip::with_meta(
                                         "Toggle message role",
