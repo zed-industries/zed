@@ -98,6 +98,26 @@ pub struct DocsDotRsProvider {
 }
 
 impl DocsDotRsProvider {
+    /// The list of crates to auto-suggest for the docs.rs provider when
+    /// the index is empty.
+    ///
+    /// List has been chosen loosely based on [this list](https://lib.rs/std) of
+    /// popular Rust libraries.
+    ///
+    /// Keep this alphabetized.
+    pub const AUTO_SUGGESTED_CRATES: &'static [&'static str] = &[
+        "anyhow",
+        "axum",
+        "chrono",
+        "itertools",
+        "rand",
+        "regex",
+        "serde",
+        "strum",
+        "thiserror",
+        "tokio",
+    ];
+
     pub fn id() -> ProviderId {
         ProviderId("docs-rs".into())
     }
