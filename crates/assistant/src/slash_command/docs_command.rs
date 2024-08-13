@@ -232,14 +232,22 @@ impl SlashCommand for DocsSlashCommand {
                     let items = store.search(package).await;
                     if items.is_empty() {
                         if provider == DocsDotRsProvider::id() {
-                            return Ok(DocsDotRsProvider::AUTO_SUGGESTED_CRATES
-                                .into_iter()
-                                .map(|crate_name| ArgumentCompletion {
+                            return Ok(std::iter::once(ArgumentCompletion {
+                                label: format!(
+                                    "Enter a {package_term} name or try one of these:",
+                                    package_term = package_term(&provider)
+                                ),
+                                new_text: provider.to_string(),
+                                run_command: false,
+                            })
+                            .chain(DocsDotRsProvider::AUTO_SUGGESTED_CRATES.into_iter().map(
+                                |crate_name| ArgumentCompletion {
                                     label: crate_name.to_string(),
                                     new_text: format!("{provider} {crate_name}"),
                                     run_command: true,
-                                })
-                                .collect());
+                                },
+                            ))
+                            .collect());
                         }
 
                         return Ok(vec![ArgumentCompletion {
