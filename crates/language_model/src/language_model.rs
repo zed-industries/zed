@@ -9,7 +9,9 @@ pub mod settings;
 use anyhow::Result;
 use client::{Client, UserStore};
 use futures::{future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, AppContext, AsyncAppContext, Model, SharedString, Task, WindowContext};
+use gpui::{
+    AnyElement, AnyView, AppContext, AsyncAppContext, Model, SharedString, Task, WindowContext,
+};
 pub use model::*;
 use project::Fs;
 use proto::Plan;
@@ -114,6 +116,12 @@ pub trait LanguageModelProvider: 'static {
     fn is_authenticated(&self, cx: &AppContext) -> bool;
     fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>>;
     fn configuration_view(&self, cx: &mut WindowContext) -> AnyView;
+    fn must_accept_terms(&self, _cx: &AppContext) -> bool {
+        false
+    }
+    fn render_accept_terms(&self, _cx: &mut WindowContext) -> Option<AnyElement> {
+        None
+    }
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>>;
 }
 

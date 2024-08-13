@@ -29,7 +29,7 @@ pub mod prompt_command;
 pub mod search_command;
 pub mod symbols_command;
 pub mod tabs_command;
-pub mod term_command;
+pub mod terminal_command;
 pub mod workflow_command;
 
 pub(crate) struct SlashCommandCompletionProvider {

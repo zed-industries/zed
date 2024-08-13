@@ -3,6 +3,7 @@ use crate::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
+use anthropic::AnthropicError;
 use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -259,7 +260,9 @@ impl AnthropicModel {
 
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            anthropic::complete(http_client.as_ref(), &api_url, &api_key, request).await
+            anthropic::complete(http_client.as_ref(), &api_url, &api_key, request)
+                .await
+                .context("failed to retrieve completion")
         }
         .boxed()
     }
@@ -268,7 +271,8 @@ impl AnthropicModel {
         &self,
         request: anthropic::Request,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<anthropic::Event>>>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<anthropic::Event, AnthropicError>>>>
+    {
         let http_client = self.http_client.clone();
 
         let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
@@ -291,7 +295,7 @@ impl AnthropicModel {
                 request,
                 low_speed_timeout,
             );
-            request.await
+            request.await.context("failed to stream completion")
         }
         .boxed()
     }
@@ -338,10 +342,16 @@ impl LanguageModel for AnthropicModel {
         let request = request.into_anthropic(self.model.id().into());
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.await?;
+            let response = request.await.map_err(|err| anyhow!(err))?;
             Ok(anthropic::extract_text_from_events(response))
         });
-        async move { Ok(future.await?.boxed()) }.boxed()
+        async move {
+            Ok(future
+                .await?
+                .map(|result| result.map_err(|err| anyhow!(err)))
+                .boxed())
+        }
+        .boxed()
     }
 
     fn use_any_tool(

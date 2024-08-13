@@ -1,5 +1,6 @@
 use super::{proto, Client, Status, TypedEnvelope};
 use anyhow::{anyhow, Context, Result};
+use chrono::{DateTime, Utc};
 use collections::{hash_map::Entry, HashMap, HashSet};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, Future, StreamExt};
@@ -94,6 +95,7 @@ pub struct UserStore {
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     current_plan: Option<proto::Plan>,
     current_user: watch::Receiver<Option<Arc<User>>>,
+    accepted_tos_at: Option<Option<DateTime<Utc>>>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -150,6 +152,7 @@ impl UserStore {
             by_github_login: Default::default(),
             current_user: current_user_rx,
             current_plan: None,
+            accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
             participant_indices: Default::default(),
@@ -189,9 +192,10 @@ impl UserStore {
                                 } else {
                                     break;
                                 };
-                                let fetch_metrics_id =
+                                let fetch_private_user_info =
                                     client.request(proto::GetPrivateUserInfo {}).log_err();
-                                let (user, info) = futures::join!(fetch_user, fetch_metrics_id);
+                                let (user, info) =
+                                    futures::join!(fetch_user, fetch_private_user_info);
 
                                 cx.update(|cx| {
                                     if let Some(info) = info {
@@ -202,9 +206,17 @@ impl UserStore {
                                         client.telemetry.set_authenticated_user_info(
                                             Some(info.metrics_id.clone()),
                                             staff,
-                                        )
+                                        );
+
+                                        this.update(cx, |this, _| {
+                                            this.set_current_user_accepted_tos_at(
+                                                info.accepted_tos_at,
+                                            );
+                                        })
+                                    } else {
+                                        anyhow::Ok(())
                                     }
-                                })?;
+                                })??;
 
                                 current_user_tx.send(user).await.ok();
 
@@ -678,6 +690,39 @@ impl UserStore {
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
         self.current_user.clone()
+    }
+
+    pub fn current_user_has_accepted_terms(&self) -> Option<bool> {
+        self.accepted_tos_at
+            .map(|accepted_tos_at| accepted_tos_at.is_some())
+    }
+
+    pub fn accept_terms_of_service(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        if self.current_user().is_none() {
+            return Task::ready(Err(anyhow!("no current user")));
+        };
+
+        let client = self.client.clone();
+        cx.spawn(move |this, mut cx| async move {
+            if let Some(client) = client.upgrade() {
+                let response = client
+                    .request(proto::AcceptTermsOfService {})
+                    .await
+                    .context("error accepting tos")?;
+
+                this.update(&mut cx, |this, _| {
+                    this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at))
+                })
+            } else {
+                Err(anyhow!("client not found"))
+            }
+        })
+    }
+
+    fn set_current_user_accepted_tos_at(&mut self, accepted_tos_at: Option<u64>) {
+        self.accepted_tos_at = Some(
+            accepted_tos_at.and_then(|timestamp| DateTime::from_timestamp(timestamp as i64, 0)),
+        );
     }
 
     fn load_users(

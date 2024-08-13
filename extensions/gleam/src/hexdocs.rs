@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::BTreeSet;
-use std::io::Read;
+use std::io::{self, Read};
 use std::rc::Rc;
 
 use html_to_markdown::markdown::{
@@ -10,23 +10,36 @@ use html_to_markdown::{
     convert_html_to_markdown, HandleTag, HandlerOutcome, HtmlElement, MarkdownWriter,
     StartTagOutcome, TagHandler,
 };
-use zed_extension_api::{self as zed, HttpRequest, KeyValueStore, Result};
+use zed_extension_api::{self as zed, HttpMethod, HttpRequest, KeyValueStore, Result};
 
 pub fn index(package: String, database: &KeyValueStore) -> Result<()> {
+    let headers = vec![(
+        "User-Agent".to_string(),
+        "Zed (Gleam Extension)".to_string(),
+    )];
+
     let response = zed::fetch(&HttpRequest {
+        method: HttpMethod::Get,
         url: format!("https://hexdocs.pm/{package}"),
+        headers: headers.clone(),
+        body: None,
     })?;
 
-    let (package_root_markdown, modules) = convert_hexdocs_to_markdown(response.body.as_bytes())?;
+    let (package_root_markdown, modules) =
+        convert_hexdocs_to_markdown(&mut io::Cursor::new(&response.body))?;
 
     database.insert(&package, &package_root_markdown)?;
 
     for module in modules {
         let response = zed::fetch(&HttpRequest {
+            method: HttpMethod::Get,
             url: format!("https://hexdocs.pm/{package}/{module}.html"),
+            headers: headers.clone(),
+            body: None,
         })?;
 
-        let (markdown, _modules) = convert_hexdocs_to_markdown(response.body.as_bytes())?;
+        let (markdown, _modules) =
+            convert_hexdocs_to_markdown(&mut io::Cursor::new(&response.body))?;
 
         database.insert(&format!("{module} ({package})"), &markdown)?;
     }

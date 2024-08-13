@@ -158,7 +158,7 @@ impl PickerDelegate for ModelPickerDelegate {
                     div().pr_1().child(
                         Icon::new(model_info.provider_icon)
                             .color(Color::Muted)
-                            .size(IconSize::XSmall),
+                            .size(IconSize::Medium),
                     ),
                 )
                 .child(
