@@ -2520,6 +2520,17 @@ impl ContextEditor {
                                     } else {
                                         theme.info_border
                                     };
+                                    let step_index = weak_self.update(&mut **cx, |this, cx| {
+                                       let snapshot = this.editor.read(cx).buffer().read(cx).as_singleton()?.read(cx).text_snapshot();
+                                       let start_offset = step_range.start.to_offset(&snapshot);
+                                       let parent_message = this.context.read(cx).messages_for_offsets([start_offset], cx);
+                                       debug_assert_eq!(parent_message.len(), 1);
+                                       let parent_message = parent_message.first()?;
+
+                                       let index_of_current_step = this.workflow_steps.keys().filter(|workflow_step_range| workflow_step_range.start.cmp(&parent_message.anchor, &snapshot).is_ge() && workflow_step_range.end.cmp(&step_range.end, &snapshot).is_le()).count();
+                                       Some(index_of_current_step)
+                                    }).ok().flatten();
+
                                     let debug_header = weak_self
                                         .update(&mut **cx, |this, _| {
                                             if let Some(inspector) = this.debug_inspector.as_mut() {
@@ -2529,6 +2540,17 @@ impl ContextEditor {
                                             }
                                         })
                                         .unwrap_or_default();
+                                    let step_label = if let Some(index) = step_index {
+
+                                        Label::new(format!("Step {index}")).size(LabelSize::Small)
+                                        } else {
+                                            Label::new("Step").size(LabelSize::Small)
+                                        };
+                                    let step_label = if current_status.as_ref().is_some_and(|status| status.is_confirmed()) {
+                                        h_flex().items_center().gap_2().child(step_label.strikethrough(true).color(Color::Muted)).child(Icon::new(IconName::Check).size(IconSize::Small).color(Color::Created))
+                                    } else {
+                                        div().child(step_label)
+                                    };
                                     div()
                                         .w_full()
                                         .px(cx.gutter_dimensions.full_width())
@@ -2537,11 +2559,12 @@ impl ContextEditor {
                                                 .w_full()
                                                 .border_b_1()
                                                 .border_color(border_color)
-                                                .pb_1()
+                                                .pb_1p5()
                                                 .justify_between()
                                                 .gap_2()
-                                                .children(debug_header.map(|is_active| {
-                                                    h_flex().justify_start().child(
+                                                .child(h_flex().justify_start().gap_2().child(step_label).children(
+                                                    debug_header.map(|is_active| {
+
                                                         Button::new("debug-workflows-toggle", "Debug")
                                                             .icon_color(Color::Hidden)
                                                             .color(Color::Hidden)
@@ -2572,10 +2595,10 @@ impl ContextEditor {
                                                                         })
                                                                         .ok();
                                                                 }
-                                                            }),
-                                                    )
-                                                    // .child(h_flex().w_full())
-                                                }))
+                                                            })
+                                                    })
+
+                                                ))
                                                 .children(current_status.as_ref().map(|status| {
                                                     h_flex().w_full().justify_end().child(
                                                         status.into_element(
