@@ -30,6 +30,10 @@ impl IndexedDocsProvider for ExtensionIndexedDocsProvider {
         database_path
     }
 
+    async fn suggest_packages(&self) -> Result<Vec<PackageName>> {
+        Ok(Vec::new())
+    }
+
     async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {
         self.extension
             .call({
