@@ -40,7 +40,7 @@ use gpui::{
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-    ProjectItem, SerializableItem, SerializableItemHandle,
+    ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
 };
 use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
@@ -670,6 +670,11 @@ pub enum Event {
     ItemAdded,
     ItemRemoved,
     ActiveItemChanged,
+    UserSavedItem {
+        pane: WeakView<Pane>,
+        item: Box<dyn WeakItemHandle>,
+        save_intent: SaveIntent,
+    },
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
     SpawnTask(Box<SpawnInTerminal>),
@@ -2934,6 +2939,11 @@ impl Workspace {
                     self.update_active_view_for_followers(cx);
                 }
             }
+            pane::Event::UserSavedItem { item, save_intent } => cx.emit(Event::UserSavedItem {
+                pane: pane.downgrade(),
+                item: item.boxed_clone(),
+                save_intent: *save_intent,
+            }),
             pane::Event::ChangeItemTitle => {
                 if pane == self.active_pane {
                     self.active_item_path_changed(cx);

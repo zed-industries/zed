@@ -1259,7 +1259,7 @@ impl LinuxClient for X11Client {
             .store(
                 state.clipboard.setter.atoms.primary,
                 state.clipboard.setter.atoms.utf8_string,
-                item.text().as_bytes(),
+                item.text().unwrap_or_default().as_bytes(),
             )
             .ok();
     }
@@ -1271,7 +1271,7 @@ impl LinuxClient for X11Client {
             .store(
                 state.clipboard.setter.atoms.clipboard,
                 state.clipboard.setter.atoms.utf8_string,
-                item.text().as_bytes(),
+                item.text().unwrap_or_default().as_bytes(),
             )
             .ok();
         state.clipboard_item.replace(item);
@@ -1287,10 +1287,7 @@ impl LinuxClient for X11Client {
                 state.clipboard.getter.atoms.property,
                 Duration::from_secs(3),
             )
-            .map(|text| crate::ClipboardItem {
-                text: String::from_utf8(text).unwrap(),
-                metadata: None,
-            })
+            .map(|text| crate::ClipboardItem::new_string(String::from_utf8(text).unwrap()))
             .ok()
     }
 
@@ -1318,10 +1315,7 @@ impl LinuxClient for X11Client {
                 state.clipboard.getter.atoms.property,
                 Duration::from_secs(3),
             )
-            .map(|text| crate::ClipboardItem {
-                text: String::from_utf8(text).unwrap(),
-                metadata: None,
-            })
+            .map(|text| crate::ClipboardItem::new_string(String::from_utf8(text).unwrap()))
             .ok()
     }
 

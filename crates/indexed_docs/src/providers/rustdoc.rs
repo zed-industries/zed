@@ -1,12 +1,16 @@
 mod item;
 mod to_markdown;
 
+use cargo_metadata::MetadataCommand;
 use futures::future::BoxFuture;
 pub use item::*;
+use parking_lot::RwLock;
 pub use to_markdown::convert_rustdoc_to_markdown;
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -39,6 +43,34 @@ impl LocalRustdocProvider {
             fs,
             cargo_workspace_root,
         }
+    }
+
+    /// Returns the list of all crates in the Cargo workspace.
+    ///
+    /// Includes the list of workspace crates as well as all dependency crates.
+    pub fn list_workspace_crates() -> Result<Vec<Arc<str>>> {
+        static WORKSPACE_CRATES: LazyLock<RwLock<Option<(BTreeSet<Arc<str>>, Instant)>>> =
+            LazyLock::new(|| RwLock::new(None));
+
+        if let Some((crates, fetched_at)) = &*WORKSPACE_CRATES.read() {
+            if fetched_at.elapsed() < Duration::from_secs(300) {
+                return Ok(crates.iter().cloned().collect());
+            }
+        }
+
+        let workspace = MetadataCommand::new()
+            .exec()
+            .context("failed to load cargo metadata")?;
+
+        let workspace_crates = workspace
+            .packages
+            .into_iter()
+            .map(|package| package.name.into())
+            .collect::<BTreeSet<_>>();
+
+        *WORKSPACE_CRATES.write() = Some((workspace_crates.clone(), Instant::now()));
+
+        Ok(workspace_crates.iter().cloned().collect())
     }
 }
 
@@ -98,6 +130,26 @@ pub struct DocsDotRsProvider {
 }
 
 impl DocsDotRsProvider {
+    /// The list of crates to auto-suggest for the docs.rs provider when
+    /// the index is empty.
+    ///
+    /// List has been chosen loosely based on [this list](https://lib.rs/std) of
+    /// popular Rust libraries.
+    ///
+    /// Keep this alphabetized.
+    pub const AUTO_SUGGESTED_CRATES: &'static [&'static str] = &[
+        "anyhow",
+        "axum",
+        "chrono",
+        "itertools",
+        "rand",
+        "regex",
+        "serde",
+        "strum",
+        "thiserror",
+        "tokio",
+    ];
+
     pub fn id() -> ProviderId {
         ProviderId("docs-rs".into())
     }

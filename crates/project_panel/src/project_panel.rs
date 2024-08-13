@@ -1357,7 +1357,7 @@ impl ProjectPanel {
 
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
-            cx.write_to_clipboard(ClipboardItem::new(
+            cx.write_to_clipboard(ClipboardItem::new_string(
                 worktree
                     .abs_path()
                     .join(&entry.path)
@@ -1369,7 +1369,9 @@ impl ProjectPanel {
 
     fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
         if let Some((_, entry)) = self.selected_entry(cx) {
-            cx.write_to_clipboard(ClipboardItem::new(entry.path.to_string_lossy().to_string()));
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                entry.path.to_string_lossy().to_string(),
+            ));
         }
     }
 

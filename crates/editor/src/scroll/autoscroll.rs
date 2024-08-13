@@ -189,8 +189,8 @@ impl Editor {
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Focused => {
-                scroll_position.y =
-                    (target_top - self.scroll_manager.vertical_scroll_margin).max(0.0);
+                let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
+                scroll_position.y = (target_top - margin).max(0.0);
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Top => {

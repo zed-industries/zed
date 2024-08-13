@@ -15,17 +15,17 @@ use crate::DEFAULT_CONTEXT_LINES;
 
 use super::create_label_for_command;
 
-pub(crate) struct TermSlashCommand;
+pub(crate) struct TerminalSlashCommand;
 
 const LINE_COUNT_ARG: &str = "--line-count";
 
-impl SlashCommand for TermSlashCommand {
+impl SlashCommand for TerminalSlashCommand {
     fn name(&self) -> String {
-        "term".into()
+        "terminal".into()
     }
 
     fn label(&self, cx: &AppContext) -> CodeLabel {
-        create_label_for_command("term", &[LINE_COUNT_ARG], cx)
+        create_label_for_command("terminal", &[LINE_COUNT_ARG], cx)
     }
 
     fn description(&self) -> String {
@@ -45,7 +45,7 @@ impl SlashCommand for TermSlashCommand {
         _query: String,
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(vec![ArgumentCompletion {
             label: LINE_COUNT_ARG.to_string(),

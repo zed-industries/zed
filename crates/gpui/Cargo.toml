@@ -39,7 +39,6 @@ derive_more.workspace = true
 env_logger.workspace = true
 etagere = "0.2"
 futures.workspace = true
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7" }
 gpui_macros.workspace = true
 http_client.workspace = true
 image = "0.25.1"
@@ -50,7 +49,6 @@ log.workspace = true
 num_cpus = "1.13"
 parking = "2.0.0"
 parking_lot.workspace = true
-pathfinder_geometry = "0.5"
 postage.workspace = true
 profiling.workspace = true
 rand.workspace = true
@@ -67,6 +65,7 @@ serde_json.workspace = true
 slotmap = "1.0.6"
 smallvec.workspace = true
 smol.workspace = true
+strum.workspace = true
 sum_tree.workspace = true
 taffy = "0.4.3"
 thiserror.workspace = true
@@ -96,25 +95,29 @@ core-foundation.workspace = true
 core-foundation-sys = "0.8"
 core-graphics = "0.23"
 core-text = "20.1"
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7" }
 foreign-types = "0.5"
 log.workspace = true
 media.workspace = true
 metal = "0.29"
 objc = "0.2"
 
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+pathfinder_geometry = "0.5"
+
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
-flume = "0.11"
 blade-graphics.workspace = true
 blade-macros.workspace = true
 blade-util.workspace = true
 bytemuck = "1"
-cosmic-text = { git = "https://github.com/pop-os/cosmic-text", rev = "542b20c" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 as-raw-xcb-connection = "1"
 ashpd.workspace = true
 calloop = "0.13.0"
 calloop-wayland-source = "0.3.0"
+cosmic-text = { git = "https://github.com/pop-os/cosmic-text", rev = "542b20c" }
+flume = "0.11"
 wayland-backend = { version = "0.3.3", features = ["client_system", "dlopen"] }
 wayland-client = { version = "0.31.2" }
 wayland-cursor = "0.31.1"

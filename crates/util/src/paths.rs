@@ -2,9 +2,11 @@ use std::sync::OnceLock;
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 /// Returns the path to the user's home directory.
@@ -93,8 +95,27 @@ impl<T: AsRef<Path>> PathExt for T {
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
+/// Extracts filename and row-column suffixes.
+/// Parenthesis format is used by [MSBuild](https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks) compatible tools
+// NOTE: All cases need to have exactly three capture groups for extract(): file_name, row and column.
+// Valid patterns that don't contain row and/or column should have empty groups in their place.
+const ROW_COL_CAPTURE_REGEX: &str = r"(?x)
+    ([^\(]+)(?:
+        \((\d+),(\d+)\) # filename(row,column)
+        |
+        \((\d+)\)()     # filename(row)
+    )
+    |
+    ([^\:]+)(?:
+        \:(\d+)\:(\d+)  # filename:row:column
+        |
+        \:(\d+)()       # filename:row
+        |
+        \:()()          # filename:
+    )";
+
 /// A representation of a path-like string with optional row and column numbers.
-/// Matching values example: `te`, `test.rs:22`, `te:22:5`, etc.
+/// Matching values example: `te`, `test.rs:22`, `te:22:5`, `test.c(22)`, `test.c(22,5)`etc.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct PathWithPosition {
     pub path: PathBuf,
@@ -112,16 +133,10 @@ impl PathWithPosition {
             column: None,
         }
     }
-    /// Parses a string that possibly has `:row:column` suffix.
+    /// Parses a string that possibly has `:row:column` or `(row, column)` suffix.
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
     /// If the suffix parsing fails, the whole string is parsed as a path.
     pub fn parse_str(s: &str) -> Self {
-        let fallback = |fallback_str| Self {
-            path: Path::new(fallback_str).to_path_buf(),
-            row: None,
-            column: None,
-        };
-
         let trimmed = s.trim();
         let path = Path::new(trimmed);
         let maybe_file_name_with_row_col = path
@@ -130,67 +145,40 @@ impl PathWithPosition {
             .to_str()
             .unwrap_or_default();
         if maybe_file_name_with_row_col.is_empty() {
-            return fallback(s);
+            return Self {
+                path: Path::new(s).to_path_buf(),
+                row: None,
+                column: None,
+            };
         }
 
-        match maybe_file_name_with_row_col.split_once(FILE_ROW_COLUMN_DELIMITER) {
-            Some((file_name, maybe_row_and_col_str)) => {
-                let file_name = file_name.trim();
-                let maybe_row_and_col_str = maybe_row_and_col_str.trim();
-                if file_name.is_empty() {
-                    return fallback(s);
-                }
+        // Let's avoid repeated init cost on this. It is subject to thread contention, but
+        // so far this code isn't called from multiple hot paths. Getting contention here
+        // in the future seems unlikely.
+        static SUFFIX_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(ROW_COL_CAPTURE_REGEX).unwrap());
+        match SUFFIX_RE
+            .captures(maybe_file_name_with_row_col)
+            .map(|caps| caps.extract())
+        {
+            Some((_, [file_name, maybe_row, maybe_column])) => {
+                let row = maybe_row.parse::<u32>().ok();
+                let column = maybe_column.parse::<u32>().ok();
 
-                let suffix_length = maybe_row_and_col_str.len() + 1;
+                let suffix_length = maybe_file_name_with_row_col.len() - file_name.len();
                 let path_without_suffix = &trimmed[..trimmed.len() - suffix_length];
 
-                if maybe_row_and_col_str.is_empty() {
-                    fallback(path_without_suffix)
-                } else {
-                    let (row_parse_result, maybe_col_str) =
-                        match maybe_row_and_col_str.split_once(FILE_ROW_COLUMN_DELIMITER) {
-                            Some((maybe_row_str, maybe_col_str)) => {
-                                (maybe_row_str.parse::<u32>(), maybe_col_str.trim())
-                            }
-                            None => (maybe_row_and_col_str.parse::<u32>(), ""),
-                        };
-
-                    let path = Path::new(path_without_suffix).to_path_buf();
-
-                    match row_parse_result {
-                        Ok(row) => {
-                            if maybe_col_str.is_empty() {
-                                Self {
-                                    path,
-                                    row: Some(row),
-                                    column: None,
-                                }
-                            } else {
-                                let (maybe_col_str, _) =
-                                    maybe_col_str.split_once(':').unwrap_or((maybe_col_str, ""));
-                                match maybe_col_str.parse::<u32>() {
-                                    Ok(col) => Self {
-                                        path,
-                                        row: Some(row),
-                                        column: Some(col),
-                                    },
-                                    Err(_) => Self {
-                                        path,
-                                        row: Some(row),
-                                        column: None,
-                                    },
-                                }
-                            }
-                        }
-                        Err(_) => Self {
-                            path,
-                            row: None,
-                            column: None,
-                        },
-                    }
+                Self {
+                    path: Path::new(path_without_suffix).to_path_buf(),
+                    row,
+                    column,
                 }
             }
-            None => fallback(s),
+            None => Self {
+                path: Path::new(s).to_path_buf(),
+                row: None,
+                column: None,
+            },
         }
     }
 
@@ -419,6 +407,22 @@ mod tests {
                 },
             ),
             (
+                "\\\\?\\C:\\Users\\someone\\test_file.rs(1902,13):",
+                PathWithPosition {
+                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
+                    row: Some(1902),
+                    column: Some(13),
+                },
+            ),
+            (
+                "\\\\?\\C:\\Users\\someone\\test_file.rs(1902):",
+                PathWithPosition {
+                    path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
+                    row: Some(1902),
+                    column: None,
+                },
+            ),
+            (
                 "C:\\Users\\someone\\test_file.rs:1902:13:",
                 PathWithPosition {
                     path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
@@ -431,6 +435,22 @@ mod tests {
                 PathWithPosition {
                     path: PathBuf::from("crates\\utils\\paths.rs"),
                     row: None,
+                    column: None,
+                },
+            ),
+            (
+                "C:\\Users\\someone\\test_file.rs(1902,13):",
+                PathWithPosition {
+                    path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                    row: Some(1902),
+                    column: Some(13),
+                },
+            ),
+            (
+                "C:\\Users\\someone\\test_file.rs(1902):",
+                PathWithPosition {
+                    path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                    row: Some(1902),
                     column: None,
                 },
             ),

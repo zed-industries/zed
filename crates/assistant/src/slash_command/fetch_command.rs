@@ -8,7 +8,7 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
 use futures::AsyncReadExt;
-use gpui::{AppContext, Task, WeakView};
+use gpui::{Task, WeakView};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
@@ -120,7 +120,7 @@ impl SlashCommand for FetchSlashCommand {
         _query: String,
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
@@ -150,6 +150,10 @@ impl SlashCommand for FetchSlashCommand {
         let url = SharedString::from(url);
         cx.foreground_executor().spawn(async move {
             let text = text.await?;
+            if text.trim().is_empty() {
+                bail!("no textual content found");
+            }
+
             let range = 0..text.len();
             Ok(SlashCommandOutput {
                 text,

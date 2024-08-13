@@ -3956,8 +3956,9 @@ async fn test_clipboard(cx: &mut gpui::TestAppContext) {
         the lazy dog"});
     cx.update_editor(|e, cx| e.copy(&Copy, cx));
     assert_eq!(
-        cx.read_from_clipboard().map(|item| item.text().to_owned()),
-        Some("fox jumps over\n".to_owned())
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some("fox jumps over\n".to_string())
     );
 
     // Paste with three selections, noticing how the copied full-line selection is inserted
@@ -13103,6 +13104,121 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
         .unwrap();
     let snapshot = editor.update(cx, |editor, cx| editor.snapshot(cx)).unwrap();
     assert!(!snapshot.is_line_folded(MultiBufferRow(1)));
+}
+
+#[gpui::test]
+async fn test_input_text(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(
+        &r#"ˇone
+        two
+
+        three
+        fourˇ
+        five
+
+        siˇx"#
+            .unindent(),
+    );
+
+    cx.dispatch_action(HandleInput(String::new()));
+    cx.assert_editor_state(
+        &r#"ˇone
+        two
+
+        three
+        fourˇ
+        five
+
+        siˇx"#
+            .unindent(),
+    );
+
+    cx.dispatch_action(HandleInput("AAAA".to_string()));
+    cx.assert_editor_state(
+        &r#"AAAAˇone
+        two
+
+        three
+        fourAAAAˇ
+        five
+
+        siAAAAˇx"#
+            .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_scroll_cursor_center_top_bottom(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        r#"let foo = 1;
+let foo = 2;
+let foo = 3;
+let fooˇ = 4;
+let foo = 5;
+let foo = 6;
+let foo = 7;
+let foo = 8;
+let foo = 9;
+let foo = 10;
+let foo = 11;
+let foo = 12;
+let foo = 13;
+let foo = 14;
+let foo = 15;"#,
+    );
+
+    cx.update_editor(|e, cx| {
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Center,
+            "Default next scroll direction is center",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Top,
+            "After center, next scroll direction should be top",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Bottom,
+            "After top, next scroll direction should be bottom",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Center,
+            "After bottom, scrolling should start over",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Top,
+            "Scrolling continues if retriggered fast enough"
+        );
+    });
+
+    cx.executor()
+        .advance_clock(SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT + Duration::from_millis(200));
+    cx.executor().run_until_parked();
+    cx.update_editor(|e, _| {
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Center,
+            "If scrolling is not triggered fast enough, it should reset"
+        );
+    });
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

@@ -398,6 +398,14 @@ fn show_hover(
 
                         Some(start..end)
                     })
+                    .or_else(|| {
+                        let snapshot = &snapshot.buffer_snapshot;
+                        let offset_range = snapshot.range_for_syntax_ancestor(anchor..anchor)?;
+                        Some(
+                            snapshot.anchor_before(offset_range.start)
+                                ..snapshot.anchor_after(offset_range.end),
+                        )
+                    })
                     .unwrap_or_else(|| anchor..anchor);
 
                 let blocks = hover_result.contents;

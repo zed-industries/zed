@@ -10,6 +10,11 @@ pub struct Model {
     pub id: ModelId,
     pub provider_id: ProviderId,
     pub name: String,
+    pub max_requests_per_minute: i64,
+    pub max_tokens_per_minute: i64,
+    pub max_tokens_per_day: i64,
+    pub price_per_million_input_tokens: i32,
+    pub price_per_million_output_tokens: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

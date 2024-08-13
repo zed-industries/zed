@@ -37,7 +37,7 @@ pub trait SlashCommand: 'static + Send + Sync {
         query: String,
         cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>>;
     fn requires_argument(&self) -> bool;
     fn run(

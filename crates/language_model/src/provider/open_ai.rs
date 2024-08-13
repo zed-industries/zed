@@ -363,7 +363,7 @@ pub fn count_open_ai_tokens(
                         Role::Assistant => "assistant".into(),
                         Role::System => "system".into(),
                     },
-                    content: Some(message.content),
+                    content: Some(message.string_contents()),
                     name: None,
                     function_call: None,
                 })

@@ -5,7 +5,7 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
 use futures::FutureExt;
-use gpui::{AppContext, Task, WeakView, WindowContext};
+use gpui::{Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
 use ui::prelude::*;
 use wasmtime_wasi::WasiView;
@@ -42,7 +42,7 @@ impl SlashCommand for ExtensionSlashCommand {
         query: String,
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         cx.background_executor().spawn(async move {
             self.extension
