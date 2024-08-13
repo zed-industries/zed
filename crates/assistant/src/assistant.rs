@@ -278,7 +278,7 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, false);
-    slash_command_registry.register_command(term_command::TermSlashCommand, true);
+    slash_command_registry.register_command(term_command::TerminalSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, false);
     slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
     if let Some(prompt_builder) = prompt_builder {
