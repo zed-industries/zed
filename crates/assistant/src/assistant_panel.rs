@@ -4470,7 +4470,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> 
                 ButtonLike::new(fold_id)
                     .style(ButtonStyle::Filled)
                     .layer(ElevationIndex::ElevatedSurface)
-                    .child(Icon::new(IconName::FileText))
+                    .child(Icon::new(IconName::TextSelect))
                     .child(Label::new(title.clone()).single_line())
                     .on_click(move |_, cx| {
                         editor
