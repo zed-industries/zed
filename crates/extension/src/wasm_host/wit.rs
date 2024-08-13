@@ -291,6 +291,19 @@ impl Extension {
         }
     }
 
+    pub async fn call_suggest_docs_packages(
+        &self,
+        store: &mut Store<WasmState>,
+        provider: &str,
+    ) -> Result<Result<Vec<String>, String>> {
+        match self {
+            Extension::V010(ext) => ext.call_suggest_docs_packages(store, provider).await,
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Err(anyhow!(
+                "`suggest_docs_packages` not available prior to v0.1.0"
+            )),
+        }
+    }
+
     pub async fn call_index_docs(
         &self,
         store: &mut Store<WasmState>,
