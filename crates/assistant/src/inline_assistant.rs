@@ -27,7 +27,7 @@ use gpui::{
     FontWeight, Global, HighlightStyle, Model, ModelContext, Subscription, Task, TextStyle,
     UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
-use language::{Buffer, IndentKind, Point, Selection, TransactionId};
+use language::{Buffer, IndentKind, Point, TransactionId};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
@@ -45,6 +45,7 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
+use text::ToOffset as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
@@ -128,6 +129,7 @@ impl InlineAssistant {
                 transform_range.end.row -= 1;
             }
             transform_range.end.column = snapshot.line_len(MultiBufferRow(transform_range.end.row));
+            let selection_range = selection.start..selection.end.min(transform_range.end);
 
             // If we intersect the previous transform range,
             if let Some(CodegenRange {
@@ -138,7 +140,7 @@ impl InlineAssistant {
             {
                 if transform_range.start <= prev_transform_range.end {
                     prev_transform_range.end = transform_range.end;
-                    selection_ranges.push(selection.start..selection.end);
+                    selection_ranges.push(selection_range);
                     *focus_assist |= selection_is_newest;
                     continue;
                 }
@@ -146,7 +148,7 @@ impl InlineAssistant {
 
             codegen_ranges.push(CodegenRange {
                 transform_range,
-                selection_ranges: vec![selection.start..selection.end],
+                selection_ranges: vec![selection_range],
                 focus_assist: selection_is_newest,
             })
         }
@@ -2083,7 +2085,7 @@ pub struct Codegen {
     old_buffer: Model<Buffer>,
     snapshot: MultiBufferSnapshot,
     transform_range: Range<Anchor>,
-    selection_ranges: Vec<Range<Anchor>>,
+    selected_ranges: Vec<Range<Anchor>>,
     edit_position: Option<Anchor>,
     last_equal_ranges: Vec<Range<Anchor>>,
     initial_transaction_id: Option<TransactionId>,
@@ -2093,7 +2095,7 @@ pub struct Codegen {
     diff: Diff,
     telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
-    builder: Arc<PromptBuilder>,
+    prompt_builder: Arc<PromptBuilder>,
 }
 
 enum CodegenStatus {
@@ -2121,7 +2123,7 @@ impl Codegen {
     pub fn new(
         buffer: Model<MultiBuffer>,
         transform_range: Range<Anchor>,
-        selection_ranges: Vec<Range<Anchor>>,
+        selected_ranges: Vec<Range<Anchor>>,
         initial_transaction_id: Option<TransactionId>,
         telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
@@ -2162,9 +2164,9 @@ impl Codegen {
             telemetry,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
             initial_transaction_id,
-            builder,
-            transform_range: transform_range.clone(),
-            selection_ranges,
+            prompt_builder: builder,
+            transform_range,
+            selected_ranges,
         }
     }
 
@@ -2282,9 +2284,20 @@ impl Codegen {
         } else {
             return Err(anyhow::anyhow!("invalid transformation range"));
         };
+
+        let selected_ranges = self
+            .selected_ranges
+            .iter()
+            .map(|range| {
+                let start = range.start.text_anchor.to_offset(&buffer);
+                let end = range.end.text_anchor.to_offset(&buffer);
+                start..end
+            })
+            .collect::<Vec<_>>();
+
         let prompt = self
-            .builder
-            .generate_content_prompt(user_prompt, language_name, buffer, range)
+            .prompt_builder
+            .generate_content_prompt(user_prompt, language_name, buffer, range, selected_ranges)
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
 
         let mut messages = Vec::new();
