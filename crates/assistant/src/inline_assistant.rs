@@ -532,16 +532,42 @@ impl InlineAssistant {
         if editor.selections.count() == 1 {
             let selection = editor.selections.newest::<usize>(cx);
             let buffer = editor.buffer().read(cx).snapshot(cx);
+            let mut closest_assist_fallback = None;
             for assist_id in &editor_assists.assist_ids {
                 let assist = &self.assists[assist_id];
                 let assist_range = assist.range.to_offset(&buffer);
-                if assist.decorations.is_some()
-                    && assist_range.contains(&selection.start)
-                    && assist_range.contains(&selection.end)
-                {
-                    self.focus_assist(*assist_id, cx);
-                    return;
+                if assist.decorations.is_some() {
+                    if assist_range.contains(&selection.start)
+                        && assist_range.contains(&selection.end)
+                    {
+                        self.focus_assist(*assist_id, cx);
+                        return;
+                    } else {
+                        let distance_from_selection = assist_range
+                            .start
+                            .abs_diff(selection.start)
+                            .min(assist_range.start.abs_diff(selection.end))
+                            + assist_range
+                                .end
+                                .abs_diff(selection.start)
+                                .min(assist_range.end.abs_diff(selection.end));
+                        match closest_assist_fallback {
+                            Some((_, old_distance)) => {
+                                if distance_from_selection < old_distance {
+                                    closest_assist_fallback =
+                                        Some((assist_id, distance_from_selection));
+                                }
+                            }
+                            None => {
+                                closest_assist_fallback = Some((assist_id, distance_from_selection))
+                            }
+                        }
+                    }
                 }
+            }
+
+            if let Some((&assist_id, _)) = closest_assist_fallback {
+                self.focus_assist(assist_id, cx);
             }
         }
 
