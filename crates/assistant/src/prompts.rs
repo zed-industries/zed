@@ -208,6 +208,9 @@ impl PromptBuilder {
             rewrite_section.push_str(chunk);
         }
 
+        println!("Transform range: {:?}", transform_range);
+        println!("Selected ranges: {:?}", selected_ranges);
+
         let rewrite_section_with_selections = {
             let mut section_with_selections = String::new();
             let mut last_end = 0;
