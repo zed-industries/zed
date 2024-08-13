@@ -17,6 +17,7 @@ pub struct LlmUsageEventRow {
     pub input_tokens_this_month: u64,
     pub output_tokens_this_month: u64,
     pub spending_this_month: u64,
+    pub lifetime_spending: u64,
 }
 
 #[derive(Serialize, Debug, clickhouse::Row)]

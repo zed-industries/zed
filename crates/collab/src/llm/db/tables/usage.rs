@@ -1,4 +1,7 @@
-use crate::llm::db::{ModelId, UsageId, UsageMeasureId};
+use crate::{
+    db::UserId,
+    llm::db::{ModelId, UsageId, UsageMeasureId},
+};
 use sea_orm::entity::prelude::*;
 
 /// An LLM usage record.
@@ -10,7 +13,7 @@ pub struct Model {
     /// The ID of the Zed user.
     ///
     /// Corresponds to the `users` table in the primary collab database.
-    pub user_id: i32,
+    pub user_id: UserId,
     pub model_id: ModelId,
     pub measure_id: UsageMeasureId,
     pub timestamp: DateTime,

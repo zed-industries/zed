@@ -4,8 +4,8 @@ mod telemetry;
 mod token;
 
 use crate::{
-    api::CloudflareIpCountryHeader, build_clickhouse_client, executor::Executor, Config, Error,
-    Result,
+    api::CloudflareIpCountryHeader, build_clickhouse_client, db::UserId, executor::Executor,
+    Config, Error, Result,
 };
 use anyhow::{anyhow, Context as _};
 use authorization::authorize_access_to_language_model;
@@ -396,7 +396,12 @@ async fn check_usage_limit(
     let model = state.db.model(provider, model_name)?;
     let usage = state
         .db
-        .get_usage(claims.user_id as i32, provider, model_name, Utc::now())
+        .get_usage(
+            UserId::from_proto(claims.user_id),
+            provider,
+            model_name,
+            Utc::now(),
+        )
         .await?;
 
     let active_users = state.get_active_user_count().await?;
@@ -523,7 +528,7 @@ impl<S> Drop for TokenCountingStream<S> {
             let usage = state
                 .db
                 .record_usage(
-                    claims.user_id as i32,
+                    UserId::from_proto(claims.user_id),
                     claims.is_staff,
                     provider,
                     &model,
@@ -555,6 +560,7 @@ impl<S> Drop for TokenCountingStream<S> {
                         input_tokens_this_month: usage.input_tokens_this_month as u64,
                         output_tokens_this_month: usage.output_tokens_this_month as u64,
                         spending_this_month: usage.spending_this_month as u64,
+                        lifetime_spending: usage.lifetime_spending as u64,
                     },
                 )
                 .await
