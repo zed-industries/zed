@@ -152,12 +152,6 @@ impl InlineAssistant {
             .map(|range| range.to_point(&snapshot))
             .collect::<Vec<Range<Point>>>();
 
-        println!("Selection ranges:");
-        for selection_range in &selection_ranges {
-            println!("{:?}", selection_range);
-        }
-        println!("Max point of snapshot: {:?}", snapshot.max_point());
-
         for selection_range in selection_ranges {
             let selection_is_newest = newest_selection_range.contains_inclusive(&selection_range);
             let mut transform_range = selection_range.start..selection_range.end;
@@ -207,13 +201,6 @@ impl InlineAssistant {
             focus_assist,
         } in codegen_ranges
         {
-            println!("Transform range:");
-            println!("{:?}", transform_range);
-            println!("Selection ranges:");
-            for selection_range in &selection_ranges {
-                println!("{:?}", selection_range);
-            }
-
             let transform_range = snapshot.anchor_before(transform_range.start)
                 ..snapshot.anchor_after(transform_range.end);
             let selection_ranges = selection_ranges
