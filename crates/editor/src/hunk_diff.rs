@@ -24,8 +24,8 @@ use crate::{
     hunk_status, hunks_for_selections,
     mouse_context_menu::MouseContextMenu,
     BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, Editor,
-    EditorElement, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt, RevertSelectedHunks,
-    ToDisplayPoint, ToggleHunkDiff,
+    EditorElement, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt, RevertFile,
+    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -139,33 +139,7 @@ impl Editor {
                             }
                         }
                     })
-                    .entry("Revert File", None, {
-                        let editor = editor_handle.clone();
-                        move |cx| {
-                            let mut revert_changes = HashMap::default();
-                            let multi_buffer = editor.read(cx).buffer().clone();
-                            let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-                            for hunk in crate::hunks_for_rows(
-                                Some(MultiBufferRow(0)..multi_buffer_snapshot.max_buffer_row())
-                                    .into_iter(),
-                                &multi_buffer_snapshot,
-                            ) {
-                                Editor::prepare_revert_change(
-                                    &mut revert_changes,
-                                    &multi_buffer,
-                                    &hunk,
-                                    cx,
-                                );
-                            }
-                            if !revert_changes.is_empty() {
-                                editor.update(cx, |editor, cx| {
-                                    editor.transact(cx, |editor, cx| {
-                                        editor.revert(revert_changes, cx);
-                                    });
-                                });
-                            }
-                        }
-                    })
+                    .action("Revert File", RevertFile.boxed_clone())
             }),
             cx,
         )

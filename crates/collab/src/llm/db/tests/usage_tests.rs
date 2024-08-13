@@ -1,5 +1,9 @@
 use crate::{
-    llm::db::{queries::providers::ModelParams, queries::usages::Usage, LlmDatabase},
+    db::UserId,
+    llm::db::{
+        queries::{providers::ModelParams, usages::Usage},
+        LlmDatabase,
+    },
     test_llm_db,
 };
 use chrono::{Duration, Utc};
@@ -26,7 +30,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
     .unwrap();
 
     let t0 = Utc::now();
-    let user_id = 123;
+    let user_id = UserId::from_proto(123);
 
     let now = t0;
     db.record_usage(user_id, false, provider, model, 1000, 0, now)
@@ -48,6 +52,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             input_tokens_this_month: 3000,
             output_tokens_this_month: 0,
             spending_this_month: 0,
+            lifetime_spending: 0,
         }
     );
 
@@ -62,6 +67,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             input_tokens_this_month: 3000,
             output_tokens_this_month: 0,
             spending_this_month: 0,
+            lifetime_spending: 0,
         }
     );
 
@@ -80,6 +86,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             input_tokens_this_month: 6000,
             output_tokens_this_month: 0,
             spending_this_month: 0,
+            lifetime_spending: 0,
         }
     );
 
@@ -95,6 +102,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             input_tokens_this_month: 6000,
             output_tokens_this_month: 0,
             spending_this_month: 0,
+            lifetime_spending: 0,
         }
     );
 
@@ -112,6 +120,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             input_tokens_this_month: 10000,
             output_tokens_this_month: 0,
             spending_this_month: 0,
+            lifetime_spending: 0,
         }
     );
 
@@ -127,6 +136,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
             input_tokens_this_month: 9000,
             output_tokens_this_month: 0,
             spending_this_month: 0,
+            lifetime_spending: 0,
         }
     );
 }

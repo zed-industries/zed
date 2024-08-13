@@ -4,8 +4,8 @@ mod telemetry;
 mod token;
 
 use crate::{
-    api::CloudflareIpCountryHeader, build_clickhouse_client, executor::Executor, Config, Error,
-    Result,
+    api::CloudflareIpCountryHeader, build_clickhouse_client, db::UserId, executor::Executor,
+    Config, Error, Result,
 };
 use anyhow::{anyhow, Context as _};
 use authorization::authorize_access_to_language_model;
@@ -18,7 +18,7 @@ use axum::{
     Extension, Json, Router, TypedHeader,
 };
 use chrono::{DateTime, Duration, Utc};
-use db::{ActiveUserCount, LlmDatabase};
+use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
 use http_client::IsahcHttpClient;
 use rpc::{
@@ -29,7 +29,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use telemetry::{report_llm_usage, LlmUsageEventRow};
+use telemetry::{report_llm_rate_limit, report_llm_usage, LlmRateLimitEventRow, LlmUsageEventRow};
 use tokio::sync::RwLock;
 use util::ResultExt;
 
@@ -131,6 +131,15 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
     let state = req.extensions().get::<Arc<LlmState>>().unwrap();
     match LlmTokenClaims::validate(&token, &state.config) {
         Ok(claims) => {
+            if state.db.is_access_token_revoked(&claims.jti).await? {
+                return Err(Error::http(
+                    StatusCode::UNAUTHORIZED,
+                    "unauthorized".to_string(),
+                ));
+            }
+
+            tracing::Span::current().record("authn.jti", &claims.jti);
+
             req.extensions_mut().insert(claims);
             Ok::<_, Error>(next.run(req).await.into_response())
         }
@@ -396,43 +405,85 @@ async fn check_usage_limit(
     let model = state.db.model(provider, model_name)?;
     let usage = state
         .db
-        .get_usage(claims.user_id as i32, provider, model_name, Utc::now())
+        .get_usage(
+            UserId::from_proto(claims.user_id),
+            provider,
+            model_name,
+            Utc::now(),
+        )
         .await?;
 
     let active_users = state.get_active_user_count().await?;
 
+    let users_in_recent_minutes = active_users.users_in_recent_minutes.max(1);
+    let users_in_recent_days = active_users.users_in_recent_days.max(1);
+
     let per_user_max_requests_per_minute =
-        model.max_requests_per_minute as usize / active_users.users_in_recent_minutes.max(1);
+        model.max_requests_per_minute as usize / users_in_recent_minutes;
     let per_user_max_tokens_per_minute =
-        model.max_tokens_per_minute as usize / active_users.users_in_recent_minutes.max(1);
-    let per_user_max_tokens_per_day =
-        model.max_tokens_per_day as usize / active_users.users_in_recent_days.max(1);
+        model.max_tokens_per_minute as usize / users_in_recent_minutes;
+    let per_user_max_tokens_per_day = model.max_tokens_per_day as usize / users_in_recent_days;
 
     let checks = [
         (
             usage.requests_this_minute,
             per_user_max_requests_per_minute,
-            "requests per minute",
+            UsageMeasure::RequestsPerMinute,
         ),
         (
             usage.tokens_this_minute,
             per_user_max_tokens_per_minute,
-            "tokens per minute",
+            UsageMeasure::TokensPerMinute,
         ),
         (
             usage.tokens_this_day,
             per_user_max_tokens_per_day,
-            "tokens per day",
+            UsageMeasure::TokensPerDay,
         ),
     ];
 
-    for (usage, limit, resource) in checks {
+    for (used, limit, usage_measure) in checks {
         // Temporarily bypass rate-limiting for staff members.
         if claims.is_staff {
             continue;
         }
 
-        if usage > limit {
+        if used > limit {
+            let resource = match usage_measure {
+                UsageMeasure::RequestsPerMinute => "requests_per_minute",
+                UsageMeasure::TokensPerMinute => "tokens_per_minute",
+                UsageMeasure::TokensPerDay => "tokens_per_day",
+                _ => "",
+            };
+
+            if let Some(client) = state.clickhouse_client.as_ref() {
+                report_llm_rate_limit(
+                    client,
+                    LlmRateLimitEventRow {
+                        time: Utc::now().timestamp_millis(),
+                        user_id: claims.user_id as i32,
+                        is_staff: claims.is_staff,
+                        plan: match claims.plan {
+                            Plan::Free => "free".to_string(),
+                            Plan::ZedPro => "zed_pro".to_string(),
+                        },
+                        model: model.name.clone(),
+                        provider: provider.to_string(),
+                        usage_measure: resource.to_string(),
+                        requests_this_minute: usage.requests_this_minute as u64,
+                        tokens_this_minute: usage.tokens_this_minute as u64,
+                        tokens_this_day: usage.tokens_this_day as u64,
+                        users_in_recent_minutes: users_in_recent_minutes as u64,
+                        users_in_recent_days: users_in_recent_days as u64,
+                        max_requests_per_minute: per_user_max_requests_per_minute as u64,
+                        max_tokens_per_minute: per_user_max_tokens_per_minute as u64,
+                        max_tokens_per_day: per_user_max_tokens_per_day as u64,
+                    },
+                )
+                .await
+                .log_err();
+            }
+
             return Err(Error::http(
                 StatusCode::TOO_MANY_REQUESTS,
                 format!("Rate limit exceeded. Maximum {} reached.", resource),
@@ -486,7 +537,7 @@ impl<S> Drop for TokenCountingStream<S> {
             let usage = state
                 .db
                 .record_usage(
-                    claims.user_id as i32,
+                    UserId::from_proto(claims.user_id),
                     claims.is_staff,
                     provider,
                     &model,
@@ -518,6 +569,7 @@ impl<S> Drop for TokenCountingStream<S> {
                         input_tokens_this_month: usage.input_tokens_this_month as u64,
                         output_tokens_this_month: usage.output_tokens_this_month as u64,
                         spending_this_month: usage.spending_this_month as u64,
+                        lifetime_spending: usage.lifetime_spending as u64,
                     },
                 )
                 .await
