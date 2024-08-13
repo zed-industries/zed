@@ -1,52 +1,41 @@
-Here's a text file that I'm going to ask you to make an edit to.
-
 {{#if language_name}}
-The file is in {{language_name}}.
+File language: {{language_name}}
 {{/if}}
-
-You need to rewrite a portion of it.
-
-The section you'll need to edit is marked with <rewrite_this></rewrite_this> tags.
 
 <document>
 {{{document_content}}}
 </document>
 
 {{#if is_truncated}}
-The context around the relevant section has been truncated (possibly in the middle of a line) for brevity.
+Note: Context around the relevant section has been truncated for brevity.
 {{/if}}
 
-Rewrite the section of {{content_type}} in <rewrite_this></rewrite_this> tags based on the following prompt:
-
+Editing instructions:
+1. Rewrite the section marked with <rewrite_this></rewrite_this> tags based on this prompt:
 <prompt>
 {{{user_prompt}}}
 </prompt>
 
-Here's the section to edit based on that prompt again for reference:
+2. Within <rewrite_this></rewrite_this>, make changes only in these subsections:
+   {{#if has_insertion}}
+   - Insert text where marked with <insert_here></insert_here> tags
+   {{/if}}
+   {{#if has_replacement}}
+   - Edit text surrounded by <edit_here></edit_here> tags
+   {{/if}}
 
-<rewrite_this>
-{{{rewrite_section}}}
-</rewrite_this>
-
-You'll rewrite this entire section, but you will only make changes within certain subsections.
-
-{{#if has_insertion}}
-Insert text anywhere you see it marked with with <insert_here></insert_here> tags. Do not include <insert_here> tags in your output.
-{{/if}}
-{{#if has_replacement}}
-Edit edit text that you see surrounded with <edit_here></edit_here> tags. Do not include <edit_here> tags in your output.
-{{/if}}
-
+3. Section to edit:
 <rewrite_this>
 {{{rewrite_section_with_selections}}}
 </rewrite_this>
 
-Only make changes that are necessary to fulfill the prompt, leave everything else as-is. All surrounding {{content_type}} will be preserved. Do not output the <rewrite_this></rewrite this> tags or anything outside of them.
+4. Guidelines:
+   - Only make changes necessary to fulfill the prompt
+   - Preserve all surrounding {{content_type}}
+   - Maintain the original indentation level
+   - Rewrite the entire section, even if no changes are needed
+   - Do not include <rewrite_this>, <insert_here>, or <edit_here> tags in your output
 
-Start at the indentation level in the original file in the rewritten {{content_type}}. Don't stop until you've rewritten the entire section, even if you have no more changes to make. Always write out the whole section with no unnecessary elisions.
-
-Immediately start with the following format with no remarks:
-
-```
-\{{REWRITTEN_CODE}}
-```
+Output format:
+Immediately start with the following, ensuring no leading whitespace:
+```{{REWRITTEN_CODE}}```
