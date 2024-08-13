@@ -365,7 +365,8 @@ impl AssistantPanel {
             pane.set_should_display_tab_bar(|_| true);
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 let focus_handle = pane.focus_handle(cx);
-                let left_children = IconButton::new("history", IconName::TextSearch)
+                let left_children = IconButton::new("history", IconName::HistoryRerun)
+                    .icon_size(IconSize::Small)
                     .on_click(cx.listener({
                         let focus_handle = focus_handle.clone();
                         move |_, _, cx| {
@@ -377,7 +378,7 @@ impl AssistantPanel {
                         cx.new_view(|cx| {
                             let keybind =
                                 KeyBinding::for_action_in(&DeployHistory, &focus_handle, cx);
-                            Tooltip::new("History").key_binding(keybind)
+                            Tooltip::new("Open History").key_binding(keybind)
                         })
                         .into()
                     })
