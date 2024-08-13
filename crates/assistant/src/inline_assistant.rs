@@ -139,15 +139,17 @@ impl InlineAssistant {
         cx: &mut WindowContext,
     ) {
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-
         struct CodegenRange {
             transform_range: Range<Point>,
             selection_ranges: Vec<Range<Point>>,
             focus_assist: bool,
         }
 
+        snapshot.excerpts_in_ranges(editor.read(cx).selections.disjoint_anchor_ranges());
+
         let newest_selection = editor.read(cx).selections.newest::<Point>(cx);
         let mut codegen_ranges: Vec<CodegenRange> = Vec::new();
+
         for selection in editor.read(cx).selections.all::<Point>(cx) {
             let selection_is_newest = selection.id == newest_selection.id;
             let mut transform_range = selection.start..selection.end;
