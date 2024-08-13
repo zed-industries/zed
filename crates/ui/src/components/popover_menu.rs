@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::sync::{Arc, Mutex};
 
 use gpui::{
     anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnchorCorner, AnyElement,
@@ -13,7 +13,7 @@ pub trait PopoverTrigger: IntoElement + Clickable + Selectable + 'static {}
 
 impl<T: IntoElement + Clickable + Selectable + 'static> PopoverTrigger for T {}
 
-pub struct PopoverMenuHandle<M>(Rc<RefCell<Option<PopoverMenuHandleState<M>>>>);
+pub struct PopoverMenuHandle<M>(Arc<Mutex<Option<PopoverMenuHandleState<M>>>>);
 
 impl<M> Clone for PopoverMenuHandle<M> {
     fn clone(&self) -> Self {
@@ -23,33 +23,36 @@ impl<M> Clone for PopoverMenuHandle<M> {
 
 impl<M> Default for PopoverMenuHandle<M> {
     fn default() -> Self {
-        Self(Rc::default())
+        Self(Arc::default())
     }
 }
 
+unsafe impl<M: ManagedView> Send for PopoverMenuHandle<M> {}
+unsafe impl<M: ManagedView> Sync for PopoverMenuHandle<M> {}
+
 struct PopoverMenuHandleState<M> {
-    menu_builder: Rc<dyn Fn(&mut WindowContext) -> Option<View<M>>>,
-    menu: Rc<RefCell<Option<View<M>>>>,
+    menu_builder: Arc<dyn Fn(&mut WindowContext) -> Option<View<M>>>,
+    menu: Arc<Mutex<Option<View<M>>>>,
 }
 
 impl<M: ManagedView> PopoverMenuHandle<M> {
     pub fn show(&self, cx: &mut WindowContext) {
-        if let Some(state) = self.0.borrow().as_ref() {
+        if let Some(state) = self.0.lock().unwrap().as_ref() {
             show_menu(&state.menu_builder, &state.menu, cx);
         }
     }
 
     pub fn hide(&self, cx: &mut WindowContext) {
-        if let Some(state) = self.0.borrow().as_ref() {
-            if let Some(menu) = state.menu.borrow().as_ref() {
+        if let Some(state) = self.0.lock().unwrap().as_ref() {
+            if let Some(menu) = state.menu.lock().unwrap().as_ref() {
                 menu.update(cx, |_, cx| cx.emit(DismissEvent));
             }
         }
     }
 
     pub fn toggle(&self, cx: &mut WindowContext) {
-        if let Some(state) = self.0.borrow().as_ref() {
-            if state.menu.borrow().is_some() {
+        if let Some(state) = self.0.lock().unwrap().as_ref() {
+            if state.menu.lock().unwrap().is_some() {
                 self.hide(cx);
             } else {
                 self.show(cx);
@@ -63,13 +66,13 @@ pub struct PopoverMenu<M: ManagedView> {
     child_builder: Option<
         Box<
             dyn FnOnce(
-                    Rc<RefCell<Option<View<M>>>>,
-                    Option<Rc<dyn Fn(&mut WindowContext) -> Option<View<M>> + 'static>>,
+                    Arc<Mutex<Option<View<M>>>>,
+                    Option<Arc<dyn Fn(&mut WindowContext) -> Option<View<M>> + 'static>>,
                 ) -> AnyElement
                 + 'static,
         >,
     >,
-    menu_builder: Option<Rc<dyn Fn(&mut WindowContext) -> Option<View<M>> + 'static>>,
+    menu_builder: Option<Arc<dyn Fn(&mut WindowContext) -> Option<View<M>> + 'static>>,
     anchor: AnchorCorner,
     attach: Option<AnchorCorner>,
     offset: Option<Point<Pixels>>,
@@ -98,7 +101,7 @@ impl<M: ManagedView> PopoverMenu<M> {
     }
 
     pub fn menu(mut self, f: impl Fn(&mut WindowContext) -> Option<View<M>> + 'static) -> Self {
-        self.menu_builder = Some(Rc::new(f));
+        self.menu_builder = Some(Arc::new(f));
         self
     }
 
@@ -109,7 +112,7 @@ impl<M: ManagedView> PopoverMenu<M> {
 
     pub fn trigger<T: PopoverTrigger>(mut self, t: T) -> Self {
         self.child_builder = Some(Box::new(|menu, builder| {
-            let open = menu.borrow().is_some();
+            let open = menu.lock().unwrap().is_some();
             t.selected(open)
                 .when_some(builder, |el, builder| {
                     el.on_click(move |_, cx| show_menu(&builder, &menu, cx))
@@ -160,8 +163,8 @@ impl<M: ManagedView> PopoverMenu<M> {
 }
 
 fn show_menu<M: ManagedView>(
-    builder: &Rc<dyn Fn(&mut WindowContext) -> Option<View<M>>>,
-    menu: &Rc<RefCell<Option<View<M>>>>,
+    builder: &Arc<dyn Fn(&mut WindowContext) -> Option<View<M>>>,
+    menu: &Arc<Mutex<Option<View<M>>>>,
     cx: &mut WindowContext,
 ) {
     let Some(new_menu) = (builder)(cx) else {
@@ -176,24 +179,24 @@ fn show_menu<M: ManagedView>(
                 cx.focus(previous_focus_handle);
             }
         }
-        *menu2.borrow_mut() = None;
+        *menu2.lock().unwrap() = None;
         cx.refresh();
     })
     .detach();
     cx.focus_view(&new_menu);
-    *menu.borrow_mut() = Some(new_menu);
+    *menu.lock().unwrap() = Some(new_menu);
     cx.refresh();
 }
 
 pub struct PopoverMenuElementState<M> {
-    menu: Rc<RefCell<Option<View<M>>>>,
+    menu: Arc<Mutex<Option<View<M>>>>,
     child_bounds: Option<Bounds<Pixels>>,
 }
 
 impl<M> Clone for PopoverMenuElementState<M> {
     fn clone(&self) -> Self {
         Self {
-            menu: Rc::clone(&self.menu),
+            menu: Arc::clone(&self.menu),
             child_bounds: self.child_bounds,
         }
     }
@@ -202,7 +205,7 @@ impl<M> Clone for PopoverMenuElementState<M> {
 impl<M> Default for PopoverMenuElementState<M> {
     fn default() -> Self {
         Self {
-            menu: Rc::default(),
+            menu: Arc::default(),
             child_bounds: None,
         }
     }
@@ -233,7 +236,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 let element_state = element_state.unwrap_or_default();
                 let mut menu_layout_id = None;
 
-                let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
+                let menu_element = element_state.menu.lock().unwrap().as_mut().map(|menu| {
                     let mut anchored = anchored().snap_to_window().anchor(self.anchor);
                     if let Some(child_bounds) = element_state.child_bounds {
                         anchored = anchored.position(
@@ -254,7 +257,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
 
                 if let Some(trigger_handle) = self.trigger_handle.take() {
                     if let Some(menu_builder) = self.menu_builder.clone() {
-                        *trigger_handle.0.borrow_mut() = Some(PopoverMenuHandleState {
+                        *trigger_handle.0.lock().unwrap() = Some(PopoverMenuHandleState {
                             menu_builder,
                             menu: element_state.menu.clone(),
                         });

@@ -13,9 +13,9 @@ use crate::{
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
     DebugWorkflowSteps, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
-    InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
-    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, ResolvedWorkflowStep,
-    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    InlineAssistant, InsertIntoEditor, MessageId, MessageStatus, ModelSelector,
+    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
+    ResolvedWorkflowStep, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use crate::{ContextStoreEvent, ShowConfiguration};
 use anyhow::{anyhow, Result};
@@ -1711,7 +1711,7 @@ pub struct ContextEditor {
     workflow_steps: HashMap<Range<language::Anchor>, WorkflowStep>,
     active_workflow_step: Option<ActiveWorkflowStep>,
     assistant_panel: WeakView<AssistantPanel>,
-    error_message: Option<SharedString>,
+    error_message_handle: Option<(MessageId, PopoverMenuHandle<ErrorPopover>)>,
     debug_inspector: Option<ContextInspector>,
     show_accept_terms: bool,
 }
@@ -1772,7 +1772,7 @@ impl ContextEditor {
             workflow_steps: HashMap::default(),
             active_workflow_step: None,
             assistant_panel,
-            error_message: None,
+            error_message_handle: None,
             debug_inspector: None,
             show_accept_terms: false,
         };
@@ -1818,7 +1818,9 @@ impl ContextEditor {
         }
 
         if !self.apply_active_workflow_step(cx) {
-            self.error_message = None;
+            if let Some((_, handle)) = self.error_message_handle.take() {
+                handle.hide(cx);
+            }
             self.send_to_model(cx);
             cx.notify();
         }
@@ -2338,8 +2340,13 @@ impl ContextEditor {
                 }
             }
             ContextEvent::Operation(_) => {}
-            ContextEvent::AssistError(error_message) => {
-                self.error_message = Some(SharedString::from(error_message.clone()));
+            ContextEvent::AssistError(message_id) => {
+                self.error_message_handle = Some((*message_id, PopoverMenuHandle::default()));
+                cx.defer(|this, cx| {
+                    if let Some((_, handle)) = &mut this.error_message_handle {
+                        handle.show(cx);
+                    }
+                });
             }
         }
     }
@@ -2951,6 +2958,7 @@ impl ContextEditor {
                     style: BlockStyle::Sticky,
                     render: Box::new({
                         let context = self.context.clone();
+                        let handle = self.error_message_handle.clone();
                         move |cx| {
                             let message_id = message.id;
                             let show_spinner = message.role == Role::Assistant
@@ -3021,6 +3029,17 @@ impl ContextEditor {
                                         cx,
                                     )
                                 });
+
+                            let handle = if let Some((id, handle)) = handle.clone() {
+                                if id == message.id {
+                                    Some(handle)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
                             h_flex()
                                 .id(("message_header", message_id.as_u64()))
                                 .pl(cx.gutter_dimensions.full_width())
@@ -3039,7 +3058,10 @@ impl ContextEditor {
                                                         focus_handle: cx.focus_handle(),
                                                     }))
                                                 })
-                                                .trigger(trigger),
+                                                .trigger(trigger)
+                                                .when_some(handle, |el, handle| {
+                                                    el.with_handle(handle)
+                                                }),
                                         )
                                     } else {
                                         None
