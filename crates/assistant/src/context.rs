@@ -1252,7 +1252,10 @@ impl Context {
 
             if let Some(step_end_index) = line.find("</step>") {
                 if in_step {
-                    let step_open_tag_end_ix = step_open_tag_start_ix + "<step>".len();
+                    let mut step_open_tag_end_ix = step_open_tag_start_ix + "<step>".len();
+                    if buffer.chars_at(step_open_tag_end_ix).next() == Some('\n') {
+                        step_open_tag_end_ix += 1;
+                    }
                     let mut step_end_tag_start_ix = line_start_offset + step_end_index;
                     let step_end_tag_end_ix = step_end_tag_start_ix + "</step>".len();
                     if buffer.reversed_chars_at(step_end_tag_start_ix).next() == Some('\n') {
@@ -3098,12 +3101,12 @@ mod tests {
                 vec![
                     (
                         Point::new(response_start_row + 2, 0)
-                            ..Point::new(response_start_row + 13, 3),
+                            ..Point::new(response_start_row + 12, 3),
                         WorkflowStepTestStatus::Pending
                     ),
                     (
-                        Point::new(response_start_row + 15, 0)
-                            ..Point::new(response_start_row + 26, 3),
+                        Point::new(response_start_row + 14, 0)
+                            ..Point::new(response_start_row + 24, 3),
                         WorkflowStepTestStatus::Pending
                     ),
                 ]
@@ -3135,12 +3138,12 @@ mod tests {
                 vec![
                     (
                         Point::new(response_start_row + 2, 0)
-                            ..Point::new(response_start_row + 13, 3),
+                            ..Point::new(response_start_row + 12, 3),
                         WorkflowStepTestStatus::Resolved
                     ),
                     (
-                        Point::new(response_start_row + 15, 0)
-                            ..Point::new(response_start_row + 26, 3),
+                        Point::new(response_start_row + 14, 0)
+                            ..Point::new(response_start_row + 24, 3),
                         WorkflowStepTestStatus::Pending
                     ),
                 ]

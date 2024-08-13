@@ -365,7 +365,8 @@ impl AssistantPanel {
             pane.set_should_display_tab_bar(|_| true);
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 let focus_handle = pane.focus_handle(cx);
-                let left_children = IconButton::new("history", IconName::TextSearch)
+                let left_children = IconButton::new("history", IconName::HistoryRerun)
+                    .icon_size(IconSize::Small)
                     .on_click(cx.listener({
                         let focus_handle = focus_handle.clone();
                         move |_, _, cx| {
@@ -377,7 +378,7 @@ impl AssistantPanel {
                         cx.new_view(|cx| {
                             let keybind =
                                 KeyBinding::for_action_in(&DeployHistory, &focus_handle, cx);
-                            Tooltip::new("History").key_binding(keybind)
+                            Tooltip::new("Open History").key_binding(keybind)
                         })
                         .into()
                     })
@@ -1458,12 +1459,14 @@ impl WorkflowStepStatus {
                 .unwrap_or_default()
         }
         match self {
-            WorkflowStepStatus::Resolving => Icon::new(IconName::ArrowCircle)
-                .size(IconSize::Small)
+            WorkflowStepStatus::Resolving => Label::new("Resolving")
+                .size(LabelSize::Small)
                 .with_animation(
-                    ("resolving-suggestion-label", id),
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                    ("resolving-suggestion-animation", id),
+                    Animation::new(Duration::from_secs(2))
+                        .repeat()
+                        .with_easing(pulsating_between(0.2, 1.0)),
+                    |label, delta| label.alpha(delta),
                 )
                 .into_any_element(),
 
@@ -1539,51 +1542,61 @@ impl WorkflowStepStatus {
                     }
                 })
                 .into_any_element(),
-            WorkflowStepStatus::Pending => Button::new(("stop-transformation", id), "Stop")
-                .icon(IconName::Stop)
-                .icon_position(IconPosition::Start)
-                .icon_size(IconSize::Small)
-                .label_size(LabelSize::Small)
-                .style(ButtonStyle::Tinted(TintColor::Negative))
-                .tooltip({
-                    let step_range = step_range.clone();
-                    let editor = editor.clone();
-                    move |cx| {
-                        cx.new_view(|cx| {
-                            let tooltip = Tooltip::new("Stop Transformation");
-                            if display_keybind_in_tooltip(&step_range, &editor, cx) {
-                                tooltip.key_binding(KeyBinding::for_action_in(
-                                    &editor::actions::Cancel,
-                                    &focus_handle,
-                                    cx,
-                                ))
-                            } else {
-                                tooltip
+            WorkflowStepStatus::Pending => h_flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    Label::new("Applying...")
+                        .size(LabelSize::Small)
+                        .with_animation(
+                            ("applying-step-transformation-label", id),
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.2, 1.0)),
+                            |label, delta| label.alpha(delta),
+                        ),
+                )
+                .child(
+                    IconButton::new(("stop-transformation", id), IconName::Stop)
+                        .icon_size(IconSize::Small)
+                        .style(ButtonStyle::Tinted(TintColor::Negative))
+                        .tooltip({
+                            let step_range = step_range.clone();
+                            let editor = editor.clone();
+                            move |cx| {
+                                cx.new_view(|cx| {
+                                    let tooltip = Tooltip::new("Stop Transformation");
+                                    if display_keybind_in_tooltip(&step_range, &editor, cx) {
+                                        tooltip.key_binding(KeyBinding::for_action_in(
+                                            &editor::actions::Cancel,
+                                            &focus_handle,
+                                            cx,
+                                        ))
+                                    } else {
+                                        tooltip
+                                    }
+                                })
+                                .into()
                             }
                         })
-                        .into()
-                    }
-                })
-                .on_click({
-                    let editor = editor.clone();
-                    let step_range = step_range.clone();
-                    move |_, cx| {
-                        editor
-                            .update(cx, |this, cx| {
-                                this.stop_workflow_step(step_range.clone(), cx)
-                            })
-                            .ok();
-                    }
-                })
+                        .on_click({
+                            let editor = editor.clone();
+                            let step_range = step_range.clone();
+                            move |_, cx| {
+                                editor
+                                    .update(cx, |this, cx| {
+                                        this.stop_workflow_step(step_range.clone(), cx)
+                                    })
+                                    .ok();
+                            }
+                        }),
+                )
                 .into_any_element(),
             WorkflowStepStatus::Done => h_flex()
                 .gap_1()
                 .child(
-                    Button::new(("stop-transformation", id), "Reject")
-                        .icon(IconName::Close)
-                        .icon_position(IconPosition::Start)
+                    IconButton::new(("stop-transformation", id), IconName::Close)
                         .icon_size(IconSize::Small)
-                        .label_size(LabelSize::Small)
                         .style(ButtonStyle::Tinted(TintColor::Negative))
                         .tooltip({
                             let focus_handle = focus_handle.clone();
@@ -1664,7 +1677,6 @@ impl WorkflowStepStatus {
                         .icon_position(IconPosition::Start)
                         .icon_size(IconSize::Small)
                         .label_size(LabelSize::Small)
-                        .tooltip(|cx| Tooltip::text("Undo Transformation", cx))
                         .on_click({
                             let editor = editor.clone();
                             let step_range = step_range.clone();
@@ -2519,6 +2531,17 @@ impl ContextEditor {
                                     } else {
                                         theme.info_border
                                     };
+                                    let step_index = weak_self.update(&mut **cx, |this, cx| {
+                                       let snapshot = this.editor.read(cx).buffer().read(cx).as_singleton()?.read(cx).text_snapshot();
+                                       let start_offset = step_range.start.to_offset(&snapshot);
+                                       let parent_message = this.context.read(cx).messages_for_offsets([start_offset], cx);
+                                       debug_assert_eq!(parent_message.len(), 1);
+                                       let parent_message = parent_message.first()?;
+
+                                       let index_of_current_step = this.workflow_steps.keys().filter(|workflow_step_range| workflow_step_range.start.cmp(&parent_message.anchor, &snapshot).is_ge() && workflow_step_range.end.cmp(&step_range.end, &snapshot).is_le()).count();
+                                       Some(index_of_current_step)
+                                    }).ok().flatten();
+
                                     let debug_header = weak_self
                                         .update(&mut **cx, |this, _| {
                                             if let Some(inspector) = this.debug_inspector.as_mut() {
@@ -2528,6 +2551,17 @@ impl ContextEditor {
                                             }
                                         })
                                         .unwrap_or_default();
+                                    let step_label = if let Some(index) = step_index {
+
+                                        Label::new(format!("Step {index}")).size(LabelSize::Small)
+                                        } else {
+                                            Label::new("Step").size(LabelSize::Small)
+                                        };
+                                    let step_label = if current_status.as_ref().is_some_and(|status| status.is_confirmed()) {
+                                        h_flex().items_center().gap_2().child(step_label.strikethrough(true).color(Color::Muted)).child(Icon::new(IconName::Check).size(IconSize::Small).color(Color::Created))
+                                    } else {
+                                        div().child(step_label)
+                                    };
                                     div()
                                         .w_full()
                                         .px(cx.gutter_dimensions.full_width())
@@ -2536,11 +2570,12 @@ impl ContextEditor {
                                                 .w_full()
                                                 .border_b_1()
                                                 .border_color(border_color)
-                                                .pb_1()
+                                                .pb_1p5()
                                                 .justify_between()
                                                 .gap_2()
-                                                .children(debug_header.map(|is_active| {
-                                                    h_flex().justify_start().child(
+                                                .child(h_flex().justify_start().gap_2().child(step_label).children(
+                                                    debug_header.map(|is_active| {
+
                                                         Button::new("debug-workflows-toggle", "Debug")
                                                             .icon_color(Color::Hidden)
                                                             .color(Color::Hidden)
@@ -2571,10 +2606,10 @@ impl ContextEditor {
                                                                         })
                                                                         .ok();
                                                                 }
-                                                            }),
-                                                    )
-                                                    // .child(h_flex().w_full())
-                                                }))
+                                                            })
+                                                    })
+
+                                                ))
                                                 .children(current_status.as_ref().map(|status| {
                                                     h_flex().w_full().justify_end().child(
                                                         status.into_element(
@@ -2618,9 +2653,7 @@ impl ContextEditor {
                                 div()
                                     .w_full()
                                     .px(cx.gutter_dimensions.full_width())
-                                    .child(
-                                        h_flex().w_full().border_t_1().border_color(border_color),
-                                    )
+                                    .child(h_flex().h(px(1.)).bg(border_color))
                                     .into_any()
                             }),
                             disposition: BlockDisposition::Below,
