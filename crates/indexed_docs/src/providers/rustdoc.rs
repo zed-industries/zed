@@ -67,6 +67,7 @@ impl IndexedDocsProvider for LocalRustdocProvider {
         }
 
         let workspace = MetadataCommand::new()
+            .manifest_path(self.cargo_workspace_root.join("Cargo.toml"))
             .exec()
             .context("failed to load cargo metadata")?;
 
