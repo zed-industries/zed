@@ -31,4 +31,5 @@ if [ -n "$SQUAWK_GITHUB_TOKEN" ]; then
     $SQUAWK_BIN $SQUAWK_ARGS upload-to-github $(git diff --name-only origin/$GITHUB_BASE_REF...origin/$GITHUB_HEAD_REF 'crates/collab/migrations/*.sql')
 else
     $SQUAWK_BIN $SQUAWK_ARGS $(git ls-files --others crates/collab/migrations/*.sql) $(git diff --name-only main crates/collab/migrations/*.sql)
+    $SQUAWK_BIN $SQUAWK_ARGS $(git ls-files --others crates/collab/migrations_llm/*.sql) $(git diff --name-only main crates/collab/migrations_llm/*.sql)
 fi
