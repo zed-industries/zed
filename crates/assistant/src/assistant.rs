@@ -36,7 +36,7 @@ use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
     active_command, default_command, diagnostics_command, docs_command, fetch_command,
     file_command, now_command, project_command, prompt_command, search_command, symbols_command,
-    tabs_command, term_command, workflow_command,
+    tabs_command, terminal_command, workflow_command,
 };
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
@@ -277,9 +277,9 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
     slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
-    slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
-    slash_command_registry.register_command(term_command::TermSlashCommand, true);
-    slash_command_registry.register_command(now_command::NowSlashCommand, true);
+    slash_command_registry.register_command(default_command::DefaultSlashCommand, false);
+    slash_command_registry.register_command(terminal_command::TerminalSlashCommand, true);
+    slash_command_registry.register_command(now_command::NowSlashCommand, false);
     slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
     if let Some(prompt_builder) = prompt_builder {
         slash_command_registry.register_command(
