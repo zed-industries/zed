@@ -861,8 +861,8 @@ impl Platform for MacPlatform {
         use crate::ClipboardEntry;
 
         unsafe {
+            // We only want to use NSAttributedString if there are multiple entries to write.
             if item.entries.len() <= 1 {
-                // We only want to do the whole
                 match item.entries.first() {
                     Some(entry) => match entry {
                         ClipboardEntry::String(string) => {
@@ -873,7 +873,7 @@ impl Platform for MacPlatform {
                         }
                     },
                     None => {
-                        // Write an empty list of entries just clears the clipboard.
+                        // Writing an empty list of entries just clears the clipboard.
                         let state = self.0.lock();
                         state.pasteboard.clearContents();
                     }
@@ -1088,24 +1088,20 @@ impl MacPlatform {
         text_bytes: &[u8],
     ) -> ClipboardItem {
         let text = String::from_utf8_lossy(text_bytes).to_string();
-        let hash_bytes = self
+        let opt_metadata = self
             .read_from_pasteboard(state.pasteboard, state.text_hash_pasteboard_type)
-            .and_then(|bytes| bytes.try_into().ok())
-            .map(u64::from_be_bytes);
-        let metadata_bytes = self
-            .read_from_pasteboard(state.pasteboard, state.metadata_pasteboard_type)
-            .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok());
-        let opt_metadata;
+            .and_then(|hash_bytes| {
+                let hash_bytes = hash_bytes.try_into().ok()?;
+                let hash = u64::from_be_bytes(hash_bytes);
+                let metadata =
+                    self.read_from_pasteboard(state.pasteboard, state.metadata_pasteboard_type)?;
 
-        if let Some((hash, metadata)) = hash_bytes.zip(metadata_bytes) {
-            if hash == ClipboardString::text_hash(&text) {
-                opt_metadata = Some(metadata);
-            } else {
-                opt_metadata = None;
-            }
-        } else {
-            opt_metadata = None;
-        }
+                if hash == ClipboardString::text_hash(&text) {
+                    String::from_utf8(metadata.to_vec()).ok()
+                } else {
+                    None
+                }
+            });
 
         ClipboardItem::new_string_with_metadata(text, opt_metadata)
     }
