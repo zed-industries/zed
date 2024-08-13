@@ -6722,7 +6722,7 @@ impl Editor {
                 Some(ClipboardEntry::String(clipboard_string)) if entries.len() == 1 => self
                     .do_paste(
                         clipboard_string.text(),
-                        clipboard_string.metadata::<Vec<ClipboardSelection>>(),
+                        clipboard_string.metadata_json::<Vec<ClipboardSelection>>(),
                         true,
                         cx,
                     ),

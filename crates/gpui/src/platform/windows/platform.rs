@@ -743,9 +743,9 @@ fn write_to_clipboard_inner(
             .collect_vec();
         set_data_to_clipboard(&encode_wide, CF_UNICODETEXT.0 as u32)?;
 
-        if let Some(ref metadata) = item.metadata {
+        if let Some((metadata, text)) = item.metadata().zip(item.text()) {
             let hash_result = {
-                let hash = ClipboardString::text_hash(&item.text);
+                let hash = ClipboardString::text_hash(&text);
                 hash.to_ne_bytes()
             };
             let encode_wide = std::slice::from_raw_parts(hash_result.as_ptr().cast::<u16>(), 4);
@@ -836,7 +836,7 @@ mod tests {
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
-        let item = ClipboardItem::new_string_with_metadata("abcdef".to_string(), vec![3, 4]);
+        let item = ClipboardItem::new_string_with_json_metadata("abcdef".to_string(), vec![3, 4]);
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
     }

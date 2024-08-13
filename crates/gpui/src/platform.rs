@@ -1033,6 +1033,17 @@ impl ClipboardItem {
         }
     }
 
+    /// If this item is one ClipboardEntry::String, returns its metadata.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub fn metadata(&self) -> Option<&String> {
+        match self.entries().first() {
+            Some(ClipboardEntry::String(clipboard_string)) if self.entries.len() == 1 => {
+                clipboard_string.metadata.as_ref()
+            }
+            _ => None,
+        }
+    }
+
     /// Get the item's entries
     pub fn entries(&self) -> &[ClipboardEntry] {
         &self.entries
@@ -1191,8 +1202,8 @@ impl ClipboardString {
         self.text
     }
 
-    /// Get the metadata of the clipboard string
-    pub fn metadata<T>(&self) -> Option<T>
+    /// Get the metadata of the clipboard string, formatted as JSON
+    pub fn metadata_json<T>(&self) -> Option<T>
     where
         T: for<'a> Deserialize<'a>,
     {

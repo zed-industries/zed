@@ -143,7 +143,7 @@ impl From<ClipboardItem> for Register {
         match item.entries().first() {
             Some(ClipboardEntry::String(value)) if item.entries().len() == 1 => Register {
                 text: value.text().to_owned().into(),
-                clipboard_selections: value.metadata::<Vec<ClipboardSelection>>(),
+                clipboard_selections: value.metadata_json::<Vec<ClipboardSelection>>(),
             },
             // For now, registers can't store images. This could change in the future.
             _ => Register::default(),
