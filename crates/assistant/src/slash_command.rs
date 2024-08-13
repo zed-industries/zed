@@ -17,7 +17,6 @@ use std::{
 use ui::ActiveTheme;
 use workspace::Workspace;
 
-pub mod active_command;
 pub mod default_command;
 pub mod diagnostics_command;
 pub mod docs_command;

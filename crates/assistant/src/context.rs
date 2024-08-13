@@ -2522,11 +2522,7 @@ pub struct SavedContextMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        assistant_panel, prompt_library,
-        slash_command::{active_command, file_command},
-        MessageId,
-    };
+    use crate::{assistant_panel, prompt_library, slash_command::file_command, MessageId};
     use assistant_slash_command::{ArgumentCompletion, SlashCommand};
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext, WeakView};
@@ -2883,7 +2879,6 @@ mod tests {
 
         let slash_command_registry = cx.update(SlashCommandRegistry::default_global);
         slash_command_registry.register_command(file_command::FileSlashCommand, false);
-        slash_command_registry.register_command(active_command::ActiveSlashCommand, false);
 
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
