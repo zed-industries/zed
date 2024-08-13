@@ -439,6 +439,50 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
     );
 }
 
+#[cfg(target_os = "linux")] // Primary clipboard is exclusive to Linux.
+#[gpui::test]
+async fn test_primary_clipboard_copy(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        struct A;
+        let vˇariable = A;
+    "});
+    let initial_coord = cx
+        .editor(|editor, cx| editor.pixel_position_of_cursor(cx))
+        .unwrap();
+    cx.set_selections_state(indoc! {"
+        strˇuct A;
+        let variable = A;
+    "});
+    let new_coord = cx
+        .editor(|editor, cx| editor.pixel_position_of_cursor(cx))
+        .unwrap();
+
+    cx.simulate_mouse_down(new_coord, MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_move(initial_coord, MouseButton::Left, gpui::Modifiers::none());
+    assert!(cx.read_from_primary().is_none()); // Don't copy until mouse up
+
+    cx.simulate_mouse_up(initial_coord, MouseButton::Left, gpui::Modifiers::none());
+    let expected = "
+        uct A;
+        let v"
+        .unindent();
+    assert_eq!(
+        cx.read_from_primary(),
+        Some(ClipboardItem::new_string(expected.clone()))
+    );
+
+    // Make sure primary clipboard isn't updated on keyboard actions
+    cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
+    assert_eq!(
+        cx.read_from_primary(),
+        Some(ClipboardItem::new_string(expected))
+    );
+}
+
 #[gpui::test]
 fn test_multiple_cursor_removal(cx: &mut TestAppContext) {
     init_test(cx, |_| {});

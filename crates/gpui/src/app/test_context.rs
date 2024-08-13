@@ -259,6 +259,19 @@ impl TestAppContext {
         self.test_platform.read_from_clipboard()
     }
 
+    /// Simulates writing to the primary Linux clipboard
+    #[cfg(target_os = "linux")]
+    pub fn write_to_primary(&self, item: ClipboardItem) {
+        self.test_platform.write_to_primary(item)
+    }
+
+    /// Simulates reading from the primary Linux clipboard.
+    /// This will return the most recent value from `write_to_primary`.
+    #[cfg(target_os = "linux")]
+    pub fn read_from_primary(&self) -> Option<ClipboardItem> {
+        self.test_platform.read_from_primary()
+    }
+
     /// Simulates choosing a File in the platform's "Open" dialog.
     pub fn simulate_new_path_selection(
         &self,
