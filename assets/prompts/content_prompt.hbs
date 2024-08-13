@@ -12,9 +12,9 @@ Note: Context around the relevant section has been truncated for brevity.
 
 Editing instructions:
 1. Rewrite the section marked with <rewrite_this></rewrite_this> tags based on this prompt:
-   <prompt>
-   {{{user_prompt}}}
-   </prompt>
+<prompt>
+{{{user_prompt}}}
+</prompt>
 
 2. Within <rewrite_this></rewrite_this>, make changes only in these subsections:
    {{#if has_insertion}}
@@ -25,9 +25,9 @@ Editing instructions:
    {{/if}}
 
 3. Section to edit:
-   <rewrite_this>
-   {{{rewrite_section_with_selections}}}
-   </rewrite_this>
+<rewrite_this>
+{{{rewrite_section_with_selections}}}
+</rewrite_this>
 
 4. Guidelines:
    - Only make changes necessary to fulfill the prompt
@@ -36,8 +36,6 @@ Editing instructions:
    - Rewrite the entire section, even if no changes are needed
    - Do not include <rewrite_this>, <insert_here>, or <edit_here> tags in your output
 
-Immediately start with the following format with no remarks:
 Output format:
-```
-\{{REWRITTEN_CODE}}
-```
+Immediately start with the following, ensuring no leading whitespace:
+```{{REWRITTEN_CODE}}```
