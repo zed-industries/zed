@@ -1465,7 +1465,7 @@ impl WorkflowStepStatus {
                     ("resolving-suggestion-animation", id),
                     Animation::new(Duration::from_secs(2))
                         .repeat()
-                        .with_easing(pulsating_between(0.2, 1.0)),
+                        .with_easing(pulsating_between(0.4, 0.8)),
                     |label, delta| label.alpha(delta),
                 )
                 .into_any_element(),
@@ -1552,7 +1552,7 @@ impl WorkflowStepStatus {
                             ("applying-step-transformation-label", id),
                             Animation::new(Duration::from_secs(2))
                                 .repeat()
-                                .with_easing(pulsating_between(0.2, 1.0)),
+                                .with_easing(pulsating_between(0.4, 0.8)),
                             |label, delta| label.alpha(delta),
                         ),
                 )
@@ -3005,7 +3005,7 @@ impl ContextEditor {
                                                 "pulsating-label",
                                                 Animation::new(Duration::from_secs(2))
                                                     .repeat()
-                                                    .with_easing(pulsating_between(0.2, 1.0)),
+                                                    .with_easing(pulsating_between(0.4, 0.8)),
                                                 |label, delta| label.alpha(delta),
                                             )
                                             .into_any_element()
