@@ -275,12 +275,16 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             let disabled = state.accept_terms.is_some();
             Some(
                 v_flex()
-                    .child(Label::new("Terms & Conditions").weight(FontWeight::SEMIBOLD))
-                    .child("Please read and accept the terms and conditions of Zed AI and our provider partners to continue.")
-                    .child(v_flex().m_2().gap_1().children(terms))
+                    .gap_2()
                     .child(
-                        h_flex().justify_end().mt_1().child(
-                            Button::new("accept_terms", "Accept")
+                        v_flex()
+                            .child(Label::new("Terms & Conditions").weight(FontWeight::MEDIUM))
+                            .child(Label::new("Please read and accept the terms and conditions of Zed AI and our provider partners to continue.").size(LabelSize::Small))
+                    )
+                    .child(v_flex().gap_1().children(terms))
+                    .child(
+                        h_flex().justify_end().child(
+                            Button::new("accept_terms", "I've read it and accept it")
                                 .disabled(disabled)
                                 .on_click({
                                     let state = self.state.downgrade();
