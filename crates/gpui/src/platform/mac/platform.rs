@@ -1088,7 +1088,7 @@ impl MacPlatform {
         text_bytes: &[u8],
     ) -> ClipboardItem {
         let text = String::from_utf8_lossy(text_bytes).to_string();
-        let opt_metadata = self
+        let metadata = self
             .read_from_pasteboard(state.pasteboard, state.text_hash_pasteboard_type)
             .and_then(|hash_bytes| {
                 let hash_bytes = hash_bytes.try_into().ok()?;
@@ -1103,7 +1103,9 @@ impl MacPlatform {
                 }
             });
 
-        ClipboardItem::new_string_with_metadata(text, opt_metadata)
+        ClipboardItem {
+            entries: vec![ClipboardEntry::String(ClipboardString { text, metadata })],
+        }
     }
 
     unsafe fn write_plaintext_to_clipboard(&self, string: &ClipboardString) {
@@ -1440,7 +1442,7 @@ mod tests {
 
         let item = ClipboardItem {
             entries: vec![ClipboardEntry::String(
-                ClipboardString::new("2".to_string()).with_metadata(vec![3, 4]),
+                ClipboardString::new("2".to_string()).with_json_metadata(vec![3, 4]),
             )],
         };
         platform.write_to_clipboard(item.clone());

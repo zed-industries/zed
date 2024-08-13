@@ -130,7 +130,7 @@ pub struct Register {
 impl From<Register> for ClipboardItem {
     fn from(register: Register) -> Self {
         if let Some(clipboard_selections) = register.clipboard_selections {
-            ClipboardItem::new_string_with_metadata(register.text.into(), clipboard_selections)
+            ClipboardItem::new_string_with_json_metadata(register.text.into(), clipboard_selections)
         } else {
             ClipboardItem::new_string(register.text.into())
         }

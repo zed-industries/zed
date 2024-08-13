@@ -6585,7 +6585,7 @@ impl Editor {
                 s.select(selections);
             });
             this.insert("", cx);
-            cx.write_to_clipboard(ClipboardItem::new_string_with_metadata(
+            cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
                 text,
                 clipboard_selections,
             ));
@@ -6627,7 +6627,7 @@ impl Editor {
             }
         }
 
-        cx.write_to_clipboard(ClipboardItem::new_string_with_metadata(
+        cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
             text,
             clipboard_selections,
         ));

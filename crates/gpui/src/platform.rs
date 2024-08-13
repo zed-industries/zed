@@ -995,10 +995,20 @@ impl ClipboardItem {
     }
 
     /// Create a new ClipboardItem::String with the given text and associated metadata
-    pub fn new_string_with_metadata<T: Serialize>(text: String, metadata: T) -> Self {
+    pub fn new_string_with_metadata(text: String, metadata: String) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::String(ClipboardString {
+                text,
+                metadata: Some(metadata),
+            })],
+        }
+    }
+
+    /// Create a new ClipboardItem::String with the given text and associated metadata
+    pub fn new_string_with_json_metadata<T: Serialize>(text: String, metadata: T) -> Self {
         Self {
             entries: vec![ClipboardEntry::String(
-                ClipboardString::new(text).with_metadata(metadata),
+                ClipboardString::new(text).with_json_metadata(metadata),
             )],
         }
     }
@@ -1164,8 +1174,9 @@ impl ClipboardString {
         }
     }
 
-    /// Return a new clipboard item with the metadata replaced by the given metadata
-    pub fn with_metadata<T: Serialize>(mut self, metadata: T) -> Self {
+    /// Return a new clipboard item with the metadata replaced by the given metadata,
+    /// after serializing it as JSON.
+    pub fn with_json_metadata<T: Serialize>(mut self, metadata: T) -> Self {
         self.metadata = Some(serde_json::to_string(&metadata).unwrap());
         self
     }
