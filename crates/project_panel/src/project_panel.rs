@@ -1877,7 +1877,7 @@ impl ProjectPanel {
                             if show_file_icons {
                                 FileIcons::get_icon(&entry.path, cx)
                             } else {
-                                None
+                                FileIcons::get_icon_by_type("default-point", cx)
                             }
                         }
                         _ => {
