@@ -22,8 +22,8 @@ use std::{
 use util::maybe;
 use wasmtime::component::{Linker, Resource};
 
-pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 7);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 7);
+pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 1, 0);
+pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 1, 0);
 
 wasmtime::component::bindgen!({
     async: true,
