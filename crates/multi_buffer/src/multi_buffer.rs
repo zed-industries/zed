@@ -6774,7 +6774,7 @@ mod tests {
                     primary: None,
                 }],
                 cx,
-            )[0];
+            );
             multibuffer.push_excerpts(
                 buffer_2.clone(),
                 [ExcerptRange {
@@ -6782,7 +6782,7 @@ mod tests {
                     primary: None,
                 }],
                 cx,
-            )[0];
+            );
         });
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
@@ -6830,7 +6830,7 @@ mod tests {
                     primary: None,
                 }],
                 cx,
-            )[0];
+            );
             multibuffer.push_excerpts(
                 buffer_2.clone(),
                 [ExcerptRange {
@@ -6838,7 +6838,7 @@ mod tests {
                     primary: None,
                 }],
                 cx,
-            )[0];
+            );
             multibuffer.push_excerpts(
                 buffer_3.clone(),
                 [ExcerptRange {
@@ -6846,7 +6846,7 @@ mod tests {
                     primary: None,
                 }],
                 cx,
-            )[0];
+            );
         });
 
         let snapshot = multibuffer.read(cx).snapshot(cx);

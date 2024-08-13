@@ -45,7 +45,6 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
-use text::ToOffset as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
