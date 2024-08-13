@@ -276,6 +276,15 @@ impl SlashCommand for DocsSlashCommand {
                     } => (provider, item_path),
                 };
 
+                if key.trim().is_empty() {
+                    let package_term = match provider.as_ref() {
+                        "docs-rs" | "rustdoc" => "crate",
+                        _ => "package",
+                    };
+
+                    bail!("no {package_term} name provided");
+                }
+
                 let store = store?;
 
                 if let Some(package) = args.package() {
