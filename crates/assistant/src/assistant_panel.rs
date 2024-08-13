@@ -1459,12 +1459,14 @@ impl WorkflowStepStatus {
                 .unwrap_or_default()
         }
         match self {
-            WorkflowStepStatus::Resolving => Icon::new(IconName::ArrowCircle)
-                .size(IconSize::Small)
+            WorkflowStepStatus::Resolving => Label::new("Resolving")
+                .size(LabelSize::Small)
                 .with_animation(
-                    ("resolving-suggestion-label", id),
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                    ("resolving-suggestion-animation", id),
+                    Animation::new(Duration::from_secs(2))
+                        .repeat()
+                        .with_easing(pulsating_between(0.2, 1.0)),
+                    |label, delta| label.alpha(delta),
                 )
                 .into_any_element(),
 
@@ -1540,51 +1542,61 @@ impl WorkflowStepStatus {
                     }
                 })
                 .into_any_element(),
-            WorkflowStepStatus::Pending => Button::new(("stop-transformation", id), "Stop")
-                .icon(IconName::Stop)
-                .icon_position(IconPosition::Start)
-                .icon_size(IconSize::Small)
-                .label_size(LabelSize::Small)
-                .style(ButtonStyle::Tinted(TintColor::Negative))
-                .tooltip({
-                    let step_range = step_range.clone();
-                    let editor = editor.clone();
-                    move |cx| {
-                        cx.new_view(|cx| {
-                            let tooltip = Tooltip::new("Stop Transformation");
-                            if display_keybind_in_tooltip(&step_range, &editor, cx) {
-                                tooltip.key_binding(KeyBinding::for_action_in(
-                                    &editor::actions::Cancel,
-                                    &focus_handle,
-                                    cx,
-                                ))
-                            } else {
-                                tooltip
+            WorkflowStepStatus::Pending => h_flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    Label::new("Applying...")
+                        .size(LabelSize::Small)
+                        .with_animation(
+                            ("applying-step-transformation-label", id),
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.2, 1.0)),
+                            |label, delta| label.alpha(delta),
+                        ),
+                )
+                .child(
+                    IconButton::new(("stop-transformation", id), IconName::Stop)
+                        .icon_size(IconSize::Small)
+                        .style(ButtonStyle::Tinted(TintColor::Negative))
+                        .tooltip({
+                            let step_range = step_range.clone();
+                            let editor = editor.clone();
+                            move |cx| {
+                                cx.new_view(|cx| {
+                                    let tooltip = Tooltip::new("Stop Transformation");
+                                    if display_keybind_in_tooltip(&step_range, &editor, cx) {
+                                        tooltip.key_binding(KeyBinding::for_action_in(
+                                            &editor::actions::Cancel,
+                                            &focus_handle,
+                                            cx,
+                                        ))
+                                    } else {
+                                        tooltip
+                                    }
+                                })
+                                .into()
                             }
                         })
-                        .into()
-                    }
-                })
-                .on_click({
-                    let editor = editor.clone();
-                    let step_range = step_range.clone();
-                    move |_, cx| {
-                        editor
-                            .update(cx, |this, cx| {
-                                this.stop_workflow_step(step_range.clone(), cx)
-                            })
-                            .ok();
-                    }
-                })
+                        .on_click({
+                            let editor = editor.clone();
+                            let step_range = step_range.clone();
+                            move |_, cx| {
+                                editor
+                                    .update(cx, |this, cx| {
+                                        this.stop_workflow_step(step_range.clone(), cx)
+                                    })
+                                    .ok();
+                            }
+                        }),
+                )
                 .into_any_element(),
             WorkflowStepStatus::Done => h_flex()
                 .gap_1()
                 .child(
-                    Button::new(("stop-transformation", id), "Reject")
-                        .icon(IconName::Close)
-                        .icon_position(IconPosition::Start)
+                    IconButton::new(("stop-transformation", id), IconName::Close)
                         .icon_size(IconSize::Small)
-                        .label_size(LabelSize::Small)
                         .style(ButtonStyle::Tinted(TintColor::Negative))
                         .tooltip({
                             let focus_handle = focus_handle.clone();
@@ -1665,7 +1677,6 @@ impl WorkflowStepStatus {
                         .icon_position(IconPosition::Start)
                         .icon_size(IconSize::Small)
                         .label_size(LabelSize::Small)
-                        .tooltip(|cx| Tooltip::text("Undo Transformation", cx))
                         .on_click({
                             let editor = editor.clone();
                             let step_range = step_range.clone();
