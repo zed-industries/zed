@@ -1298,10 +1298,16 @@ struct PromptEditor {
     _codegen_subscription: Subscription,
     editor_subscriptions: Vec<Subscription>,
     pending_token_count: Task<Result<()>>,
-    token_count: Option<usize>,
+    token_counts: Option<TokenCounts>,
     _token_count_subscriptions: Vec<Subscription>,
     workspace: Option<WeakView<Workspace>>,
     show_rate_limit_notice: bool,
+}
+
+#[derive(Copy, Clone)]
+pub struct TokenCounts {
+    total: usize,
+    assistant_panel: usize,
 }
 
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
@@ -1549,7 +1555,7 @@ impl PromptEditor {
             codegen,
             fs,
             pending_token_count: Task::ready(Ok(())),
-            token_count: None,
+            token_counts: None,
             _token_count_subscriptions: token_count_subscriptions,
             workspace,
             show_rate_limit_notice: false,
@@ -1639,7 +1645,7 @@ impl PromptEditor {
                 .await?;
 
             this.update(&mut cx, |this, cx| {
-                this.token_count = Some(token_count);
+                this.token_counts = Some(token_count);
                 cx.notify();
             })
         })
@@ -1780,13 +1786,13 @@ impl PromptEditor {
 
     fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let model = LanguageModelRegistry::read_global(cx).active_model()?;
-        let token_count = self.token_count?;
+        let token_counts = self.token_counts?;
         let max_token_count = model.max_token_count();
 
-        let remaining_tokens = max_token_count as isize - token_count as isize;
+        let remaining_tokens = max_token_count as isize - token_counts.total as isize;
         let token_count_color = if remaining_tokens <= 0 {
             Color::Error
-        } else if token_count as f32 / max_token_count as f32 >= 0.8 {
+        } else if token_counts.total as f32 / max_token_count as f32 >= 0.8 {
             Color::Warning
         } else {
             Color::Muted
@@ -1796,7 +1802,7 @@ impl PromptEditor {
             .id("token_count")
             .gap_0p5()
             .child(
-                Label::new(humanize_token_count(token_count))
+                Label::new(humanize_token_count(token_counts.total))
                     .size(LabelSize::Small)
                     .color(token_count_color),
             )
@@ -1808,11 +1814,14 @@ impl PromptEditor {
             );
         if let Some(workspace) = self.workspace.clone() {
             token_count = token_count
-                .tooltip(|cx| {
+                .tooltip(move |cx| {
                     Tooltip::with_meta(
-                        "Tokens Used by Inline Assistant",
+                        format!(
+                            "Tokens Used ({} from the Assistant Panel)",
+                            humanize_token_count(token_counts.assistant_panel)
+                        ),
                         None,
-                        "Click to Open Assistant Panel",
+                        "Click to open the Assistant Panel",
                         cx,
                     )
                 })
@@ -1829,7 +1838,7 @@ impl PromptEditor {
         } else {
             token_count = token_count
                 .cursor_default()
-                .tooltip(|cx| Tooltip::text("Tokens Used by Inline Assistant", cx));
+                .tooltip(|cx| Tooltip::text("Tokens used", cx));
         }
 
         Some(token_count)
@@ -2078,7 +2087,7 @@ impl InlineAssist {
         }
     }
 
-    pub fn count_tokens(&self, cx: &WindowContext) -> BoxFuture<'static, Result<usize>> {
+    pub fn count_tokens(&self, cx: &WindowContext) -> BoxFuture<'static, Result<TokenCounts>> {
         let Some(user_prompt) = self.user_prompt(cx) else {
             return future::ready(Err(anyhow!("no user prompt"))).boxed();
         };
@@ -2216,11 +2225,24 @@ impl Codegen {
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &AppContext,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<TokenCounts>> {
         if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-            let request = self.build_request(user_prompt, assistant_panel_context, cx);
+            let request = self.build_request(user_prompt, assistant_panel_context.clone(), cx);
             match request {
-                Ok(request) => model.count_tokens(request, cx),
+                Ok(request) => {
+                    let total_count = model.count_tokens(request.clone(), cx);
+                    let assistant_panel_count = assistant_panel_context
+                        .map(|context| model.count_tokens(context, cx))
+                        .unwrap_or_else(|| future::ready(Ok(0)).boxed());
+
+                    async move {
+                        Ok(TokenCounts {
+                            total: total_count.await?,
+                            assistant_panel: assistant_panel_count.await?,
+                        })
+                    }
+                    .boxed()
+                }
                 Err(error) => futures::future::ready(Err(error)).boxed(),
             }
         } else {
