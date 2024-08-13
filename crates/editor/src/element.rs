@@ -655,7 +655,7 @@ impl EditorElement {
                     },
                     cx,
                 );
-                editor.insert(text, cx);
+                editor.insert(&text, cx);
             }
             cx.stop_propagation()
         }
