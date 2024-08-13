@@ -10,7 +10,9 @@ use html_to_markdown::{
     convert_html_to_markdown, HandleTag, HandlerOutcome, HtmlElement, MarkdownWriter,
     StartTagOutcome, TagHandler,
 };
-use zed_extension_api::{self as zed, HttpMethod, HttpRequest, KeyValueStore, Result};
+use zed_extension_api::{
+    self as zed, HttpMethod, HttpRequest, KeyValueStore, RedirectPolicy, Result,
+};
 
 pub fn index(package: String, database: &KeyValueStore) -> Result<()> {
     let headers = vec![(
@@ -23,6 +25,7 @@ pub fn index(package: String, database: &KeyValueStore) -> Result<()> {
         url: format!("https://hexdocs.pm/{package}"),
         headers: headers.clone(),
         body: None,
+        redirect_policy: RedirectPolicy::FollowAll,
     })?;
 
     let (package_root_markdown, modules) =
@@ -36,6 +39,7 @@ pub fn index(package: String, database: &KeyValueStore) -> Result<()> {
             url: format!("https://hexdocs.pm/{package}/{module}.html"),
             headers: headers.clone(),
             body: None,
+            redirect_policy: RedirectPolicy::FollowAll,
         })?;
 
         let (markdown, _modules) =

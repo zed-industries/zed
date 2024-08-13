@@ -9,6 +9,8 @@ interface http-client {
         headers: list<tuple<string, string>>,
         /// The request body.
         body: option<list<u8>>,
+        /// The policy to use for redirects.
+        redirect-policy: redirect-policy,
     }
 
     /// HTTP methods.
@@ -27,6 +29,18 @@ interface http-client {
         options,
         /// `PATCH`
         patch,
+    }
+
+    /// The policy for dealing with redirects received from the server.
+    variant redirect-policy {
+        /// Redirects from the server will not be followed.
+        ///
+        /// This is the default behavior.
+        no-follow,
+        /// Redirects from the server will be followed up to the specified limit.
+        follow-limit(u32),
+        /// All redirects from the server will be followed.
+        follow-all,
     }
 
     /// An HTTP response.

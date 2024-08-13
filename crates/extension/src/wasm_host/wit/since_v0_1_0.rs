@@ -136,7 +136,7 @@ impl http_client::Host for WasmState {
     ) -> wasmtime::Result<Result<http_client::HttpResponse, String>> {
         maybe!(async {
             let url = &request.url;
-            let request = convert_request(&request, true)?;
+            let request = convert_request(&request)?;
             let mut response = self.host.http_client.send(request).await?;
 
             if response.status().is_client_error() || response.status().is_server_error() {
@@ -152,7 +152,7 @@ impl http_client::Host for WasmState {
         &mut self,
         request: http_client::HttpRequest,
     ) -> wasmtime::Result<Result<Resource<ExtensionHttpResponseStream>, String>> {
-        let request = convert_request(&request, true)?;
+        let request = convert_request(&request)?;
         let response = self.host.http_client.send(request);
         maybe!(async {
             let response = response.await?;
@@ -208,15 +208,14 @@ impl From<http_client::HttpMethod> for ::http_client::Method {
 
 fn convert_request(
     extension_request: &http_client::HttpRequest,
-    follow_redirects: bool,
 ) -> Result<::http_client::Request<AsyncBody>, anyhow::Error> {
     let mut request = ::http_client::Request::builder()
         .method(::http_client::Method::from(extension_request.method))
         .uri(&extension_request.url)
-        .redirect_policy(if follow_redirects {
-            RedirectPolicy::Follow
-        } else {
-            RedirectPolicy::None
+        .redirect_policy(match extension_request.redirect_policy {
+            http_client::RedirectPolicy::NoFollow => RedirectPolicy::None,
+            http_client::RedirectPolicy::FollowLimit(limit) => RedirectPolicy::Limit(limit),
+            http_client::RedirectPolicy::FollowAll => RedirectPolicy::Follow,
         });
     for (key, value) in &extension_request.headers {
         request = request.header(key, value);

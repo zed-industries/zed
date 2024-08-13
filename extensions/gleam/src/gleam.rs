@@ -4,7 +4,8 @@ use std::{fs, io};
 use zed::lsp::CompletionKind;
 use zed::{
     CodeLabel, CodeLabelSpan, HttpMethod, HttpRequest, KeyValueStore, LanguageServerId,
-    SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
+    RedirectPolicy, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput,
+    SlashCommandOutputSection,
 };
 use zed_extension_api::{self as zed, Result};
 
@@ -208,6 +209,7 @@ impl zed::Extension for GleamExtension {
                         "Zed (Gleam Extension)".to_string(),
                     )],
                     body: None,
+                    redirect_policy: RedirectPolicy::FollowAll,
                 })?;
 
                 let (markdown, _modules) =
