@@ -5,8 +5,9 @@ use super::{
 };
 use anyhow::{Context, Result};
 use assistant_slash_command::ArgumentCompletion;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::Editor;
+use futures::future::join_all;
 use gpui::{Entity, Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::{
@@ -45,29 +46,33 @@ impl SlashCommand for TabsSlashCommand {
         workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
-        let all_tabs_completion_item = if ALL_TABS_COMPLETION_ITEM.contains(&query) {
-            Some(ArgumentCompletion {
-                label: ALL_TABS_COMPLETION_ITEM.into(),
-                new_text: ALL_TABS_COMPLETION_ITEM.to_owned(),
-                run_command: true,
-            })
-        } else {
-            None
+        let has_all_tabs_completion_item = query.to_lowercase().contains(ALL_TABS_COMPLETION_ITEM);
+        let current_query = match query.rsplit_once(' ') {
+            Some((_, current_query)) => current_query.to_owned(),
+            None => query,
         };
-        let tab_items_search = tab_items_for_query(workspace, query, cancel, false, cx);
+        let all_tabs_completion_item =
+            if !has_all_tabs_completion_item && ALL_TABS_COMPLETION_ITEM.contains(&current_query) {
+                Some(ArgumentCompletion {
+                    label: ALL_TABS_COMPLETION_ITEM.into(),
+                    new_text: ALL_TABS_COMPLETION_ITEM.to_owned(),
+                    run_command: true,
+                })
+            } else {
+                None
+            };
+        let tab_items_search = tab_items_for_query(workspace, current_query, cancel, false, cx);
         cx.spawn(|_| async move {
-            let tab_completion_items =
-                tab_items_search
-                    .await?
-                    .into_iter()
-                    .filter_map(|(path, ..)| {
-                        let path_string = path.as_deref()?.to_string_lossy().to_string();
-                        Some(ArgumentCompletion {
-                            label: path_string.clone().into(),
-                            new_text: path_string,
-                            run_command: true,
-                        })
-                    });
+            let tab_items = tab_items_search.await?;
+            let run_command = tab_items.len() == 1;
+            let tab_completion_items = tab_items.into_iter().filter_map(|(path, ..)| {
+                let path_string = path.as_deref()?.to_string_lossy().to_string();
+                Some(ArgumentCompletion {
+                    label: path_string.clone().into(),
+                    new_text: path_string,
+                    run_command,
+                })
+            });
             Ok(all_tabs_completion_item
                 .into_iter()
                 .chain(tab_completion_items)
@@ -131,13 +136,12 @@ impl SlashCommand for TabsSlashCommand {
 
 fn tab_items_for_query(
     workspace: Option<WeakView<Workspace>>,
-    mut query: String,
+    query: String,
     cancel: Arc<AtomicBool>,
     use_active_tab_for_empty_query: bool,
     cx: &mut WindowContext,
 ) -> Task<anyhow::Result<Vec<(Option<PathBuf>, BufferSnapshot, usize)>>> {
     cx.spawn(|mut cx| async move {
-        query.make_ascii_lowercase();
         let mut open_buffers =
             workspace
                 .context("no workspace")?
@@ -190,7 +194,7 @@ fn tab_items_for_query(
             .spawn(async move {
                 open_buffers.sort_by_key(|(_, _, timestamp)| *timestamp);
                 let query = query.trim();
-                if query.is_empty() || query == ALL_TABS_COMPLETION_ITEM {
+                if query.is_empty() || query.to_lowercase() == ALL_TABS_COMPLETION_ITEM {
                     return Ok(open_buffers);
                 }
 
@@ -206,21 +210,32 @@ fn tab_items_for_query(
                         })
                     })
                     .collect::<Vec<_>>();
-                let string_matches = fuzzy::match_strings(
-                    &match_candidates,
-                    &query,
-                    true,
-                    usize::MAX,
-                    &cancel,
-                    background_executor,
-                )
-                .await;
+                let mut processed_matches = HashSet::default();
 
-                Ok(string_matches
+                let file_queries = query.split(' ').map(|query| {
+                    fuzzy::match_strings(
+                        &match_candidates,
+                        query,
+                        true,
+                        usize::MAX,
+                        &cancel,
+                        background_executor.clone(),
+                    )
+                });
+
+                let matched_items = join_all(file_queries)
+                    .await
                     .into_iter()
+                    .flatten()
+                    .filter(|string_match| processed_matches.insert(string_match.candidate_id))
                     .filter_map(|string_match| open_buffers.get(string_match.candidate_id))
+                    .map(|a| {
+                        dbg!(&a.0);
+                        a
+                    })
                     .cloned()
-                    .collect())
+                    .collect();
+                Ok(matched_items)
             })
             .await
     })
