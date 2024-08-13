@@ -2227,7 +2227,7 @@ impl Codegen {
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<TokenCounts>> {
         if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-            let request = self.build_request(user_prompt, assistant_panel_context, cx);
+            let request = self.build_request(user_prompt, assistant_panel_context.clone(), cx);
             match request {
                 Ok(request) => {
                     let total_count = model.count_tokens(request.clone(), cx);
