@@ -621,6 +621,28 @@ impl EditorElement {
 
         if end_selection {
             editor.select(SelectPhase::End, cx);
+            // Copy selections to primary selection buffer
+            #[cfg(target_os = "linux")]
+            {
+                let selections = editor.selections.all::<usize>(cx);
+                let buffer_handle = editor.buffer.read(cx).read(cx);
+
+                let mut text = String::new();
+                for (index, selection) in selections.iter().enumerate() {
+                    let text_for_selection = buffer_handle
+                        .text_for_range(selection.start..selection.end)
+                        .collect::<String>();
+
+                    text.push_str(&text_for_selection);
+                    if index != selections.len() - 1 {
+                        text.push('\n');
+                    }
+                }
+
+                if !text.is_empty() {
+                    cx.write_to_primary(ClipboardItem::new_string(text));
+                }
+            }
         }
 
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
