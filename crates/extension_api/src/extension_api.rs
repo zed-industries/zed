@@ -129,6 +129,16 @@ pub trait Extension: Send + Sync {
         Err("`run_slash_command` not implemented".to_string())
     }
 
+    /// Returns a list of package names as suggestions to be included in the
+    /// search results of the `/docs` slash command.
+    ///
+    /// This can be used to provide completions for known packages (e.g., from the
+    /// local project or a registry) before a package has been indexed.
+    fn suggest_docs_packages(&self, _provider: String) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Indexes the docs for the specified package.
     fn index_docs(
         &self,
         _provider: String,
@@ -258,6 +268,10 @@ impl wit::Guest for Component {
         worktree: Option<&Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         extension().run_slash_command(command, argument, worktree)
+    }
+
+    fn suggest_docs_packages(provider: String) -> Result<Vec<String>, String> {
+        extension().suggest_docs_packages(provider)
     }
 
     fn index_docs(

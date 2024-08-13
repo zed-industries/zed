@@ -246,6 +246,17 @@ impl zed::Extension for GleamExtension {
         }
     }
 
+    fn suggest_docs_packages(&self, provider: String) -> Result<Vec<String>, String> {
+        match provider.as_str() {
+            "gleam-hexdocs" => Ok(vec![
+                "gleam_stdlib".to_string(),
+                "birdie".to_string(),
+                "startest".to_string(),
+            ]),
+            _ => Ok(Vec::new()),
+        }
+    }
+
     fn index_docs(
         &self,
         provider: String,

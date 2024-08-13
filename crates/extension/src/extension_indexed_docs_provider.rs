@@ -31,7 +31,25 @@ impl IndexedDocsProvider for ExtensionIndexedDocsProvider {
     }
 
     async fn suggest_packages(&self) -> Result<Vec<PackageName>> {
-        Ok(Vec::new())
+        self.extension
+            .call({
+                let id = self.id.clone();
+                |extension, store| {
+                    async move {
+                        let packages = extension
+                            .call_suggest_docs_packages(store, id.as_ref())
+                            .await?
+                            .map_err(|err| anyhow!("{err:?}"))?;
+
+                        Ok(packages
+                            .into_iter()
+                            .map(|package| PackageName::from(package.as_str()))
+                            .collect())
+                    }
+                    .boxed()
+                }
+            })
+            .await
     }
 
     async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {
