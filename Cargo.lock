@@ -5469,6 +5469,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "cargo_metadata",
  "collections",
  "derive_more",
  "fs",

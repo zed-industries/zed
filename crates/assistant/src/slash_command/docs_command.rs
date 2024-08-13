@@ -72,6 +72,9 @@ impl DocsSlashCommand {
             });
 
             if let Some((fs, cargo_workspace_root)) = index_provider_deps.log_err() {
+                // List the workspace crates once to prime the cache.
+                LocalRustdocProvider::list_workspace_crates().ok();
+
                 indexed_docs_registry.register_provider(Box::new(LocalRustdocProvider::new(
                     fs,
                     cargo_workspace_root,
@@ -230,6 +233,29 @@ impl SlashCommand for DocsSlashCommand {
                     }
 
                     let items = store.search(package).await;
+
+                    if provider == LocalRustdocProvider::id() {
+                        let items = build_completions(provider.clone(), items);
+                        let workspace_crates = LocalRustdocProvider::list_workspace_crates()?;
+
+                        let mut all_items = items;
+                        let workspace_crate_completions = workspace_crates
+                            .into_iter()
+                            .filter(|crate_name| {
+                                !all_items
+                                    .iter()
+                                    .any(|item| item.label.as_str() == crate_name.as_ref())
+                            })
+                            .map(|crate_name| ArgumentCompletion {
+                                label: format!("{crate_name} (unindexed)"),
+                                new_text: format!("{provider} {crate_name}"),
+                                run_command: true,
+                            })
+                            .collect::<Vec<_>>();
+                        all_items.extend(workspace_crate_completions);
+                        return Ok(all_items);
+                    }
+
                     if items.is_empty() {
                         if provider == DocsDotRsProvider::id() {
                             return Ok(std::iter::once(ArgumentCompletion {
