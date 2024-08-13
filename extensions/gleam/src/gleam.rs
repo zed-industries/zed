@@ -1,11 +1,11 @@
 mod hexdocs;
 
 use std::{fs, io};
+use zed::http_client::{HttpMethod, HttpRequest, RedirectPolicy};
 use zed::lsp::CompletionKind;
 use zed::{
-    CodeLabel, CodeLabelSpan, HttpMethod, HttpRequest, KeyValueStore, LanguageServerId,
-    RedirectPolicy, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput,
-    SlashCommandOutputSection,
+    CodeLabel, CodeLabelSpan, KeyValueStore, LanguageServerId, SlashCommand,
+    SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
 };
 use zed_extension_api::{self as zed, Result};
 
@@ -194,23 +194,20 @@ impl zed::Extension for GleamExtension {
                     .ok_or_else(|| "missing package name".to_string())?;
                 let module_path = components.map(ToString::to_string).collect::<Vec<_>>();
 
-                let response = zed::fetch(&HttpRequest {
-                    method: HttpMethod::Get,
-                    url: format!(
+                let response = HttpRequest::builder()
+                    .method(HttpMethod::Get)
+                    .url(format!(
                         "https://hexdocs.pm/{package_name}{maybe_path}",
                         maybe_path = if !module_path.is_empty() {
                             format!("/{}.html", module_path.join("/"))
                         } else {
                             String::new()
                         }
-                    ),
-                    headers: vec![(
-                        "User-Agent".to_string(),
-                        "Zed (Gleam Extension)".to_string(),
-                    )],
-                    body: None,
-                    redirect_policy: RedirectPolicy::FollowAll,
-                })?;
+                    ))
+                    .header("User-Agent", "Zed (Gleam Extension)")
+                    .redirect_policy(RedirectPolicy::FollowAll)
+                    .build()?
+                    .fetch()?;
 
                 let (markdown, _modules) =
                     convert_hexdocs_to_markdown(&mut io::Cursor::new(response.body))?;

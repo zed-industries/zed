@@ -11,7 +11,8 @@ use html_to_markdown::{
     StartTagOutcome, TagHandler,
 };
 use zed_extension_api::{
-    self as zed, HttpMethod, HttpRequest, KeyValueStore, RedirectPolicy, Result,
+    http_client::{HttpMethod, HttpRequest, RedirectPolicy},
+    KeyValueStore, Result,
 };
 
 pub fn index(package: String, database: &KeyValueStore) -> Result<()> {
@@ -20,13 +21,13 @@ pub fn index(package: String, database: &KeyValueStore) -> Result<()> {
         "Zed (Gleam Extension)".to_string(),
     )];
 
-    let response = zed::fetch(&HttpRequest {
-        method: HttpMethod::Get,
-        url: format!("https://hexdocs.pm/{package}"),
-        headers: headers.clone(),
-        body: None,
-        redirect_policy: RedirectPolicy::FollowAll,
-    })?;
+    let response = HttpRequest::builder()
+        .method(HttpMethod::Get)
+        .url(format!("https://hexdocs.pm/{package}"))
+        .headers(headers.clone())
+        .redirect_policy(RedirectPolicy::FollowAll)
+        .build()?
+        .fetch()?;
 
     let (package_root_markdown, modules) =
         convert_hexdocs_to_markdown(&mut io::Cursor::new(&response.body))?;
@@ -34,13 +35,13 @@ pub fn index(package: String, database: &KeyValueStore) -> Result<()> {
     database.insert(&package, &package_root_markdown)?;
 
     for module in modules {
-        let response = zed::fetch(&HttpRequest {
-            method: HttpMethod::Get,
-            url: format!("https://hexdocs.pm/{package}/{module}.html"),
-            headers: headers.clone(),
-            body: None,
-            redirect_policy: RedirectPolicy::FollowAll,
-        })?;
+        let response = HttpRequest::builder()
+            .method(HttpMethod::Get)
+            .url(format!("https://hexdocs.pm/{package}/{module}.html"))
+            .headers(headers.clone())
+            .redirect_policy(RedirectPolicy::FollowAll)
+            .build()?
+            .fetch()?;
 
         let (markdown, _modules) =
             convert_hexdocs_to_markdown(&mut io::Cursor::new(&response.body))?;

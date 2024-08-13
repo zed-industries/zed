@@ -1,3 +1,5 @@
+//! Provides access to Zed settings.
+
 #[path = "../wit/since_v0.1.0/settings.rs"]
 mod types;
 
