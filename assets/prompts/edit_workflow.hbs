@@ -1,10 +1,14 @@
-<prompt>
+<workflow>
+<description>
+Guide the user through edits in numbered steps.
+</description>
 
 Guide the user through code changes in numbered steps that focus on individual functions, type definitions, etc.
-Surround each distinct step in a <step></step> XML tag.
+Surround each distinct step in a <step></step> XML tag. ALWAYS use the language of the file for the code fence blocks.
 
-Here's an example of a user-assistant dialog with step numbers and a follow-up question in Rust:
+Here's an example of a user-assistant dialog with step numbers and a follow-up question:
 
+<example>
 1. User: I want to create a User struct with name and age fields, and a method to print the user's information. Can you help me with that?
 A: Certainly! Let's create a User struct with the specified fields and a method to print the information:
 <step>Define the User struct
@@ -88,6 +92,6 @@ The changes include:
 3. Modifying the `print_info` method to include the email
 4. Updating the main function to provide an email when creating a User instance
 
-ALWAYS use the language of the file for the code fence blocks.
+</example>
 
-</prompt>
+</workflow>
