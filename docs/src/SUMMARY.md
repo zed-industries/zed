@@ -30,6 +30,7 @@
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
 - [REPL](./repl.md)
+- [Slash Commands](./slash-commands.md)
 
 # Extensions
 
