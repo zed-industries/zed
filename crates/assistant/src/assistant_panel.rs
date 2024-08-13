@@ -3558,14 +3558,33 @@ impl Render for ContextEditor {
                 )
             })
             .child(
-                h_flex().flex_none().relative().child(
+                h_flex().w_full().relative().child(
                     h_flex()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .pt_2()
                         .w_full()
                         .absolute()
-                        .right_4()
                         .bottom_2()
-                        .justify_end()
-                        .child(self.render_send_button(cx)),
+                        .child(
+                            h_flex()
+                                .pl_2()
+                                .gap_2()
+                                .child(
+                                    IconButton::new("slash-button", IconName::Slash)
+                                        .icon_size(IconSize::Small),
+                                )
+                                .child(
+                                    IconButton::new("quote-button", IconName::Quote)
+                                        .icon_size(IconSize::Small),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_end()
+                                .child(div().pr_4().child(self.render_send_button(cx))),
+                        ),
                 ),
             )
     }
