@@ -1252,7 +1252,10 @@ impl Context {
 
             if let Some(step_end_index) = line.find("</step>") {
                 if in_step {
-                    let step_open_tag_end_ix = step_open_tag_start_ix + "<step>".len();
+                    let mut step_open_tag_end_ix = step_open_tag_start_ix + "<step>".len();
+                    if buffer.chars_at(step_open_tag_end_ix).next() == Some('\n') {
+                        step_open_tag_end_ix += 1;
+                    }
                     let mut step_end_tag_start_ix = line_start_offset + step_end_index;
                     let step_end_tag_end_ix = step_end_tag_start_ix + "</step>".len();
                     if buffer.reversed_chars_at(step_end_tag_start_ix).next() == Some('\n') {
