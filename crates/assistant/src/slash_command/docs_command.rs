@@ -250,6 +250,19 @@ impl SlashCommand for DocsSlashCommand {
                             .collect());
                         }
 
+                        if provider == LocalRustdocProvider::id() {
+                            let workspace_crates = LocalRustdocProvider::list_workspace_crates()?;
+
+                            return Ok(workspace_crates
+                                .into_iter()
+                                .map(|crate_name| ArgumentCompletion {
+                                    label: crate_name.to_string(),
+                                    new_text: format!("{provider} {crate_name}"),
+                                    run_command: true,
+                                })
+                                .collect());
+                        }
+
                         return Ok(vec![ArgumentCompletion {
                             label: format!(
                                 "Enter a {package_term} name.",
