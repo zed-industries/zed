@@ -27,7 +27,7 @@ impl SlashCommand for TabsSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert open tabs (only active tab by default)".to_owned()
+        "insert open tabs (active tab by default)".to_owned()
     }
 
     fn menu_text(&self) -> String {
@@ -35,7 +35,7 @@ impl SlashCommand for TabsSlashCommand {
     }
 
     fn requires_argument(&self) -> bool {
-        true
+        false
     }
 
     fn complete_argument(
