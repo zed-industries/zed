@@ -1346,7 +1346,7 @@ impl Terminal {
                 #[cfg(target_os = "linux")]
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
-                        let text = item.text().to_string();
+                        let text = item.text().unwrap_or_default().to_string();
                         self.input(text);
                     }
                 }
