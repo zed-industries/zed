@@ -28,7 +28,7 @@ pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 7);
 wasmtime::component::bindgen!({
     async: true,
     trappable_imports: true,
-    path: "../extension_api/wit/since_v0.0.7",
+    path: "../extension_api/wit/since_v0.1.0",
     with: {
          "worktree": ExtensionWorktree,
          "key-value-store": ExtensionKeyValueStore,
@@ -39,7 +39,7 @@ wasmtime::component::bindgen!({
 pub use self::zed::extension::*;
 
 mod settings {
-    include!(concat!(env!("OUT_DIR"), "/since_v0.0.7/settings.rs"));
+    include!(concat!(env!("OUT_DIR"), "/since_v0.1.0/settings.rs"));
 }
 
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;

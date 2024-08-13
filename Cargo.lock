@@ -13964,7 +13964,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.0.7"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -13976,7 +13976,7 @@ name = "zed_gleam"
 version = "0.1.3"
 dependencies = [
  "html_to_markdown 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "zed_extension_api 0.0.7",
+ "zed_extension_api 0.1.0",
 ]
 
 [[package]]
