@@ -767,6 +767,12 @@ impl WorkspaceDb {
         let dev_server_projects = self.dev_server_projects()?;
 
         for (id, location, order, dev_server_project_id) in self.recent_workspaces()? {
+            let temp_order = order.clone();
+            let order = if temp_order.order().len() == 0 {
+                LocalPathsOrder::default_for_paths(&location)
+            } else {
+                order
+            };
             if let Some(dev_server_project_id) = dev_server_project_id.map(DevServerProjectId) {
                 if let Some(dev_server_project) = dev_server_projects
                     .iter()
