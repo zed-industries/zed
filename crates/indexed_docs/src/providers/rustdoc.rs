@@ -45,6 +45,9 @@ impl LocalRustdocProvider {
         }
     }
 
+    /// Returns the list of all crates in the Cargo workspace.
+    ///
+    /// Includes the list of workspace crates as well as all dependency crates.
     pub fn list_workspace_crates() -> Result<Vec<Arc<str>>> {
         static WORKSPACE_CRATES: LazyLock<RwLock<Option<(BTreeSet<Arc<str>>, Instant)>>> =
             LazyLock::new(|| RwLock::new(None));
