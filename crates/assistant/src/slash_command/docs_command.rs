@@ -72,9 +72,6 @@ impl DocsSlashCommand {
             });
 
             if let Some((fs, cargo_workspace_root)) = index_provider_deps.log_err() {
-                // List the workspace crates once to prime the cache.
-                LocalRustdocProvider::list_workspace_crates().ok();
-
                 indexed_docs_registry.register_provider(Box::new(LocalRustdocProvider::new(
                     fs,
                     cargo_workspace_root,
@@ -232,50 +229,26 @@ impl SlashCommand for DocsSlashCommand {
                         drop(store.clone().index(package.as_str().into()));
                     }
 
-                    let items = store.search(package).await;
+                    let suggested_packages = store.clone().suggest_packages().await?;
+                    let search_results = store.search(package).await;
 
-                    if provider == LocalRustdocProvider::id() {
-                        let items = build_completions(provider.clone(), items);
-                        let workspace_crates = LocalRustdocProvider::list_workspace_crates()?;
-
-                        let mut all_items = items;
-                        let workspace_crate_completions = workspace_crates
-                            .into_iter()
-                            .filter(|crate_name| {
-                                !all_items
-                                    .iter()
-                                    .any(|item| item.label.as_str() == crate_name.as_ref())
-                            })
-                            .map(|crate_name| ArgumentCompletion {
-                                label: format!("{crate_name} (unindexed)"),
-                                new_text: format!("{provider} {crate_name}"),
-                                run_command: true,
-                            })
-                            .collect::<Vec<_>>();
-                        all_items.extend(workspace_crate_completions);
-                        return Ok(all_items);
-                    }
+                    let mut items = build_completions(provider.clone(), search_results);
+                    let workspace_crate_completions = suggested_packages
+                        .into_iter()
+                        .filter(|package_name| {
+                            !items
+                                .iter()
+                                .any(|item| item.label.as_str() == package_name.as_ref())
+                        })
+                        .map(|package_name| ArgumentCompletion {
+                            label: format!("{package_name} (unindexed)"),
+                            new_text: format!("{provider} {package_name}"),
+                            run_command: true,
+                        })
+                        .collect::<Vec<_>>();
+                    items.extend(workspace_crate_completions);
 
                     if items.is_empty() {
-                        if provider == DocsDotRsProvider::id() {
-                            return Ok(std::iter::once(ArgumentCompletion {
-                                label: format!(
-                                    "Enter a {package_term} name or try one of these:",
-                                    package_term = package_term(&provider)
-                                ),
-                                new_text: provider.to_string(),
-                                run_command: false,
-                            })
-                            .chain(DocsDotRsProvider::AUTO_SUGGESTED_CRATES.into_iter().map(
-                                |crate_name| ArgumentCompletion {
-                                    label: crate_name.to_string(),
-                                    new_text: format!("{provider} {crate_name}"),
-                                    run_command: true,
-                                },
-                            ))
-                            .collect());
-                        }
-
                         return Ok(vec![ArgumentCompletion {
                             label: format!(
                                 "Enter a {package_term} name.",
@@ -286,7 +259,7 @@ impl SlashCommand for DocsSlashCommand {
                         }]);
                     }
 
-                    Ok(build_completions(provider, items))
+                    Ok(items)
                 }
                 DocsSlashCommandArgs::SearchItemDocs {
                     provider,
