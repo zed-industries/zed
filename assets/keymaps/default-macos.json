@@ -474,7 +474,7 @@
     "context": "Editor && showing_completions",
     "bindings": {
       "enter": "editor::ConfirmCompletion",
-      "tab": "editor::ConfirmCompletion"
+      "tab": "editor::ComposeCompletion"
     }
   },
   {

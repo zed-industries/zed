@@ -413,6 +413,28 @@ pub struct InlayHint {
     pub resolve_state: ResolveState,
 }
 
+/// The user's intent behind a given completion confirmation
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
+pub enum CompletionIntent {
+    /// The user intends to 'commit' this result, if possible
+    /// completion confirmations should run side effects
+    Complete,
+    /// The user intends to continue 'composing' this completion
+    /// completion confirmations should not run side effects and
+    /// let the user continue composing their action
+    Compose,
+}
+
+impl CompletionIntent {
+    pub fn is_complete(&self) -> bool {
+        self == &Self::Complete
+    }
+
+    pub fn is_compose(&self) -> bool {
+        self == &Self::Compose
+    }
+}
+
 /// A completion provided by a language server
 #[derive(Clone)]
 pub struct Completion {
@@ -429,7 +451,7 @@ pub struct Completion {
     /// The raw completion provided by the language server.
     pub lsp_completion: lsp::CompletionItem,
     /// An optional callback to invoke when this completion is confirmed.
-    pub confirm: Option<Arc<dyn Send + Sync + Fn(&mut WindowContext)>>,
+    pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut WindowContext)>>,
     /// If true, the editor will show a new completion menu after this completion is confirmed.
     pub show_new_completions_on_confirm: bool,
 }

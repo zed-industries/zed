@@ -6,6 +6,7 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{AppContext, Model, Task, ViewContext, WeakView, WindowContext};
 use language::{Anchor, Buffer, CodeLabel, Documentation, HighlightId, LanguageServerId, ToPoint};
 use parking_lot::{Mutex, RwLock};
+use project::CompletionIntent;
 use rope::Point;
 use std::{
     ops::Range,
@@ -106,20 +107,24 @@ impl SlashCommandCompletionProvider {
                                     let command_range = command_range.clone();
                                     let editor = editor.clone();
                                     let workspace = workspace.clone();
-                                    Arc::new(move |cx: &mut WindowContext| {
-                                        editor
-                                            .update(cx, |editor, cx| {
-                                                editor.run_command(
-                                                    command_range.clone(),
-                                                    &command_name,
-                                                    None,
-                                                    true,
-                                                    workspace.clone(),
-                                                    cx,
-                                                );
-                                            })
-                                            .ok();
-                                    }) as Arc<_>
+                                    Arc::new(
+                                        move |intent: CompletionIntent, cx: &mut WindowContext| {
+                                            if intent.is_complete() {
+                                                editor
+                                                    .update(cx, |editor, cx| {
+                                                        editor.run_command(
+                                                            command_range.clone(),
+                                                            &command_name,
+                                                            None,
+                                                            true,
+                                                            workspace.clone(),
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
+                                        },
+                                    ) as Arc<_>
                                 })
                             },
                         );
@@ -177,19 +182,21 @@ impl SlashCommandCompletionProvider {
                                         let command_range = command_range.clone();
                                         let command_name = command_name.clone();
                                         let command_argument = command_argument.new_text.clone();
-                                        move |cx: &mut WindowContext| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.run_command(
-                                                        command_range.clone(),
-                                                        &command_name,
-                                                        Some(&command_argument),
-                                                        true,
-                                                        workspace.clone(),
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
+                                        move |intent: CompletionIntent, cx: &mut WindowContext| {
+                                            if intent.is_complete() {
+                                                editor
+                                                    .update(cx, |editor, cx| {
+                                                        editor.run_command(
+                                                            command_range.clone(),
+                                                            &command_name,
+                                                            Some(&command_argument),
+                                                            true,
+                                                            workspace.clone(),
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
                                         }
                                     }) as Arc<_>
                                 })

@@ -373,6 +373,13 @@ impl EditorElement {
             }
         });
         register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.compose_completion(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
+        register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.confirm_code_action(action, cx) {
                 task.detach_and_log_err(cx);
             } else {

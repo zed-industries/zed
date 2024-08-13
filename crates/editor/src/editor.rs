@@ -114,7 +114,7 @@ use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{
-    CodeAction, Completion, FormatTrigger, Item, Location, Project, ProjectPath,
+    CodeAction, Completion, CompletionIntent, FormatTrigger, Item, Location, Project, ProjectPath,
     ProjectTransaction, TaskSourceKind, WorktreeId,
 };
 use rand::prelude::*;
@@ -4213,6 +4213,23 @@ impl Editor {
         action: &ConfirmCompletion,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
+        self.do_completion(action.item_ix, CompletionIntent::Complete, cx)
+    }
+
+    pub fn compose_completion(
+        &mut self,
+        action: &ComposeCompletion,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        self.do_completion(action.item_ix, CompletionIntent::Compose, cx)
+    }
+
+    fn do_completion(
+        &mut self,
+        item_ix: Option<usize>,
+        intent: CompletionIntent,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
         use language::ToOffset as _;
 
         let completions_menu = if let ContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
@@ -4223,7 +4240,7 @@ impl Editor {
 
         let mat = completions_menu
             .matches
-            .get(action.item_ix.unwrap_or(completions_menu.selected_item))?;
+            .get(item_ix.unwrap_or(completions_menu.selected_item))?;
         let buffer_handle = completions_menu.buffer;
         let completions = completions_menu.completions.read();
         let completion = completions.get(mat.candidate_id)?;
@@ -4358,7 +4375,7 @@ impl Editor {
         });
 
         if let Some(confirm) = completion.confirm.as_ref() {
-            (confirm)(cx);
+            (confirm)(intent, cx);
         }
 
         if completion.show_new_completions_on_confirm {
