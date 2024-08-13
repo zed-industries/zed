@@ -30,7 +30,7 @@ impl Render for LabelStory {
                     "pulsating-label",
                     Animation::new(Duration::from_secs(2))
                         .repeat()
-                        .with_easing(pulsating_between(0.2, 1.0)),
+                        .with_easing(pulsating_between(0.4, 0.8)),
                     |label, delta| label.alpha(delta),
                 ),
             )
