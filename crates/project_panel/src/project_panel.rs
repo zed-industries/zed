@@ -2120,13 +2120,12 @@ impl ProjectPanel {
                                 .into_any_element(),
                         )
                     })
-                    .child(if let Some(icon) = &icon {
-                        h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
-                    } else {
-                        h_flex()
-                            .size(IconSize::default().rems())
-                            .invisible()
-                            .flex_none()
+                    .when_some(icon, |this, icon| {
+                        this.child(
+                            h_flex().child(
+                                Icon::from_path(icon.to_string()).color(filename_text_color),
+                            ),
+                        )
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
