@@ -10,6 +10,7 @@ mod model_selector;
 mod prompt_library;
 mod prompts;
 mod slash_command;
+pub mod slash_command_settings;
 mod streaming_diff;
 mod terminal_inline_assistant;
 
@@ -42,6 +43,8 @@ use slash_command::{
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
 use util::ResultExt;
+
+use crate::slash_command_settings::SlashCommandSettings;
 
 actions!(
     assistant,
@@ -177,6 +180,7 @@ pub fn init(
 ) -> Arc<PromptBuilder> {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
+    SlashCommandSettings::register(cx);
 
     // TODO: remove this when 0.148.0 is released.
     if AssistantSettings::get_global(cx).using_outdated_settings_version {
@@ -290,6 +294,7 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry.register_command(terminal_command::TerminalSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, false);
     slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
+
     if let Some(prompt_builder) = prompt_builder {
         slash_command_registry.register_command(
             workflow_command::WorkflowSlashCommand::new(prompt_builder),
@@ -298,15 +303,10 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     }
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 
-    cx.observe_flag::<docs_command::DocsSlashCommandFeatureFlag, _>({
-        let slash_command_registry = slash_command_registry.clone();
-        move |is_enabled, _cx| {
-            if is_enabled {
-                slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
-            }
-        }
-    })
-    .detach();
+    update_slash_commands_from_settings(cx);
+    cx.observe_global::<SettingsStore>(update_slash_commands_from_settings)
+        .detach();
+
     cx.observe_flag::<search_command::SearchSlashCommandFeatureFlag, _>({
         let slash_command_registry = slash_command_registry.clone();
         move |is_enabled, _cx| {
@@ -316,6 +316,23 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
         }
     })
     .detach();
+}
+
+fn update_slash_commands_from_settings(cx: &mut AppContext) {
+    let slash_command_registry = SlashCommandRegistry::global(cx);
+    let settings = SlashCommandSettings::get_global(cx);
+
+    if settings.docs.enabled {
+        slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
+    } else {
+        slash_command_registry.unregister_command(docs_command::DocsSlashCommand);
+    }
+
+    if settings.project.enabled {
+        slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
+    } else {
+        slash_command_registry.unregister_command(project_command::ProjectSlashCommand);
+    }
 }
 
 pub fn humanize_token_count(count: usize) -> String {
