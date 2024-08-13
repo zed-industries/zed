@@ -2653,9 +2653,7 @@ impl ContextEditor {
                                 div()
                                     .w_full()
                                     .px(cx.gutter_dimensions.full_width())
-                                    .child(
-                                        h_flex().w_full().border_t_1().border_color(border_color),
-                                    )
+                                    .child(h_flex().h(px(1.)).bg(border_color))
                                     .into_any()
                             }),
                             disposition: BlockDisposition::Below,

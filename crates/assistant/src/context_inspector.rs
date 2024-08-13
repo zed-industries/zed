@@ -8,7 +8,7 @@ use editor::{
 use gpui::{AppContext, Model, View};
 use text::{ToOffset, ToPoint};
 use ui::{
-    div, h_flex, Color, Element as _, ParentElement as _, Styled, ViewContext, WindowContext,
+    div, h_flex, px, Color, Element as _, ParentElement as _, Styled, ViewContext, WindowContext,
 };
 
 use crate::{Context, ResolvedWorkflowStep, WorkflowSuggestion};
@@ -109,12 +109,7 @@ impl ContextInspector {
                             div()
                                 .w_full()
                                 .px(cx.gutter_dimensions.full_width())
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .border_t_1()
-                                        .border_color(Color::Warning.color(cx)),
-                                )
+                                .child(h_flex().h(px(1.)).bg(Color::Warning.color(cx)))
                                 .into_any()
                         }),
                         disposition: BlockDisposition::Below,
