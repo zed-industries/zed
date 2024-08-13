@@ -35,9 +35,9 @@ use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, diagnostics_command, docs_command, fetch_command,
-    file_command, now_command, project_command, prompt_command, search_command, symbols_command,
-    tabs_command, terminal_command, workflow_command,
+    default_command, diagnostics_command, docs_command, fetch_command, file_command, now_command,
+    project_command, prompt_command, search_command, symbols_command, tabs_command,
+    terminal_command, workflow_command,
 };
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
@@ -282,7 +282,6 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
 fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
-    slash_command_registry.register_command(active_command::ActiveSlashCommand, true);
     slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
     slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
     slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
