@@ -77,6 +77,11 @@ impl SlashCommand for PromptSlashCommand {
         });
         cx.foreground_executor().spawn(async move {
             let mut prompt = prompt.await?;
+
+            if prompt.starts_with('/') {
+                // Prevent an edge case where the inserted prompt starts with a slash command (that leads to funky rendering).
+                prompt.insert(0, '\n');
+            }
             if prompt.is_empty() {
                 prompt.push('\n');
             }
