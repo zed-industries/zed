@@ -48,11 +48,6 @@ impl FileIcons {
             })
     }
 
-    pub fn get_icon_by_type(icon_type: &str, cx: &AppContext) -> Option<SharedString> {
-        let this = cx.try_global::<Self>()?;
-        this.get_type_icon(icon_type)
-    }
-
     pub fn get_icon(path: &Path, cx: &AppContext) -> Option<SharedString> {
         let this = cx.try_global::<Self>()?;
 

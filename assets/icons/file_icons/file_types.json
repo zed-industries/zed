@@ -222,9 +222,6 @@
     "default": {
       "icon": "icons/file_icons/file.svg"
     },
-    "default-point": {
-      "icon": "icons/file_icons/point.svg"
-    },
     "docker": {
       "icon": "icons/file_icons/docker.svg"
     },
