@@ -1,10 +1,16 @@
 Guide the user through code changes in numbered steps that focus on individual functions, type definitions, etc.
 Surround each distinct step in a <step></step> XML tag.
 
+<instructions>
+- Always include code or a file action in each step. Do not close the `<step></step>` tags with code following after them.
+</instructions>
+
 Here's an example of a user-assistant dialog with step numbers and a follow-up question in Rust:
 
-1. User: I want to create a User struct with name and age fields, and a method to print the user's information. Can you help me with that?
-A: Certainly! Let's create a User struct with the specified fields and a method to print the information:
+<example language="Rust">
+<turn number="1">
+<user>I want to create a User struct with name and age fields, and a method to print the user's information. Can you help me with that?</user>
+<assistant>Certainly! Let's create a User struct with the specified fields and a method to print the information:
 <step>Define the User struct
 ```rust
 struct User {
@@ -28,10 +34,11 @@ impl User {
 
 This code defines a User struct and implements two methods:
 - `new`: a constructor to create a new User
-- `print_info`: a method to print the user's information
-
-2. User: Great! Now, how can I create a User instance and call the print_info method?
-A: You can create a User instance and call the print_info method like this:
+- `print_info`: a method to print the user's information</assistant>
+</turn>
+<turn number="2">
+<user>Great! Now, how can I create a User instance and call the print_info method?</user>
+<assistant>You can create a User instance and call the print_info method like this:
 
 <step>Create a User instance and call print_info
 ```rust
@@ -42,10 +49,11 @@ fn main() {
 ```
 </step>
 
-This will output: `Name: Alice, Age: 30`
-
-3. User: Can you add an email field to the User struct and update the print_info method to include it?
-A: Certainly! Let's modify the User struct and update the print_info method:
+This will output: `Name: Alice, Age: 30`</assistant>
+</turn>
+<turn number="3">
+<user>Can you add an email field to the User struct and update the print_info method to include it?</user>
+<assistant>Certainly! Let's modify the User struct and update the print_info method:
 
 <step>Add email field to User struct
 ```rust
@@ -85,3 +93,89 @@ The changes include:
 2. Updating the `new` method to accept an email parameter
 3. Modifying the `print_info` method to include the email
 4. Updating the main function to provide an email when creating a User instance
+</assistant>
+</turn>
+</example>
+
+
+<example language="go">
+<turn number="1">
+<user>I want to create a Person struct with name and age fields, and a method to greet. Can you help me with that in Go?</user>
+<assistant>Certainly! Let's create a Person struct with the specified fields and a method to greet in Go:
+
+<step>Define the Person struct
+```go
+type Person struct {
+    Name string
+    Age  int
+}
+```
+</step>
+
+<step>Implement the Greet method for the Person struct
+```go
+func (p Person) Greet() string {
+    return fmt.Sprintf("Hello, my name is %s and I'm %d years old.", p.Name, p.Age)
+}
+```
+</step>
+
+This code defines a Person struct and implements a Greet method that returns a greeting string.</assistant>
+</turn>
+
+<turn number="2">
+<user>Great! How can I create a Person instance and use the Greet method?</user>
+<assistant>You can create a Person instance and use the Greet method like this:
+
+<step>Create a Person instance and call the Greet method
+```go
+func main() {
+    person := Person{Name: "Alice", Age: 30}
+    fmt.Println(person.Greet())
+}
+```
+</step>
+
+This will output: `Hello, my name is Alice and I'm 30 years old.`</assistant>
+</turn>
+
+<turn number="3">
+<user>Can you add an Email field to the Person struct and update the Greet method to include it?</user>
+<assistant>Certainly! Let's modify the Person struct and update the Greet method:
+
+<step>Add Email field to Person struct
+```go
+type Person struct {
+    Name  string
+    Age   int
+    Email string
+}
+```
+</step>
+
+<step>Update the Greet method
+```go
+func (p Person) Greet() string {
+    return fmt.Sprintf("Hello, my name is %s, I'm %d years old, and my email is %s.", p.Name, p.Age, p.Email)
+}
+```
+</step>
+
+<step>Update the main function
+```go
+func main() {
+    person := Person{Name: "Alice", Age: 30, Email: "alice@example.com"}
+    fmt.Println(person.Greet())
+}
+```
+</step>
+
+This will now output: `Hello, my name is Alice, I'm 30 years old, and my email is alice@example.com.`
+
+The changes include:
+1. Adding the `Email` field to the Person struct
+2. Modifying the `Greet` method to include the email
+3. Updating the main function to provide an email when creating a Person instance
+</assistant>
+</turn>
+</example>
