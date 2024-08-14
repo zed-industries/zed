@@ -12,6 +12,7 @@ use windows::Win32::{
         WindowsAndMessaging::*,
     },
 };
+use windows_core::{HSTRING, PCWSTR};
 
 use crate::*;
 
@@ -83,7 +84,10 @@ pub(crate) fn handle_msg(
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
-        WM_SETTINGCHANGE => handle_system_settings_changed(handle, state_ptr),
+        WM_SETTINGCHANGE => handle_system_settings_changed(handle, lparam, state_ptr),
+        WM_DWMCOLORIZATIONCOLORCHANGED | WM_THEMECHANGED => {
+            handle_system_theme_changed(msg, state_ptr)
+        }
         CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
     };
@@ -1079,8 +1083,13 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
 
 fn handle_system_settings_changed(
     handle: HWND,
+    lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    unsafe {
+        let string = PCWSTR::from_raw(lparam.0 as _);
+        println!("==> {:?}", string.to_string());
+    }
     let mut lock = state_ptr.state.borrow_mut();
     // mouse wheel
     lock.system_settings.mouse_wheel_settings.update();
@@ -1100,6 +1109,19 @@ fn handle_system_command(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -
         }
     }
     None
+}
+
+fn handle_system_theme_changed(msg: u32, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    println!("WM_CORLR");
+    let mut callback = state_ptr
+        .state
+        .borrow_mut()
+        .callbacks
+        .appearance_changed
+        .take()?;
+    callback();
+    state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
+    Some(0)
 }
 
 fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
