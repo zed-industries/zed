@@ -346,6 +346,10 @@ impl CompletionProvider for SlashCommandCompletionProvider {
             false
         }
     }
+
+    fn sort_completions(&self) -> bool {
+        false
+    }
 }
 
 impl SlashCommandLine {
