@@ -1713,6 +1713,8 @@ impl Context {
             .insert_message_after(assistant_message.id, Role::User, MessageStatus::Done, cx)
             .unwrap();
 
+        let pending_completion_id = post_inc(&mut self.completion_count);
+
         let task = cx.spawn({
             |this, mut cx| async move {
                 let stream = model.stream_completion(request, &cx);
@@ -1761,10 +1763,9 @@ impl Context {
                         })?;
                         smol::future::yield_now().await;
                     }
-
                     this.update(&mut cx, |this, cx| {
                         this.pending_completions
-                            .retain(|completion| completion.id != this.completion_count);
+                            .retain(|completion| completion.id != pending_completion_id);
                         this.summarize(false, cx);
                     })?;
 
@@ -1806,7 +1807,7 @@ impl Context {
         });
 
         self.pending_completions.push(PendingCompletion {
-            id: post_inc(&mut self.completion_count),
+            id: pending_completion_id,
             assistant_message_id: assistant_message.id,
             _task: task,
         });
