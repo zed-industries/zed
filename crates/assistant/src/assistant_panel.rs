@@ -3560,30 +3560,44 @@ impl Render for ContextEditor {
             .child(
                 h_flex().w_full().relative().child(
                     h_flex()
+                        .p_2()
+                        .w_full()
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
-                        .pt_2()
-                        .w_full()
-                        .absolute()
-                        .bottom_2()
+                        .bg(cx.theme().colors().editor_background)
                         .child(
                             h_flex()
-                                .pl_2()
                                 .gap_2()
                                 .child(
                                     IconButton::new("slash-button", IconName::Slash)
-                                        .icon_size(IconSize::Small),
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(|cx| {
+                                            Tooltip::with_meta(
+                                                "Insert Context",
+                                                None,
+                                                "Type / to insert via keyboard",
+                                                cx,
+                                            )
+                                        }),
                                 )
                                 .child(
                                     IconButton::new("quote-button", IconName::Quote)
-                                        .icon_size(IconSize::Small),
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(|cx| {
+                                            Tooltip::with_meta(
+                                                "Insert Selection",
+                                                None,
+                                                "Type / to insert via keyboard",
+                                                cx,
+                                            )
+                                        }),
                                 ),
                         )
                         .child(
                             h_flex()
                                 .w_full()
                                 .justify_end()
-                                .child(div().pr_4().child(self.render_send_button(cx))),
+                                .child(div().child(self.render_send_button(cx))),
                         ),
                 ),
             )
