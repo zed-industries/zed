@@ -401,6 +401,7 @@ impl PartialEq for ImageAnchor {
 
 struct PendingCompletion {
     id: usize,
+    assistant_message_id: MessageId,
     _task: Task<()>,
 }
 
@@ -1806,6 +1807,7 @@ impl Context {
 
         self.pending_completions.push(PendingCompletion {
             id: post_inc(&mut self.completion_count),
+            assistant_message_id: assistant_message.id,
             _task: task,
         });
 
@@ -1827,8 +1829,15 @@ impl Context {
         }
     }
 
-    pub fn cancel_last_assist(&mut self) -> bool {
-        self.pending_completions.pop().is_some()
+    pub fn cancel_last_assist(&mut self, cx: &mut ModelContext<Self>) -> bool {
+        if let Some(pending_completion) = self.pending_completions.pop() {
+            self.update_metadata(pending_completion.assistant_message_id, cx, |metadata| {
+                metadata.status = MessageStatus::Canceled;
+            });
+            true
+        } else {
+            false
+        }
     }
 
     pub fn cycle_message_roles(&mut self, ids: HashSet<MessageId>, cx: &mut ModelContext<Self>) {

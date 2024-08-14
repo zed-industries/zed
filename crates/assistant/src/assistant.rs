@@ -102,6 +102,7 @@ pub enum MessageStatus {
     Pending,
     Done,
     Error(SharedString),
+    Canceled,
 }
 
 impl MessageStatus {
@@ -112,6 +113,7 @@ impl MessageStatus {
             Some(proto::context_message_status::Variant::Error(error)) => {
                 MessageStatus::Error(error.message.into())
             }
+            Some(proto::context_message_status::Variant::Canceled(_)) => MessageStatus::Canceled,
             None => MessageStatus::Pending,
         }
     }
@@ -133,6 +135,11 @@ impl MessageStatus {
                     proto::context_message_status::Error {
                         message: message.to_string(),
                     },
+                )),
+            },
+            MessageStatus::Canceled => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Canceled(
+                    proto::context_message_status::Canceled {},
                 )),
             },
         }
