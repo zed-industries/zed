@@ -103,6 +103,10 @@ impl AnyProtoClient {
         let envelope = request.into_envelope(0, None, None);
         self.0.send(envelope)
     }
+
+    pub fn send_dynamic(&self, message: Envelope) -> anyhow::Result<()> {
+        self.0.send(message)
+    }
 }
 
 impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
@@ -183,6 +187,8 @@ impl fmt::Display for PeerId {
 }
 
 messages!(
+    (AcceptTermsOfService, Foreground),
+    (AcceptTermsOfServiceResponse, Foreground),
     (Ack, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
@@ -199,12 +205,9 @@ messages!(
     (CancelCall, Foreground),
     (ChannelMessageSent, Foreground),
     (ChannelMessageUpdate, Foreground),
-    (CompleteWithLanguageModel, Background),
     (ComputeEmbeddings, Background),
     (ComputeEmbeddingsResponse, Background),
     (CopyProjectEntry, Foreground),
-    (CountTokensWithLanguageModel, Background),
-    (CountTokensResponse, Background),
     (CreateBufferForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
@@ -238,6 +241,8 @@ messages!(
     (GetCompletionsResponse, Background),
     (GetDefinition, Background),
     (GetDefinitionResponse, Background),
+    (GetDeclaration, Background),
+    (GetDeclarationResponse, Background),
     (GetDocumentHighlights, Background),
     (GetDocumentHighlightsResponse, Background),
     (GetHover, Background),
@@ -258,6 +263,8 @@ messages!(
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
     (GetImplementationResponse, Background),
+    (GetLlmToken, Background),
+    (GetLlmTokenResponse, Background),
     (GetUsers, Foreground),
     (Hello, Foreground),
     (IncomingCall, Foreground),
@@ -274,7 +281,6 @@ messages!(
     (JoinProjectResponse, Foreground),
     (JoinRoom, Foreground),
     (JoinRoomResponse, Foreground),
-    (LanguageModelResponse, Background),
     (LeaveChannelBuffer, Background),
     (LeaveChannelChat, Foreground),
     (LeaveProject, Foreground),
@@ -294,6 +300,8 @@ messages!(
     (PrepareRename, Background),
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
+    (CountLanguageModelTokens, Background),
+    (CountLanguageModelTokensResponse, Background),
     (RefreshInlayHints, Foreground),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -353,6 +361,7 @@ messages!(
     (UpdateParticipantLocation, Foreground),
     (UpdateProject, Foreground),
     (UpdateProjectCollaborator, Foreground),
+    (UpdateUserPlan, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
     (UsersResponse, Foreground),
@@ -392,15 +401,17 @@ messages!(
     (AdvertiseContexts, Foreground),
     (OpenContext, Foreground),
     (OpenContextResponse, Foreground),
+    (CreateContext, Foreground),
+    (CreateContextResponse, Foreground),
     (UpdateContext, Foreground),
     (SynchronizeContexts, Foreground),
     (SynchronizeContextsResponse, Foreground),
-    // Remote development
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
 );
 
 request_messages!(
+    (AcceptTermsOfService, AcceptTermsOfServiceResponse),
     (ApplyCodeAction, ApplyCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
@@ -409,9 +420,7 @@ request_messages!(
     (Call, Ack),
     (CancelCall, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
-    (CompleteWithLanguageModel, LanguageModelResponse),
     (ComputeEmbeddings, ComputeEmbeddingsResponse),
-    (CountTokensWithLanguageModel, CountTokensResponse),
     (CreateChannel, CreateChannelResponse),
     (CreateProjectEntry, ProjectEntryResponse),
     (CreateRoom, CreateRoomResponse),
@@ -429,9 +438,11 @@ request_messages!(
     (GetCodeActions, GetCodeActionsResponse),
     (GetCompletions, GetCompletionsResponse),
     (GetDefinition, GetDefinitionResponse),
+    (GetDeclaration, GetDeclarationResponse),
     (GetImplementation, GetImplementationResponse),
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
     (GetHover, GetHoverResponse),
+    (GetLlmToken, GetLlmTokenResponse),
     (GetNotifications, GetNotificationsResponse),
     (GetPrivateUserInfo, GetPrivateUserInfoResponse),
     (GetProjectSymbols, GetProjectSymbolsResponse),
@@ -464,6 +475,7 @@ request_messages!(
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
     (PrepareRename, PrepareRenameResponse),
+    (CountLanguageModelTokens, CountLanguageModelTokensResponse),
     (RefreshInlayHints, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),
     (RejoinRoom, RejoinRoomResponse),
@@ -514,8 +526,8 @@ request_messages!(
     (RenameDevServer, Ack),
     (RestartLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
+    (CreateContext, CreateContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
-    // Remote development
     (AddWorktree, AddWorktreeResponse),
 );
 
@@ -536,6 +548,7 @@ entity_messages!(
     GetCodeActions,
     GetCompletions,
     GetDefinition,
+    GetDeclaration,
     GetImplementation,
     GetDocumentHighlights,
     GetHover,
@@ -581,6 +594,7 @@ entity_messages!(
     LspExtExpandMacro,
     AdvertiseContexts,
     OpenContext,
+    CreateContext,
     UpdateContext,
     SynchronizeContexts,
 );

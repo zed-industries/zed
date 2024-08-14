@@ -1,8 +1,13 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::stdio::TerminalOutput;
 use anyhow::Result;
-use gpui::{img, AnyElement, FontWeight, ImageData, Render, TextRun, View};
+use base64::prelude::*;
+use gpui::{
+    img, percentage, Animation, AnimationExt, AnyElement, FontWeight, Render, RenderImage, Task,
+    TextRun, Transformation, View,
+};
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
@@ -11,13 +16,12 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
 
-// Given these outputs are destined for the editor with the block decorations API, all of them must report
-// how many lines they will take up in the editor.
-pub trait LineHeight: Sized {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8;
-}
+use markdown_preview::{
+    markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,
+    markdown_renderer::render_markdown_block,
+};
 
-// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
+/// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
         MimeType::DataTable(_) => 6,
@@ -34,7 +38,7 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
 pub struct ImageView {
     height: u32,
     width: u32,
-    image: Arc<ImageData>,
+    image: Arc<RenderImage>,
 }
 
 impl ImageView {
@@ -59,7 +63,7 @@ impl ImageView {
     }
 
     fn from(base64_encoded_data: &str) -> Result<Self> {
-        let bytes = base64::decode(base64_encoded_data)?;
+        let bytes = BASE64_STANDARD.decode(base64_encoded_data)?;
 
         let format = image::guess_format(&bytes)?;
         let mut data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
@@ -72,26 +76,13 @@ impl ImageView {
         let height = data.height();
         let width = data.width();
 
-        let gpui_image_data = ImageData::new(data);
+        let gpui_image_data = RenderImage::new(vec![image::Frame::new(data)]);
 
         return Ok(ImageView {
             height,
             width,
             image: Arc::new(gpui_image_data),
         });
-    }
-}
-
-impl LineHeight for ImageView {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        let line_height = cx.line_height();
-
-        let lines = self.height as f32 / line_height.0;
-
-        if lines > u8::MAX as f32 {
-            return u8::MAX;
-        }
-        lines as u8
     }
 }
 
@@ -112,6 +103,9 @@ fn cell_content(row: &Value, field: &str) -> String {
         Some(Value::Null) | None => String::new(),
     }
 }
+
+// Declare constant for the padding multiple on the line height
+const TABLE_Y_PADDING_MULTIPLE: f32 = 0.5;
 
 impl TableView {
     pub fn new(table: TabularDataResource, cx: &mut WindowContext) -> Self {
@@ -166,8 +160,6 @@ impl TableView {
             None => return div().into_any_element(),
         };
 
-        // todo!(): compute the width of each column by finding the widest cell in each column
-
         let mut headings = serde_json::Map::new();
         for field in &self.table.schema.fields {
             headings.insert(field.name.clone(), Value::String(field.name.clone()));
@@ -196,6 +188,8 @@ impl TableView {
     ) -> AnyElement {
         let theme = cx.theme();
 
+        let line_height = cx.line_height();
+
         let row_cells = schema
             .fields
             .iter()
@@ -223,11 +217,11 @@ impl TableView {
                     .w(*width + px(22.))
                     .child(value)
                     .px_2()
-                    .py_1()
+                    .py((TABLE_Y_PADDING_MULTIPLE / 2.0) * line_height)
                     .border_color(theme.colors().border);
 
                 if is_header {
-                    cell = cell.border_2().bg(theme.colors().border_focused)
+                    cell = cell.border_1().bg(theme.colors().border_focused)
                 } else {
                     cell = cell.border_1()
                 }
@@ -248,23 +242,7 @@ impl TableView {
     }
 }
 
-impl LineHeight for TableView {
-    fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
-        let num_rows = match &self.table.data {
-            Some(data) => data.len(),
-            // We don't support Path based data sources
-            None => 0,
-        };
-
-        // Given that each cell has both `py_1` and a border, we have to estimate
-        // a reasonable size to add on, then round up.
-        let row_heights = (num_rows as f32 * 1.2) + 1.0;
-
-        (row_heights as u8).saturating_add(2) // Header + spacing
-    }
-}
-
-// Userspace error from the kernel
+/// Userspace error from the kernel
 pub struct ErrorView {
     pub ename: String,
     pub evalue: String,
@@ -275,14 +253,14 @@ impl ErrorView {
     fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
         let theme = cx.theme();
 
-        let colors = cx.theme().colors();
+        let padding = cx.line_height() / 2.;
 
         Some(
             v_flex()
                 .w_full()
-                .bg(colors.background)
-                .p_4()
-                .border_l_1()
+                .px(padding)
+                .py(padding)
+                .border_1()
                 .border_color(theme.status().error_border)
                 .child(
                     h_flex()
@@ -295,33 +273,97 @@ impl ErrorView {
     }
 }
 
-impl LineHeight for ErrorView {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        let mut height: u8 = 0;
-        height = height.saturating_add(self.ename.lines().count() as u8);
-        height = height.saturating_add(self.evalue.lines().count() as u8);
-        height = height.saturating_add(self.traceback.num_lines(cx));
-        height
+pub struct MarkdownView {
+    contents: Option<ParsedMarkdown>,
+    parsing_markdown_task: Option<Task<Result<()>>>,
+}
+
+impl MarkdownView {
+    pub fn from(text: String, cx: &mut ViewContext<Self>) -> Self {
+        let task = cx.spawn(|markdown, mut cx| async move {
+            let text = text.clone();
+            let parsed = cx
+                .background_executor()
+                .spawn(async move { parse_markdown(&text, None, None).await });
+
+            let content = parsed.await;
+
+            markdown.update(&mut cx, |markdown, cx| {
+                markdown.parsing_markdown_task.take();
+                markdown.contents = Some(content);
+                cx.notify();
+            })
+        });
+
+        Self {
+            contents: None,
+            parsing_markdown_task: Some(task),
+        }
     }
 }
 
-pub enum OutputType {
+impl Render for MarkdownView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let Some(parsed) = self.contents.as_ref() else {
+            return div().into_any_element();
+        };
+
+        let mut markdown_render_context =
+            markdown_preview::markdown_renderer::RenderContext::new(None, cx);
+
+        v_flex()
+            .gap_3()
+            .py_4()
+            .children(parsed.children.iter().map(|child| {
+                div().relative().child(
+                    div()
+                        .relative()
+                        .child(render_markdown_block(child, &mut markdown_render_context)),
+                )
+            }))
+            .into_any_element()
+    }
+}
+
+pub struct Output {
+    content: OutputContent,
+    display_id: Option<String>,
+}
+
+impl Output {
+    pub fn new(data: &MimeBundle, display_id: Option<String>, cx: &mut WindowContext) -> Self {
+        Self {
+            content: OutputContent::new(data, cx),
+            display_id,
+        }
+    }
+
+    pub fn from(content: OutputContent) -> Self {
+        Self {
+            content,
+            display_id: None,
+        }
+    }
+}
+
+pub enum OutputContent {
     Plain(TerminalOutput),
     Stream(TerminalOutput),
     Image(ImageView),
     ErrorOutput(ErrorView),
     Message(String),
     Table(TableView),
+    Markdown(View<MarkdownView>),
     ClearOutputWaitMarker,
 }
 
-impl OutputType {
+impl OutputContent {
     fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
             Self::Plain(stdio) => Some(stdio.render(cx)),
-            // Self::Markdown(markdown) => Some(markdown.render(theme)),
+            Self::Markdown(markdown) => Some(markdown.clone().into_any_element()),
             Self::Stream(stdio) => Some(stdio.render(cx)),
             Self::Image(image) => Some(image.render(cx)),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
@@ -335,30 +377,20 @@ impl OutputType {
 
     pub fn new(data: &MimeBundle, cx: &mut WindowContext) -> Self {
         match data.richest(rank_mime_type) {
-            Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
-            Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
+            Some(MimeType::Plain(text)) => OutputContent::Plain(TerminalOutput::from(text, cx)),
+            Some(MimeType::Markdown(text)) => {
+                let view = cx.new_view(|cx| MarkdownView::from(text.clone(), cx));
+                OutputContent::Markdown(view)
+            }
             Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
-                Ok(view) => OutputType::Image(view),
-                Err(error) => OutputType::Message(format!("Failed to load image: {}", error)),
+                Ok(view) => OutputContent::Image(view),
+                Err(error) => OutputContent::Message(format!("Failed to load image: {}", error)),
             },
-            Some(MimeType::DataTable(data)) => OutputType::Table(TableView::new(data.clone(), cx)),
+            Some(MimeType::DataTable(data)) => {
+                OutputContent::Table(TableView::new(data.clone(), cx))
+            }
             // Any other media types are not supported
-            _ => OutputType::Message("Unsupported media type".to_string()),
-        }
-    }
-}
-
-impl LineHeight for OutputType {
-    /// Calculates the expected number of lines
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        match self {
-            Self::Plain(stdio) => stdio.num_lines(cx),
-            Self::Stream(stdio) => stdio.num_lines(cx),
-            Self::Image(image) => image.num_lines(cx),
-            Self::Message(message) => message.lines().count() as u8,
-            Self::Table(table) => table.num_lines(cx),
-            Self::ErrorOutput(error_view) => error_view.num_lines(cx),
-            Self::ClearOutputWaitMarker => 0,
+            _ => OutputContent::Message("Unsupported media type".to_string()),
         }
     }
 }
@@ -377,7 +409,7 @@ pub enum ExecutionStatus {
 }
 
 pub struct ExecutionView {
-    pub outputs: Vec<OutputType>,
+    pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
 }
 
@@ -391,27 +423,32 @@ impl ExecutionView {
 
     /// Accept a Jupyter message belonging to this execution
     pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ViewContext<Self>) {
-        let output: OutputType = match message {
-            JupyterMessageContent::ExecuteResult(result) => OutputType::new(&result.data, cx),
-            JupyterMessageContent::DisplayData(result) => OutputType::new(&result.data, cx),
+        let output: Output = match message {
+            JupyterMessageContent::ExecuteResult(result) => Output::new(
+                &result.data,
+                result.transient.as_ref().and_then(|t| t.display_id.clone()),
+                cx,
+            ),
+            JupyterMessageContent::DisplayData(result) => {
+                Output::new(&result.data, result.transient.display_id.clone(), cx)
+            }
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
-                if let Some(new_terminal) = self.apply_terminal_text(&result.text) {
-                    new_terminal
+                if let Some(new_terminal) = self.apply_terminal_text(&result.text, cx) {
+                    Output::from(new_terminal)
                 } else {
-                    cx.notify();
                     return;
                 }
             }
             JupyterMessageContent::ErrorOutput(result) => {
-                let mut terminal = TerminalOutput::new();
+                let mut terminal = TerminalOutput::new(cx);
                 terminal.append_text(&result.traceback.join("\n"));
 
-                OutputType::ErrorOutput(ErrorView {
+                Output::from(OutputContent::ErrorOutput(ErrorView {
                     ename: result.ename.clone(),
                     evalue: result.evalue.clone(),
                     traceback: terminal,
-                })
+                }))
             }
             JupyterMessageContent::ExecuteReply(reply) => {
                 for payload in reply.payload.iter() {
@@ -419,17 +456,21 @@ impl ExecutionView {
                         // Pager data comes in via `?` at the end of a statement in Python, used for showing documentation.
                         // Some UI will show this as a popup. For ease of implementation, it's included as an output here.
                         runtimelib::Payload::Page { data, .. } => {
-                            let output = OutputType::new(data, cx);
+                            let output = Output::new(data, None, cx);
                             self.outputs.push(output);
                         }
 
-                        // Comments from @rgbkrk, reach out with questions
+                        // There are other payloads that could be handled here, such as updating the input.
+                        // Below are the other payloads that _could_ be handled, but are not required for Zed.
 
                         // Set next input adds text to the next cell. Not required to support.
                         // However, this could be implemented by adding text to the buffer.
+                        // Trigger in python using `get_ipython().set_next_input("text")`
+                        //
                         // runtimelib::Payload::SetNextInput { text, replace } => {},
 
                         // Not likely to be used in the context of Zed, where someone could just open the buffer themselves
+                        // Python users can trigger this with the `%edit` magic command
                         // runtimelib::Payload::EditMagic { filename, line_number } => {},
 
                         // Ask the user if they want to exit the kernel. Not required to support.
@@ -448,7 +489,7 @@ impl ExecutionView {
                 }
 
                 // Create a marker to clear the output after we get in a new output
-                OutputType::ClearOutputWaitMarker
+                Output::from(OutputContent::ClearOutputWaitMarker)
             }
             JupyterMessageContent::Status(status) => {
                 match status.execution_state {
@@ -466,8 +507,10 @@ impl ExecutionView {
         };
 
         // Check for a clear output marker as the previous output, so we can clear it out
-        if let Some(OutputType::ClearOutputWaitMarker) = self.outputs.last() {
-            self.outputs.clear();
+        if let Some(output) = self.outputs.last() {
+            if let OutputContent::ClearOutputWaitMarker = output.content {
+                self.outputs.clear();
+            }
         }
 
         self.outputs.push(output);
@@ -475,16 +518,43 @@ impl ExecutionView {
         cx.notify();
     }
 
-    fn apply_terminal_text(&mut self, text: &str) -> Option<OutputType> {
+    pub fn update_display_data(
+        &mut self,
+        data: &MimeBundle,
+        display_id: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let mut any = false;
+
+        self.outputs.iter_mut().for_each(|output| {
+            if let Some(other_display_id) = output.display_id.as_ref() {
+                if other_display_id == display_id {
+                    output.content = OutputContent::new(data, cx);
+                    any = true;
+                }
+            }
+        });
+
+        if any {
+            cx.notify();
+        }
+    }
+
+    fn apply_terminal_text(
+        &mut self,
+        text: &str,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<OutputContent> {
         if let Some(last_output) = self.outputs.last_mut() {
-            match last_output {
-                OutputType::Stream(last_stream) => {
+            match &mut last_output.content {
+                OutputContent::Stream(last_stream) => {
                     last_stream.append_text(text);
                     // Don't need to add a new output, we already have a terminal output
+                    cx.notify();
                     return None;
                 }
                 // Edge case note: a clear output marker
-                OutputType::ClearOutputWaitMarker => {
+                OutputContent::ClearOutputWaitMarker => {
                     // Edge case note: a clear output marker is handled by the caller
                     // since we will return a new output at the end here as a new terminal output
                 }
@@ -494,64 +564,72 @@ impl ExecutionView {
             }
         }
 
-        let mut new_terminal = TerminalOutput::new();
+        let mut new_terminal = TerminalOutput::new(cx);
         new_terminal.append_text(text);
-        Some(OutputType::Stream(new_terminal))
+        Some(OutputContent::Stream(new_terminal))
     }
 }
 
 impl Render for ExecutionView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let status = match &self.status {
+            ExecutionStatus::ConnectingToKernel => Label::new("Connecting to kernel...")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::Executing => h_flex()
+                .gap_2()
+                .child(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::Small)
+                        .color(Color::Muted)
+                        .with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(3)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        ),
+                )
+                .child(Label::new("Executing...").color(Color::Muted))
+                .into_any_element(),
+            ExecutionStatus::Finished => Icon::new(IconName::Check)
+                .size(IconSize::Small)
+                .into_any_element(),
+            ExecutionStatus::Unknown => Label::new("Unknown status")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::ShuttingDown => Label::new("Kernel shutting down...")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::Shutdown => Label::new("Kernel shutdown")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::Queued => Label::new("Queued...")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::KernelErrored(error) => Label::new(format!("Kernel error: {}", error))
+                .color(Color::Error)
+                .into_any_element(),
+        };
+
         if self.outputs.len() == 0 {
-            return match &self.status {
-                ExecutionStatus::ConnectingToKernel => {
-                    div().child(Label::new("Connecting to kernel...").color(Color::Muted))
-                }
-                ExecutionStatus::Executing => {
-                    div().child(Label::new("Executing...").color(Color::Muted))
-                }
-                ExecutionStatus::Finished => div().child(Icon::new(IconName::Check)),
-                ExecutionStatus::Unknown => {
-                    div().child(div().child(Label::new("Unknown status").color(Color::Muted)))
-                }
-                ExecutionStatus::ShuttingDown => {
-                    div().child(Label::new("Kernel shutting down...").color(Color::Muted))
-                }
-                ExecutionStatus::Shutdown => {
-                    div().child(Label::new("Kernel shutdown").color(Color::Muted))
-                }
-                ExecutionStatus::Queued => div().child(Label::new("Queued").color(Color::Muted)),
-                ExecutionStatus::KernelErrored(error) => {
-                    div().child(Label::new(format!("Kernel error: {}", error)).color(Color::Error))
-                }
-            }
-            .into_any_element();
+            return v_flex()
+                .min_h(cx.line_height())
+                .justify_center()
+                .child(status)
+                .into_any_element();
         }
 
         div()
             .w_full()
-            .children(self.outputs.iter().filter_map(|output| output.render(cx)))
-            .into_any_element()
-    }
-}
-
-impl LineHeight for ExecutionView {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        if self.outputs.is_empty() {
-            return 1; // For the status message if outputs are not there
-        }
-
-        self.outputs
-            .iter()
-            .map(|output| output.num_lines(cx))
-            .fold(0, |acc, additional_height| {
-                acc.saturating_add(additional_height)
+            .children(
+                self.outputs
+                    .iter()
+                    .filter_map(|output| output.content.render(cx)),
+            )
+            .children(match self.status {
+                ExecutionStatus::Executing => vec![status],
+                ExecutionStatus::Queued => vec![status],
+                _ => vec![],
             })
-    }
-}
-
-impl LineHeight for View<ExecutionView> {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        self.update(cx, |execution_view, cx| execution_view.num_lines(cx))
+            .into_any_element()
     }
 }

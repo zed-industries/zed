@@ -9,6 +9,7 @@ pub(crate) mod repeat;
 mod scroll;
 pub(crate) mod search;
 pub mod substitute;
+mod toggle_comments;
 pub(crate) mod yank;
 
 use std::collections::HashMap;
@@ -39,6 +40,7 @@ use self::{
     change::{change_motion, change_object},
     delete::{delete_motion, delete_object},
     indent::{indent_motion, indent_object, IndentDirection},
+    toggle_comments::{toggle_comments_motion, toggle_comments_object},
     yank::{yank_motion, yank_object},
 };
 
@@ -155,10 +157,13 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(|_: &mut Workspace, _: &Indent, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
+            let count = vim.take_count(cx).unwrap_or(1);
             vim.update_active_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, cx| {
                     let mut original_positions = save_selection_starts(editor, cx);
-                    editor.indent(&Default::default(), cx);
+                    for _ in 0..count {
+                        editor.indent(&Default::default(), cx);
+                    }
                     restore_selection_cursors(editor, cx, &mut original_positions);
                 });
             });
@@ -171,10 +176,13 @@ pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace
     workspace.register_action(|_: &mut Workspace, _: &Outdent, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
+            let count = vim.take_count(cx).unwrap_or(1);
             vim.update_active_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, cx| {
                     let mut original_positions = save_selection_starts(editor, cx);
-                    editor.outdent(&Default::default(), cx);
+                    for _ in 0..count {
+                        editor.outdent(&Default::default(), cx);
+                    }
                     restore_selection_cursors(editor, cx, &mut original_positions);
                 });
             });
@@ -237,6 +245,7 @@ pub fn normal_motion(
             Some(Operator::OppositeCase) => {
                 change_case_motion(vim, motion, times, CaseTarget::OppositeCase, cx)
             }
+            Some(Operator::ToggleComments) => toggle_comments_motion(vim, motion, times, cx),
             Some(operator) => {
                 // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
@@ -273,6 +282,7 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
                         target: Some(SurroundsType::Object(object)),
                     });
                 }
+                Some(Operator::ToggleComments) => toggle_comments_object(vim, object, around, cx),
                 _ => {
                     // Can't do anything for namespace operators. Ignoring
                 }

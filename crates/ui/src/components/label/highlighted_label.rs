@@ -53,6 +53,11 @@ impl LabelCommon for HighlightedLabel {
         self.base = self.base.italic(italic);
         self
     }
+
+    fn alpha(mut self, alpha: f32) -> Self {
+        self.base = self.base.alpha(alpha);
+        self
+    }
 }
 
 pub fn highlight_ranges(

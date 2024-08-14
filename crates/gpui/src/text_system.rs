@@ -1,8 +1,10 @@
+mod font_fallbacks;
 mod font_features;
 mod line;
 mod line_layout;
 mod line_wrapper;
 
+pub use font_fallbacks::*;
 pub use font_features::*;
 pub use line::*;
 pub use line_layout::*;
@@ -62,8 +64,7 @@ impl TextSystem {
             wrapper_pool: Mutex::default(),
             font_runs_pool: Mutex::default(),
             fallback_font_stack: smallvec![
-                // TODO: This is currently Zed-specific.
-                // We should allow GPUI users to provide their own fallback font stack.
+                // TODO: Remove this when Linux have implemented setting fallbacks.
                 font("Zed Plex Mono"),
                 font("Helvetica"),
                 font("Segoe UI"),  // Windows
@@ -595,6 +596,19 @@ impl FontWeight {
     pub const EXTRA_BOLD: FontWeight = FontWeight(800.0);
     /// Black weight (900), the thickest value.
     pub const BLACK: FontWeight = FontWeight(900.0);
+
+    /// All of the font weights, in order from thinnest to thickest.
+    pub const ALL: [FontWeight; 9] = [
+        Self::THIN,
+        Self::EXTRA_LIGHT,
+        Self::LIGHT,
+        Self::NORMAL,
+        Self::MEDIUM,
+        Self::SEMIBOLD,
+        Self::BOLD,
+        Self::EXTRA_BOLD,
+        Self::BLACK,
+    ];
 }
 
 /// Allows italic or oblique faces to be selected.
@@ -670,6 +684,9 @@ pub struct Font {
     /// The font features to use.
     pub features: FontFeatures,
 
+    /// The fallbacks fonts to use.
+    pub fallbacks: Option<FontFallbacks>,
+
     /// The font weight.
     pub weight: FontWeight,
 
@@ -684,6 +701,7 @@ pub fn font(family: impl Into<SharedString>) -> Font {
         features: FontFeatures::default(),
         weight: FontWeight::default(),
         style: FontStyle::default(),
+        fallbacks: None,
     }
 }
 

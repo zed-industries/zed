@@ -954,6 +954,7 @@ fn random_diagnostic(
             is_primary,
             is_disk_based: false,
             is_unnecessary: false,
+            data: None,
         },
     }
 }

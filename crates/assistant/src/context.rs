@@ -1,6 +1,6 @@
 use crate::{
-    prompt_library::PromptStore, slash_command::SlashCommandLine, CompletionProvider, MessageId,
-    MessageStatus,
+    prompts::PromptBuilder, slash_command::SlashCommandLine, AssistantPanel, InitialInsertion,
+    InlineAssistId, InlineAssistant, MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -9,23 +9,35 @@ use assistant_slash_command::{
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use fs::Fs;
+use editor::Editor;
+use fs::{Fs, RemoveOptions};
 use futures::{
     future::{self, Shared},
+    stream::FuturesUnordered,
     FutureExt, StreamExt,
 };
-use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task};
-use language::{
-    AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, ParseStatus, Point, ToOffset,
+use gpui::{
+    AppContext, Context as _, EventEmitter, Image, Model, ModelContext, RenderImage, Subscription,
+    Task, UpdateGlobal, View, WeakView,
 };
-use language_model::LanguageModelRequestMessage;
-use language_model::{LanguageModelRequest, Role};
+
+use language::{
+    AnchorRangeExt, Bias, Buffer, BufferSnapshot, LanguageRegistry, OffsetRangeExt, ParseStatus,
+    Point, ToOffset,
+};
+use language_model::{
+    LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelTool, Role,
+};
 use open_ai::Model as OpenAiModel;
-use paths::contexts_dir;
+use paths::{context_images_dir, contexts_dir};
 use project::Project;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use std::{
-    cmp,
+    cmp::{self, Ordering},
+    collections::hash_map,
     fmt::Debug,
     iter, mem,
     ops::Range,
@@ -34,9 +46,10 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::AssistantKind;
-use ui::SharedString;
+use ui::{SharedString, WindowContext};
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
+use workspace::Workspace;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
@@ -270,11 +283,13 @@ impl ContextOperation {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ContextEvent {
+    AssistError(String),
     MessagesEdited,
     SummaryChanged,
-    EditStepsChanged,
+    WorkflowStepsRemoved(Vec<Range<language::Anchor>>),
+    WorkflowStepUpdated(Range<language::Anchor>),
     StreamedCompletion,
     PendingSlashCommandsUpdated {
         removed: Vec<Range<language::Anchor>>,
@@ -308,8 +323,23 @@ pub struct MessageMetadata {
     timestamp: clock::Lamport,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
+pub struct MessageImage {
+    image_id: u64,
+    image: Shared<Task<Option<LanguageModelImage>>>,
+}
+
+impl PartialEq for MessageImage {
+    fn eq(&self, other: &Self) -> bool {
+        self.image_id == other.image_id
+    }
+}
+
+impl Eq for MessageImage {}
+
+#[derive(Clone, Debug)]
 pub struct Message {
+    pub image_offsets: SmallVec<[(usize, MessageImage); 1]>,
     pub offset_range: Range<usize>,
     pub index_range: Range<usize>,
     pub id: MessageId,
@@ -320,10 +350,52 @@ pub struct Message {
 
 impl Message {
     fn to_request_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
+        let mut content = Vec::new();
+
+        let mut range_start = self.offset_range.start;
+        for (image_offset, message_image) in self.image_offsets.iter() {
+            if *image_offset != range_start {
+                content.push(
+                    buffer
+                        .text_for_range(range_start..*image_offset)
+                        .collect::<String>()
+                        .into(),
+                )
+            }
+
+            if let Some(image) = message_image.image.clone().now_or_never().flatten() {
+                content.push(language_model::MessageContent::Image(image));
+            }
+
+            range_start = *image_offset;
+        }
+        if range_start != self.offset_range.end {
+            content.push(
+                buffer
+                    .text_for_range(range_start..self.offset_range.end)
+                    .collect::<String>()
+                    .into(),
+            )
+        }
+
         LanguageModelRequestMessage {
             role: self.role,
-            content: buffer.text_for_range(self.offset_range.clone()).collect(),
+            content,
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ImageAnchor {
+    pub anchor: language::Anchor,
+    pub image_id: u64,
+    pub render_image: Arc<RenderImage>,
+    pub image: Shared<Task<Option<LanguageModelImage>>>,
+}
+
+impl PartialEq for ImageAnchor {
+    fn eq(&self, other: &Self) -> bool {
+        self.image_id == other.image_id
     }
 }
 
@@ -336,326 +408,248 @@ struct PendingCompletion {
 pub struct SlashCommandId(clock::Lamport);
 
 #[derive(Debug)]
-pub struct EditStep {
-    pub source_range: Range<language::Anchor>,
-    pub operations: Option<EditStepOperations>,
+pub struct WorkflowStep {
+    pub tagged_range: Range<language::Anchor>,
+    pub status: WorkflowStepStatus,
 }
 
-#[derive(Debug)]
-pub struct EditSuggestionGroup {
-    pub context_range: Range<language::Anchor>,
-    pub suggestions: Vec<EditSuggestion>,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedWorkflowStep {
+    pub title: String,
+    pub suggestions: HashMap<Model<Buffer>, Vec<WorkflowSuggestionGroup>>,
 }
 
-#[derive(Debug)]
-pub struct EditSuggestion {
-    pub range: Range<language::Anchor>,
-    /// If None, assume this is a suggestion to delete the range rather than transform it.
-    pub description: Option<String>,
-    pub prepend_newline: bool,
+pub enum WorkflowStepStatus {
+    Pending(Task<Option<()>>),
+    Resolved(ResolvedWorkflowStep),
+    Error(Arc<anyhow::Error>),
 }
 
-impl EditStep {
-    pub fn edit_suggestions(
-        &self,
-        project: &Model<Project>,
-        cx: &AppContext,
-    ) -> Task<HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>> {
-        let Some(EditStepOperations::Parsed { operations, .. }) = &self.operations else {
-            return Task::ready(HashMap::default());
-        };
-
-        let suggestion_tasks: Vec<_> = operations
-            .iter()
-            .map(|operation| operation.edit_suggestion(project.clone(), cx))
-            .collect();
-
-        cx.spawn(|mut cx| async move {
-            let suggestions = future::join_all(suggestion_tasks)
-                .await
-                .into_iter()
-                .filter_map(|task| task.log_err())
-                .collect::<Vec<_>>();
-
-            let mut suggestions_by_buffer = HashMap::default();
-            for (buffer, suggestion) in suggestions {
-                suggestions_by_buffer
-                    .entry(buffer)
-                    .or_insert_with(Vec::new)
-                    .push(suggestion);
-            }
-
-            let mut suggestion_groups_by_buffer = HashMap::default();
-            for (buffer, mut suggestions) in suggestions_by_buffer {
-                let mut suggestion_groups = Vec::<EditSuggestionGroup>::new();
-                buffer
-                    .update(&mut cx, |buffer, _cx| {
-                        // Sort suggestions by their range
-                        suggestions.sort_by(|a, b| a.range.cmp(&b.range, buffer));
-
-                        // Dedup overlapping suggestions
-                        suggestions.dedup_by(|a, b| {
-                            let a_range = a.range.to_offset(buffer);
-                            let b_range = b.range.to_offset(buffer);
-                            if a_range.start <= b_range.end && b_range.start <= a_range.end {
-                                if b_range.start < a_range.start {
-                                    a.range.start = b.range.start;
-                                }
-                                if b_range.end > a_range.end {
-                                    a.range.end = b.range.end;
-                                }
-
-                                if let (Some(a_desc), Some(b_desc)) =
-                                    (a.description.as_mut(), b.description.as_mut())
-                                {
-                                    b_desc.push('\n');
-                                    b_desc.push_str(a_desc);
-                                } else if a.description.is_some() {
-                                    b.description = a.description.take();
-                                }
-
-                                true
-                            } else {
-                                false
-                            }
-                        });
-
-                        // Create context ranges for each suggestion
-                        for suggestion in suggestions {
-                            let context_range = {
-                                let suggestion_point_range = suggestion.range.to_point(buffer);
-                                let start_row = suggestion_point_range.start.row.saturating_sub(5);
-                                let end_row = cmp::min(
-                                    suggestion_point_range.end.row + 5,
-                                    buffer.max_point().row,
-                                );
-                                let start = buffer.anchor_before(Point::new(start_row, 0));
-                                let end = buffer
-                                    .anchor_after(Point::new(end_row, buffer.line_len(end_row)));
-                                start..end
-                            };
-
-                            if let Some(last_group) = suggestion_groups.last_mut() {
-                                if last_group
-                                    .context_range
-                                    .end
-                                    .cmp(&context_range.start, buffer)
-                                    .is_ge()
-                                {
-                                    // Merge with the previous group if context ranges overlap
-                                    last_group.context_range.end = context_range.end;
-                                    last_group.suggestions.push(suggestion);
-                                } else {
-                                    // Create a new group
-                                    suggestion_groups.push(EditSuggestionGroup {
-                                        context_range,
-                                        suggestions: vec![suggestion],
-                                    });
-                                }
-                            } else {
-                                // Create the first group
-                                suggestion_groups.push(EditSuggestionGroup {
-                                    context_range,
-                                    suggestions: vec![suggestion],
-                                });
-                            }
-                        }
-                    })
-                    .ok();
-                suggestion_groups_by_buffer.insert(buffer, suggestion_groups);
-            }
-
-            suggestion_groups_by_buffer
-        })
-    }
-}
-
-pub enum EditStepOperations {
-    Pending(Task<Result<()>>),
-    Parsed {
-        operations: Vec<EditOperation>,
-        raw_output: String,
-    },
-}
-
-impl Debug for EditStepOperations {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl WorkflowStepStatus {
+    pub fn into_resolved(&self) -> Option<Result<ResolvedWorkflowStep, Arc<anyhow::Error>>> {
         match self {
-            EditStepOperations::Pending(_) => write!(f, "EditStepOperations::Pending"),
-            EditStepOperations::Parsed {
-                operations,
-                raw_output,
-            } => f
-                .debug_struct("EditStepOperations::Parsed")
-                .field("operations", operations)
-                .field("raw_output", raw_output)
-                .finish(),
+            WorkflowStepStatus::Resolved(resolved) => Some(Ok(resolved.clone())),
+            WorkflowStepStatus::Error(error) => Some(Err(error.clone())),
+            WorkflowStepStatus::Pending(_) => None,
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EditOperation {
-    pub path: String,
-    pub kind: EditOperationKind,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkflowSuggestionGroup {
+    pub context_range: Range<language::Anchor>,
+    pub suggestions: Vec<WorkflowSuggestion>,
 }
 
-impl EditOperation {
-    fn edit_suggestion(
-        &self,
-        project: Model<Project>,
-        cx: &AppContext,
-    ) -> Task<Result<(Model<language::Buffer>, EditSuggestion)>> {
-        let path = self.path.clone();
-        let kind = self.kind.clone();
-        cx.spawn(move |mut cx| async move {
-            let buffer = project
-                .update(&mut cx, |project, cx| {
-                    let project_path = project
-                        .project_path_for_full_path(Path::new(&path), cx)
-                        .with_context(|| format!("worktree not found for {:?}", path))?;
-                    anyhow::Ok(project.open_buffer(project_path, cx))
-                })??
-                .await?;
-
-            let mut parse_status = buffer.read_with(&cx, |buffer, _cx| buffer.parse_status())?;
-            while *parse_status.borrow() != ParseStatus::Idle {
-                parse_status.changed().await?;
-            }
-
-            let prepend_newline = kind.prepend_newline();
-            let suggestion_range = if let Some(symbol) = kind.symbol() {
-                let outline = buffer
-                    .update(&mut cx, |buffer, _| buffer.snapshot().outline(None))?
-                    .context("no outline for buffer")?;
-                let candidate = outline
-                    .path_candidates
-                    .iter()
-                    .find(|item| item.string == symbol)
-                    .context("symbol not found")?;
-                buffer.update(&mut cx, |buffer, _| {
-                    let outline_item = &outline.items[candidate.id];
-                    let symbol_range = outline_item.range.to_point(buffer);
-                    let body_range = outline_item
-                        .body_range
-                        .as_ref()
-                        .map(|range| range.to_point(buffer))
-                        .unwrap_or(symbol_range.clone());
-
-                    match kind {
-                        EditOperationKind::PrependChild { .. } => {
-                            let position = buffer.anchor_after(body_range.start);
-                            position..position
-                        }
-                        EditOperationKind::AppendChild { .. } => {
-                            let position = buffer.anchor_before(body_range.end);
-                            position..position
-                        }
-                        EditOperationKind::InsertSiblingBefore { .. } => {
-                            let position = buffer.anchor_before(symbol_range.start);
-                            position..position
-                        }
-                        EditOperationKind::InsertSiblingAfter { .. } => {
-                            let position = buffer.anchor_after(symbol_range.end);
-                            position..position
-                        }
-                        EditOperationKind::Update { .. } | EditOperationKind::Delete { .. } => {
-                            let start = Point::new(symbol_range.start.row, 0);
-                            let end = Point::new(
-                                symbol_range.end.row,
-                                buffer.line_len(symbol_range.end.row),
-                            );
-                            buffer.anchor_before(start)..buffer.anchor_after(end)
-                        }
-                        EditOperationKind::Create { .. } => unreachable!(),
-                    }
-                })?
-            } else {
-                match kind {
-                    EditOperationKind::PrependChild { .. } => {
-                        language::Anchor::MIN..language::Anchor::MIN
-                    }
-                    EditOperationKind::AppendChild { .. } | EditOperationKind::Create { .. } => {
-                        language::Anchor::MAX..language::Anchor::MAX
-                    }
-                    _ => unreachable!("All other operations should have a symbol"),
-                }
-            };
-
-            Ok((
-                buffer,
-                EditSuggestion {
-                    range: suggestion_range,
-                    description: kind.description().map(ToString::to_string),
-                    prepend_newline,
-                },
-            ))
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum EditOperationKind {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkflowSuggestion {
     Update {
-        symbol: String,
+        range: Range<language::Anchor>,
         description: String,
     },
-    Create {
+    CreateFile {
         description: String,
     },
     InsertSiblingBefore {
-        symbol: String,
+        position: language::Anchor,
         description: String,
     },
     InsertSiblingAfter {
-        symbol: String,
+        position: language::Anchor,
         description: String,
     },
     PrependChild {
-        symbol: Option<String>,
+        position: language::Anchor,
         description: String,
     },
     AppendChild {
-        symbol: Option<String>,
+        position: language::Anchor,
         description: String,
     },
     Delete {
-        symbol: String,
+        range: Range<language::Anchor>,
     },
 }
 
-impl EditOperationKind {
-    pub fn symbol(&self) -> Option<&str> {
+impl WorkflowSuggestion {
+    pub fn range(&self) -> Range<language::Anchor> {
         match self {
-            Self::Update { symbol, .. } => Some(symbol),
-            Self::InsertSiblingBefore { symbol, .. } => Some(symbol),
-            Self::InsertSiblingAfter { symbol, .. } => Some(symbol),
-            Self::PrependChild { symbol, .. } => symbol.as_deref(),
-            Self::AppendChild { symbol, .. } => symbol.as_deref(),
-            Self::Delete { symbol } => Some(symbol),
-            Self::Create { .. } => None,
+            WorkflowSuggestion::Update { range, .. } => range.clone(),
+            WorkflowSuggestion::CreateFile { .. } => language::Anchor::MIN..language::Anchor::MAX,
+            WorkflowSuggestion::InsertSiblingBefore { position, .. }
+            | WorkflowSuggestion::InsertSiblingAfter { position, .. }
+            | WorkflowSuggestion::PrependChild { position, .. }
+            | WorkflowSuggestion::AppendChild { position, .. } => *position..*position,
+            WorkflowSuggestion::Delete { range } => range.clone(),
         }
     }
 
     pub fn description(&self) -> Option<&str> {
         match self {
-            Self::Update { description, .. } => Some(description),
-            Self::Create { description } => Some(description),
-            Self::InsertSiblingBefore { description, .. } => Some(description),
-            Self::InsertSiblingAfter { description, .. } => Some(description),
-            Self::PrependChild { description, .. } => Some(description),
-            Self::AppendChild { description, .. } => Some(description),
-            Self::Delete { .. } => None,
+            WorkflowSuggestion::Update { description, .. }
+            | WorkflowSuggestion::CreateFile { description }
+            | WorkflowSuggestion::InsertSiblingBefore { description, .. }
+            | WorkflowSuggestion::InsertSiblingAfter { description, .. }
+            | WorkflowSuggestion::PrependChild { description, .. }
+            | WorkflowSuggestion::AppendChild { description, .. } => Some(description),
+            WorkflowSuggestion::Delete { .. } => None,
         }
     }
 
-    pub fn prepend_newline(&self) -> bool {
+    fn description_mut(&mut self) -> Option<&mut String> {
         match self {
-            Self::PrependChild { .. }
-            | Self::AppendChild { .. }
-            | Self::InsertSiblingAfter { .. }
-            | Self::InsertSiblingBefore { .. } => true,
-            _ => false,
+            WorkflowSuggestion::Update { description, .. }
+            | WorkflowSuggestion::CreateFile { description }
+            | WorkflowSuggestion::InsertSiblingBefore { description, .. }
+            | WorkflowSuggestion::InsertSiblingAfter { description, .. }
+            | WorkflowSuggestion::PrependChild { description, .. }
+            | WorkflowSuggestion::AppendChild { description, .. } => Some(description),
+            WorkflowSuggestion::Delete { .. } => None,
+        }
+    }
+
+    fn try_merge(&mut self, other: &Self, buffer: &BufferSnapshot) -> bool {
+        let range = self.range();
+        let other_range = other.range();
+
+        // Don't merge if we don't contain the other suggestion.
+        if range.start.cmp(&other_range.start, buffer).is_gt()
+            || range.end.cmp(&other_range.end, buffer).is_lt()
+        {
+            return false;
+        }
+
+        if let Some(description) = self.description_mut() {
+            if let Some(other_description) = other.description() {
+                description.push('\n');
+                description.push_str(other_description);
+            }
+        }
+        true
+    }
+
+    pub fn show(
+        &self,
+        editor: &View<Editor>,
+        excerpt_id: editor::ExcerptId,
+        workspace: &WeakView<Workspace>,
+        assistant_panel: &View<AssistantPanel>,
+        cx: &mut WindowContext,
+    ) -> Option<InlineAssistId> {
+        let mut initial_transaction_id = None;
+        let initial_prompt;
+        let suggestion_range;
+        let buffer = editor.read(cx).buffer().clone();
+        let snapshot = buffer.read(cx).snapshot(cx);
+
+        match self {
+            WorkflowSuggestion::Update { range, description } => {
+                initial_prompt = description.clone();
+                suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
+                    ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
+            }
+            WorkflowSuggestion::CreateFile { description } => {
+                initial_prompt = description.clone();
+                suggestion_range = editor::Anchor::min()..editor::Anchor::min();
+            }
+            WorkflowSuggestion::InsertSiblingBefore {
+                position,
+                description,
+            } => {
+                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                initial_prompt = description.clone();
+                suggestion_range = buffer.update(cx, |buffer, cx| {
+                    buffer.start_transaction(cx);
+                    let line_start = buffer.insert_empty_line(position, true, true, cx);
+                    initial_transaction_id = buffer.end_transaction(cx);
+                    buffer.refresh_preview(cx);
+
+                    let line_start = buffer.read(cx).anchor_before(line_start);
+                    line_start..line_start
+                });
+            }
+            WorkflowSuggestion::InsertSiblingAfter {
+                position,
+                description,
+            } => {
+                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                initial_prompt = description.clone();
+                suggestion_range = buffer.update(cx, |buffer, cx| {
+                    buffer.start_transaction(cx);
+                    let line_start = buffer.insert_empty_line(position, true, true, cx);
+                    initial_transaction_id = buffer.end_transaction(cx);
+                    buffer.refresh_preview(cx);
+
+                    let line_start = buffer.read(cx).anchor_before(line_start);
+                    line_start..line_start
+                });
+            }
+            WorkflowSuggestion::PrependChild {
+                position,
+                description,
+            } => {
+                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                initial_prompt = description.clone();
+                suggestion_range = buffer.update(cx, |buffer, cx| {
+                    buffer.start_transaction(cx);
+                    let line_start = buffer.insert_empty_line(position, false, true, cx);
+                    initial_transaction_id = buffer.end_transaction(cx);
+                    buffer.refresh_preview(cx);
+
+                    let line_start = buffer.read(cx).anchor_before(line_start);
+                    line_start..line_start
+                });
+            }
+            WorkflowSuggestion::AppendChild {
+                position,
+                description,
+            } => {
+                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                initial_prompt = description.clone();
+                suggestion_range = buffer.update(cx, |buffer, cx| {
+                    buffer.start_transaction(cx);
+                    let line_start = buffer.insert_empty_line(position, true, false, cx);
+                    initial_transaction_id = buffer.end_transaction(cx);
+                    buffer.refresh_preview(cx);
+
+                    let line_start = buffer.read(cx).anchor_before(line_start);
+                    line_start..line_start
+                });
+            }
+            WorkflowSuggestion::Delete { range } => {
+                initial_prompt = "Delete".to_string();
+                suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
+                    ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
+            }
+        }
+
+        InlineAssistant::update_global(cx, |inline_assistant, cx| {
+            Some(inline_assistant.suggest_assist(
+                editor,
+                suggestion_range,
+                initial_prompt,
+                initial_transaction_id,
+                Some(workspace.clone()),
+                Some(assistant_panel),
+                cx,
+            ))
+        })
+    }
+}
+
+impl Debug for WorkflowStepStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WorkflowStepStatus::Pending(_) => write!(f, "WorkflowStepStatus::Pending"),
+            WorkflowStepStatus::Resolved(ResolvedWorkflowStep { title, suggestions }) => f
+                .debug_struct("WorkflowStepStatus::Resolved")
+                .field("title", title)
+                .field("suggestions", suggestions)
+                .finish(),
+            WorkflowStepStatus::Error(error) => f
+                .debug_tuple("WorkflowStepStatus::Error")
+                .field(error)
+                .finish(),
         }
     }
 }
@@ -672,6 +666,8 @@ pub struct Context {
     finished_slash_commands: HashSet<SlashCommandId>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
+    images: HashMap<u64, (Arc<RenderImage>, Shared<Task<Option<LanguageModelImage>>>)>,
+    image_anchors: Vec<ImageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     summary: Option<ContextSummary>,
     pending_summary: Task<Option<()>>,
@@ -684,7 +680,10 @@ pub struct Context {
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    edit_steps: Vec<EditStep>,
+    workflow_steps: Vec<WorkflowStep>,
+    edits_since_last_workflow_step_prune: language::Subscription,
+    project: Option<Model<Project>>,
+    prompt_builder: Arc<PromptBuilder>,
 }
 
 impl EventEmitter<ContextEvent> for Context {}
@@ -692,7 +691,9 @@ impl EventEmitter<ContextEvent> for Context {}
 impl Context {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
+        project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
+        prompt_builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::new(
@@ -700,16 +701,21 @@ impl Context {
             ReplicaId::default(),
             language::Capability::ReadWrite,
             language_registry,
+            prompt_builder,
+            project,
             telemetry,
             cx,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: ContextId,
         replica_id: ReplicaId,
         capability: language::Capability,
         language_registry: Arc<LanguageRegistry>,
+        prompt_builder: Arc<PromptBuilder>,
+        project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -725,6 +731,8 @@ impl Context {
         });
         let edits_since_last_slash_command_parse =
             buffer.update(cx, |buffer, _| buffer.subscribe());
+        let edits_since_last_workflow_step_prune =
+            buffer.update(cx, |buffer, _| buffer.subscribe());
         let mut this = Self {
             id,
             timestamp: clock::Lamport::new(replica_id),
@@ -732,6 +740,8 @@ impl Context {
             pending_ops: Vec::new(),
             operations: Vec::new(),
             message_anchors: Default::default(),
+            image_anchors: Default::default(),
+            images: Default::default(),
             messages_metadata: Default::default(),
             pending_slash_commands: Vec::new(),
             finished_slash_commands: HashSet::default(),
@@ -748,8 +758,11 @@ impl Context {
             path: None,
             buffer,
             telemetry,
+            project,
             language_registry,
-            edit_steps: Vec::new(),
+            workflow_steps: Vec::new(),
+            edits_since_last_workflow_step_prune,
+            prompt_builder,
         };
 
         let first_message_id = MessageId(clock::Lamport {
@@ -788,6 +801,11 @@ impl Context {
                     id: message.id,
                     start: message.offset_range.start,
                     metadata: self.messages_metadata[&message.id].clone(),
+                    image_offsets: message
+                        .image_offsets
+                        .iter()
+                        .map(|image_offset| (image_offset.0, image_offset.1.image_id))
+                        .collect(),
                 })
                 .collect(),
             summary: self
@@ -819,6 +837,8 @@ impl Context {
         saved_context: SavedContext,
         path: PathBuf,
         language_registry: Arc<LanguageRegistry>,
+        prompt_builder: Arc<PromptBuilder>,
+        project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -828,6 +848,8 @@ impl Context {
             ReplicaId::default(),
             language::Capability::ReadWrite,
             language_registry,
+            prompt_builder,
+            project,
             telemetry,
             cx,
         );
@@ -1067,8 +1089,14 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub fn edit_steps(&self) -> &[EditStep] {
-        &self.edit_steps
+    pub fn workflow_steps(&self) -> &[WorkflowStep] {
+        &self.workflow_steps
+    }
+
+    pub fn workflow_step_for_range(&self, range: Range<language::Anchor>) -> Option<&WorkflowStep> {
+        self.workflow_steps
+            .iter()
+            .find(|step| step.tagged_range == range)
     }
 
     pub fn pending_slash_commands(&self) -> &[PendingSlashCommand] {
@@ -1104,7 +1132,9 @@ impl Context {
             language::Event::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse_slash_commands(cx);
-                self.prune_invalid_edit_steps(cx);
+                // Use `inclusive = true` to invalidate a step when an edit occurs
+                // at the start/end of a parsed step.
+                self.prune_invalid_workflow_steps(true, cx);
                 cx.emit(ContextEvent::MessagesEdited);
             }
             _ => {}
@@ -1117,21 +1147,20 @@ impl Context {
 
     pub(crate) fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
         let request = self.to_completion_request(cx);
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return;
+        };
         self.pending_token_count = cx.spawn(|this, mut cx| {
             async move {
                 cx.background_executor()
                     .timer(Duration::from_millis(200))
                     .await;
 
-                let token_count = cx
-                    .update(|cx| CompletionProvider::global(cx).count_tokens(request, cx))?
-                    .await?;
-
+                let token_count = cx.update(|cx| model.count_tokens(request, cx))?.await?;
                 this.update(&mut cx, |this, cx| {
                     this.token_count = Some(token_count);
                     cx.notify()
-                })?;
-                anyhow::Ok(())
+                })
             }
             .log_err()
         });
@@ -1212,243 +1241,297 @@ impl Context {
         }
     }
 
-    fn prune_invalid_edit_steps(&mut self, cx: &mut ModelContext<Self>) {
-        let buffer = self.buffer.read(cx);
-        let prev_len = self.edit_steps.len();
-        self.edit_steps.retain(|step| {
-            step.source_range.start.is_valid(buffer) && step.source_range.end.is_valid(buffer)
-        });
-        if self.edit_steps.len() != prev_len {
-            cx.emit(ContextEvent::EditStepsChanged);
+    fn prune_invalid_workflow_steps(&mut self, inclusive: bool, cx: &mut ModelContext<Self>) {
+        let mut removed = Vec::new();
+
+        for edit_range in self.edits_since_last_workflow_step_prune.consume() {
+            let intersecting_range = self.find_intersecting_steps(edit_range.new, inclusive, cx);
+            removed.extend(
+                self.workflow_steps
+                    .drain(intersecting_range)
+                    .map(|step| step.tagged_range),
+            );
+        }
+
+        if !removed.is_empty() {
+            cx.emit(ContextEvent::WorkflowStepsRemoved(removed));
             cx.notify();
         }
     }
 
-    fn parse_edit_steps_in_range(&mut self, range: Range<usize>, cx: &mut ModelContext<Self>) {
+    fn find_intersecting_steps(
+        &self,
+        range: Range<usize>,
+        inclusive: bool,
+        cx: &AppContext,
+    ) -> Range<usize> {
+        let buffer = self.buffer.read(cx);
+        let start_ix = match self.workflow_steps.binary_search_by(|probe| {
+            probe
+                .tagged_range
+                .end
+                .to_offset(buffer)
+                .cmp(&range.start)
+                .then(if inclusive {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                })
+        }) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let end_ix = match self.workflow_steps.binary_search_by(|probe| {
+            probe
+                .tagged_range
+                .start
+                .to_offset(buffer)
+                .cmp(&range.end)
+                .then(if inclusive {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                })
+        }) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        start_ix..end_ix
+    }
+
+    fn parse_workflow_steps_in_range(
+        &mut self,
+        range: Range<usize>,
+        project: Model<Project>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let mut new_edit_steps = Vec::new();
+        let mut edits = Vec::new();
 
-        self.buffer.update(cx, |buffer, _cx| {
-            let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
-            let mut in_step = false;
-            let mut step_start = 0;
-            let mut line_start_offset = message_lines.offset();
+        let buffer = self.buffer.read(cx).snapshot();
+        let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
+        let mut in_step = false;
+        let mut step_open_tag_start_ix = 0;
+        let mut line_start_offset = message_lines.offset();
 
-            while let Some(line) = message_lines.next() {
-                if let Some(step_start_index) = line.find("<step>") {
-                    if !in_step {
-                        in_step = true;
-                        step_start = line_start_offset + step_start_index;
-                    }
+        while let Some(line) = message_lines.next() {
+            if let Some(step_start_index) = line.find("<step>") {
+                if !in_step {
+                    in_step = true;
+                    step_open_tag_start_ix = line_start_offset + step_start_index;
                 }
-
-                if let Some(step_end_index) = line.find("</step>") {
-                    if in_step {
-                        let start_anchor = buffer.anchor_after(step_start);
-                        let end_anchor = buffer
-                            .anchor_before(line_start_offset + step_end_index + "</step>".len());
-                        let source_range = start_anchor..end_anchor;
-
-                        // Check if a step with the same range already exists
-                        let existing_step_index = self.edit_steps.binary_search_by(|probe| {
-                            probe.source_range.cmp(&source_range, buffer)
-                        });
-
-                        if let Err(ix) = existing_step_index {
-                            // Step doesn't exist, so add it
-                            new_edit_steps.push((
-                                ix,
-                                EditStep {
-                                    source_range,
-                                    operations: None,
-                                },
-                            ));
-                        }
-
-                        in_step = false;
-                    }
-                }
-
-                line_start_offset = message_lines.offset();
             }
-        });
 
-        // Insert new steps and generate their corresponding tasks
-        for (index, mut step) in new_edit_steps.into_iter().rev() {
-            let task = self.generate_edit_step_operations(&step, cx);
-            step.operations = Some(EditStepOperations::Pending(task));
-            self.edit_steps.insert(index, step);
+            if let Some(step_end_index) = line.find("</step>") {
+                if in_step {
+                    let mut step_open_tag_end_ix = step_open_tag_start_ix + "<step>".len();
+                    if buffer.chars_at(step_open_tag_end_ix).next() == Some('\n') {
+                        step_open_tag_end_ix += 1;
+                    }
+                    let mut step_end_tag_start_ix = line_start_offset + step_end_index;
+                    let step_end_tag_end_ix = step_end_tag_start_ix + "</step>".len();
+                    if buffer.reversed_chars_at(step_end_tag_start_ix).next() == Some('\n') {
+                        step_end_tag_start_ix -= 1;
+                    }
+                    edits.push((step_open_tag_start_ix..step_open_tag_end_ix, ""));
+                    edits.push((step_end_tag_start_ix..step_end_tag_end_ix, ""));
+                    let tagged_range = buffer.anchor_after(step_open_tag_end_ix)
+                        ..buffer.anchor_before(step_end_tag_start_ix);
+
+                    // Check if a step with the same range already exists
+                    let existing_step_index = self
+                        .workflow_steps
+                        .binary_search_by(|probe| probe.tagged_range.cmp(&tagged_range, &buffer));
+
+                    if let Err(ix) = existing_step_index {
+                        new_edit_steps.push((
+                            ix,
+                            WorkflowStep {
+                                tagged_range,
+                                status: WorkflowStepStatus::Pending(Task::ready(None)),
+                            },
+                        ));
+                    }
+
+                    in_step = false;
+                }
+            }
+
+            line_start_offset = message_lines.offset();
         }
 
-        cx.emit(ContextEvent::EditStepsChanged);
-        cx.notify();
+        let mut updated = Vec::new();
+        for (index, step) in new_edit_steps.into_iter().rev() {
+            let step_range = step.tagged_range.clone();
+            updated.push(step_range.clone());
+            self.workflow_steps.insert(index, step);
+            self.resolve_workflow_step(step_range, project.clone(), cx);
+        }
+
+        // Delete <step> tags, making sure we don't accidentally invalidate
+        // the step we just parsed.
+        self.buffer
+            .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        self.edits_since_last_workflow_step_prune.consume();
     }
 
-    fn generate_edit_step_operations(
-        &self,
-        edit_step: &EditStep,
+    pub fn resolve_workflow_step(
+        &mut self,
+        tagged_range: Range<language::Anchor>,
+        project: Model<Project>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    ) {
+        let Ok(step_index) = self
+            .workflow_steps
+            .binary_search_by(|step| step.tagged_range.cmp(&tagged_range, self.buffer.read(cx)))
+        else {
+            return;
+        };
+
         let mut request = self.to_completion_request(cx);
-        let edit_step_range = edit_step.source_range.clone();
-        let step_text = self
-            .buffer
-            .read(cx)
-            .text_for_range(edit_step_range.clone())
-            .collect::<String>();
-
-        cx.spawn(|this, mut cx| async move {
-            let prompt_store = cx.update(|cx| PromptStore::global(cx))?.await?;
-
-            let mut prompt = prompt_store.operations_prompt();
-            prompt.push_str(&step_text);
-
-            request.messages.push(LanguageModelRequestMessage {
-                role: Role::User,
-                content: prompt,
-            });
-
-            let raw_output = cx
-                .update(|cx| CompletionProvider::global(cx).complete(request, cx))?
-                .await?;
-
-            let operations = Self::parse_edit_operations(&raw_output);
-            this.update(&mut cx, |this, cx| {
-                let step_index = this
-                    .edit_steps
-                    .binary_search_by(|step| {
-                        step.source_range
-                            .cmp(&edit_step_range, this.buffer.read(cx))
-                    })
-                    .map_err(|_| anyhow!("edit step not found"))?;
-                if let Some(edit_step) = this.edit_steps.get_mut(step_index) {
-                    edit_step.operations = Some(EditStepOperations::Parsed {
-                        operations,
-                        raw_output,
-                    });
-                    cx.emit(ContextEvent::EditStepsChanged);
-                }
-                anyhow::Ok(())
-            })?
-        })
-    }
-
-    fn parse_edit_operations(xml: &str) -> Vec<EditOperation> {
-        let Some(start_ix) = xml.find("<operations>") else {
-            return Vec::new();
+        let Some(edit_step) = self.workflow_steps.get_mut(step_index) else {
+            return;
         };
-        let Some(end_ix) = xml[start_ix..].find("</operations>") else {
-            return Vec::new();
-        };
-        let end_ix = end_ix + start_ix + "</operations>".len();
 
-        let doc = roxmltree::Document::parse(&xml[start_ix..end_ix]).log_err();
-        doc.map_or(Vec::new(), |doc| {
-            doc.root_element()
-                .children()
-                .map(|node| {
-                    let tag_name = node.tag_name().name();
-                    let path = node
-                        .attribute("path")
-                        .with_context(|| {
-                            format!("invalid node {node:?}, missing attribute 'path'")
-                        })?
-                        .to_string();
-                    let kind = match tag_name {
-                        "update" => EditOperationKind::Update {
-                            symbol: node
-                                .attribute("symbol")
-                                .with_context(|| {
-                                    format!("invalid node {node:?}, missing attribute 'symbol'")
-                                })?
-                                .to_string(),
-                            description: node
-                                .attribute("description")
-                                .with_context(|| {
-                                    format!(
-                                        "invalid node {node:?}, missing attribute 'description'"
-                                    )
-                                })?
-                                .to_string(),
-                        },
-                        "create" => EditOperationKind::Create {
-                            description: node
-                                .attribute("description")
-                                .with_context(|| {
-                                    format!(
-                                        "invalid node {node:?}, missing attribute 'description'"
-                                    )
-                                })?
-                                .to_string(),
-                        },
-                        "insert_sibling_after" => EditOperationKind::InsertSiblingAfter {
-                            symbol: node
-                                .attribute("symbol")
-                                .with_context(|| {
-                                    format!("invalid node {node:?}, missing attribute 'symbol'")
-                                })?
-                                .to_string(),
-                            description: node
-                                .attribute("description")
-                                .with_context(|| {
-                                    format!(
-                                        "invalid node {node:?}, missing attribute 'description'"
-                                    )
-                                })?
-                                .to_string(),
-                        },
-                        "insert_sibling_before" => EditOperationKind::InsertSiblingBefore {
-                            symbol: node
-                                .attribute("symbol")
-                                .with_context(|| {
-                                    format!("invalid node {node:?}, missing attribute 'symbol'")
-                                })?
-                                .to_string(),
-                            description: node
-                                .attribute("description")
-                                .with_context(|| {
-                                    format!(
-                                        "invalid node {node:?}, missing attribute 'description'"
-                                    )
-                                })?
-                                .to_string(),
-                        },
-                        "prepend_child" => EditOperationKind::PrependChild {
-                            symbol: node.attribute("symbol").map(String::from),
-                            description: node
-                                .attribute("description")
-                                .with_context(|| {
-                                    format!(
-                                        "invalid node {node:?}, missing attribute 'description'"
-                                    )
-                                })?
-                                .to_string(),
-                        },
-                        "append_child" => EditOperationKind::AppendChild {
-                            symbol: node.attribute("symbol").map(String::from),
-                            description: node
-                                .attribute("description")
-                                .with_context(|| {
-                                    format!(
-                                        "invalid node {node:?}, missing attribute 'description'"
-                                    )
-                                })?
-                                .to_string(),
-                        },
-                        "delete" => EditOperationKind::Delete {
-                            symbol: node
-                                .attribute("symbol")
-                                .with_context(|| {
-                                    format!("invalid node {node:?}, missing attribute 'symbol'")
-                                })?
-                                .to_string(),
-                        },
-                        _ => return Err(anyhow!("invalid node {node:?}")),
+        if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+            let step_text = self
+                .buffer
+                .read(cx)
+                .text_for_range(tagged_range.clone())
+                .collect::<String>();
+
+            let tagged_range = tagged_range.clone();
+            edit_step.status = WorkflowStepStatus::Pending(cx.spawn(|this, mut cx| {
+                async move {
+                    let result = async {
+                        let mut prompt = this.update(&mut cx, |this, _| {
+                            this.prompt_builder.generate_step_resolution_prompt()
+                        })??;
+                        prompt.push_str(&step_text);
+
+                        request.messages.push(LanguageModelRequestMessage {
+                            role: Role::User,
+                            content: vec![prompt.into()],
+                        });
+
+                        // Invoke the model to get its edit suggestions for this workflow step.
+                        let resolution = model
+                            .use_tool::<tool::WorkflowStepResolution>(request, &cx)
+                            .await?;
+
+                        // Translate the parsed suggestions to our internal types, which anchor the suggestions to locations in the code.
+                        let suggestion_tasks: Vec<_> = resolution
+                            .suggestions
+                            .iter()
+                            .map(|suggestion| suggestion.resolve(project.clone(), cx.clone()))
+                            .collect();
+
+                        // Expand the context ranges of each suggestion and group suggestions with overlapping context ranges.
+                        let suggestions = future::join_all(suggestion_tasks)
+                            .await
+                            .into_iter()
+                            .filter_map(|task| task.log_err())
+                            .collect::<Vec<_>>();
+
+                        let mut suggestions_by_buffer = HashMap::default();
+                        for (buffer, suggestion) in suggestions {
+                            suggestions_by_buffer
+                                .entry(buffer)
+                                .or_insert_with(Vec::new)
+                                .push(suggestion);
+                        }
+
+                        let mut suggestion_groups_by_buffer = HashMap::default();
+                        for (buffer, mut suggestions) in suggestions_by_buffer {
+                            let mut suggestion_groups = Vec::<WorkflowSuggestionGroup>::new();
+                            let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+                            // Sort suggestions by their range so that earlier, larger ranges come first
+                            suggestions.sort_by(|a, b| a.range().cmp(&b.range(), &snapshot));
+
+                            // Merge overlapping suggestions
+                            suggestions.dedup_by(|a, b| b.try_merge(&a, &snapshot));
+
+                            // Create context ranges for each suggestion
+                            for suggestion in suggestions {
+                                let context_range = {
+                                    let suggestion_point_range =
+                                        suggestion.range().to_point(&snapshot);
+                                    let start_row =
+                                        suggestion_point_range.start.row.saturating_sub(5);
+                                    let end_row = cmp::min(
+                                        suggestion_point_range.end.row + 5,
+                                        snapshot.max_point().row,
+                                    );
+                                    let start = snapshot.anchor_before(Point::new(start_row, 0));
+                                    let end = snapshot.anchor_after(Point::new(
+                                        end_row,
+                                        snapshot.line_len(end_row),
+                                    ));
+                                    start..end
+                                };
+
+                                if let Some(last_group) = suggestion_groups.last_mut() {
+                                    if last_group
+                                        .context_range
+                                        .end
+                                        .cmp(&context_range.start, &snapshot)
+                                        .is_ge()
+                                    {
+                                        // Merge with the previous group if context ranges overlap
+                                        last_group.context_range.end = context_range.end;
+                                        last_group.suggestions.push(suggestion);
+                                    } else {
+                                        // Create a new group
+                                        suggestion_groups.push(WorkflowSuggestionGroup {
+                                            context_range,
+                                            suggestions: vec![suggestion],
+                                        });
+                                    }
+                                } else {
+                                    // Create the first group
+                                    suggestion_groups.push(WorkflowSuggestionGroup {
+                                        context_range,
+                                        suggestions: vec![suggestion],
+                                    });
+                                }
+                            }
+
+                            suggestion_groups_by_buffer.insert(buffer, suggestion_groups);
+                        }
+
+                        Ok((resolution.step_title, suggestion_groups_by_buffer))
                     };
-                    anyhow::Ok(EditOperation { path, kind })
-                })
-                .filter_map(|op| op.log_err())
-                .collect()
-        })
+
+                    let result = result.await;
+                    this.update(&mut cx, |this, cx| {
+                        let step_index = this
+                            .workflow_steps
+                            .binary_search_by(|step| {
+                                step.tagged_range.cmp(&tagged_range, this.buffer.read(cx))
+                            })
+                            .map_err(|_| anyhow!("edit step not found"))?;
+                        if let Some(edit_step) = this.workflow_steps.get_mut(step_index) {
+                            edit_step.status = match result {
+                                Ok((title, suggestions)) => {
+                                    WorkflowStepStatus::Resolved(ResolvedWorkflowStep {
+                                        title,
+                                        suggestions,
+                                    })
+                                }
+                                Err(error) => WorkflowStepStatus::Error(Arc::new(error)),
+                            };
+                            cx.emit(ContextEvent::WorkflowStepUpdated(tagged_range));
+                            cx.notify();
+                        }
+                        anyhow::Ok(())
+                    })?
+                }
+                .log_err()
+            }));
+        } else {
+            edit_step.status = WorkflowStepStatus::Error(Arc::new(anyhow!("no active model")));
+        }
+
+        cx.emit(ContextEvent::WorkflowStepUpdated(tagged_range));
+        cx.notify();
     }
 
     pub fn pending_command_for_position(
@@ -1605,6 +1688,8 @@ impl Context {
     }
 
     pub fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<MessageAnchor> {
+        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
+        let model = LanguageModelRegistry::read_global(cx).active_model()?;
         let last_message_id = self.message_anchors.iter().rev().find_map(|message| {
             message
                 .start
@@ -1612,13 +1697,12 @@ impl Context {
                 .then_some(message.id)
         })?;
 
-        if !CompletionProvider::global(cx).is_authenticated() {
+        if !provider.is_authenticated(cx) {
             log::info!("completion provider has no credentials");
             return None;
         }
 
         let request = self.to_completion_request(cx);
-        let stream = CompletionProvider::global(cx).stream_completion(request, cx);
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
             .unwrap();
@@ -1630,6 +1714,7 @@ impl Context {
 
         let task = cx.spawn({
             |this, mut cx| async move {
+                let stream = model.stream_completion(request, &cx);
                 let assistant_message_id = assistant_message.id;
                 let mut response_latency = None;
                 let stream_completion = async {
@@ -1664,7 +1749,11 @@ impl Context {
                                 );
                                 message_start_offset..message_new_end_offset
                             });
-                            this.parse_edit_steps_in_range(message_range, cx);
+                            if let Some(project) = this.project.clone() {
+                                // Use `inclusive = false` as edits might occur at the end of a parsed step.
+                                this.prune_invalid_workflow_steps(false, cx);
+                                this.parse_workflow_steps_in_range(message_range, project, cx);
+                            }
                             cx.emit(ContextEvent::StreamedCompletion);
 
                             Some(())
@@ -1675,7 +1764,7 @@ impl Context {
                     this.update(&mut cx, |this, cx| {
                         this.pending_completions
                             .retain(|completion| completion.id != this.completion_count);
-                        this.summarize(cx);
+                        this.summarize(false, cx);
                     })?;
 
                     anyhow::Ok(())
@@ -1688,6 +1777,10 @@ impl Context {
                         .err()
                         .map(|error| error.to_string().trim().to_string());
 
+                    if let Some(error_message) = error_message.as_ref() {
+                        cx.emit(ContextEvent::AssistError(error_message.to_string()));
+                    }
+
                     this.update_metadata(assistant_message_id, cx, |metadata| {
                         if let Some(error_message) = error_message.as_ref() {
                             metadata.status =
@@ -1698,7 +1791,6 @@ impl Context {
                     });
 
                     if let Some(telemetry) = this.telemetry.as_ref() {
-                        let model = CompletionProvider::global(cx).model();
                         telemetry.report_assistant_event(
                             Some(this.id.0.clone()),
                             AssistantKind::Panel,
@@ -1721,14 +1813,15 @@ impl Context {
     }
 
     pub fn to_completion_request(&self, cx: &AppContext) -> LanguageModelRequest {
-        let messages = self
+        let buffer = self.buffer.read(cx);
+        let request_messages = self
             .messages(cx)
-            .filter(|message| matches!(message.status, MessageStatus::Done))
-            .map(|message| message.to_request_message(self.buffer.read(cx)));
+            .filter(|message| message.status == MessageStatus::Done)
+            .map(|message| message.to_request_message(&buffer))
+            .collect();
 
         LanguageModelRequest {
-            model: CompletionProvider::global(cx).model(),
-            messages: messages.collect(),
+            messages: request_messages,
             stop: vec![],
             temperature: 1.0,
         }
@@ -1826,6 +1919,55 @@ impl Context {
         }
     }
 
+    pub fn insert_image(&mut self, image: Image, cx: &mut ModelContext<Self>) -> Option<()> {
+        if let hash_map::Entry::Vacant(entry) = self.images.entry(image.id()) {
+            entry.insert((
+                image.to_image_data(cx).log_err()?,
+                LanguageModelImage::from_image(image, cx).shared(),
+            ));
+        }
+
+        Some(())
+    }
+
+    pub fn insert_image_anchor(
+        &mut self,
+        image_id: u64,
+        anchor: language::Anchor,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
+        cx.emit(ContextEvent::MessagesEdited);
+
+        let buffer = self.buffer.read(cx);
+        let insertion_ix = match self
+            .image_anchors
+            .binary_search_by(|existing_anchor| anchor.cmp(&existing_anchor.anchor, buffer))
+        {
+            Ok(ix) => ix,
+            Err(ix) => ix,
+        };
+
+        if let Some((render_image, image)) = self.images.get(&image_id) {
+            self.image_anchors.insert(
+                insertion_ix,
+                ImageAnchor {
+                    anchor,
+                    image_id,
+                    image: image.clone(),
+                    render_image: render_image.clone(),
+                },
+            );
+
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn images<'a>(&'a self, _cx: &'a AppContext) -> impl 'a + Iterator<Item = ImageAnchor> {
+        self.image_anchors.iter().cloned()
+    }
+
     pub fn split_message(
         &mut self,
         range: Range<usize>,
@@ -1844,7 +1986,10 @@ impl Context {
             let mut edited_buffer = false;
 
             let mut suffix_start = None;
-            if range.start > message.offset_range.start && range.end < message.offset_range.end - 1
+
+            // TODO: why did this start panicking?
+            if range.start > message.offset_range.start
+                && range.end < message.offset_range.end.saturating_sub(1)
             {
                 if self.buffer.read(cx).chars_at(range.end).next() == Some('\n') {
                     suffix_start = Some(range.end + 1);
@@ -1968,9 +2113,16 @@ impl Context {
         self.message_anchors.insert(insertion_ix, new_anchor);
     }
 
-    fn summarize(&mut self, cx: &mut ModelContext<Self>) {
-        if self.message_anchors.len() >= 2 && self.summary.is_none() {
-            if !CompletionProvider::global(cx).is_authenticated() {
+    pub(super) fn summarize(&mut self, replace_old: bool, cx: &mut ModelContext<Self>) {
+        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+            return;
+        };
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return;
+        };
+
+        if replace_old || (self.message_anchors.len() >= 2 && self.summary.is_none()) {
+            if !provider.is_authenticated(cx) {
                 return;
             }
 
@@ -1979,27 +2131,33 @@ impl Context {
                 .map(|message| message.to_request_message(self.buffer.read(cx)))
                 .chain(Some(LanguageModelRequestMessage {
                     role: Role::User,
-                    content: "Summarize the context into a short title without punctuation.".into(),
+                    content: vec![
+                        "Summarize the context into a short title without punctuation.".into(),
+                    ],
                 }));
             let request = LanguageModelRequest {
-                model: CompletionProvider::global(cx).model(),
                 messages: messages.collect(),
                 stop: vec![],
                 temperature: 1.0,
             };
 
-            let stream = CompletionProvider::global(cx).stream_completion(request, cx);
             self.pending_summary = cx.spawn(|this, mut cx| {
                 async move {
+                    let stream = model.stream_completion(request, &cx);
                     let mut messages = stream.await?;
 
+                    let mut replaced = !replace_old;
                     while let Some(message) = messages.next().await {
                         let text = message?;
                         let mut lines = text.lines();
                         this.update(&mut cx, |this, cx| {
                             let version = this.version.clone();
                             let timestamp = this.next_timestamp();
-                            let summary = this.summary.get_or_insert(Default::default());
+                            let summary = this.summary.get_or_insert(ContextSummary::default());
+                            if !replaced && replace_old {
+                                summary.text.clear();
+                                replaced = true;
+                            }
                             summary.text.extend(lines.next());
                             summary.timestamp = timestamp;
                             let operation = ContextOperation::UpdateSummary {
@@ -2077,25 +2235,55 @@ impl Context {
 
     pub fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
         let buffer = self.buffer.read(cx);
-        let mut message_anchors = self.message_anchors.iter().enumerate().peekable();
+        let messages = self.message_anchors.iter().enumerate();
+        let images = self.image_anchors.iter();
+
+        Self::messages_from_iters(buffer, &self.messages_metadata, messages, images)
+    }
+
+    pub fn messages_from_iters<'a>(
+        buffer: &'a Buffer,
+        metadata: &'a HashMap<MessageId, MessageMetadata>,
+        messages: impl Iterator<Item = (usize, &'a MessageAnchor)> + 'a,
+        images: impl Iterator<Item = &'a ImageAnchor> + 'a,
+    ) -> impl 'a + Iterator<Item = Message> {
+        let mut messages = messages.peekable();
+        let mut images = images.peekable();
+
         iter::from_fn(move || {
-            if let Some((start_ix, message_anchor)) = message_anchors.next() {
-                let metadata = self.messages_metadata.get(&message_anchor.id)?;
+            if let Some((start_ix, message_anchor)) = messages.next() {
+                let metadata = metadata.get(&message_anchor.id)?;
+
                 let message_start = message_anchor.start.to_offset(buffer);
                 let mut message_end = None;
                 let mut end_ix = start_ix;
-                while let Some((_, next_message)) = message_anchors.peek() {
+                while let Some((_, next_message)) = messages.peek() {
                     if next_message.start.is_valid(buffer) {
                         message_end = Some(next_message.start);
                         break;
                     } else {
                         end_ix += 1;
-                        message_anchors.next();
+                        messages.next();
                     }
                 }
-                let message_end = message_end
-                    .unwrap_or(language::Anchor::MAX)
-                    .to_offset(buffer);
+                let message_end_anchor = message_end.unwrap_or(language::Anchor::MAX);
+                let message_end = message_end_anchor.to_offset(buffer);
+
+                let mut image_offsets = SmallVec::new();
+                while let Some(image_anchor) = images.peek() {
+                    if image_anchor.anchor.cmp(&message_end_anchor, buffer).is_lt() {
+                        image_offsets.push((
+                            image_anchor.anchor.to_offset(buffer),
+                            MessageImage {
+                                image_id: image_anchor.image_id,
+                                image: image_anchor.image.clone(),
+                            },
+                        ));
+                        images.next();
+                    } else {
+                        break;
+                    }
+                }
 
                 return Some(Message {
                     index_range: start_ix..end_ix,
@@ -2104,6 +2292,7 @@ impl Context {
                     anchor: message_anchor.start,
                     role: metadata.role,
                     status: metadata.status.clone(),
+                    image_offsets,
                 });
             }
             None
@@ -2141,35 +2330,94 @@ impl Context {
             })?;
 
             if let Some(summary) = summary {
+                this.read_with(&cx, |this, cx| this.serialize_images(fs.clone(), cx))?
+                    .await;
+
                 let context = this.read_with(&cx, |this, cx| this.serialize(cx))?;
-                let path = if let Some(old_path) = old_path {
-                    old_path
-                } else {
-                    let mut discriminant = 1;
-                    let mut new_path;
-                    loop {
-                        new_path = contexts_dir().join(&format!(
-                            "{} - {}.zed.json",
-                            summary.trim(),
-                            discriminant
-                        ));
-                        if fs.is_file(&new_path).await {
-                            discriminant += 1;
-                        } else {
-                            break;
-                        }
+                let mut discriminant = 1;
+                let mut new_path;
+                loop {
+                    new_path = contexts_dir().join(&format!(
+                        "{} - {}.zed.json",
+                        summary.trim(),
+                        discriminant
+                    ));
+                    if fs.is_file(&new_path).await {
+                        discriminant += 1;
+                    } else {
+                        break;
                     }
-                    new_path
-                };
+                }
 
                 fs.create_dir(contexts_dir().as_ref()).await?;
-                fs.atomic_write(path.clone(), serde_json::to_string(&context).unwrap())
+                fs.atomic_write(new_path.clone(), serde_json::to_string(&context).unwrap())
                     .await?;
-                this.update(&mut cx, |this, _| this.path = Some(path))?;
+                if let Some(old_path) = old_path {
+                    if new_path != old_path {
+                        fs.remove_file(
+                            &old_path,
+                            RemoveOptions {
+                                recursive: false,
+                                ignore_if_not_exists: true,
+                            },
+                        )
+                        .await?;
+                    }
+                }
+
+                this.update(&mut cx, |this, _| this.path = Some(new_path))?;
             }
 
             Ok(())
         });
+    }
+
+    pub fn serialize_images(&self, fs: Arc<dyn Fs>, cx: &AppContext) -> Task<()> {
+        let mut images_to_save = self
+            .images
+            .iter()
+            .map(|(id, (_, llm_image))| {
+                let fs = fs.clone();
+                let llm_image = llm_image.clone();
+                let id = *id;
+                async move {
+                    if let Some(llm_image) = llm_image.await {
+                        let path: PathBuf =
+                            context_images_dir().join(&format!("{}.png.base64", id));
+                        if fs
+                            .metadata(path.as_path())
+                            .await
+                            .log_err()
+                            .flatten()
+                            .is_none()
+                        {
+                            fs.atomic_write(path, llm_image.source.to_string())
+                                .await
+                                .log_err();
+                        }
+                    }
+                }
+            })
+            .collect::<FuturesUnordered<_>>();
+        cx.background_executor().spawn(async move {
+            if fs
+                .create_dir(context_images_dir().as_ref())
+                .await
+                .log_err()
+                .is_some()
+            {
+                while let Some(_) = images_to_save.next().await {}
+            }
+        })
+    }
+
+    pub(crate) fn custom_summary(&mut self, custom_summary: String, cx: &mut ModelContext<Self>) {
+        let timestamp = self.next_timestamp();
+        let summary = self.summary.get_or_insert(ContextSummary::default());
+        summary.timestamp = timestamp;
+        summary.done = true;
+        summary.text = custom_summary;
+        cx.emit(ContextEvent::SummaryChanged);
     }
 }
 
@@ -2196,7 +2444,7 @@ impl ContextVersion {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PendingSlashCommand {
     pub name: String,
     pub argument: Option<String>,
@@ -2204,7 +2452,7 @@ pub struct PendingSlashCommand {
     pub source_range: Range<language::Anchor>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum PendingSlashCommandStatus {
     Idle,
     Running { _task: Shared<Task<()>> },
@@ -2216,6 +2464,9 @@ pub struct SavedMessage {
     pub id: MessageId,
     pub start: usize,
     pub metadata: MessageMetadata,
+    #[serde(default)]
+    // This is defaulted for backwards compatibility with JSON files created before August 2024. We didn't always have this field.
+    pub image_offsets: Vec<(usize, u64)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -2398,6 +2649,7 @@ impl SavedContextV0_3_0 {
                             status: metadata.status.clone(),
                             timestamp,
                         },
+                        image_offsets: Vec::new(),
                     })
                 })
                 .collect(),
@@ -2476,13 +2728,8 @@ pub struct SavedContextMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        assistant_panel, prompt_library,
-        slash_command::{active_command, file_command},
-        MessageId,
-    };
+    use crate::{assistant_panel, prompt_library, slash_command::file_command, MessageId};
     use assistant_slash_command::{ArgumentCompletion, SlashCommand};
-    use completion::FakeCompletionProvider;
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext, WeakView};
     use indoc::indoc;
@@ -2502,12 +2749,13 @@ mod tests {
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        FakeCompletionProvider::setup_test(cx);
+        LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-
-        let context = cx.new_model(|cx| Context::local(registry, None, cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context =
+            cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
         let buffer = context.read(cx).buffer.clone();
 
         let message_1 = context.read(cx).message_anchors[0].clone();
@@ -2634,11 +2882,13 @@ mod tests {
     fn test_message_splitting(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        FakeCompletionProvider::setup_test(cx);
+        LanguageModelRegistry::test(cx);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let context = cx.new_model(|cx| Context::local(registry, None, cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context =
+            cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
         let buffer = context.read(cx).buffer.clone();
 
         let message_1 = context.read(cx).message_anchors[0].clone();
@@ -2727,11 +2977,13 @@ mod tests {
     #[gpui::test]
     fn test_messages_for_offsets(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        FakeCompletionProvider::setup_test(cx);
+        LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let context = cx.new_model(|cx| Context::local(registry, None, cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context =
+            cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
         let buffer = context.read(cx).buffer.clone();
 
         let message_1 = context.read(cx).message_anchors[0].clone();
@@ -2812,7 +3064,7 @@ mod tests {
     async fn test_slash_commands(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.update(FakeCompletionProvider::setup_test);
+        cx.update(LanguageModelRegistry::test);
         cx.update(Project::init_settings);
         cx.update(assistant_panel::init);
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -2833,10 +3085,12 @@ mod tests {
 
         let slash_command_registry = cx.update(SlashCommandRegistry::default_global);
         slash_command_registry.register_command(file_command::FileSlashCommand, false);
-        slash_command_registry.register_command(active_command::ActiveSlashCommand, false);
 
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context = cx.new_model(|cx| {
+            Context::local(registry.clone(), None, None, prompt_builder.clone(), cx)
+        });
 
         let output_ranges = Rc::new(RefCell::new(HashSet::default()));
         context.update(cx, |_, cx| {
@@ -2937,21 +3191,53 @@ mod tests {
         cx.update(prompt_library::init);
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        let fake_provider = cx.update(FakeCompletionProvider::setup_test);
+        cx.update(Project::init_settings);
+        let fs = FakeFs::new(cx.executor());
+        fs.as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "hello.rs": r#"
+                    fn hello() {
+                        println!("Hello, World!");
+                    }
+                "#.unindent()
+                }),
+            )
+            .await;
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        cx.update(LanguageModelRegistry::test);
+
+        let model = cx.read(|cx| {
+            LanguageModelRegistry::read_global(cx)
+                .active_model()
+                .unwrap()
+        });
         cx.update(assistant_panel::init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
 
         // Create a new context
-        let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context = cx.new_model(|cx| {
+            Context::local(
+                registry.clone(),
+                Some(project),
+                None,
+                prompt_builder.clone(),
+                cx,
+            )
+        });
         let buffer = context.read_with(cx, |context, _| context.buffer.clone());
 
         // Simulate user input
         let user_message = indoc! {r#"
-            Please refactor this code:
+            Please add unnecessary complexity to this code:
 
+            ```hello.rs
             fn main() {
                 println!("Hello, World!");
             }
+            ```
         "#};
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(0..0, user_message)], None, cx);
@@ -2959,7 +3245,7 @@ mod tests {
 
         // Simulate LLM response with edit steps
         let llm_response = indoc! {r#"
-            Sure, I can help you refactor that code. Here's a step-by-step process:
+            Sure, I can help you with that. Here's a step-by-step process:
 
             <step>
             First, let's extract the greeting into a separate function:
@@ -3003,8 +3289,10 @@ mod tests {
         });
 
         // Simulate the LLM completion
-        fake_provider.send_last_completion_chunk(llm_response.to_string());
-        fake_provider.finish_last_completion();
+        model
+            .as_fake()
+            .stream_last_completion_response(llm_response.to_string());
+        model.as_fake().end_last_completion_stream();
 
         // Wait for the completion to be processed
         cx.run_until_parked();
@@ -3012,83 +3300,97 @@ mod tests {
         // Verify that the edit steps were parsed correctly
         context.read_with(cx, |context, cx| {
             assert_eq!(
-                edit_steps(context, cx),
+                workflow_steps(context, cx),
                 vec![
-                    Point::new(response_start_row + 2, 0)..Point::new(response_start_row + 14, 7),
-                    Point::new(response_start_row + 16, 0)..Point::new(response_start_row + 28, 7),
+                    (
+                        Point::new(response_start_row + 2, 0)
+                            ..Point::new(response_start_row + 12, 3),
+                        WorkflowStepTestStatus::Pending
+                    ),
+                    (
+                        Point::new(response_start_row + 14, 0)
+                            ..Point::new(response_start_row + 24, 3),
+                        WorkflowStepTestStatus::Pending
+                    ),
                 ]
             );
         });
 
-        fn edit_steps(context: &Context, cx: &AppContext) -> Vec<Range<Point>> {
+        model
+            .as_fake()
+            .respond_to_last_tool_use(Ok(serde_json::to_value(tool::WorkflowStepResolution {
+                step_title: "Title".into(),
+                suggestions: vec![tool::WorkflowSuggestion {
+                    path: "/root/hello.rs".into(),
+                    // Simulate a symbol name that's slightly different than our outline query
+                    kind: tool::WorkflowSuggestionKind::Update {
+                        symbol: "fn main()".into(),
+                        description: "Extract a greeting function".into(),
+                    },
+                }],
+            })
+            .unwrap()));
+
+        // Wait for tool use to be processed.
+        cx.run_until_parked();
+
+        // Verify that the first edit step is not pending anymore.
+        context.read_with(cx, |context, cx| {
+            assert_eq!(
+                workflow_steps(context, cx),
+                vec![
+                    (
+                        Point::new(response_start_row + 2, 0)
+                            ..Point::new(response_start_row + 12, 3),
+                        WorkflowStepTestStatus::Resolved
+                    ),
+                    (
+                        Point::new(response_start_row + 14, 0)
+                            ..Point::new(response_start_row + 24, 3),
+                        WorkflowStepTestStatus::Pending
+                    ),
+                ]
+            );
+        });
+
+        #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+        enum WorkflowStepTestStatus {
+            Pending,
+            Resolved,
+            Error,
+        }
+
+        fn workflow_steps(
+            context: &Context,
+            cx: &AppContext,
+        ) -> Vec<(Range<Point>, WorkflowStepTestStatus)> {
             context
-                .edit_steps
+                .workflow_steps
                 .iter()
                 .map(|step| {
                     let buffer = context.buffer.read(cx);
-                    step.source_range.to_point(buffer)
+                    let status = match &step.status {
+                        WorkflowStepStatus::Pending(_) => WorkflowStepTestStatus::Pending,
+                        WorkflowStepStatus::Resolved { .. } => WorkflowStepTestStatus::Resolved,
+                        WorkflowStepStatus::Error(_) => WorkflowStepTestStatus::Error,
+                    };
+                    (step.tagged_range.to_point(buffer), status)
                 })
                 .collect()
         }
-    }
-
-    #[test]
-    fn test_parse_edit_operations() {
-        let operations = indoc! {r#"
-            Here are the operations to make all fields of the Canvas struct private:
-
-            <operations>
-                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub pixels" description="Remove pub keyword from pixels field" />
-                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub size" description="Remove pub keyword from size field" />
-                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub stride" description="Remove pub keyword from stride field" />
-                <update path="font-kit/src/canvas.rs" symbol="pub struct Canvas pub format" description="Remove pub keyword from format field" />
-            </operations>
-        "#};
-
-        let parsed_operations = Context::parse_edit_operations(operations);
-        assert_eq!(
-            parsed_operations,
-            vec![
-                EditOperation {
-                    path: "font-kit/src/canvas.rs".to_string(),
-                    kind: EditOperationKind::Update {
-                        symbol: "pub struct Canvas pub pixels".to_string(),
-                        description: "Remove pub keyword from pixels field".to_string(),
-                    },
-                },
-                EditOperation {
-                    path: "font-kit/src/canvas.rs".to_string(),
-                    kind: EditOperationKind::Update {
-                        symbol: "pub struct Canvas pub size".to_string(),
-                        description: "Remove pub keyword from size field".to_string(),
-                    },
-                },
-                EditOperation {
-                    path: "font-kit/src/canvas.rs".to_string(),
-                    kind: EditOperationKind::Update {
-                        symbol: "pub struct Canvas pub stride".to_string(),
-                        description: "Remove pub keyword from stride field".to_string(),
-                    },
-                },
-                EditOperation {
-                    path: "font-kit/src/canvas.rs".to_string(),
-                    kind: EditOperationKind::Update {
-                        symbol: "pub struct Canvas pub format".to_string(),
-                        description: "Remove pub keyword from format field".to_string(),
-                    },
-                },
-            ]
-        );
     }
 
     #[gpui::test]
     async fn test_serialization(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.update(FakeCompletionProvider::setup_test);
+        cx.update(LanguageModelRegistry::test);
         cx.update(assistant_panel::init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context = cx.new_model(|cx| {
+            Context::local(registry.clone(), None, None, prompt_builder.clone(), cx)
+        });
         let buffer = context.read_with(cx, |context, _| context.buffer.clone());
         let message_0 = context.read_with(cx, |context, _| context.message_anchors[0].id);
         let message_1 = context.update(cx, |context, cx| {
@@ -3127,6 +3429,8 @@ mod tests {
                 serialized_context,
                 Default::default(),
                 registry.clone(),
+                prompt_builder.clone(),
+                None,
                 None,
                 cx,
             )
@@ -3161,7 +3465,8 @@ mod tests {
 
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.update(FakeCompletionProvider::setup_test);
+        cx.update(LanguageModelRegistry::test);
+
         cx.update(assistant_panel::init);
         let slash_commands = cx.update(SlashCommandRegistry::default_global);
         slash_commands.register_command(FakeSlashCommand("cmd-1".into()), false);
@@ -3174,6 +3479,7 @@ mod tests {
 
         let num_peers = rng.gen_range(min_peers..=max_peers);
         let context_id = ContextId::new();
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         for i in 0..num_peers {
             let context = cx.new_model(|cx| {
                 Context::new(
@@ -3181,6 +3487,8 @@ mod tests {
                     i as ReplicaId,
                     language::Capability::ReadWrite,
                     registry.clone(),
+                    prompt_builder.clone(),
+                    None,
                     None,
                     cx,
                 )
@@ -3443,7 +3751,7 @@ mod tests {
             _query: String,
             _cancel: Arc<AtomicBool>,
             _workspace: Option<WeakView<Workspace>>,
-            _cx: &mut AppContext,
+            _cx: &mut WindowContext,
         ) -> Task<Result<Vec<ArgumentCompletion>>> {
             Task::ready(Ok(vec![]))
         }
@@ -3456,7 +3764,7 @@ mod tests {
             self: Arc<Self>,
             _argument: Option<&str>,
             _workspace: WeakView<Workspace>,
-            _delegate: Arc<dyn LspAdapterDelegate>,
+            _delegate: Option<Arc<dyn LspAdapterDelegate>>,
             _cx: &mut WindowContext,
         ) -> Task<Result<SlashCommandOutput>> {
             Task::ready(Ok(SlashCommandOutput {
@@ -3464,6 +3772,317 @@ mod tests {
                 sections: vec![],
                 run_commands_in_text: false,
             }))
+        }
+    }
+}
+
+mod tool {
+    use gpui::AsyncAppContext;
+
+    use super::*;
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    pub struct WorkflowStepResolution {
+        /// An extremely short title for the edit step represented by these operations.
+        pub step_title: String,
+        /// A sequence of operations to apply to the codebase.
+        /// When multiple operations are required for a step, be sure to include multiple operations in this list.
+        pub suggestions: Vec<WorkflowSuggestion>,
+    }
+
+    impl LanguageModelTool for WorkflowStepResolution {
+        fn name() -> String {
+            "edit".into()
+        }
+
+        fn description() -> String {
+            "suggest edits to one or more locations in the codebase".into()
+        }
+    }
+
+    /// A description of an operation to apply to one location in the codebase.
+    ///
+    /// This object represents a single edit operation that can be performed on a specific file
+    /// in the codebase. It encapsulates both the location (file path) and the nature of the
+    /// edit to be made.
+    ///
+    /// # Fields
+    ///
+    /// * `path`: A string representing the file path where the edit operation should be applied.
+    ///           This path is relative to the root of the project or repository.
+    ///
+    /// * `kind`: An enum representing the specific type of edit operation to be performed.
+    ///
+    /// # Usage
+    ///
+    /// `EditOperation` is used within a code editor to represent and apply
+    /// programmatic changes to source code. It provides a structured way to describe
+    /// edits for features like refactoring tools or AI-assisted coding suggestions.
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+    pub struct WorkflowSuggestion {
+        /// The path to the file containing the relevant operation
+        pub path: String,
+        #[serde(flatten)]
+        pub kind: WorkflowSuggestionKind,
+    }
+
+    impl WorkflowSuggestion {
+        pub(super) async fn resolve(
+            &self,
+            project: Model<Project>,
+            mut cx: AsyncAppContext,
+        ) -> Result<(Model<Buffer>, super::WorkflowSuggestion)> {
+            let path = self.path.clone();
+            let kind = self.kind.clone();
+            let buffer = project
+                .update(&mut cx, |project, cx| {
+                    let project_path = project
+                        .find_project_path(Path::new(&path), cx)
+                        .with_context(|| format!("worktree not found for {:?}", path))?;
+                    anyhow::Ok(project.open_buffer(project_path, cx))
+                })??
+                .await?;
+
+            let mut parse_status = buffer.read_with(&cx, |buffer, _cx| buffer.parse_status())?;
+            while *parse_status.borrow() != ParseStatus::Idle {
+                parse_status.changed().await?;
+            }
+
+            let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+            let outline = snapshot.outline(None).context("no outline for buffer")?;
+
+            let suggestion;
+            match kind {
+                WorkflowSuggestionKind::Update {
+                    symbol,
+                    description,
+                } => {
+                    let symbol = outline
+                        .find_most_similar(&symbol)
+                        .with_context(|| format!("symbol not found: {:?}", symbol))?
+                        .to_point(&snapshot);
+                    let start = symbol
+                        .annotation_range
+                        .map_or(symbol.range.start, |range| range.start);
+                    let start = Point::new(start.row, 0);
+                    let end = Point::new(
+                        symbol.range.end.row,
+                        snapshot.line_len(symbol.range.end.row),
+                    );
+                    let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                    suggestion = super::WorkflowSuggestion::Update { range, description };
+                }
+                WorkflowSuggestionKind::Create { description } => {
+                    suggestion = super::WorkflowSuggestion::CreateFile { description };
+                }
+                WorkflowSuggestionKind::InsertSiblingBefore {
+                    symbol,
+                    description,
+                } => {
+                    let symbol = outline
+                        .find_most_similar(&symbol)
+                        .with_context(|| format!("symbol not found: {:?}", symbol))?
+                        .to_point(&snapshot);
+                    let position = snapshot.anchor_before(
+                        symbol
+                            .annotation_range
+                            .map_or(symbol.range.start, |annotation_range| {
+                                annotation_range.start
+                            }),
+                    );
+                    suggestion = super::WorkflowSuggestion::InsertSiblingBefore {
+                        position,
+                        description,
+                    };
+                }
+                WorkflowSuggestionKind::InsertSiblingAfter {
+                    symbol,
+                    description,
+                } => {
+                    let symbol = outline
+                        .find_most_similar(&symbol)
+                        .with_context(|| format!("symbol not found: {:?}", symbol))?
+                        .to_point(&snapshot);
+                    let position = snapshot.anchor_after(symbol.range.end);
+                    suggestion = super::WorkflowSuggestion::InsertSiblingAfter {
+                        position,
+                        description,
+                    };
+                }
+                WorkflowSuggestionKind::PrependChild {
+                    symbol,
+                    description,
+                } => {
+                    if let Some(symbol) = symbol {
+                        let symbol = outline
+                            .find_most_similar(&symbol)
+                            .with_context(|| format!("symbol not found: {:?}", symbol))?
+                            .to_point(&snapshot);
+
+                        let position = snapshot.anchor_after(
+                            symbol
+                                .body_range
+                                .map_or(symbol.range.start, |body_range| body_range.start),
+                        );
+                        suggestion = super::WorkflowSuggestion::PrependChild {
+                            position,
+                            description,
+                        };
+                    } else {
+                        suggestion = super::WorkflowSuggestion::PrependChild {
+                            position: language::Anchor::MIN,
+                            description,
+                        };
+                    }
+                }
+                WorkflowSuggestionKind::AppendChild {
+                    symbol,
+                    description,
+                } => {
+                    if let Some(symbol) = symbol {
+                        let symbol = outline
+                            .find_most_similar(&symbol)
+                            .with_context(|| format!("symbol not found: {:?}", symbol))?
+                            .to_point(&snapshot);
+
+                        let position = snapshot.anchor_before(
+                            symbol
+                                .body_range
+                                .map_or(symbol.range.end, |body_range| body_range.end),
+                        );
+                        suggestion = super::WorkflowSuggestion::AppendChild {
+                            position,
+                            description,
+                        };
+                    } else {
+                        suggestion = super::WorkflowSuggestion::PrependChild {
+                            position: language::Anchor::MAX,
+                            description,
+                        };
+                    }
+                }
+                WorkflowSuggestionKind::Delete { symbol } => {
+                    let symbol = outline
+                        .find_most_similar(&symbol)
+                        .with_context(|| format!("symbol not found: {:?}", symbol))?
+                        .to_point(&snapshot);
+                    let start = symbol
+                        .annotation_range
+                        .map_or(symbol.range.start, |range| range.start);
+                    let start = Point::new(start.row, 0);
+                    let end = Point::new(
+                        symbol.range.end.row,
+                        snapshot.line_len(symbol.range.end.row),
+                    );
+                    let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                    suggestion = super::WorkflowSuggestion::Delete { range };
+                }
+            }
+
+            Ok((buffer, suggestion))
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+    #[serde(tag = "kind")]
+    pub enum WorkflowSuggestionKind {
+        /// Rewrites the specified symbol entirely based on the given description.
+        /// This operation completely replaces the existing symbol with new content.
+        Update {
+            /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+            /// The path should uniquely identify the symbol within the containing file.
+            symbol: String,
+            /// A brief description of the transformation to apply to the symbol.
+            description: String,
+        },
+        /// Creates a new file with the given path based on the provided description.
+        /// This operation adds a new file to the codebase.
+        Create {
+            /// A brief description of the file to be created.
+            description: String,
+        },
+        /// Inserts a new symbol based on the given description before the specified symbol.
+        /// This operation adds new content immediately preceding an existing symbol.
+        InsertSiblingBefore {
+            /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+            /// The new content will be inserted immediately before this symbol.
+            symbol: String,
+            /// A brief description of the new symbol to be inserted.
+            description: String,
+        },
+        /// Inserts a new symbol based on the given description after the specified symbol.
+        /// This operation adds new content immediately following an existing symbol.
+        InsertSiblingAfter {
+            /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+            /// The new content will be inserted immediately after this symbol.
+            symbol: String,
+            /// A brief description of the new symbol to be inserted.
+            description: String,
+        },
+        /// Inserts a new symbol as a child of the specified symbol at the start.
+        /// This operation adds new content as the first child of an existing symbol (or file if no symbol is provided).
+        PrependChild {
+            /// An optional fully-qualified reference to the symbol after the code you want to insert, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+            /// If provided, the new content will be inserted as the first child of this symbol.
+            /// If not provided, the new content will be inserted at the top of the file.
+            symbol: Option<String>,
+            /// A brief description of the new symbol to be inserted.
+            description: String,
+        },
+        /// Inserts a new symbol as a child of the specified symbol at the end.
+        /// This operation adds new content as the last child of an existing symbol (or file if no symbol is provided).
+        AppendChild {
+            /// An optional fully-qualified reference to the symbol before the code you want to insert, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+            /// If provided, the new content will be inserted as the last child of this symbol.
+            /// If not provided, the new content will be applied at the bottom of the file.
+            symbol: Option<String>,
+            /// A brief description of the new symbol to be inserted.
+            description: String,
+        },
+        /// Deletes the specified symbol from the containing file.
+        Delete {
+            /// An fully-qualified reference to the symbol to be deleted, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+            symbol: String,
+        },
+    }
+
+    impl WorkflowSuggestionKind {
+        pub fn symbol(&self) -> Option<&str> {
+            match self {
+                Self::Update { symbol, .. } => Some(symbol),
+                Self::InsertSiblingBefore { symbol, .. } => Some(symbol),
+                Self::InsertSiblingAfter { symbol, .. } => Some(symbol),
+                Self::PrependChild { symbol, .. } => symbol.as_deref(),
+                Self::AppendChild { symbol, .. } => symbol.as_deref(),
+                Self::Delete { symbol } => Some(symbol),
+                Self::Create { .. } => None,
+            }
+        }
+
+        pub fn description(&self) -> Option<&str> {
+            match self {
+                Self::Update { description, .. } => Some(description),
+                Self::Create { description } => Some(description),
+                Self::InsertSiblingBefore { description, .. } => Some(description),
+                Self::InsertSiblingAfter { description, .. } => Some(description),
+                Self::PrependChild { description, .. } => Some(description),
+                Self::AppendChild { description, .. } => Some(description),
+                Self::Delete { .. } => None,
+            }
+        }
+
+        pub fn initial_insertion(&self) -> Option<InitialInsertion> {
+            match self {
+                WorkflowSuggestionKind::InsertSiblingBefore { .. } => {
+                    Some(InitialInsertion::NewlineAfter)
+                }
+                WorkflowSuggestionKind::InsertSiblingAfter { .. } => {
+                    Some(InitialInsertion::NewlineBefore)
+                }
+                WorkflowSuggestionKind::PrependChild { .. } => Some(InitialInsertion::NewlineAfter),
+                WorkflowSuggestionKind::AppendChild { .. } => Some(InitialInsertion::NewlineBefore),
+                _ => None,
+            }
         }
     }
 }

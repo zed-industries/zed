@@ -5,6 +5,7 @@ use super::{
 };
 use anyhow::Result;
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LineEnding, LspAdapterDelegate};
 use semantic_index::SemanticIndex;
@@ -16,6 +17,12 @@ use std::{
 use ui::{prelude::*, IconName};
 use util::ResultExt;
 use workspace::Workspace;
+
+pub(crate) struct SearchSlashCommandFeatureFlag;
+
+impl FeatureFlag for SearchSlashCommandFeatureFlag {
+    const NAME: &'static str = "search-slash-command";
+}
 
 pub(crate) struct SearchSlashCommand;
 
@@ -45,7 +52,7 @@ impl SlashCommand for SearchSlashCommand {
         _query: String,
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
@@ -54,7 +61,7 @@ impl SlashCommand for SearchSlashCommand {
         self: Arc<Self>,
         argument: Option<&str>,
         workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let Some(workspace) = workspace.upgrade() else {

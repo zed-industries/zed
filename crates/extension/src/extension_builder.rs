@@ -6,7 +6,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::io::BufReader;
 use futures::AsyncReadExt;
-use http::{self, AsyncBody, HttpClient};
+use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
 use std::{
     env, fs, mem,
@@ -64,10 +64,10 @@ struct CargoTomlPackage {
 }
 
 impl ExtensionBuilder {
-    pub fn new(cache_dir: PathBuf) -> Self {
+    pub fn new(http_client: Arc<dyn HttpClient>, cache_dir: PathBuf) -> Self {
         Self {
             cache_dir,
-            http: http::client(None),
+            http: http_client,
         }
     }
 

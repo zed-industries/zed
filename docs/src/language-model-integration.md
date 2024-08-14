@@ -2,25 +2,18 @@
 
 ## Assistant Panel
 
-The assistant panel provides you with a way to interact with OpenAI's large language models. The assistant is good for various tasks, such as generating code, asking questions about existing code, and even writing plaintext, such as emails and documentation. To open the assistant panel, toggle the right dock by using the `workspace: toggle right dock` action in the command palette (`cmd-shift-p`).
+The assistant panel provides you with a way to interact with large language models. The assistant is good for various tasks, such as generating code, asking questions about existing code, and even writing plaintext, such as emails and documentation. To open the assistant panel, toggle the right dock by using the `workspace: toggle right dock` action in the command palette or by using the `cmd-r` (Mac) or `ctrl-alt-b` (Linux) shortcut.
 
-> **Note**: A default binding can be set to toggle the right dock via the settings.
+> **Note**: A custom [key binding](./key-bindings.md) can be set to toggle the right dock.
 
-### Setup
+## Setup
 
-1. Create an [OpenAI API key](https://platform.openai.com/account/api-keys)
-2. Make sure that your OpenAI account has credits
-3. Open the assistant panel, using either the `assistant: toggle focus` or the `workspace: toggle right dock` action in the command palette (`cmd-shift-p`).
-4. Make sure the assistant panel is focused:
-
-   ![The focused assistant panel](https://zed.dev/img/assistant/assistant-focused.png)
-
-5. Open the command palette (`cmd-shift-p`) and use the now-available `assistant: reset key` action to set your OpenAI API key:
-   ![Enter your OpenAI API key into the field on the right and hit return](https://zed.dev/img/assistant/assistant-reset-key.png)
-
-The OpenAI API key will be saved in your keychain.
-
-Zed will also use the `OPENAI_API_KEY` environment variable if it's defined. If you need to reset your OpenAI API key, focus on the assistant panel and run the command palette action `assistant: reset key`.
+- [OpenAI API Setup Instructions](#openai)
+- [OpenAI API Custom Endpoint](#openai-custom-endpoint)
+- [Ollama Setup Instructions](#ollama)
+- [Anthropic API Setup Instructions](#anthropic)
+- [Google Gemini API Setup Instructions](#google-gemini)
+- [GitHub Copilot Chat](#github-copilot)
 
 ### Having a conversation
 
@@ -77,80 +70,6 @@ After you submit your first message, a name for your conversation is generated b
 
 ![Viewing assistant history](https://zed.dev/img/assistant/assistant-history.png)
 
-### Using a custom API endpoint for OpenAI
-
-You can use a custom API endpoint for OpenAI, as long as it's compatible with the OpenAI API structure.
-
-To do so, add the following to your Zed `settings.json`:
-
-```json
-{
-  "assistant": {
-    "version": "1",
-    "provider": {
-      "name": "openai",
-      "type": "openai",
-      "default_model": "gpt-4-turbo-preview",
-      "api_url": "http://localhost:11434/v1"
-    }
-  }
-}
-```
-
-The custom URL here is `http://localhost:11434/v1`.
-
-### Using Ollama on macOS
-
-You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI endpoint.
-
-1. Add the following to your Zed `settings.json`:
-
-  ```json
-  {
-    "assistant": {
-      "version": "1",
-      "provider": {
-        "name": "openai",
-        "type": "openai",
-        "default_model": "gpt-4-turbo-preview",
-        "api_url": "http://localhost:11434/v1"
-      }
-    }
-  }
-  ```
-2. Download, for example, the `mistral` model with Ollama:
-  ```
-  ollama run mistral
-  ```
-3. Copy the model and change its name to match the model in the Zed `settings.json`:
-  ```
-  ollama cp mistral gpt-4-turbo-preview
-  ```
-4. Use `assistant: reset key` (see the [Setup](#setup) section above) and enter the following API key:
-  ```
-  ollama
-  ```
-5. Restart Zed
-
-### Using Claude 3.5 Sonnet
-
-You can use Claude with the Zed assistant by adding the following settings:
-
-```json
-"assistant": {
-  "version": "1",
-  "provider": {
-    "default_model": "claude-3-5-sonnet",
-    "name": "anthropic"
-  }
-},
-```
-
-When you save the settings, the assistant panel will open and ask you to add your Anthropic API key.
-You need can obtain this key [here](https://console.anthropic.com/settings/keys).
-
-Even if you pay for Claude Pro, you will still have to [pay for additional credits](https://console.anthropic.com/settings/plans) to use it via the API.
-
 ## Inline generation
 
 You can generate and transform text in any editor by selecting text and pressing `ctrl-enter`.
@@ -170,3 +89,166 @@ To create a custom keybinding that prefills a prompt, you can add the following 
   }
 ]
 ```
+
+## Advanced: Overriding prompt templates
+
+Zed allows you to override the default prompts used for various assistant features by placing custom Handlebars (.hbs) templates in your `~/.config/zed/prompts/templates` directory. The following templates can be overridden:
+
+1. `content_prompt.hbs`: Used for generating content in the editor.
+   Format:
+
+   ```handlebars
+   You are an AI programming assistant. Your task is to
+   {{#if is_insert}}insert{{else}}rewrite{{/if}}
+   {{content_type}}{{#if language_name}} in {{language_name}}{{/if}}
+   based on the following context and user request. Context:
+   {{#if is_truncated}}
+     [Content truncated...]
+   {{/if}}
+   {{document_content}}
+   {{#if is_truncated}}
+     [Content truncated...]
+   {{/if}}
+
+   User request:
+   {{user_prompt}}
+
+   {{#if rewrite_section}}
+     Please rewrite the section enclosed in
+     <rewrite_this></rewrite_this>
+     tags.
+   {{else}}
+     Please insert your response at the
+     <insert_here></insert_here>
+     tag.
+   {{/if}}
+
+   Provide only the
+   {{content_type}}
+   content in your response, without any additional explanation.
+   ```
+
+2. `terminal_assistant_prompt.hbs`: Used for the terminal assistant feature.
+   Format:
+
+   ```handlebars
+   You are an AI assistant for a terminal emulator. Provide helpful responses to
+   user queries about terminal commands, file systems, and general computer
+   usage. System information: - Operating System:
+   {{os}}
+   - Architecture:
+   {{arch}}
+   {{#if shell}}
+     - Shell:
+     {{shell}}
+   {{/if}}
+   {{#if working_directory}}
+     - Current Working Directory:
+     {{working_directory}}
+   {{/if}}
+
+   Latest terminal output:
+   {{#each latest_output}}
+     {{this}}
+   {{/each}}
+
+   User query:
+   {{user_prompt}}
+
+   Provide a clear and concise response to the user's query, considering the
+   given system information and latest terminal output if relevant.
+   ```
+
+3. `edit_workflow.hbs`: Used for generating the edit workflow prompt.
+
+4. `step_resolution.hbs`: Used for generating the step resolution prompt.
+
+You can customize these templates to better suit your needs while maintaining the core structure and variables used by Zed. Zed will automatically reload your prompt overrides when they change on disk. Consult Zed's assets/prompts directory for current versions you can play with.
+
+Be sure you want to override these, as you'll miss out on iteration on our built in features. This should be primarily used when developing Zed.
+
+## Setup Instructions
+
+### OpenAI
+
+<!--
+TBD: OpenAI Setup flow: Review/Correct/Simplify
+-->
+
+1. Create an [OpenAI API key](https://platform.openai.com/account/api-keys)
+2. Make sure that your OpenAI account has credits
+3. Open the assistant panel, using either the `assistant: toggle focus` or the `workspace: toggle right dock` action in the command palette (`cmd-shift-p`).
+4. Make sure the assistant panel is focused:
+
+   ![The focused assistant panel](https://zed.dev/img/assistant/assistant-focused.png)
+
+The OpenAI API key will be saved in your keychain.
+
+Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
+
+#### OpenAI Custom Endpoint
+
+You can use a custom API endpoint for OpenAI, as long as it's compatible with the OpenAI API structure.
+
+To do so, add the following to your Zed `settings.json`:
+
+```json
+{
+  "language_models": {
+    "openai": {
+      "api_url": "http://localhost:11434/v1"
+    }
+  }
+}
+```
+
+The custom URL here is `http://localhost:11434/v1`.
+
+### Ollama
+
+Download and install ollama from [ollama.com/download](https://ollama.com/download) (Linux or MacOS) and ensure it's running with `ollama --version`.
+
+You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI endpoint.
+
+1. Download, for example, the `mistral` model with Ollama:
+
+   ```sh
+   ollama pull mistral
+   ```
+
+2. Make sure that the Ollama server is running. You can start it either via running the Ollama app, or launching:
+
+   ```sh
+   ollama serve
+   ```
+
+3. In the assistant panel, select one of the Ollama models using the model dropdown.
+4. (Optional) If you want to change the default url that is used to access the Ollama server, you can do so by adding the following settings:
+
+```json
+{
+  "language_models": {
+    "ollama": {
+      "api_url": "http://localhost:11434"
+    }
+  }
+}
+```
+
+### Anthropic
+
+You can use Claude 3.5 Sonnet with the Zed assistant by choosing it via the model dropdown in the assistant panel.
+
+You can obtain an API key [here](https://console.anthropic.com/settings/keys).
+
+Even if you pay for Claude Pro, you will still have to [pay for additional credits](https://console.anthropic.com/settings/plans) to use it via the API.
+
+### Google Gemini
+
+You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the assistant panel.
+
+You can obtain an API key [here](https://aistudio.google.com/app/apikey).
+
+### GitHub Copilot
+
+You can use GitHub Copilot chat with the Zed assistant by choosing it via the model dropdown in the assistant panel.

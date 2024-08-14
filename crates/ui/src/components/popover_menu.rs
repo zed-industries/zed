@@ -1,10 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    anchored, deferred, div, point, prelude::FluentBuilder, px, AnchorCorner, AnyElement, Bounds,
-    DismissEvent, DispatchPhase, Element, ElementId, GlobalElementId, HitboxId, InteractiveElement,
-    IntoElement, LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View,
-    VisualContext, WindowContext,
+    anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnchorCorner, AnyElement,
+    Bounds, DismissEvent, DispatchPhase, Element, ElementId, GlobalElementId, HitboxId,
+    InteractiveElement, IntoElement, LayoutId, Length, ManagedView, MouseDownEvent, ParentElement,
+    Pixels, Point, Style, View, VisualContext, WindowContext,
 };
 
 use crate::prelude::*;
@@ -74,6 +74,7 @@ pub struct PopoverMenu<M: ManagedView> {
     attach: Option<AnchorCorner>,
     offset: Option<Point<Pixels>>,
     trigger_handle: Option<PopoverMenuHandle<M>>,
+    full_width: bool,
 }
 
 impl<M: ManagedView> PopoverMenu<M> {
@@ -87,7 +88,13 @@ impl<M: ManagedView> PopoverMenu<M> {
             attach: None,
             offset: None,
             trigger_handle: None,
+            full_width: false,
         }
+    }
+
+    pub fn full_width(mut self, full_width: bool) -> Self {
+        self.full_width = full_width;
+        self
     }
 
     pub fn menu(mut self, f: impl Fn(&mut WindowContext) -> Option<View<M>> + 'static) -> Self {
@@ -258,10 +265,13 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                     .as_mut()
                     .map(|child_element| child_element.request_layout(cx));
 
-                let layout_id = cx.request_layout(
-                    gpui::Style::default(),
-                    menu_layout_id.into_iter().chain(child_layout_id),
-                );
+                let mut style = Style::default();
+                if self.full_width {
+                    style.size = size(relative(1.).into(), Length::Auto);
+                }
+
+                let layout_id =
+                    cx.request_layout(style, menu_layout_id.into_iter().chain(child_layout_id));
 
                 (
                     (

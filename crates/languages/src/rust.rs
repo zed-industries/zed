@@ -3,7 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
 use gpui::{AppContext, AsyncAppContext};
-use http::github::{latest_github_release, GitHubLspBinaryVersion};
+use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use language_settings::all_language_settings;
 use lazy_static::lazy_static;
@@ -626,7 +626,7 @@ fn human_readable_package_name(package_directory: &Path) -> Option<String> {
 
 // For providing local `cargo check -p $pkgid` task, we do not need most of the information we have returned.
 // Output example in the root of Zed project:
-// ```bash
+// ```sh
 // ❯ cargo pkgid zed
 // path+file:///absolute/path/to/project/zed/crates/zed#0.131.0
 // ```

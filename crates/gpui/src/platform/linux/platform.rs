@@ -77,6 +77,7 @@ pub trait LinuxClient {
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
 }
 
@@ -144,11 +145,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
         LinuxClient::run(self);
 
-        self.with_common(|common| {
-            if let Some(mut fun) = common.callbacks.quit.take() {
-                fun();
-            }
-        });
+        let quit = self.with_common(|common| common.callbacks.quit.take());
+        if let Some(mut fun) = quit {
+            fun();
+        }
     }
 
     fn quit(&self) {
@@ -238,6 +238,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         self.active_window()
+    }
+
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        self.window_stack()
     }
 
     fn open_window(
@@ -724,7 +728,7 @@ impl Keystroke {
             // we only include the shift for upper-case letters by convention,
             // so don't include for numbers and symbols, but do include for
             // tab/enter, etc.
-            if key.chars().count() == 1 && key_utf8 == key {
+            if key.chars().count() == 1 && key.to_lowercase() == key.to_uppercase() {
                 modifiers.shift = false;
             }
         }

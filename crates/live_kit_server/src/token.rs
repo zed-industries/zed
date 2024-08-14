@@ -1,15 +1,13 @@
 use anyhow::{anyhow, Result};
-use hmac::{Hmac, Mac};
-use jwt::{SignWithKey, VerifyWithKey};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use std::{
     borrow::Cow,
     ops::Add,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-static DEFAULT_TTL: Duration = Duration::from_secs(6 * 60 * 60); // 6 hours
+const DEFAULT_TTL: Duration = Duration::from_secs(6 * 60 * 60); // 6 hours
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,8 +79,6 @@ pub fn create(
         ))?;
     }
 
-    let secret_key: Hmac<Sha256> = Hmac::new_from_slice(secret_key.as_bytes())?;
-
     let now = SystemTime::now();
 
     let claims = ClaimGrants {
@@ -98,10 +94,19 @@ pub fn create(
         jwtid: identity.map(Cow::Borrowed),
         video: video_grant,
     };
-    Ok(claims.sign_with_key(&secret_key)?)
+    Ok(jsonwebtoken::encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret_key.as_ref()),
+    )?)
 }
 
 pub fn validate<'a>(token: &'a str, secret_key: &str) -> Result<ClaimGrants<'a>> {
-    let secret_key: Hmac<Sha256> = Hmac::new_from_slice(secret_key.as_bytes())?;
-    Ok(token.verify_with_key(&secret_key)?)
+    let token = jsonwebtoken::decode(
+        token,
+        &DecodingKey::from_secret(secret_key.as_ref()),
+        &Validation::default(),
+    )?;
+
+    Ok(token.claims)
 }

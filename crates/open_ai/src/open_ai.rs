@@ -1,11 +1,15 @@
+mod supported_countries;
+
 use anyhow::{anyhow, Context, Result};
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::{convert::TryFrom, future::Future, time::Duration};
 use strum::EnumIter;
+
+pub use supported_countries::*;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
@@ -77,14 +81,14 @@ impl Model {
         }
     }
 
-    pub fn id(&self) -> &'static str {
+    pub fn id(&self) -> &str {
         match self {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo-preview",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
-            Self::Custom { .. } => "custom",
+            Self::Custom { name, .. } => name,
         }
     }
 
@@ -111,42 +115,42 @@ impl Model {
     }
 }
 
-fn serialize_model<S>(model: &Model, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    match model {
-        Model::Custom { name, .. } => serializer.serialize_str(name),
-        _ => serializer.serialize_str(model.id()),
-    }
-}
-
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
-    #[serde(serialize_with = "serialize_model")]
-    pub model: Model,
+    pub model: String,
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<usize>,
     pub stop: Vec<String>,
     pub temperature: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct FunctionDefinition {
-    pub name: String,
-    pub description: Option<String>,
-    pub parameters: Option<Map<String, Value>>,
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolChoice {
+    Auto,
+    Required,
+    None,
+    Other(ToolDefinition),
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolDefinition {
     #[allow(dead_code)]
     Function { function: FunctionDefinition },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub description: Option<String>,
+    pub parameters: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -213,21 +217,28 @@ pub struct FunctionChunk {
     pub arguments: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
     pub index: u32,
     pub delta: ResponseMessageDelta,
     pub finish_reason: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum ResponseStreamResult {
+    Ok(ResponseStreamEvent),
+    Err { error: String },
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
     pub created: u32,
     pub model: String,
@@ -267,7 +278,10 @@ pub async fn stream_completion(
                             None
                         } else {
                             match serde_json::from_str(line) {
-                                Ok(response) => Some(Ok(response)),
+                                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                                Ok(ResponseStreamResult::Err { error }) => {
+                                    Some(Err(anyhow!(error)))
+                                }
                                 Err(error) => Some(Err(anyhow!(error))),
                             }
                         }
@@ -368,4 +382,15 @@ pub fn embed<'a>(
             ))
         }
     }
+}
+
+pub fn extract_text_from_events(
+    response: impl Stream<Item = Result<ResponseStreamEvent>>,
+) -> impl Stream<Item = Result<String>> {
+    response.filter_map(|response| async move {
+        match response {
+            Ok(mut response) => Some(Ok(response.choices.pop()?.delta.content?)),
+            Err(error) => Some(Err(error)),
+        }
+    })
 }

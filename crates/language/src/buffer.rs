@@ -10,11 +10,11 @@ use crate::{
     markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
-        SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
-        SyntaxSnapshot, ToTreeSitterPoint,
+        SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatch,
+        SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
-    LanguageScope, Outline, RunnableCapture, RunnableTag,
+    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
 };
 use anyhow::{anyhow, Context, Result};
 use async_watch as watch;
@@ -27,6 +27,7 @@ use gpui::{
 use lazy_static::lazy_static;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
+use serde_json::Value;
 use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
@@ -96,6 +97,7 @@ pub struct Buffer {
     /// The version vector when this buffer was last loaded from
     /// or saved to disk.
     saved_version: clock::Global,
+    preview_version: clock::Global,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
@@ -213,6 +215,8 @@ pub struct Diagnostic {
     pub is_disk_based: bool,
     /// Whether this diagnostic marks unnecessary code.
     pub is_unnecessary: bool,
+    /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
+    pub data: Option<Value>,
 }
 
 /// TODO - move this into the `project` crate and make it private.
@@ -446,6 +450,7 @@ struct BufferChunkHighlights<'a> {
 /// An iterator that yields chunks of a buffer's text, along with their
 /// syntax highlights and diagnostic status.
 pub struct BufferChunks<'a> {
+    buffer_snapshot: Option<&'a BufferSnapshot>,
     range: Range<usize>,
     chunks: text::Chunks<'a>,
     diagnostic_endpoints: Peekable<vec::IntoIter<DiagnosticEndpoint>>,
@@ -699,6 +704,7 @@ impl Buffer {
         Self {
             saved_mtime,
             saved_version: buffer.version(),
+            preview_version: buffer.version(),
             reload_task: None,
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
@@ -1347,7 +1353,11 @@ impl Buffer {
             })
             .collect();
 
+        let preserve_preview = self.preserve_preview();
         self.edit(edits, None, cx);
+        if preserve_preview {
+            self.refresh_preview();
+        }
     }
 
     /// Create a minimal edit that will cause the given row to be indented
@@ -1399,7 +1409,7 @@ impl Buffer {
                 LineEnding::normalize(&mut new_text);
 
                 let diff = TextDiff::from_chars(old_text.as_str(), new_text.as_str());
-                let empty: Arc<str> = "".into();
+                let empty: Arc<str> = Arc::default();
 
                 let mut edits = Vec::new();
                 let mut old_offset = 0;
@@ -1717,7 +1727,7 @@ impl Buffer {
             .get(&self.text.replica_id())
             .map_or(true, |set| !set.selections.is_empty())
         {
-            self.set_active_selections(Arc::from([]), false, Default::default(), cx);
+            self.set_active_selections(Arc::default(), false, Default::default(), cx);
         }
     }
 
@@ -1870,6 +1880,63 @@ impl Buffer {
             cx.emit(Event::DirtyChanged);
         }
         cx.notify();
+    }
+
+    // Inserts newlines at the given position to create an empty line, returning the start of the new line.
+    // You can also request the insertion of empty lines above and below the line starting at the returned point.
+    pub fn insert_empty_line(
+        &mut self,
+        position: impl ToPoint,
+        space_above: bool,
+        space_below: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Point {
+        let mut position = position.to_point(self);
+
+        self.start_transaction();
+
+        self.edit(
+            [(position..position, "\n")],
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+
+        if position.column > 0 {
+            position += Point::new(1, 0);
+        }
+
+        if !self.is_line_blank(position.row) {
+            self.edit(
+                [(position..position, "\n")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+        }
+
+        if space_above {
+            if position.row > 0 && !self.is_line_blank(position.row - 1) {
+                self.edit(
+                    [(position..position, "\n")],
+                    Some(AutoindentMode::EachLine),
+                    cx,
+                );
+                position.row += 1;
+            }
+        }
+
+        if space_below {
+            if position.row == self.max_point().row || !self.is_line_blank(position.row + 1) {
+                self.edit(
+                    [(position..position, "\n")],
+                    Some(AutoindentMode::EachLine),
+                    cx,
+                );
+            }
+        }
+
+        self.end_transaction(cx);
+
+        position
     }
 
     /// Applies the given remote operations to the buffer.
@@ -2133,6 +2200,18 @@ impl Buffer {
     /// Usually this is driven by LSP server which returns a list of trigger characters for completions.
     pub fn completion_triggers(&self) -> &[String] {
         &self.completion_triggers
+    }
+
+    /// Call this directly after performing edits to prevent the preview tab
+    /// from being dismissed by those edits. It causes `should_dismiss_preview`
+    /// to return false until there are additional edits.
+    pub fn refresh_preview(&mut self) {
+        self.preview_version = self.version.clone();
+    }
+
+    /// Whether we should preserve the preview status of a tab containing this buffer.
+    pub fn preserve_preview(&self) -> bool {
+        !self.has_edits_since(&self.preview_version)
     }
 }
 
@@ -2472,6 +2551,17 @@ impl BufferSnapshot {
         None
     }
 
+    fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures, Vec<HighlightMap>) {
+        let captures = self.syntax.captures(range, &self.text, |grammar| {
+            grammar.highlights_query.as_ref()
+        });
+        let highlight_maps = captures
+            .grammars()
+            .into_iter()
+            .map(|grammar| grammar.highlight_map())
+            .collect();
+        (captures, highlight_maps)
+    }
     /// Iterates over chunks of text in the given range of the buffer. Text is chunked
     /// in an arbitrary way due to being stored in a [`Rope`](text::Rope). The text is also
     /// returned in chunks where each chunk has a single syntax highlighting style and
@@ -2480,36 +2570,11 @@ impl BufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut syntax = None;
-        let mut diagnostic_endpoints = Vec::new();
         if language_aware {
-            let captures = self.syntax.captures(range.clone(), &self.text, |grammar| {
-                grammar.highlights_query.as_ref()
-            });
-            let highlight_maps = captures
-                .grammars()
-                .into_iter()
-                .map(|grammar| grammar.highlight_map())
-                .collect();
-            syntax = Some((captures, highlight_maps));
-            for entry in self.diagnostics_in_range::<_, usize>(range.clone(), false) {
-                diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.start,
-                    is_start: true,
-                    severity: entry.diagnostic.severity,
-                    is_unnecessary: entry.diagnostic.is_unnecessary,
-                });
-                diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.end,
-                    is_start: false,
-                    severity: entry.diagnostic.severity,
-                    is_unnecessary: entry.diagnostic.is_unnecessary,
-                });
-            }
-            diagnostic_endpoints
-                .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
+            syntax = Some(self.get_highlights(range.clone()));
         }
 
-        BufferChunks::new(self.text.as_rope(), range, syntax, diagnostic_endpoints)
+        BufferChunks::new(self.text.as_rope(), range, syntax, Some(self))
     }
 
     /// Invokes the given callback for each line of text in the given range of the buffer.
@@ -2765,135 +2830,63 @@ impl BufferSnapshot {
             .collect::<Vec<_>>();
 
         let mut items = Vec::new();
+        let mut annotation_row_ranges: Vec<Range<u32>> = Vec::new();
         while let Some(mat) = matches.peek() {
             let config = &configs[mat.grammar_index];
-            let item_node = mat.captures.iter().find_map(|cap| {
-                if cap.index == config.item_capture_ix {
-                    Some(cap.node)
-                } else {
-                    None
-                }
-            })?;
-
-            let item_range = item_node.byte_range();
-            if item_range.end < range.start || item_range.start > range.end {
-                matches.advance();
-                continue;
-            }
-
-            let mut open_index = None;
-            let mut close_index = None;
-
-            let mut buffer_ranges = Vec::new();
-            for capture in mat.captures {
-                let node_is_name;
-                if capture.index == config.name_capture_ix {
-                    node_is_name = true;
-                } else if Some(capture.index) == config.context_capture_ix
-                    || (Some(capture.index) == config.extra_context_capture_ix
-                        && include_extra_context)
+            if let Some(item) =
+                self.next_outline_item(config, &mat, &range, include_extra_context, theme)
+            {
+                items.push(item);
+            } else if let Some(capture) = mat
+                .captures
+                .iter()
+                .find(|capture| Some(capture.index) == config.annotation_capture_ix)
+            {
+                let capture_range = capture.node.start_position()..capture.node.end_position();
+                let mut capture_row_range =
+                    capture_range.start.row as u32..capture_range.end.row as u32;
+                if capture_range.end.row > capture_range.start.row && capture_range.end.column == 0
                 {
-                    node_is_name = false;
-                } else {
-                    if Some(capture.index) == config.open_capture_ix {
-                        open_index = Some(capture.node.end_byte());
-                    } else if Some(capture.index) == config.close_capture_ix {
-                        close_index = Some(capture.node.start_byte());
-                    }
-
-                    continue;
+                    capture_row_range.end -= 1;
                 }
-
-                let mut range = capture.node.start_byte()..capture.node.end_byte();
-                let start = capture.node.start_position();
-                if capture.node.end_position().row > start.row {
-                    range.end =
-                        range.start + self.line_len(start.row as u32) as usize - start.column;
-                }
-
-                if !range.is_empty() {
-                    buffer_ranges.push((range, node_is_name));
-                }
-            }
-
-            if buffer_ranges.is_empty() {
-                matches.advance();
-                continue;
-            }
-
-            let mut text = String::new();
-            let mut highlight_ranges = Vec::new();
-            let mut name_ranges = Vec::new();
-            let mut chunks = self.chunks(
-                buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end,
-                true,
-            );
-            let mut last_buffer_range_end = 0;
-            for (buffer_range, is_name) in buffer_ranges {
-                if !text.is_empty() && buffer_range.start > last_buffer_range_end {
-                    text.push(' ');
-                }
-                last_buffer_range_end = buffer_range.end;
-                if is_name {
-                    let mut start = text.len();
-                    let end = start + buffer_range.len();
-
-                    // When multiple names are captured, then the matcheable text
-                    // includes the whitespace in between the names.
-                    if !name_ranges.is_empty() {
-                        start -= 1;
-                    }
-
-                    name_ranges.push(start..end);
-                }
-
-                let mut offset = buffer_range.start;
-                chunks.seek(offset);
-                for mut chunk in chunks.by_ref() {
-                    if chunk.text.len() > buffer_range.end - offset {
-                        chunk.text = &chunk.text[0..(buffer_range.end - offset)];
-                        offset = buffer_range.end;
+                if let Some(last_row_range) = annotation_row_ranges.last_mut() {
+                    if last_row_range.end >= capture_row_range.start.saturating_sub(1) {
+                        last_row_range.end = capture_row_range.end;
                     } else {
-                        offset += chunk.text.len();
+                        annotation_row_ranges.push(capture_row_range);
                     }
-                    let style = chunk
-                        .syntax_highlight_id
-                        .zip(theme)
-                        .and_then(|(highlight, theme)| highlight.style(theme));
-                    if let Some(style) = style {
-                        let start = text.len();
-                        let end = start + chunk.text.len();
-                        highlight_ranges.push((start..end, style));
-                    }
-                    text.push_str(chunk.text);
-                    if offset >= buffer_range.end {
-                        break;
-                    }
+                } else {
+                    annotation_row_ranges.push(capture_row_range);
                 }
             }
-
             matches.advance();
-
-            items.push(OutlineItem {
-                depth: 0, // We'll calculate the depth later
-                range: item_range,
-                text,
-                highlight_ranges,
-                name_ranges,
-                body_range: open_index.zip(close_index).map(|(start, end)| start..end),
-            });
         }
 
         items.sort_by_key(|item| (item.range.start, Reverse(item.range.end)));
 
         // Assign depths based on containment relationships and convert to anchors.
-        let mut item_ends_stack = Vec::<usize>::new();
+        let mut item_ends_stack = Vec::<Point>::new();
         let mut anchor_items = Vec::new();
+        let mut annotation_row_ranges = annotation_row_ranges.into_iter().peekable();
         for item in items {
             while let Some(last_end) = item_ends_stack.last().copied() {
                 if last_end < item.range.end {
                     item_ends_stack.pop();
                 } else {
+                    break;
+                }
+            }
+
+            let mut annotation_row_range = None;
+            while let Some(next_annotation_row_range) = annotation_row_ranges.peek() {
+                let row_preceding_item = item.range.start.row.saturating_sub(1);
+                if next_annotation_row_range.end < row_preceding_item {
+                    annotation_row_ranges.next();
+                } else {
+                    if next_annotation_row_range.end == row_preceding_item {
+                        annotation_row_range = Some(next_annotation_row_range.clone());
+                        annotation_row_ranges.next();
+                    }
                     break;
                 }
             }
@@ -2907,11 +2900,137 @@ impl BufferSnapshot {
                 body_range: item.body_range.map(|body_range| {
                     self.anchor_after(body_range.start)..self.anchor_before(body_range.end)
                 }),
+                annotation_range: annotation_row_range.map(|annotation_range| {
+                    self.anchor_after(Point::new(annotation_range.start, 0))
+                        ..self.anchor_before(Point::new(
+                            annotation_range.end,
+                            self.line_len(annotation_range.end),
+                        ))
+                }),
             });
             item_ends_stack.push(item.range.end);
         }
 
         Some(anchor_items)
+    }
+
+    fn next_outline_item(
+        &self,
+        config: &OutlineConfig,
+        mat: &SyntaxMapMatch,
+        range: &Range<usize>,
+        include_extra_context: bool,
+        theme: Option<&SyntaxTheme>,
+    ) -> Option<OutlineItem<Point>> {
+        let item_node = mat.captures.iter().find_map(|cap| {
+            if cap.index == config.item_capture_ix {
+                Some(cap.node)
+            } else {
+                None
+            }
+        })?;
+
+        let item_byte_range = item_node.byte_range();
+        if item_byte_range.end < range.start || item_byte_range.start > range.end {
+            return None;
+        }
+        let item_point_range = Point::from_ts_point(item_node.start_position())
+            ..Point::from_ts_point(item_node.end_position());
+
+        let mut open_point = None;
+        let mut close_point = None;
+        let mut buffer_ranges = Vec::new();
+        for capture in mat.captures {
+            let node_is_name;
+            if capture.index == config.name_capture_ix {
+                node_is_name = true;
+            } else if Some(capture.index) == config.context_capture_ix
+                || (Some(capture.index) == config.extra_context_capture_ix && include_extra_context)
+            {
+                node_is_name = false;
+            } else {
+                if Some(capture.index) == config.open_capture_ix {
+                    open_point = Some(Point::from_ts_point(capture.node.end_position()));
+                } else if Some(capture.index) == config.close_capture_ix {
+                    close_point = Some(Point::from_ts_point(capture.node.start_position()));
+                }
+
+                continue;
+            }
+
+            let mut range = capture.node.start_byte()..capture.node.end_byte();
+            let start = capture.node.start_position();
+            if capture.node.end_position().row > start.row {
+                range.end = range.start + self.line_len(start.row as u32) as usize - start.column;
+            }
+
+            if !range.is_empty() {
+                buffer_ranges.push((range, node_is_name));
+            }
+        }
+        if buffer_ranges.is_empty() {
+            return None;
+        }
+        let mut text = String::new();
+        let mut highlight_ranges = Vec::new();
+        let mut name_ranges = Vec::new();
+        let mut chunks = self.chunks(
+            buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end,
+            true,
+        );
+        let mut last_buffer_range_end = 0;
+        for (buffer_range, is_name) in buffer_ranges {
+            if !text.is_empty() && buffer_range.start > last_buffer_range_end {
+                text.push(' ');
+            }
+            last_buffer_range_end = buffer_range.end;
+            if is_name {
+                let mut start = text.len();
+                let end = start + buffer_range.len();
+
+                // When multiple names are captured, then the matcheable text
+                // includes the whitespace in between the names.
+                if !name_ranges.is_empty() {
+                    start -= 1;
+                }
+
+                name_ranges.push(start..end);
+            }
+
+            let mut offset = buffer_range.start;
+            chunks.seek(buffer_range.clone());
+            for mut chunk in chunks.by_ref() {
+                if chunk.text.len() > buffer_range.end - offset {
+                    chunk.text = &chunk.text[0..(buffer_range.end - offset)];
+                    offset = buffer_range.end;
+                } else {
+                    offset += chunk.text.len();
+                }
+                let style = chunk
+                    .syntax_highlight_id
+                    .zip(theme)
+                    .and_then(|(highlight, theme)| highlight.style(theme));
+                if let Some(style) = style {
+                    let start = text.len();
+                    let end = start + chunk.text.len();
+                    highlight_ranges.push((start..end, style));
+                }
+                text.push_str(chunk.text);
+                if offset >= buffer_range.end {
+                    break;
+                }
+            }
+        }
+
+        Some(OutlineItem {
+            depth: 0, // We'll calculate the depth later
+            range: item_point_range,
+            text,
+            highlight_ranges,
+            name_ranges,
+            body_range: open_point.zip(close_point).map(|(start, end)| start..end),
+            annotation_range: None,
+        })
     }
 
     /// For each grammar in the language, runs the provided
@@ -3052,6 +3171,43 @@ impl BufferSnapshot {
                 .map(|mat| mat.node.byte_range());
             syntax_matches.advance();
             redacted_range
+        })
+    }
+
+    pub fn injections_intersecting_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = (Range<usize>, &Arc<Language>)> + '_ {
+        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
+            grammar
+                .injection_config
+                .as_ref()
+                .map(|config| &config.query)
+        });
+
+        let configs = syntax_matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.injection_config.as_ref())
+            .collect::<Vec<_>>();
+
+        iter::from_fn(move || {
+            let ranges = syntax_matches.peek().and_then(|mat| {
+                let config = &configs[mat.grammar_index]?;
+                let content_capture_range = mat.captures.iter().find_map(|capture| {
+                    if capture.index == config.content_capture_ix {
+                        Some(capture.node.byte_range())
+                    } else {
+                        None
+                    }
+                })?;
+                let language = self.language_at(content_capture_range.start)?;
+                Some((content_capture_range, language))
+            });
+            syntax_matches.advance();
+            ranges
         })
     }
 
@@ -3637,7 +3793,7 @@ impl<'a> BufferChunks<'a> {
         text: &'a Rope,
         range: Range<usize>,
         syntax: Option<(SyntaxMapCaptures<'a>, Vec<HighlightMap>)>,
-        diagnostic_endpoints: Vec<DiagnosticEndpoint>,
+        buffer_snapshot: Option<&'a BufferSnapshot>,
     ) -> Self {
         let mut highlights = None;
         if let Some((captures, highlight_maps)) = syntax {
@@ -3649,11 +3805,12 @@ impl<'a> BufferChunks<'a> {
             })
         }
 
-        let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
+        let diagnostic_endpoints = Vec::new().into_iter().peekable();
         let chunks = text.chunks_in_range(range.clone());
 
-        BufferChunks {
+        let mut this = BufferChunks {
             range,
+            buffer_snapshot,
             chunks,
             diagnostic_endpoints,
             error_depth: 0,
@@ -3662,30 +3819,72 @@ impl<'a> BufferChunks<'a> {
             hint_depth: 0,
             unnecessary_depth: 0,
             highlights,
-        }
+        };
+        this.initialize_diagnostic_endpoints();
+        this
     }
 
     /// Seeks to the given byte offset in the buffer.
-    pub fn seek(&mut self, offset: usize) {
-        self.range.start = offset;
-        self.chunks.seek(self.range.start);
+    pub fn seek(&mut self, range: Range<usize>) {
+        let old_range = std::mem::replace(&mut self.range, range.clone());
+        self.chunks.set_range(self.range.clone());
         if let Some(highlights) = self.highlights.as_mut() {
-            highlights
-                .stack
-                .retain(|(end_offset, _)| *end_offset > offset);
-            if let Some(capture) = &highlights.next_capture {
-                if offset >= capture.node.start_byte() {
-                    let next_capture_end = capture.node.end_byte();
-                    if offset < next_capture_end {
-                        highlights.stack.push((
-                            next_capture_end,
-                            highlights.highlight_maps[capture.grammar_index].get(capture.index),
-                        ));
+            if old_range.start >= self.range.start && old_range.end <= self.range.end {
+                // Reuse existing highlights stack, as the new range is a subrange of the old one.
+                highlights
+                    .stack
+                    .retain(|(end_offset, _)| *end_offset > range.start);
+                if let Some(capture) = &highlights.next_capture {
+                    if range.start >= capture.node.start_byte() {
+                        let next_capture_end = capture.node.end_byte();
+                        if range.start < next_capture_end {
+                            highlights.stack.push((
+                                next_capture_end,
+                                highlights.highlight_maps[capture.grammar_index].get(capture.index),
+                            ));
+                        }
+                        highlights.next_capture.take();
                     }
-                    highlights.next_capture.take();
                 }
+            } else if let Some(snapshot) = self.buffer_snapshot {
+                let (captures, highlight_maps) = snapshot.get_highlights(self.range.clone());
+                *highlights = BufferChunkHighlights {
+                    captures,
+                    next_capture: None,
+                    stack: Default::default(),
+                    highlight_maps,
+                };
+            } else {
+                // We cannot obtain new highlights for a language-aware buffer iterator, as we don't have a buffer snapshot.
+                // Seeking such BufferChunks is not supported.
+                debug_assert!(false, "Attempted to seek on a language-aware buffer iterator without associated buffer snapshot");
             }
+
             highlights.captures.set_byte_range(self.range.clone());
+            self.initialize_diagnostic_endpoints();
+        }
+    }
+
+    fn initialize_diagnostic_endpoints(&mut self) {
+        if let Some(buffer) = self.buffer_snapshot {
+            let mut diagnostic_endpoints = Vec::new();
+            for entry in buffer.diagnostics_in_range::<_, usize>(self.range.clone(), false) {
+                diagnostic_endpoints.push(DiagnosticEndpoint {
+                    offset: entry.range.start,
+                    is_start: true,
+                    severity: entry.diagnostic.severity,
+                    is_unnecessary: entry.diagnostic.is_unnecessary,
+                });
+                diagnostic_endpoints.push(DiagnosticEndpoint {
+                    offset: entry.range.end,
+                    is_start: false,
+                    severity: entry.diagnostic.severity,
+                    is_unnecessary: entry.diagnostic.is_unnecessary,
+                });
+            }
+            diagnostic_endpoints
+                .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
+            self.diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
         }
     }
 
@@ -3844,6 +4043,7 @@ impl Default for Diagnostic {
             is_primary: false,
             is_disk_based: false,
             is_unnecessary: false,
+            data: None,
         }
     }
 }

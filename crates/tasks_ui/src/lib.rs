@@ -180,7 +180,7 @@ fn active_item_selection_properties(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{collections::HashMap, sync::Arc};
 
     use editor::Editor;
     use gpui::{Entity, TestAppContext};
@@ -256,7 +256,7 @@ mod tests {
         );
 
         let worktree_id = project.update(cx, |project, cx| {
-            project.worktrees().next().unwrap().read(cx).id()
+            project.worktrees(cx).next().unwrap().read(cx).id()
         });
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
@@ -306,7 +306,8 @@ mod tests {
                     (VariableName::WorktreeRoot, "/dir".into()),
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "1".into()),
-                ])
+                ]),
+                project_env: HashMap::default(),
             }
         );
 
@@ -332,7 +333,8 @@ mod tests {
                     (VariableName::Column, "15".into()),
                     (VariableName::SelectedText, "is_i".into()),
                     (VariableName::Symbol, "this_is_a_rust_file".into()),
-                ])
+                ]),
+                project_env: HashMap::default(),
             }
         );
 
@@ -356,7 +358,8 @@ mod tests {
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "1".into()),
                     (VariableName::Symbol, "this_is_a_test".into()),
-                ])
+                ]),
+                project_env: HashMap::default(),
             }
         );
     }

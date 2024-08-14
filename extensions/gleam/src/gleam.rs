@@ -1,9 +1,10 @@
 mod hexdocs;
 
-use std::fs;
+use std::{fs, io};
+use zed::http_client::{HttpMethod, HttpRequest, RedirectPolicy};
 use zed::lsp::CompletionKind;
 use zed::{
-    CodeLabel, CodeLabelSpan, HttpRequest, KeyValueStore, LanguageServerId, SlashCommand,
+    CodeLabel, CodeLabelSpan, KeyValueStore, LanguageServerId, SlashCommand,
     SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
 };
 use zed_extension_api::{self as zed, Result};
@@ -181,7 +182,7 @@ impl zed::Extension for GleamExtension {
         &self,
         command: SlashCommand,
         argument: Option<String>,
-        worktree: &zed::Worktree,
+        worktree: Option<&zed::Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         match command.name.as_str() {
             "gleam-docs" => {
@@ -193,18 +194,23 @@ impl zed::Extension for GleamExtension {
                     .ok_or_else(|| "missing package name".to_string())?;
                 let module_path = components.map(ToString::to_string).collect::<Vec<_>>();
 
-                let response = zed::fetch(&HttpRequest {
-                    url: format!(
+                let response = HttpRequest::builder()
+                    .method(HttpMethod::Get)
+                    .url(format!(
                         "https://hexdocs.pm/{package_name}{maybe_path}",
                         maybe_path = if !module_path.is_empty() {
                             format!("/{}.html", module_path.join("/"))
                         } else {
                             String::new()
                         }
-                    ),
-                })?;
+                    ))
+                    .header("User-Agent", "Zed (Gleam Extension)")
+                    .redirect_policy(RedirectPolicy::FollowAll)
+                    .build()?
+                    .fetch()?;
 
-                let (markdown, _modules) = convert_hexdocs_to_markdown(response.body.as_bytes())?;
+                let (markdown, _modules) =
+                    convert_hexdocs_to_markdown(&mut io::Cursor::new(response.body))?;
 
                 let mut text = String::new();
                 text.push_str(&markdown);
@@ -218,6 +224,8 @@ impl zed::Extension for GleamExtension {
                 })
             }
             "gleam-project" => {
+                let worktree = worktree.ok_or_else(|| "no worktree")?;
+
                 let mut text = String::new();
                 text.push_str("You are in a Gleam project.\n");
 
@@ -235,6 +243,17 @@ impl zed::Extension for GleamExtension {
                 })
             }
             command => Err(format!("unknown slash command: \"{command}\"")),
+        }
+    }
+
+    fn suggest_docs_packages(&self, provider: String) -> Result<Vec<String>, String> {
+        match provider.as_str() {
+            "gleam-hexdocs" => Ok(vec![
+                "gleam_stdlib".to_string(),
+                "birdie".to_string(),
+                "startest".to_string(),
+            ]),
+            _ => Ok(Vec::new()),
         }
     }
 

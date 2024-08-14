@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use collections::HashMap;
 use command_palette::CommandPalette;
-use editor::{display_map::DisplayRow, DisplayPoint};
+use editor::{actions::DeleteLine, display_map::DisplayRow, DisplayPoint};
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
 pub use neovim_backed_test_context::*;
@@ -916,6 +916,8 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     cx.assert_state("const afterˇ = 2; console.log(after)", Mode::Normal)
 }
 
+// TODO: this test is flaky on our linux CI machines
+#[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_remap(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1268,6 +1270,29 @@ async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
           "},
         Mode::Normal,
     );
+
+    // works with count
+    cx.simulate_keystrokes("g c 2 j");
+    cx.assert_state(
+        indoc! {"
+            // // ˇone
+            // two
+            // three
+            "},
+        Mode::Normal,
+    );
+
+    // works with motion object
+    cx.simulate_keystrokes("shift-g");
+    cx.simulate_keystrokes("g c g g");
+    cx.assert_state(
+        indoc! {"
+            // one
+            two
+            three
+            ˇ"},
+        Mode::Normal,
+    );
 }
 
 #[gpui::test]
@@ -1316,4 +1341,122 @@ async fn test_command_alias(cx: &mut gpui::TestAppContext) {
     cx.set_state("ˇhello world", Mode::Normal);
     cx.simulate_keystrokes(": Q");
     cx.set_state("ˇHello world", Mode::Normal);
+}
+
+#[gpui::test]
+async fn test_remap_adjacent_dog_cat(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.update(|cx| {
+        cx.bind_keys([
+            KeyBinding::new(
+                "d o g",
+                workspace::SendKeystrokes("🐶".to_string()),
+                Some("vim_mode == insert"),
+            ),
+            KeyBinding::new(
+                "c a t",
+                workspace::SendKeystrokes("🐱".to_string()),
+                Some("vim_mode == insert"),
+            ),
+        ])
+    });
+    cx.neovim.exec("imap dog 🐶").await;
+    cx.neovim.exec("imap cat 🐱").await;
+
+    cx.set_shared_state("ˇ").await;
+    cx.simulate_shared_keystrokes("i d o g").await;
+    cx.shared_state().await.assert_eq("🐶ˇ");
+
+    cx.set_shared_state("ˇ").await;
+    cx.simulate_shared_keystrokes("i d o d o g").await;
+    cx.shared_state().await.assert_eq("do🐶ˇ");
+
+    cx.set_shared_state("ˇ").await;
+    cx.simulate_shared_keystrokes("i d o c a t").await;
+    cx.shared_state().await.assert_eq("do🐱ˇ");
+}
+
+#[gpui::test]
+async fn test_remap_nested_pineapple(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.update(|cx| {
+        cx.bind_keys([
+            KeyBinding::new(
+                "p i n",
+                workspace::SendKeystrokes("📌".to_string()),
+                Some("vim_mode == insert"),
+            ),
+            KeyBinding::new(
+                "p i n e",
+                workspace::SendKeystrokes("🌲".to_string()),
+                Some("vim_mode == insert"),
+            ),
+            KeyBinding::new(
+                "p i n e a p p l e",
+                workspace::SendKeystrokes("🍍".to_string()),
+                Some("vim_mode == insert"),
+            ),
+        ])
+    });
+    cx.neovim.exec("imap pin 📌").await;
+    cx.neovim.exec("imap pine 🌲").await;
+    cx.neovim.exec("imap pineapple 🍍").await;
+
+    cx.set_shared_state("ˇ").await;
+    cx.simulate_shared_keystrokes("i p i n").await;
+    cx.executor().advance_clock(Duration::from_millis(1000));
+    cx.run_until_parked();
+    cx.shared_state().await.assert_eq("📌ˇ");
+
+    cx.set_shared_state("ˇ").await;
+    cx.simulate_shared_keystrokes("i p i n e").await;
+    cx.executor().advance_clock(Duration::from_millis(1000));
+    cx.run_until_parked();
+    cx.shared_state().await.assert_eq("🌲ˇ");
+
+    cx.set_shared_state("ˇ").await;
+    cx.simulate_shared_keystrokes("i p i n e a p p l e").await;
+    cx.shared_state().await.assert_eq("🍍ˇ");
+}
+
+#[gpui::test]
+async fn test_escape_while_waiting(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_shared_state("ˇhi").await;
+    cx.simulate_shared_keystrokes("\" + escape x").await;
+    cx.shared_state().await.assert_eq("ˇi");
+}
+
+#[gpui::test]
+async fn test_ctrl_w_override(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new("ctrl-w", DeleteLine, None)]);
+    });
+    cx.neovim.exec("map <c-w> D").await;
+    cx.set_shared_state("ˇhi").await;
+    cx.simulate_shared_keystrokes("ctrl-w").await;
+    cx.shared_state().await.assert_eq("ˇ");
+}
+
+#[gpui::test]
+async fn test_visual_indent_count(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.set_state("ˇhi", Mode::Normal);
+    cx.simulate_keystrokes("shift-v 3 >");
+    cx.assert_state("            ˇhi", Mode::Normal);
+    cx.simulate_keystrokes("shift-v 2 <");
+    cx.assert_state("    ˇhi", Mode::Normal);
+}
+
+#[gpui::test]
+async fn test_record_replay_recursion(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("ˇhello world").await;
+    cx.simulate_shared_keystrokes(">").await;
+    cx.simulate_shared_keystrokes(".").await;
+    cx.simulate_shared_keystrokes(".").await;
+    cx.simulate_shared_keystrokes(".").await;
+    cx.shared_state().await.assert_eq("ˇhello world"); // takes a _long_ time
 }

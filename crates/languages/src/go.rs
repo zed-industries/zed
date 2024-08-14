@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task};
-use http::github::latest_github_release;
+use http_client::github::latest_github_release;
 pub use language::*;
 use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
@@ -537,7 +537,7 @@ impl ContextProvider for GoContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "go test {} -run {}/{}",
+                    "go test {} -v -run {}/{}",
                     GO_PACKAGE_TASK_VARIABLE.template_value(),
                     VariableName::Symbol.template_value(),
                     GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),

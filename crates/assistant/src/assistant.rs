@@ -1,12 +1,16 @@
+#![cfg_attr(target_os = "windows", allow(unused, dead_code))]
+
 pub mod assistant_panel;
 pub mod assistant_settings;
 mod context;
+pub(crate) mod context_inspector;
 pub mod context_store;
 mod inline_assistant;
 mod model_selector;
 mod prompt_library;
 mod prompts;
 mod slash_command;
+pub mod slash_command_settings;
 mod streaming_diff;
 mod terminal_inline_assistant;
 
@@ -15,27 +19,32 @@ use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
-use completion::CompletionProvider;
 pub use context::*;
 pub use context_store::*;
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::{
-    actions, impl_actions, AppContext, BorrowAppContext, Global, SharedString, UpdateGlobal,
-};
+use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
-use language_model::LanguageModelResponseMessage;
+use language_model::{
+    LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
+};
 pub(crate) use model_selector::*;
+pub use prompts::PromptBuilder;
+use prompts::PromptOverrideContext;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, diagnostics_command, docs_command, fetch_command,
-    file_command, now_command, project_command, prompt_command, search_command, symbols_command,
-    tabs_command, term_command,
+    default_command, diagnostics_command, docs_command, fetch_command, file_command, now_command,
+    project_command, prompt_command, search_command, symbols_command, tabs_command,
+    terminal_command, workflow_command,
 };
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
+use util::ResultExt;
+
+use crate::slash_command_settings::SlashCommandSettings;
 
 actions!(
     assistant,
@@ -46,15 +55,17 @@ actions!(
         QuoteSelection,
         InsertIntoEditor,
         ToggleFocus,
-        ResetKey,
         InsertActivePrompt,
+        ShowConfiguration,
         DeployHistory,
         DeployPromptLibrary,
         ConfirmCommand,
         ToggleModelSelector,
-        DebugEditSteps
+        DebugWorkflowSteps
     ]
 );
+
+const DEFAULT_CONTEXT_LINES: usize = 20;
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct InlineAssist {
@@ -161,9 +172,25 @@ impl Assistant {
     }
 }
 
-pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
+pub fn init(
+    fs: Arc<dyn Fs>,
+    client: Arc<Client>,
+    dev_mode: bool,
+    cx: &mut AppContext,
+) -> Arc<PromptBuilder> {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
+    SlashCommandSettings::register(cx);
+
+    // TODO: remove this when 0.148.0 is released.
+    if AssistantSettings::get_global(cx).using_outdated_settings_version {
+        update_settings_file::<AssistantSettings>(fs.clone(), cx, {
+            let fs = fs.clone();
+            |content, cx| {
+                content.update_file(fs, cx);
+            }
+        });
+    }
 
     cx.spawn(|mut cx| {
         let client = client.clone();
@@ -182,12 +209,31 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
 
     context_store::init(&client);
     prompt_library::init(cx);
-    init_completion_provider(Arc::clone(&client), cx);
+    init_language_model_settings(cx);
     assistant_slash_command::init(cx);
-    register_slash_commands(cx);
     assistant_panel::init(cx);
-    inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
-    terminal_inline_assistant::init(fs.clone(), client.telemetry().clone(), cx);
+
+    let prompt_builder = prompts::PromptBuilder::new(Some(PromptOverrideContext {
+        dev_mode,
+        fs: fs.clone(),
+        cx,
+    }))
+    .log_err()
+    .map(Arc::new)
+    .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
+    register_slash_commands(Some(prompt_builder.clone()), cx);
+    inline_assistant::init(
+        fs.clone(),
+        prompt_builder.clone(),
+        client.telemetry().clone(),
+        cx,
+    );
+    terminal_inline_assistant::init(
+        fs.clone(),
+        prompt_builder.clone(),
+        client.telemetry().clone(),
+        cx,
+    );
     IndexedDocsRegistry::init_global(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
@@ -205,37 +251,88 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) {
         });
     })
     .detach();
+
+    prompt_builder
 }
 
-fn init_completion_provider(client: Arc<Client>, cx: &mut AppContext) {
-    let provider = assistant_settings::create_provider_from_settings(client.clone(), 0, cx);
-    cx.set_global(CompletionProvider::new(provider, Some(client)));
+fn init_language_model_settings(cx: &mut AppContext) {
+    update_active_language_model_from_settings(cx);
 
-    let mut settings_version = 0;
-    cx.observe_global::<SettingsStore>(move |cx| {
-        settings_version += 1;
-        cx.update_global::<CompletionProvider, _>(|provider, cx| {
-            assistant_settings::update_completion_provider_settings(provider, settings_version, cx);
-        })
+    cx.observe_global::<SettingsStore>(update_active_language_model_from_settings)
+        .detach();
+    cx.subscribe(
+        &LanguageModelRegistry::global(cx),
+        |_, event: &language_model::Event, cx| match event {
+            language_model::Event::ProviderStateChanged
+            | language_model::Event::AddedProvider(_)
+            | language_model::Event::RemovedProvider(_) => {
+                update_active_language_model_from_settings(cx);
+            }
+            _ => {}
+        },
+    )
+    .detach();
+}
+
+fn update_active_language_model_from_settings(cx: &mut AppContext) {
+    let settings = AssistantSettings::get_global(cx);
+    let provider_name = LanguageModelProviderId::from(settings.default_model.provider.clone());
+    let model_id = LanguageModelId::from(settings.default_model.model.clone());
+    LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+        registry.select_active_model(&provider_name, &model_id, cx);
+    });
+}
+
+fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut AppContext) {
+    let slash_command_registry = SlashCommandRegistry::global(cx);
+    slash_command_registry.register_command(file_command::FileSlashCommand, true);
+    slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
+    slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
+    slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
+    slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
+    slash_command_registry.register_command(default_command::DefaultSlashCommand, false);
+    slash_command_registry.register_command(terminal_command::TerminalSlashCommand, true);
+    slash_command_registry.register_command(now_command::NowSlashCommand, false);
+    slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
+
+    if let Some(prompt_builder) = prompt_builder {
+        slash_command_registry.register_command(
+            workflow_command::WorkflowSlashCommand::new(prompt_builder),
+            true,
+        );
+    }
+    slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
+
+    update_slash_commands_from_settings(cx);
+    cx.observe_global::<SettingsStore>(update_slash_commands_from_settings)
+        .detach();
+
+    cx.observe_flag::<search_command::SearchSlashCommandFeatureFlag, _>({
+        let slash_command_registry = slash_command_registry.clone();
+        move |is_enabled, _cx| {
+            if is_enabled {
+                slash_command_registry.register_command(search_command::SearchSlashCommand, true);
+            }
+        }
     })
     .detach();
 }
 
-fn register_slash_commands(cx: &mut AppContext) {
+fn update_slash_commands_from_settings(cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
-    slash_command_registry.register_command(file_command::FileSlashCommand, true);
-    slash_command_registry.register_command(active_command::ActiveSlashCommand, true);
-    slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
-    slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
-    slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
-    slash_command_registry.register_command(search_command::SearchSlashCommand, true);
-    slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
-    slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
-    slash_command_registry.register_command(term_command::TermSlashCommand, true);
-    slash_command_registry.register_command(now_command::NowSlashCommand, true);
-    slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
-    slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
-    slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
+    let settings = SlashCommandSettings::get_global(cx);
+
+    if settings.docs.enabled {
+        slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
+    } else {
+        slash_command_registry.unregister_command(docs_command::DocsSlashCommand);
+    }
+
+    if settings.project.enabled {
+        slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
+    } else {
+        slash_command_registry.unregister_command(project_command::ProjectSlashCommand);
+    }
 }
 
 pub fn humanize_token_count(count: usize) -> String {

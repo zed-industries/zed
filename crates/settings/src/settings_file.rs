@@ -1,9 +1,8 @@
 use crate::{settings_store::SettingsStore, Settings};
-use anyhow::{Context, Result};
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui::{AppContext, BackgroundExecutor, UpdateGlobal};
-use std::{io::ErrorKind, path::PathBuf, sync::Arc, time::Duration};
+use gpui::{AppContext, BackgroundExecutor, ReadGlobal, UpdateGlobal};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 use util::ResultExt;
 
 pub const EMPTY_THEME_NAME: &str = "empty-theme";
@@ -19,9 +18,11 @@ pub fn test_settings() -> String {
             "ui_font_family": "Courier",
             "ui_font_features": {},
             "ui_font_size": 14,
+            "ui_font_fallback": [],
             "buffer_font_family": "Courier",
             "buffer_font_features": {},
             "buffer_font_size": 14,
+            "buffer_font_fallback": [],
             "theme": EMPTY_THEME_NAME,
         }),
         &mut value,
@@ -65,6 +66,7 @@ pub fn watch_config_file(
 pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,
+    settings_changed: impl Fn(Option<anyhow::Error>, &mut AppContext) + 'static,
 ) {
     let user_settings_content = cx
         .background_executor()
@@ -78,9 +80,11 @@ pub fn handle_settings_file_changes(
     cx.spawn(move |mut cx| async move {
         while let Some(user_settings_content) = user_settings_file_rx.next().await {
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                store
-                    .set_user_settings(&user_settings_content, cx)
-                    .log_err();
+                let result = store.set_user_settings(&user_settings_content, cx);
+                if let Err(err) = &result {
+                    log::error!("Failed to load user settings: {err}");
+                }
+                settings_changed(result.err(), cx);
                 cx.refresh();
             });
             if result.is_err() {
@@ -91,46 +95,10 @@ pub fn handle_settings_file_changes(
     .detach();
 }
 
-async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
-    match fs.load(paths::settings_file()).await {
-        result @ Ok(_) => result,
-        Err(err) => {
-            if let Some(e) = err.downcast_ref::<std::io::Error>() {
-                if e.kind() == ErrorKind::NotFound {
-                    return Ok(crate::initial_user_settings_content().to_string());
-                }
-            }
-            Err(err)
-        }
-    }
-}
-
 pub fn update_settings_file<T: Settings>(
     fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
-    update: impl 'static + Send + FnOnce(&mut T::FileContent),
+    cx: &AppContext,
+    update: impl 'static + Send + FnOnce(&mut T::FileContent, &AppContext),
 ) {
-    cx.spawn(|cx| async move {
-        let old_text = load_settings(&fs).await?;
-        let new_text = cx.read_global(|store: &SettingsStore, _cx| {
-            store.new_text_for_update::<T>(old_text, update)
-        })?;
-        let initial_path = paths::settings_file().as_path();
-        if fs.is_file(initial_path).await {
-            let resolved_path = fs.canonicalize(initial_path).await.with_context(|| {
-                format!("Failed to canonicalize settings path {:?}", initial_path)
-            })?;
-
-            fs.atomic_write(resolved_path.clone(), new_text)
-                .await
-                .with_context(|| format!("Failed to write settings to file {:?}", resolved_path))?;
-        } else {
-            fs.atomic_write(initial_path.to_path_buf(), new_text)
-                .await
-                .with_context(|| format!("Failed to write settings to file {:?}", initial_path))?;
-        }
-
-        anyhow::Ok(())
-    })
-    .detach_and_log_err(cx);
+    SettingsStore::global(cx).update_settings_file::<T>(fs, update);
 }

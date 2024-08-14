@@ -27,7 +27,7 @@ use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
-use http::HttpClient;
+use http_client::HttpClient;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::Mutex;
@@ -156,15 +156,11 @@ pub struct CachedLspAdapter {
     language_ids: HashMap<String, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
-    /// Indicates whether this language server is the primary language server
-    /// for a given language. Currently, most LSP-backed features only work
-    /// with one language server, so one server needs to be primary.
-    pub is_primary: bool,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
 }
 
 impl CachedLspAdapter {
-    pub fn new(adapter: Arc<dyn LspAdapter>, is_primary: bool) -> Arc<Self> {
+    pub fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
         let name = adapter.name();
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
         let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
@@ -176,7 +172,6 @@ impl CachedLspAdapter {
             disk_based_diagnostics_progress_token,
             language_ids,
             adapter,
-            is_primary,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
         })
@@ -682,7 +677,7 @@ impl<T> Override<T> {
 impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
-            name: "".into(),
+            name: Arc::default(),
             code_fence_block_name: None,
             grammar: None,
             matcher: LanguageMatcher::default(),
@@ -869,6 +864,7 @@ pub struct OutlineConfig {
     pub extra_context_capture_ix: Option<u32>,
     pub open_capture_ix: Option<u32>,
     pub close_capture_ix: Option<u32>,
+    pub annotation_capture_ix: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -1054,6 +1050,7 @@ impl Language {
         let mut extra_context_capture_ix = None;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
+        let mut annotation_capture_ix = None;
         get_capture_indices(
             &query,
             &mut [
@@ -1063,6 +1060,7 @@ impl Language {
                 ("context.extra", &mut extra_context_capture_ix),
                 ("open", &mut open_capture_ix),
                 ("close", &mut close_capture_ix),
+                ("annotation", &mut annotation_capture_ix),
             ],
         );
         if let Some((item_capture_ix, name_capture_ix)) = item_capture_ix.zip(name_capture_ix) {
@@ -1074,6 +1072,7 @@ impl Language {
                 extra_context_capture_ix,
                 open_capture_ix,
                 close_capture_ix,
+                annotation_capture_ix,
             });
         }
         Ok(self)
@@ -1342,7 +1341,7 @@ impl Language {
                 });
             let highlight_maps = vec![grammar.highlight_map()];
             let mut offset = 0;
-            for chunk in BufferChunks::new(text, range, Some((captures, highlight_maps)), vec![]) {
+            for chunk in BufferChunks::new(text, range, Some((captures, highlight_maps)), None) {
                 let end_offset = offset + chunk.text.len();
                 if let Some(highlight_id) = chunk.syntax_highlight_id {
                     if !highlight_id.is_default() {

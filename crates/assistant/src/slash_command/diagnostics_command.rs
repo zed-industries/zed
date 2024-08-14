@@ -33,7 +33,7 @@ impl DiagnosticsSlashCommand {
         if query.is_empty() {
             let workspace = workspace.read(cx);
             let entries = workspace.recent_navigation_history(Some(10), cx);
-            let path_prefix: Arc<str> = "".into();
+            let path_prefix: Arc<str> = Arc::default();
             Task::ready(
                 entries
                     .into_iter()
@@ -107,7 +107,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
         query: String,
         cancellation_flag: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
@@ -158,7 +158,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
         self: Arc<Self>,
         argument: Option<&str>,
         workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let Some(workspace) = workspace.upgrade() else {
@@ -284,7 +284,7 @@ fn collect_diagnostics(
         PathBuf::try_from(path)
             .ok()
             .and_then(|path| {
-                project.read(cx).worktrees().find_map(|worktree| {
+                project.read(cx).worktrees(cx).find_map(|worktree| {
                     let worktree = worktree.read(cx);
                     let worktree_root_path = Path::new(worktree.root_name());
                     let relative_path = path.strip_prefix(worktree_root_path).ok()?;

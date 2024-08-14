@@ -1,0 +1,41 @@
+{{#if language_name}}
+File language: {{language_name}}
+{{/if}}
+
+<document>
+{{{document_content}}}
+</document>
+
+{{#if is_truncated}}
+Note: Context around the relevant section has been truncated for brevity.
+{{/if}}
+
+Editing instructions:
+1. Rewrite the section marked with <rewrite_this></rewrite_this> tags based on this prompt:
+<prompt>
+{{{user_prompt}}}
+</prompt>
+
+2. Within <rewrite_this></rewrite_this>, make changes only in these subsections:
+   {{#if has_insertion}}
+   - Insert text where marked with <insert_here></insert_here> tags
+   {{/if}}
+   {{#if has_replacement}}
+   - Edit text surrounded by <edit_here></edit_here> tags
+   {{/if}}
+
+3. Section to edit:
+<rewrite_this>
+{{{rewrite_section_with_selections}}}
+</rewrite_this>
+
+4. Guidelines:
+   - Only make changes necessary to fulfill the prompt
+   - Preserve all surrounding {{content_type}}
+   - Maintain the original indentation level
+   - Rewrite the entire section, even if no changes are needed
+   - Do not include <rewrite_this>, <insert_here>, or <edit_here> tags in your output
+
+Output format:
+Immediately start with the following, ensuring no leading whitespace:
+```{{REWRITTEN_CODE}}```

@@ -19,7 +19,7 @@ jobs:
       - test
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           ref: ${{ github.event.inputs.branch }}
           ssh-key: ${{ secrets.ZED_BOT_DEPLOY_KEY }}

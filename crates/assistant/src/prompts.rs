@@ -1,135 +1,284 @@
+use assets::Assets;
+use fs::Fs;
+use futures::StreamExt;
+use handlebars::{Handlebars, RenderError, TemplateError};
 use language::BufferSnapshot;
-use std::{fmt::Write, ops::Range};
+use parking_lot::Mutex;
+use serde::Serialize;
+use std::{ops::Range, sync::Arc, time::Duration};
+use util::ResultExt;
 
-pub fn generate_content_prompt(
-    user_prompt: String,
-    language_name: Option<&str>,
-    buffer: BufferSnapshot,
-    range: Range<usize>,
-    _project_name: Option<String>,
-) -> anyhow::Result<String> {
-    let mut prompt = String::new();
-
-    let content_type = match language_name {
-        None | Some("Markdown" | "Plain Text") => {
-            writeln!(
-                prompt,
-                "Here's a file of text that I'm going to ask you to make an edit to."
-            )?;
-            "text"
-        }
-        Some(language_name) => {
-            writeln!(
-                prompt,
-                "Here's a file of {language_name} that I'm going to ask you to make an edit to."
-            )?;
-            "code"
-        }
-    };
-
-    const MAX_CTX: usize = 50000;
-    let mut is_truncated = false;
-    if range.is_empty() {
-        prompt.push_str("The point you'll need to insert at is marked with <insert_here></insert_here>.\n\n<document>");
-    } else {
-        prompt.push_str("The section you'll need to rewrite is marked with <rewrite_this></rewrite_this> tags.\n\n<document>");
-    }
-    // Include file content.
-    let before_range = 0..range.start;
-    let truncated_before = if before_range.len() > MAX_CTX {
-        is_truncated = true;
-        range.start - MAX_CTX..range.start
-    } else {
-        before_range
-    };
-    let mut non_rewrite_len = truncated_before.len();
-    for chunk in buffer.text_for_range(truncated_before) {
-        prompt.push_str(chunk);
-    }
-    if !range.is_empty() {
-        prompt.push_str("<rewrite_this>\n");
-        for chunk in buffer.text_for_range(range.clone()) {
-            prompt.push_str(chunk);
-        }
-        prompt.push_str("\n<rewrite_this>");
-    } else {
-        prompt.push_str("<insert_here></insert_here>");
-    }
-    let after_range = range.end..buffer.len();
-    let truncated_after = if after_range.len() > MAX_CTX {
-        is_truncated = true;
-        range.end..range.end + MAX_CTX
-    } else {
-        after_range
-    };
-    non_rewrite_len += truncated_after.len();
-    for chunk in buffer.text_for_range(truncated_after) {
-        prompt.push_str(chunk);
-    }
-
-    write!(prompt, "</document>\n\n").unwrap();
-
-    if is_truncated {
-        writeln!(prompt, "The context around the relevant section has been truncated (possibly in the middle of a line) for brevity.\n")?;
-    }
-
-    if range.is_empty() {
-        writeln!(
-                prompt,
-                "You can't replace {content_type}, your answer will be inserted in place of the `<insert_here></insert_here>` tags. Don't include the insert_here tags in your output.",
-            )
-            .unwrap();
-        writeln!(
-                prompt,
-                "Generate {content_type} based on the following prompt:\n\n<prompt>\n{user_prompt}\n</prompt>",
-            )
-            .unwrap();
-        writeln!(prompt, "Match the indentation in the original file in the inserted {content_type}, don't include any indentation on blank lines.\n").unwrap();
-        prompt.push_str("Immediately start with the following format with no remarks:\n\n```\n{{INSERTED_CODE}}\n```");
-    } else {
-        writeln!(prompt, "Edit the section of {content_type} in <rewrite_this></rewrite_this> tags based on the following prompt:'").unwrap();
-        writeln!(prompt, "\n<prompt>\n{user_prompt}\n</prompt>\n").unwrap();
-        let rewrite_len = range.end - range.start;
-        if rewrite_len < 20000 && rewrite_len * 2 < non_rewrite_len {
-            writeln!(prompt, "And here's the section to rewrite based on that prompt again for reference:\n\n<rewrite_this>\n").unwrap();
-            for chunk in buffer.text_for_range(range.clone()) {
-                prompt.push_str(chunk);
-            }
-            writeln!(prompt, "\n</rewrite_this>\n").unwrap();
-        }
-        writeln!(prompt, "Only make changes that are necessary to fulfill the prompt, leave everything else as-is. All surrounding {content_type} will be preserved.\n").unwrap();
-        write!(
-            prompt,
-            "Start at the indentation level in the original file in the rewritten {content_type}. "
-        )
-        .unwrap();
-        prompt.push_str("Don't stop until you've rewritten the entire section, even if you have no more changes to make, always write out the whole section with no unnecessary elisions.");
-        prompt.push_str("\n\nImmediately start with the following format with no remarks:\n\n```\n{{REWRITTEN_CODE}}\n```");
-    }
-
-    Ok(prompt)
+#[derive(Serialize)]
+pub struct ContentPromptContext {
+    pub content_type: String,
+    pub language_name: Option<String>,
+    pub is_truncated: bool,
+    pub document_content: String,
+    pub user_prompt: String,
+    pub rewrite_section: String,
+    pub rewrite_section_with_selections: String,
+    pub has_insertion: bool,
+    pub has_replacement: bool,
 }
 
-pub fn generate_terminal_assistant_prompt(
-    user_prompt: &str,
-    shell: Option<&str>,
-    working_directory: Option<&str>,
-) -> String {
-    let mut prompt = String::new();
-    writeln!(&mut prompt, "You are an expert terminal user.").unwrap();
-    writeln!(&mut prompt, "You will be given a description of a command and you need to respond with a command that matches the description.").unwrap();
-    writeln!(&mut prompt, "Do not include markdown blocks or any other text formatting in your response, always respond with a single command that can be executed in the given shell.").unwrap();
-    if let Some(shell) = shell {
-        writeln!(&mut prompt, "Current shell is '{shell}'.").unwrap();
+#[derive(Serialize)]
+pub struct TerminalAssistantPromptContext {
+    pub os: String,
+    pub arch: String,
+    pub shell: Option<String>,
+    pub working_directory: Option<String>,
+    pub latest_output: Vec<String>,
+    pub user_prompt: String,
+}
+
+pub struct PromptBuilder {
+    handlebars: Arc<Mutex<Handlebars<'static>>>,
+}
+
+pub struct PromptOverrideContext<'a> {
+    pub dev_mode: bool,
+    pub fs: Arc<dyn Fs>,
+    pub cx: &'a mut gpui::AppContext,
+}
+
+impl PromptBuilder {
+    pub fn new(override_cx: Option<PromptOverrideContext>) -> Result<Self, Box<TemplateError>> {
+        let mut handlebars = Handlebars::new();
+        Self::register_templates(&mut handlebars)?;
+
+        let handlebars = Arc::new(Mutex::new(handlebars));
+
+        if let Some(override_cx) = override_cx {
+            Self::watch_fs_for_template_overrides(override_cx, handlebars.clone());
+        }
+
+        Ok(Self { handlebars })
     }
-    if let Some(working_directory) = working_directory {
-        writeln!(
-            &mut prompt,
-            "Current working directory is '{working_directory}'."
-        )
-        .unwrap();
+
+    fn watch_fs_for_template_overrides(
+        PromptOverrideContext { dev_mode, fs, cx }: PromptOverrideContext,
+        handlebars: Arc<Mutex<Handlebars<'static>>>,
+    ) {
+        cx.background_executor()
+            .spawn(async move {
+                let templates_dir = if dev_mode {
+                    std::env::current_dir()
+                        .ok()
+                        .and_then(|pwd| {
+                            let pwd_assets_prompts = pwd.join("assets").join("prompts");
+                            pwd_assets_prompts.exists().then_some(pwd_assets_prompts)
+                        })
+                        .unwrap_or_else(|| paths::prompt_overrides_dir().clone())
+                } else {
+                    paths::prompt_overrides_dir().clone()
+                };
+
+                // Create the prompt templates directory if it doesn't exist
+                if !fs.is_dir(&templates_dir).await {
+                    if let Err(e) = fs.create_dir(&templates_dir).await {
+                        log::error!("Failed to create prompt templates directory: {}", e);
+                        return;
+                    }
+                }
+
+                // Initial scan of the prompts directory
+                if let Ok(mut entries) = fs.read_dir(&templates_dir).await {
+                    while let Some(Ok(file_path)) = entries.next().await {
+                        if file_path.to_string_lossy().ends_with(".hbs") {
+                            if let Ok(content) = fs.load(&file_path).await {
+                                let file_name = file_path.file_stem().unwrap().to_string_lossy();
+
+                                match handlebars.lock().register_template_string(&file_name, content) {
+                                    Ok(_) => {
+                                        log::info!(
+                                            "Successfully registered template override: {} ({})",
+                                            file_name,
+                                            file_path.display()
+                                        );
+                                    },
+                                    Err(e) => {
+                                        log::error!(
+                                            "Failed to register template during initial scan: {} ({})",
+                                            e,
+                                            file_path.display()
+                                        );
+                                    },
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Watch for changes
+                let (mut changes, watcher) = fs.watch(&templates_dir, Duration::from_secs(1)).await;
+                while let Some(changed_paths) = changes.next().await {
+                    for changed_path in changed_paths {
+                        if changed_path.extension().map_or(false, |ext| ext == "hbs") {
+                            log::info!("Reloading template: {}", changed_path.display());
+                            if let Some(content) = fs.load(&changed_path).await.log_err() {
+                                let file_name = changed_path.file_stem().unwrap().to_string_lossy();
+                                let file_path = changed_path.to_string_lossy();
+                                match handlebars.lock().register_template_string(&file_name, content) {
+                                    Ok(_) => log::info!(
+                                        "Successfully reloaded template: {} ({})",
+                                        file_name,
+                                        file_path
+                                    ),
+                                    Err(e) => log::error!(
+                                        "Failed to register template: {} ({})",
+                                        e,
+                                        file_path
+                                    ),
+                                }
+                            }
+                        }
+                    }
+                }
+                drop(watcher);
+            })
+            .detach();
     }
-    writeln!(&mut prompt, "Here is the description of the command:").unwrap();
-    prompt.push_str(user_prompt);
-    prompt
+
+    fn register_templates(handlebars: &mut Handlebars) -> Result<(), Box<TemplateError>> {
+        let mut register_template = |id: &str| {
+            let prompt = Assets::get(&format!("prompts/{}.hbs", id))
+                .unwrap_or_else(|| panic!("{} prompt template not found", id))
+                .data;
+            handlebars
+                .register_template_string(id, String::from_utf8_lossy(&prompt))
+                .map_err(Box::new)
+        };
+
+        register_template("content_prompt")?;
+        register_template("terminal_assistant_prompt")?;
+        register_template("edit_workflow")?;
+        register_template("step_resolution")?;
+
+        Ok(())
+    }
+
+    pub fn generate_content_prompt(
+        &self,
+        user_prompt: String,
+        language_name: Option<&str>,
+        buffer: BufferSnapshot,
+        transform_range: Range<usize>,
+        selected_ranges: Vec<Range<usize>>,
+    ) -> Result<String, RenderError> {
+        let content_type = match language_name {
+            None | Some("Markdown" | "Plain Text") => "text",
+            Some(_) => "code",
+        };
+
+        const MAX_CTX: usize = 50000;
+        let mut is_truncated = false;
+
+        let before_range = 0..transform_range.start;
+        let truncated_before = if before_range.len() > MAX_CTX {
+            is_truncated = true;
+            transform_range.start - MAX_CTX..transform_range.start
+        } else {
+            before_range
+        };
+
+        let after_range = transform_range.end..buffer.len();
+        let truncated_after = if after_range.len() > MAX_CTX {
+            is_truncated = true;
+            transform_range.end..transform_range.end + MAX_CTX
+        } else {
+            after_range
+        };
+
+        let mut document_content = String::new();
+        for chunk in buffer.text_for_range(truncated_before) {
+            document_content.push_str(chunk);
+        }
+        document_content.push_str("<rewrite_this>\n");
+        for chunk in buffer.text_for_range(transform_range.clone()) {
+            document_content.push_str(chunk);
+        }
+        document_content.push_str("\n</rewrite_this>");
+
+        for chunk in buffer.text_for_range(truncated_after) {
+            document_content.push_str(chunk);
+        }
+
+        let mut rewrite_section = String::new();
+        for chunk in buffer.text_for_range(transform_range.clone()) {
+            rewrite_section.push_str(chunk);
+        }
+
+        let rewrite_section_with_selections = {
+            let mut section_with_selections = String::new();
+            let mut last_end = 0;
+            for selected_range in &selected_ranges {
+                if selected_range.start > last_end {
+                    section_with_selections.push_str(
+                        &rewrite_section[last_end..selected_range.start - transform_range.start],
+                    );
+                }
+                if selected_range.start == selected_range.end {
+                    section_with_selections.push_str("<insert_here></insert_here>");
+                } else {
+                    section_with_selections.push_str("<edit_here>");
+                    section_with_selections.push_str(
+                        &rewrite_section[selected_range.start - transform_range.start
+                            ..selected_range.end - transform_range.start],
+                    );
+                    section_with_selections.push_str("</edit_here>");
+                }
+                last_end = selected_range.end - transform_range.start;
+            }
+            if last_end < rewrite_section.len() {
+                section_with_selections.push_str(&rewrite_section[last_end..]);
+            }
+            section_with_selections
+        };
+
+        let has_insertion = selected_ranges.iter().any(|range| range.start == range.end);
+        let has_replacement = selected_ranges.iter().any(|range| range.start != range.end);
+
+        let context = ContentPromptContext {
+            content_type: content_type.to_string(),
+            language_name: language_name.map(|s| s.to_string()),
+            is_truncated,
+            document_content,
+            user_prompt,
+            rewrite_section,
+            rewrite_section_with_selections,
+            has_insertion,
+            has_replacement,
+        };
+
+        self.handlebars.lock().render("content_prompt", &context)
+    }
+
+    pub fn generate_terminal_assistant_prompt(
+        &self,
+        user_prompt: &str,
+        shell: Option<&str>,
+        working_directory: Option<&str>,
+        latest_output: &[String],
+    ) -> Result<String, RenderError> {
+        let context = TerminalAssistantPromptContext {
+            os: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            shell: shell.map(|s| s.to_string()),
+            working_directory: working_directory.map(|s| s.to_string()),
+            latest_output: latest_output.to_vec(),
+            user_prompt: user_prompt.to_string(),
+        };
+
+        self.handlebars
+            .lock()
+            .render("terminal_assistant_prompt", &context)
+    }
+
+    pub fn generate_workflow_prompt(&self) -> Result<String, RenderError> {
+        self.handlebars.lock().render("edit_workflow", &())
+    }
+
+    pub fn generate_step_resolution_prompt(&self) -> Result<String, RenderError> {
+        self.handlebars.lock().render("step_resolution", &())
+    }
 }

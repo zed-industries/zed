@@ -5,7 +5,7 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
 use futures::FutureExt;
-use gpui::{AppContext, Task, WeakView, WindowContext};
+use gpui::{Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
 use ui::prelude::*;
 use wasmtime_wasi::WasiView;
@@ -42,7 +42,7 @@ impl SlashCommand for ExtensionSlashCommand {
         query: String,
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         cx.background_executor().spawn(async move {
             self.extension
@@ -81,7 +81,7 @@ impl SlashCommand for ExtensionSlashCommand {
         self: Arc<Self>,
         argument: Option<&str>,
         _workspace: WeakView<Workspace>,
-        delegate: Arc<dyn LspAdapterDelegate>,
+        delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let argument = argument.map(|arg| arg.to_string());
@@ -91,7 +91,11 @@ impl SlashCommand for ExtensionSlashCommand {
                     let this = self.clone();
                     move |extension, store| {
                         async move {
-                            let resource = store.data_mut().table().push(delegate)?;
+                            let resource = if let Some(delegate) = delegate {
+                                Some(store.data_mut().table().push(delegate)?)
+                            } else {
+                                None
+                            };
                             let output = extension
                                 .call_run_slash_command(
                                     store,

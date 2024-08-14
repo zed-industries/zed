@@ -25,7 +25,7 @@ use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, AnyWindowHandle, Bounds, Decorations, Globals, Modifiers, Output, Pixels,
+    px, size, AnyWindowHandle, Bounds, Decorations, GPUSpecs, Globals, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, Size, Tiling,
     WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControls, WindowDecorations, WindowParams,
@@ -185,13 +185,7 @@ impl WaylandWindowState {
             active: false,
             hovered: false,
             in_progress_window_controls: None,
-            // Assume that we can do anything, unless told otherwise
-            window_controls: WindowControls {
-                fullscreen: true,
-                maximize: true,
-                minimize: true,
-                window_menu: true,
-            },
+            window_controls: WindowControls::default(),
             inset: None,
         })
     }
@@ -264,7 +258,10 @@ impl WaylandWindow {
             .wm_base
             .get_xdg_surface(&surface, &globals.qh, surface.id());
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
-        toplevel.set_min_size(50, 50);
+
+        if let Some(size) = params.window_min_size {
+            toplevel.set_min_size(size.width.0 as i32, size.height.0 as i32);
+        }
 
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
@@ -545,6 +542,7 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    #[allow(clippy::mutable_key_type)]
     pub fn handle_surface_event(
         &self,
         event: wl_surface::Event,
@@ -1006,6 +1004,10 @@ impl PlatformWindow for WaylandWindow {
             state.inset = Some(inset);
             update_window(state);
         }
+    }
+
+    fn gpu_specs(&self) -> Option<GPUSpecs> {
+        self.borrow().renderer.gpu_specs().into()
     }
 }
 

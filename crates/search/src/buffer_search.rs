@@ -13,10 +13,9 @@ use editor::{
 };
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusableView,
-    FontStyle, Hsla, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render,
-    ScrollHandle, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext as _,
-    WhiteSpace, WindowContext,
+    actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusableView, Hsla,
+    InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
+    Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext as _, WindowContext,
 };
 use project::{
     search::SearchQuery,
@@ -115,14 +114,11 @@ impl BufferSearchBar {
             },
             font_family: settings.buffer_font.family.clone(),
             font_features: settings.buffer_font.features.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.buffer_font.weight,
-            font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
 
         EditorElement::new(
@@ -200,6 +196,7 @@ impl Render for BufferSearchBar {
         };
 
         let search_line = h_flex()
+            .mb_1()
             .child(
                 h_flex()
                     .id("editor-scroll")
@@ -299,7 +296,7 @@ impl Render for BufferSearchBar {
                         &SelectNextMatch,
                     ))
                     .when(!narrow_mode, |this| {
-                        this.child(h_flex().min_w(rems_from_px(40.)).child(
+                        this.child(h_flex().ml_2().min_w(rems_from_px(40.)).child(
                             Label::new(match_text).color(if self.active_match_index.is_some() {
                                 Color::Default
                             } else {
@@ -442,7 +439,7 @@ impl ToolbarItemView for BufferSearchBar {
                 ));
 
             self.active_searchable_item = Some(searchable_item_handle);
-            let _ = self.update_matches(cx);
+            drop(self.update_matches(cx));
             if !self.dismissed {
                 return ToolbarItemLocation::Secondary;
             }
@@ -724,7 +721,7 @@ impl BufferSearchBar {
     fn toggle_search_option(&mut self, search_option: SearchOptions, cx: &mut ViewContext<Self>) {
         self.search_options.toggle(search_option);
         self.default_options = self.search_options;
-        let _ = self.update_matches(cx);
+        drop(self.update_matches(cx));
         cx.notify();
     }
 
@@ -861,7 +858,7 @@ impl BufferSearchBar {
     fn on_active_searchable_item_event(&mut self, event: &SearchEvent, cx: &mut ViewContext<Self>) {
         match event {
             SearchEvent::MatchesInvalidated => {
-                let _ = self.update_matches(cx);
+                drop(self.update_matches(cx));
             }
             SearchEvent::ActiveMatchChanged => self.update_match_index(cx),
         }
@@ -879,7 +876,7 @@ impl BufferSearchBar {
         if let Some(active_item) = self.active_searchable_item.as_mut() {
             self.selection_search_enabled = !self.selection_search_enabled;
             active_item.toggle_filtered_search_ranges(self.selection_search_enabled, cx);
-            let _ = self.update_matches(cx);
+            drop(self.update_matches(cx));
             cx.notify();
         }
     }
@@ -1052,10 +1049,10 @@ impl BufferSearchBar {
             .next(&mut self.search_history_cursor)
             .map(str::to_string)
         {
-            let _ = self.search(&new_query, Some(self.search_options), cx);
+            drop(self.search(&new_query, Some(self.search_options), cx));
         } else {
             self.search_history_cursor.reset();
-            let _ = self.search("", Some(self.search_options), cx);
+            drop(self.search("", Some(self.search_options), cx));
         }
     }
 
@@ -1066,7 +1063,7 @@ impl BufferSearchBar {
                 .current(&mut self.search_history_cursor)
                 .map(str::to_string)
             {
-                let _ = self.search(&new_query, Some(self.search_options), cx);
+                drop(self.search(&new_query, Some(self.search_options), cx));
                 return;
             }
         }
@@ -1076,7 +1073,7 @@ impl BufferSearchBar {
             .previous(&mut self.search_history_cursor)
             .map(str::to_string)
         {
-            let _ = self.search(&new_query, Some(self.search_options), cx);
+            drop(self.search(&new_query, Some(self.search_options), cx));
         }
     }
 

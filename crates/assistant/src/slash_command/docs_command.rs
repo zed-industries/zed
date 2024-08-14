@@ -24,7 +24,7 @@ impl DocsSlashCommand {
     pub const NAME: &'static str = "docs";
 
     fn path_to_cargo_toml(project: Model<Project>, cx: &mut AppContext) -> Option<Arc<Path>> {
-        let worktree = project.read(cx).worktrees().next()?;
+        let worktree = project.read(cx).worktrees(cx).next()?;
         let worktree = worktree.read(cx);
         let entry = worktree.entry_for_path("Cargo.toml")?;
         let path = ProjectPath {
@@ -164,7 +164,7 @@ impl SlashCommand for DocsSlashCommand {
         query: String,
         _cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         self.ensure_rust_doc_providers_are_registered(workspace, cx);
 
@@ -219,11 +219,40 @@ impl SlashCommand for DocsSlashCommand {
                     if index {
                         // We don't need to hold onto this task, as the `IndexedDocsStore` will hold it
                         // until it completes.
-                        let _ = store.clone().index(package.as_str().into());
+                        drop(store.clone().index(package.as_str().into()));
                     }
 
-                    let items = store.search(package).await;
-                    Ok(build_completions(provider, items))
+                    let suggested_packages = store.clone().suggest_packages().await?;
+                    let search_results = store.search(package).await;
+
+                    let mut items = build_completions(provider.clone(), search_results);
+                    let workspace_crate_completions = suggested_packages
+                        .into_iter()
+                        .filter(|package_name| {
+                            !items
+                                .iter()
+                                .any(|item| item.label.as_str() == package_name.as_ref())
+                        })
+                        .map(|package_name| ArgumentCompletion {
+                            label: format!("{package_name} (unindexed)"),
+                            new_text: format!("{provider} {package_name}"),
+                            run_command: true,
+                        })
+                        .collect::<Vec<_>>();
+                    items.extend(workspace_crate_completions);
+
+                    if items.is_empty() {
+                        return Ok(vec![ArgumentCompletion {
+                            label: format!(
+                                "Enter a {package_term} name.",
+                                package_term = package_term(&provider)
+                            ),
+                            new_text: provider.to_string(),
+                            run_command: false,
+                        }]);
+                    }
+
+                    Ok(items)
                 }
                 DocsSlashCommandArgs::SearchItemDocs {
                     provider,
@@ -242,7 +271,7 @@ impl SlashCommand for DocsSlashCommand {
         self: Arc<Self>,
         argument: Option<&str>,
         _workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let Some(argument) = argument else {
@@ -268,6 +297,13 @@ impl SlashCommand for DocsSlashCommand {
                         ..
                     } => (provider, item_path),
                 };
+
+                if key.trim().is_empty() {
+                    bail!(
+                        "no {package_term} name provided",
+                        package_term = package_term(&provider)
+                    );
+                }
 
                 let store = store?;
 
@@ -389,6 +425,15 @@ impl DocsSlashCommandArgs {
             }
         }
     }
+}
+
+/// Returns the term used to refer to a package.
+fn package_term(provider: &ProviderId) -> &'static str {
+    if provider == &DocsDotRsProvider::id() || provider == &LocalRustdocProvider::id() {
+        return "crate";
+    }
+
+    "package"
 }
 
 #[cfg(test)]

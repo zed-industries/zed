@@ -13,9 +13,9 @@ use workspace::Workspace;
 
 actions!(vim, [Repeat, EndRepeat, ToggleRecord, ReplayLastRecording]);
 
-fn should_replay(action: &Box<dyn Action>) -> bool {
+fn should_replay(action: &dyn Action) -> bool {
     // skip so that we don't leave the character palette open
-    if editor::actions::ShowCharacterPalette.partial_eq(&**action) {
+    if editor::actions::ShowCharacterPalette.partial_eq(action) {
         return false;
     }
     true
@@ -121,7 +121,7 @@ impl Replayer {
         };
         match action {
             ReplayableAction::Action(action) => {
-                if should_replay(&action) {
+                if should_replay(&*action) {
                     cx.dispatch_action(action.boxed_clone());
                     cx.defer(move |cx| observe_action(action.boxed_clone(), cx));
                 }

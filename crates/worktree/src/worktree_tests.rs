@@ -841,6 +841,10 @@ async fn test_write_file(cx: &mut TestAppContext) {
     )
     .await
     .unwrap();
+
+    #[cfg(target_os = "linux")]
+    fs::watcher::global(|_| {}).unwrap();
+
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
     tree.flush_fs_events(cx).await;

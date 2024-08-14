@@ -1,21 +1,38 @@
-use async_dispatcher::{set_dispatcher, Dispatcher, Runnable};
-use gpui::{AppContext, PlatformDispatcher};
-use settings::Settings as _;
-use std::{sync::Arc, time::Duration};
-
+mod components;
 mod jupyter_settings;
 mod kernels;
 mod outputs;
-mod runtime_panel;
+mod repl_editor;
+mod repl_sessions_ui;
+mod repl_store;
 mod session;
 mod stdio;
 
-pub use jupyter_settings::JupyterSettings;
-pub use kernels::{Kernel, KernelSpecification, KernelStatus};
-pub use runtime_panel::{ClearOutputs, Interrupt, Run, Shutdown};
-pub use runtime_panel::{RuntimePanel, SessionSupport};
+use std::{sync::Arc, time::Duration};
+
+use async_dispatcher::{set_dispatcher, Dispatcher, Runnable};
+use gpui::{AppContext, PlatformDispatcher};
+use project::Fs;
 pub use runtimelib::ExecutionState;
-pub use session::Session;
+use settings::Settings as _;
+
+pub use crate::jupyter_settings::JupyterSettings;
+pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus};
+pub use crate::repl_editor::*;
+pub use crate::repl_sessions_ui::{
+    ClearOutputs, Interrupt, ReplSessionsPage, Run, Sessions, Shutdown,
+};
+use crate::repl_store::ReplStore;
+pub use crate::session::Session;
+use client::telemetry::Telemetry;
+
+pub fn init(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut AppContext) {
+    set_dispatcher(zed_dispatcher(cx));
+    JupyterSettings::register(cx);
+    ::editor::init_settings(cx);
+    repl_sessions_ui::init(cx);
+    ReplStore::init(fs, telemetry, cx);
+}
 
 fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
     struct ZedDispatcher {
@@ -39,10 +56,4 @@ fn zed_dispatcher(cx: &mut AppContext) -> impl Dispatcher {
     ZedDispatcher {
         dispatcher: cx.background_executor().dispatcher.clone(),
     }
-}
-
-pub fn init(cx: &mut AppContext) {
-    set_dispatcher(zed_dispatcher(cx));
-    JupyterSettings::register(cx);
-    runtime_panel::init(cx)
 }

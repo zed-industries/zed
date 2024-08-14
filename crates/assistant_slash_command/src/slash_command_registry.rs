@@ -56,6 +56,14 @@ impl SlashCommandRegistry {
         state.commands.insert(command_name, Arc::new(command));
     }
 
+    /// Unregisters the provided [`SlashCommand`].
+    pub fn unregister_command(&self, command: impl SlashCommand) {
+        let mut state = self.state.write();
+        let command_name: Arc<str> = command.name().into();
+        state.featured_commands.remove(&command_name);
+        state.commands.remove(&command_name);
+    }
+
     /// Returns the names of registered [`SlashCommand`]s.
     pub fn command_names(&self) -> Vec<Arc<str>> {
         self.state.read().commands.keys().cloned().collect()

@@ -1334,7 +1334,7 @@ pub(crate) fn splice_included_ranges(
     let mut removed_ranges = removed_ranges.iter().cloned().peekable();
     let mut new_ranges = new_ranges.into_iter().cloned().peekable();
     let mut ranges_ix = 0;
-    let mut changed_portion = usize::MAX..0;
+    let mut changed_portion: Option<Range<usize>> = None;
     loop {
         let next_new_range = new_ranges.peek();
         let next_removed_range = removed_ranges.peek();
@@ -1395,23 +1395,26 @@ pub(crate) fn splice_included_ranges(
                 break;
             }
         }
-
-        changed_portion.start = changed_portion.start.min(start_ix);
-        changed_portion.end = changed_portion.end.max(if insert.is_some() {
-            start_ix + 1
-        } else {
-            start_ix
-        });
+        let changed_start = changed_portion
+            .as_ref()
+            .map_or(usize::MAX, |range| range.start)
+            .min(start_ix);
+        let changed_end =
+            changed_portion
+                .as_ref()
+                .map_or(0, |range| range.end)
+                .max(if insert.is_some() {
+                    start_ix + 1
+                } else {
+                    start_ix
+                });
+        changed_portion = Some(changed_start..changed_end);
 
         ranges.splice(start_ix..end_ix, insert);
         ranges_ix = start_ix;
     }
 
-    if changed_portion.end < changed_portion.start {
-        changed_portion = 0..0;
-    }
-
-    (ranges, changed_portion)
+    (ranges, changed_portion.unwrap_or(0..0))
 }
 
 /// Ensure there are newline ranges in between content range that appear on

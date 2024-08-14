@@ -76,8 +76,12 @@ impl IconSize {
         }
     }
 
-    /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
-    pub(crate) fn square(&self, cx: &mut WindowContext) -> Pixels {
+    /// Returns the individual components of the square that contains this [`IconSize`].
+    ///
+    /// The returned tuple contains:
+    ///   1. The length of one side of the square
+    ///   2. The padding of one side of the square
+    pub fn square_components(&self, cx: &mut WindowContext) -> (Pixels, Pixels) {
         let icon_size = self.rems() * cx.rem_size();
         let padding = match self {
             IconSize::Indicator => Spacing::None.px(cx),
@@ -85,6 +89,13 @@ impl IconSize {
             IconSize::Small => Spacing::XSmall.px(cx),
             IconSize::Medium => Spacing::XSmall.px(cx),
         };
+
+        (icon_size, padding)
+    }
+
+    /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
+    pub fn square(&self, cx: &mut WindowContext) -> Pixels {
+        let (icon_size, padding) = self.square_components(cx);
 
         icon_size + padding * 2.
     }
@@ -95,6 +106,11 @@ impl IconSize {
 )]
 pub enum IconName {
     Ai,
+    AiAnthropic,
+    AiOpenAi,
+    AiGoogle,
+    AiOllama,
+    AiZed,
     ArrowCircle,
     ArrowDown,
     ArrowDownFromLine,
@@ -147,6 +163,7 @@ pub enum IconName {
     Exit,
     ExpandVertical,
     ExternalLink,
+    Eye,
     File,
     FileDoc,
     FileGeneric,
@@ -155,6 +172,8 @@ pub enum IconName {
     FileRust,
     FileToml,
     FileTree,
+    FileText,
+    FileCode,
     Filter,
     Folder,
     FolderOpen,
@@ -184,6 +203,7 @@ pub enum IconName {
     MessageBubbles,
     Mic,
     MicMute,
+    Microscope,
     Minimize,
     Option,
     PageDown,
@@ -204,6 +224,7 @@ pub enum IconName {
     Rerun,
     Return,
     Reveal,
+    Route,
     RotateCcw,
     RotateCw,
     Save,
@@ -214,9 +235,11 @@ pub enum IconName {
     Settings,
     Shift,
     Sliders,
+    SlidersAlt,
     Snip,
     Space,
     Sparkle,
+    SparkleAlt,
     SparkleFilled,
     Spinner,
     Split,
@@ -231,8 +254,10 @@ pub enum IconName {
     Tab,
     Terminal,
     TextCursor,
+    TextSelect,
     Trash,
     TriangleRight,
+    Undo,
     Update,
     WholeWord,
     XCircle,
@@ -246,6 +271,11 @@ impl IconName {
     pub fn path(self) -> &'static str {
         match self {
             IconName::Ai => "icons/ai.svg",
+            IconName::AiAnthropic => "icons/ai_anthropic.svg",
+            IconName::AiOpenAi => "icons/ai_open_ai.svg",
+            IconName::AiGoogle => "icons/ai_google.svg",
+            IconName::AiOllama => "icons/ai_ollama.svg",
+            IconName::AiZed => "icons/ai_zed.svg",
             IconName::ArrowCircle => "icons/arrow_circle.svg",
             IconName::ArrowDown => "icons/arrow_down.svg",
             IconName::ArrowDownFromLine => "icons/arrow_down_from_line.svg",
@@ -297,6 +327,7 @@ impl IconName {
             IconName::Exit => "icons/exit.svg",
             IconName::ExpandVertical => "icons/expand_vertical.svg",
             IconName::ExternalLink => "icons/external_link.svg",
+            IconName::Eye => "icons/eye.svg",
             IconName::File => "icons/file.svg",
             IconName::FileDoc => "icons/file_icons/book.svg",
             IconName::FileGeneric => "icons/file_icons/file.svg",
@@ -305,6 +336,8 @@ impl IconName {
             IconName::FileRust => "icons/file_icons/rust.svg",
             IconName::FileToml => "icons/file_icons/toml.svg",
             IconName::FileTree => "icons/project.svg",
+            IconName::FileCode => "icons/file_code.svg",
+            IconName::FileText => "icons/file_text.svg",
             IconName::Filter => "icons/filter.svg",
             IconName::Folder => "icons/file_icons/folder.svg",
             IconName::FolderOpen => "icons/file_icons/folder_open.svg",
@@ -334,6 +367,7 @@ impl IconName {
             IconName::MessageBubbles => "icons/conversations.svg",
             IconName::Mic => "icons/mic.svg",
             IconName::MicMute => "icons/mic_mute.svg",
+            IconName::Microscope => "icons/microscope.svg",
             IconName::Minimize => "icons/minimize.svg",
             IconName::Option => "icons/option.svg",
             IconName::PageDown => "icons/page_down.svg",
@@ -356,6 +390,7 @@ impl IconName {
             IconName::Reveal => "icons/reveal.svg",
             IconName::RotateCcw => "icons/rotate_ccw.svg",
             IconName::RotateCw => "icons/rotate_cw.svg",
+            IconName::Route => "icons/route.svg",
             IconName::Save => "icons/save.svg",
             IconName::Screen => "icons/desktop.svg",
             IconName::SearchSelection => "icons/search_selection.svg",
@@ -364,9 +399,11 @@ impl IconName {
             IconName::Settings => "icons/file_icons/settings.svg",
             IconName::Shift => "icons/shift.svg",
             IconName::Sliders => "icons/sliders.svg",
+            IconName::SlidersAlt => "icons/sliders-alt.svg",
             IconName::Snip => "icons/snip.svg",
             IconName::Space => "icons/space.svg",
             IconName::Sparkle => "icons/sparkle.svg",
+            IconName::SparkleAlt => "icons/sparkle_alt.svg",
             IconName::SparkleFilled => "icons/sparkle_filled.svg",
             IconName::Spinner => "icons/spinner.svg",
             IconName::Split => "icons/split.svg",
@@ -381,9 +418,11 @@ impl IconName {
             IconName::Tab => "icons/tab.svg",
             IconName::Terminal => "icons/terminal.svg",
             IconName::TextCursor => "icons/text-cursor.svg",
+            IconName::TextSelect => "icons/text_select.svg",
             IconName::Trash => "icons/trash.svg",
             IconName::TriangleRight => "icons/triangle_right.svg",
             IconName::Update => "icons/update.svg",
+            IconName::Undo => "icons/undo.svg",
             IconName::WholeWord => "icons/word_search.svg",
             IconName::XCircle => "icons/error.svg",
             IconName::ZedAssistant => "icons/zed_assistant.svg",

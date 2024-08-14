@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 
-#[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     User,
@@ -15,7 +15,6 @@ impl Role {
             Some(proto::LanguageModelRole::LanguageModelUser) => Role::User,
             Some(proto::LanguageModelRole::LanguageModelAssistant) => Role::Assistant,
             Some(proto::LanguageModelRole::LanguageModelSystem) => Role::System,
-            Some(proto::LanguageModelRole::LanguageModelTool) => Role::System,
             None => Role::User,
         }
     }
