@@ -169,58 +169,66 @@ impl SlashCommand for DiagnosticsSlashCommand {
         let options = Options::parse(argument);
 
         let task = collect_diagnostics(workspace.read(cx).project().clone(), options, cx);
+
         cx.spawn(move |_| async move {
             let Some((text, sections)) = task.await? else {
-                return Ok(SlashCommandOutput::default());
+                return Ok(SlashCommandOutput {
+                    sections: vec![SlashCommandOutputSection {
+                        range: 0..1,
+                        icon: IconName::Library,
+                        label: "No Diagnostics".into(),
+                    }],
+                    text: "\n".to_string(),
+                    run_commands_in_text: true,
+                });
             };
+
+            let sections = sections
+                .into_iter()
+                .map(|(range, placeholder_type)| SlashCommandOutputSection {
+                    range,
+                    icon: match placeholder_type {
+                        PlaceholderType::Root(_, _) => IconName::ExclamationTriangle,
+                        PlaceholderType::File(_) => IconName::File,
+                        PlaceholderType::Diagnostic(DiagnosticType::Error, _) => IconName::XCircle,
+                        PlaceholderType::Diagnostic(DiagnosticType::Warning, _) => {
+                            IconName::ExclamationTriangle
+                        }
+                    },
+                    label: match placeholder_type {
+                        PlaceholderType::Root(summary, source) => {
+                            let mut label = String::new();
+                            label.push_str("Diagnostics");
+                            if let Some(source) = source {
+                                write!(label, " ({})", source).unwrap();
+                            }
+
+                            if summary.error_count > 0 || summary.warning_count > 0 {
+                                label.push(':');
+
+                                if summary.error_count > 0 {
+                                    write!(label, " {} errors", summary.error_count).unwrap();
+                                    if summary.warning_count > 0 {
+                                        label.push_str(",");
+                                    }
+                                }
+
+                                if summary.warning_count > 0 {
+                                    write!(label, " {} warnings", summary.warning_count).unwrap();
+                                }
+                            }
+
+                            label.into()
+                        }
+                        PlaceholderType::File(file_path) => file_path.into(),
+                        PlaceholderType::Diagnostic(_, message) => message.into(),
+                    },
+                })
+                .collect();
 
             Ok(SlashCommandOutput {
                 text,
-                sections: sections
-                    .into_iter()
-                    .map(|(range, placeholder_type)| SlashCommandOutputSection {
-                        range,
-                        icon: match placeholder_type {
-                            PlaceholderType::Root(_, _) => IconName::ExclamationTriangle,
-                            PlaceholderType::File(_) => IconName::File,
-                            PlaceholderType::Diagnostic(DiagnosticType::Error, _) => {
-                                IconName::XCircle
-                            }
-                            PlaceholderType::Diagnostic(DiagnosticType::Warning, _) => {
-                                IconName::ExclamationTriangle
-                            }
-                        },
-                        label: match placeholder_type {
-                            PlaceholderType::Root(summary, source) => {
-                                let mut label = String::new();
-                                label.push_str("Diagnostics");
-                                if let Some(source) = source {
-                                    write!(label, " ({})", source).unwrap();
-                                }
-
-                                if summary.error_count > 0 || summary.warning_count > 0 {
-                                    label.push(':');
-
-                                    if summary.error_count > 0 {
-                                        write!(label, " {} errors", summary.error_count).unwrap();
-                                        if summary.warning_count > 0 {
-                                            label.push_str(",");
-                                        }
-                                    }
-
-                                    if summary.warning_count > 0 {
-                                        write!(label, " {} warnings", summary.warning_count)
-                                            .unwrap();
-                                    }
-                                }
-
-                                label.into()
-                            }
-                            PlaceholderType::File(file_path) => file_path.into(),
-                            PlaceholderType::Diagnostic(_, message) => message.into(),
-                        },
-                    })
-                    .collect(),
+                sections,
                 run_commands_in_text: false,
             })
         })

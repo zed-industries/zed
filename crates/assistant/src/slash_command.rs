@@ -156,7 +156,6 @@ impl SlashCommandCompletionProvider {
         let mut flag = self.cancel_flag.lock();
         flag.store(true, SeqCst);
         *flag = new_cancel_flag.clone();
-
         let commands = SlashCommandRegistry::global(cx);
         if let Some(command) = commands.command(command_name) {
             let completions = command.complete_argument(
