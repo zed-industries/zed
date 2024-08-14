@@ -76,6 +76,7 @@ impl SlashCommand for TabSlashCommand {
                 Some(ArgumentCompletion {
                     label: path_string.clone().into(),
                     new_text: path_string,
+                    replace_previous_arguments: false,
                     run_command,
                 })
             });
@@ -83,6 +84,7 @@ impl SlashCommand for TabSlashCommand {
             Ok(Some(ArgumentCompletion {
                 label: ALL_TABS_COMPLETION_ITEM.into(),
                 new_text: ALL_TABS_COMPLETION_ITEM.to_owned(),
+                replace_previous_arguments: false,
                 run_command: true,
             })
             .into_iter()

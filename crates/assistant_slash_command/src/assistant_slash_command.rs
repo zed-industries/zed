@@ -23,6 +23,8 @@ pub struct ArgumentCompletion {
     pub new_text: String,
     /// Whether the command should be run when accepting this completion.
     pub run_command: bool,
+    /// Whether to replace the all arguments, or whether to treat this as an independent argument.
+    pub replace_previous_arguments: bool,
 }
 
 pub trait SlashCommand: 'static + Send + Sync {

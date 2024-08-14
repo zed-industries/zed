@@ -165,6 +165,7 @@ impl SlashCommand for FileSlashCommand {
                         label,
                         new_text: text,
                         run_command: true,
+                        replace_previous_arguments: false,
                     })
                 })
                 .collect())

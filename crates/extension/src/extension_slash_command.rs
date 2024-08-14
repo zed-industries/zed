@@ -66,6 +66,7 @@ impl SlashCommand for ExtensionSlashCommand {
                                     .map(|completion| ArgumentCompletion {
                                         label: completion.label.into(),
                                         new_text: completion.new_text,
+                                        replace_previous_arguments: false,
                                         run_command: completion.run_command,
                                     })
                                     .collect(),
