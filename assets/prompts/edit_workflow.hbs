@@ -24,8 +24,7 @@ Examples of user-assistant dialogs with step numbers and user follow-up requests
 <user>Create a Library struct with a vector of Book structs. Include methods to add books and find books by author. Use generics for the book ID.</user>
 <assistant>Certainly! Let's create a Library struct with a vector of Book structs, including methods to add books and find books by author, using generics for the book ID:
 
-<step>
-Define the Book and Library structs
+<step>Define the Book and Library structs
 ```rust
 use std::fmt::Display;
 
@@ -46,9 +45,7 @@ where
 }
 ```
 </step>
-
-<step>
-Implement methods for the Library struct
+<step>Implement methods for the Library struct
 ```rust
 impl<T> Library<T>
 where
@@ -84,8 +81,7 @@ The use of generics allows flexibility in the type of ID used for books.</assist
 <user>How can I use this Library struct in a main function?</user>
 <assistant>Here's how you can use the Library struct in a main function:
 
-<step>
-Create a main function to demonstrate Library usage
+<step>Create a main function to demonstrate Library usage
 ```rust
 fn main() {
     // Create a new Library with string IDs
@@ -118,8 +114,7 @@ This main function demonstrates:
 <user>Can you add a method to remove a book by ID and handle potential errors?</user>
 <assistant>Certainly! Let's add a method to remove a book by ID and handle potential errors:
 
-<step>
-Add a remove_book method to the Library struct
+<step>Add a remove_book method to the Library struct
 ```rust
 use std::fmt::Display;
 use std::error::Error;
@@ -152,9 +147,7 @@ where
 }
 ```
 </step>
-
-<step>
-Update the main function to demonstrate book removal
+<step>Update the main function to demonstrate book removal
 ```rust
 fn main() {
     // ... (previous code remains the same)
@@ -197,7 +190,7 @@ The remove_book method uses the PartialEq trait to compare book IDs, allowing fo
 <user>Create a Person struct with name, age, and email fields, and a method to greet. Include error handling for age.</user>
 <assistant>Certainly! Let's create a Person struct with the specified fields and a method to greet in Go:
 
-Define the Person struct and NewPerson function with error handling
+<step>Define the Person struct and NewPerson function with error handling
 ```go
 type Person struct {
     Name  string
@@ -212,13 +205,14 @@ func NewPerson(name string, age int, email string) (*Person, error) {
     return &Person{Name: name, Age: age, Email: email}, nil
 }
 ```
-
-Implement the Greet method for the Person struct
+</step>
+<step>Implement the Greet method for the Person struct
 ```go
 func (p *Person) Greet() string {
     return fmt.Sprintf("Hello, I'm %s, %d years old. You can reach me at %s.", p.Name, p.Age, p.Email)
 }
 ```
+</step>
 
 This code defines a Person struct, a NewPerson function with age validation, and a Greet method.</assistant>
 </turn>
@@ -227,7 +221,7 @@ This code defines a Person struct, a NewPerson function with age validation, and
 <user>How can I use these in a main function?</user>
 <assistant>Here's how to use the Person struct and its methods in a main function:
 
-Create a main function with error handling
+<step>Create a main function with error handling
 ```go
 func main() {
     // Create a new Person instance
@@ -247,6 +241,7 @@ func main() {
     }
 }
 ```
+</step>
 
 This main function demonstrates:
 1. Creating a valid Person instance
@@ -258,7 +253,7 @@ This main function demonstrates:
 <user>Can you add a method to update the email with validation?</user>
 <assistant>Certainly! Let's add a method to update the email with validation:
 
-Add UpdateEmail method with validation
+<step>Add UpdateEmail method with validation
 ```go
 import (
     "fmt"
@@ -275,8 +270,8 @@ func (p *Person) UpdateEmail(newEmail string) error {
     return nil
 }
 ```
-
-Update the main function to demonstrate email update
+</step>
+<step>Update the main function to demonstrate email update
 ```go
 func main() {
     // ... (previous code remains the same)
@@ -296,6 +291,7 @@ func main() {
     }
 }
 ```
+</step>
 
 This update includes:
 1. An UpdateEmail method with email format validation
