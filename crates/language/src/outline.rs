@@ -88,16 +88,18 @@ impl<T> Outline<T> {
     pub fn find_most_similar(&self, query: &str) -> Option<&OutlineItem<T>> {
         const SIMILARITY_THRESHOLD: f64 = 0.6;
 
-        let (item, similarity) = self
-            .items
+        let (position, similarity) = self
+            .path_candidates
             .iter()
-            .map(|item| {
-                let similarity = strsim::normalized_levenshtein(&item.text, query);
-                (item, similarity)
+            .enumerate()
+            .map(|(index, candidate)| {
+                let similarity = strsim::normalized_levenshtein(&candidate.string, query);
+                (index, similarity)
             })
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())?;
 
         if similarity >= SIMILARITY_THRESHOLD {
+            let item = self.items.get(position)?;
             Some(item)
         } else {
             None
