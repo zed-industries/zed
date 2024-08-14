@@ -829,6 +829,13 @@ impl Context {
                     }
                 })
                 .collect(),
+            workflow_steps: self
+                .workflow_steps
+                .iter()
+                .map(|step| SavedWorkflowStep {
+                    range: step.tagged_range.to_offset(buffer),
+                })
+                .collect(),
         }
     }
 
@@ -857,6 +864,22 @@ impl Context {
         this.buffer.update(cx, |buffer, cx| {
             buffer.set_text(saved_context.text.as_str(), cx)
         });
+        let buffer = this.buffer.read(cx).snapshot();
+
+        this.prune_invalid_workflow_steps(true, cx);
+        for step in &saved_context.workflow_steps {
+            let start = buffer.clip_offset(step.range.start, Bias::Left);
+            let end = buffer.clip_offset(step.range.end, Bias::Right);
+            let tagged_range = buffer.anchor_before(start)..buffer.anchor_after(end);
+            this.workflow_steps.push(WorkflowStep {
+                tagged_range: tagged_range.clone(),
+                status: WorkflowStepStatus::Pending(Task::ready(None)),
+            });
+            if let Some(project) = this.project.clone() {
+                this.resolve_workflow_step(tagged_range, project, cx)
+            }
+        }
+
         let operations = saved_context.into_ops(&this.buffer, cx);
         this.apply_ops(operations, cx).unwrap();
         this
@@ -2470,6 +2493,11 @@ pub struct SavedMessage {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct SavedWorkflowStep {
+    pub range: Range<usize>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct SavedContext {
     pub id: Option<ContextId>,
     pub zed: String,
@@ -2479,6 +2507,8 @@ pub struct SavedContext {
     pub summary: String,
     pub slash_command_output_sections:
         Vec<assistant_slash_command::SlashCommandOutputSection<usize>>,
+    #[serde(default)]
+    pub workflow_steps: Vec<SavedWorkflowStep>,
 }
 
 impl SavedContext {
@@ -2655,6 +2685,7 @@ impl SavedContextV0_3_0 {
                 .collect(),
             summary: self.summary,
             slash_command_output_sections: self.slash_command_output_sections,
+            workflow_steps: Vec::new(),
         }
     }
 }
@@ -3221,7 +3252,7 @@ mod tests {
         let context = cx.new_model(|cx| {
             Context::local(
                 registry.clone(),
-                Some(project),
+                Some(project.clone()),
                 None,
                 prompt_builder.clone(),
                 cx,
@@ -3343,6 +3374,37 @@ mod tests {
                         Point::new(response_start_row + 2, 0)
                             ..Point::new(response_start_row + 12, 3),
                         WorkflowStepTestStatus::Resolved
+                    ),
+                    (
+                        Point::new(response_start_row + 14, 0)
+                            ..Point::new(response_start_row + 24, 3),
+                        WorkflowStepTestStatus::Pending
+                    ),
+                ]
+            );
+        });
+
+        let serialized_context = context.read_with(cx, |context, cx| context.serialize(cx));
+        let deserialized_context = cx.new_model(|cx| {
+            Context::deserialize(
+                serialized_context,
+                Default::default(),
+                registry.clone(),
+                prompt_builder.clone(),
+                Some(project.clone()),
+                None,
+                cx,
+            )
+        });
+
+        deserialized_context.read_with(cx, |context, cx| {
+            assert_eq!(
+                workflow_steps(context, cx),
+                vec![
+                    (
+                        Point::new(response_start_row + 2, 0)
+                            ..Point::new(response_start_row + 12, 3),
+                        WorkflowStepTestStatus::Pending
                     ),
                     (
                         Point::new(response_start_row + 14, 0)
