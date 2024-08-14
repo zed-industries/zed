@@ -2357,7 +2357,7 @@ impl ContextEditor {
             }
             ContextEvent::Operation(_) => {}
             ContextEvent::ShowAssistError(error_message) => {
-                self.error_message = Some(SharedString::from(error_message.clone()));
+                self.error_message = Some(error_message.clone());
             }
         }
     }
