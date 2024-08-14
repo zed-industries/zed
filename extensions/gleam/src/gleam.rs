@@ -1,15 +1,13 @@
 mod hexdocs;
 
-use std::{fs, io};
-use zed::http_client::{HttpMethod, HttpRequest, RedirectPolicy};
+use std::fs;
+use std::sync::LazyLock;
 use zed::lsp::CompletionKind;
 use zed::{
-    CodeLabel, CodeLabelSpan, KeyValueStore, LanguageServerId, SlashCommand,
-    SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
+    CodeLabel, CodeLabelSpan, KeyValueStore, LanguageServerId, SlashCommand, SlashCommandOutput,
+    SlashCommandOutputSection,
 };
 use zed_extension_api::{self as zed, Result};
-
-use crate::hexdocs::convert_hexdocs_to_markdown;
 
 struct GleamExtension {
     cached_binary_path: Option<String>,
@@ -151,78 +149,13 @@ impl zed::Extension for GleamExtension {
         })
     }
 
-    fn complete_slash_command_argument(
-        &self,
-        command: SlashCommand,
-        _arguments: Vec<String>,
-    ) -> Result<Vec<SlashCommandArgumentCompletion>, String> {
-        match command.name.as_str() {
-            "gleam-project" => Ok(vec![
-                SlashCommandArgumentCompletion {
-                    label: "apple".to_string(),
-                    new_text: "Apple".to_string(),
-                    run_command: false,
-                },
-                SlashCommandArgumentCompletion {
-                    label: "banana".to_string(),
-                    new_text: "Banana".to_string(),
-                    run_command: false,
-                },
-                SlashCommandArgumentCompletion {
-                    label: "cherry".to_string(),
-                    new_text: "Cherry".to_string(),
-                    run_command: true,
-                },
-            ]),
-            _ => Ok(Vec::new()),
-        }
-    }
-
     fn run_slash_command(
         &self,
         command: SlashCommand,
-        args: Vec<String>,
+        _args: Vec<String>,
         worktree: Option<&zed::Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         match command.name.as_str() {
-            "gleam-docs" => {
-                let argument = args.last().ok_or_else(|| "missing argument".to_string())?;
-
-                let mut components = argument.split('/');
-                let package_name = components
-                    .next()
-                    .ok_or_else(|| "missing package name".to_string())?;
-                let module_path = components.map(ToString::to_string).collect::<Vec<_>>();
-
-                let response = HttpRequest::builder()
-                    .method(HttpMethod::Get)
-                    .url(format!(
-                        "https://hexdocs.pm/{package_name}{maybe_path}",
-                        maybe_path = if !module_path.is_empty() {
-                            format!("/{}.html", module_path.join("/"))
-                        } else {
-                            String::new()
-                        }
-                    ))
-                    .header("User-Agent", "Zed (Gleam Extension)")
-                    .redirect_policy(RedirectPolicy::FollowAll)
-                    .build()?
-                    .fetch()?;
-
-                let (markdown, _modules) =
-                    convert_hexdocs_to_markdown(&mut io::Cursor::new(response.body))?;
-
-                let mut text = String::new();
-                text.push_str(&markdown);
-
-                Ok(SlashCommandOutput {
-                    sections: vec![SlashCommandOutputSection {
-                        range: (0..text.len()).into(),
-                        label: format!("gleam-docs: {package_name} {}", module_path.join("/")),
-                    }],
-                    text,
-                })
-            }
             "gleam-project" => {
                 let worktree = worktree.ok_or_else(|| "no worktree")?;
 
@@ -248,11 +181,17 @@ impl zed::Extension for GleamExtension {
 
     fn suggest_docs_packages(&self, provider: String) -> Result<Vec<String>, String> {
         match provider.as_str() {
-            "gleam-hexdocs" => Ok(vec![
-                "gleam_stdlib".to_string(),
-                "birdie".to_string(),
-                "startest".to_string(),
-            ]),
+            "gleam-hexdocs" => {
+                static GLEAM_PACKAGES: LazyLock<Vec<String>> = LazyLock::new(|| {
+                    include_str!("../packages.txt")
+                        .lines()
+                        .filter(|line| !line.starts_with('#'))
+                        .map(|line| line.trim().to_owned())
+                        .collect()
+                });
+
+                Ok(GLEAM_PACKAGES.clone())
+            }
             _ => Ok(Vec::new()),
         }
     }
