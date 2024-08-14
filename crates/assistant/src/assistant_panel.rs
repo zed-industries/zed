@@ -2356,7 +2356,7 @@ impl ContextEditor {
                 }
             }
             ContextEvent::Operation(_) => {}
-            ContextEvent::AssistError(error_message) => {
+            ContextEvent::ShowAssistError(error_message) => {
                 self.error_message = Some(SharedString::from(error_message.clone()));
             }
         }
@@ -3053,40 +3053,36 @@ impl ContextEditor {
                                 .gap_1()
                                 .child(sender)
                                 .children(match &message.status {
-                                    MessageStatus::Error(error) => {
-                                        let error_popover_trigger =
-                                            Button::new("show-error", "Error")
-                                                .color(Color::Error)
-                                                .selected_label_color(Color::Error)
-                                                .selected_icon_color(Color::Error)
-                                                .icon(IconName::XCircle)
-                                                .icon_color(Color::Error)
-                                                .icon_size(IconSize::Small)
-                                                .icon_position(IconPosition::Start)
-                                                .tooltip(move |cx| {
-                                                    Tooltip::with_meta(
-                                                        "Error interacting with language model",
-                                                        None,
-                                                        "Click for more details",
-                                                        cx,
-                                                    )
-                                                });
-
-                                        Some(
-                                            PopoverMenu::new("show-error-popover")
-                                                .menu({
-                                                    let error = error.clone();
-                                                    move |cx| {
-                                                        Some(cx.new_view(|cx| ErrorPopover {
-                                                            error: error.clone(),
-                                                            focus_handle: cx.focus_handle(),
-                                                        }))
-                                                    }
-                                                })
-                                                .trigger(error_popover_trigger)
-                                                .into_any_element(),
-                                        )
-                                    }
+                                    MessageStatus::Error(error) => Some(
+                                        Button::new("show-error", "Error")
+                                            .color(Color::Error)
+                                            .selected_label_color(Color::Error)
+                                            .selected_icon_color(Color::Error)
+                                            .icon(IconName::XCircle)
+                                            .icon_color(Color::Error)
+                                            .icon_size(IconSize::Small)
+                                            .icon_position(IconPosition::Start)
+                                            .tooltip(move |cx| {
+                                                Tooltip::with_meta(
+                                                    "Error interacting with language model",
+                                                    None,
+                                                    "Click for more details",
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click({
+                                                let context = context.clone();
+                                                let error = error.clone();
+                                                move |_, cx| {
+                                                    context.update(cx, |_, cx| {
+                                                        cx.emit(ContextEvent::ShowAssistError(
+                                                            error.clone(),
+                                                        ));
+                                                    });
+                                                }
+                                            })
+                                            .into_any_element(),
+                                    ),
                                     MessageStatus::Canceled => Some(
                                         ButtonLike::new("canceled")
                                             .child(
@@ -3719,16 +3715,14 @@ impl Render for ContextEditor {
                                         .overflow_y_scroll()
                                         .child(Label::new(error_message)),
                                 )
-                                .child(
-                                    h_flex().justify_end().mt_1().child(
-                                        Button::new("dismiss", "Dismiss")
-                                            .style(ButtonStyle::Filled)
-                                            .on_click(cx.listener(|this, _, cx| {
-                                                this.error_message = None;
-                                                cx.notify();
-                                            })),
-                                    ),
-                                ),
+                                .child(h_flex().justify_end().mt_1().child(
+                                    Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                                        |this, _, cx| {
+                                            this.error_message = None;
+                                            cx.notify();
+                                        },
+                                    )),
+                                )),
                         ),
                 )
             })
@@ -3762,14 +3756,15 @@ impl FocusableView for ErrorPopover {
 impl Render for ErrorPopover {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
+            .track_focus(&self.focus_handle)
             .mt_2()
             .max_w_96()
             .py_2()
             .px_3()
             .gap_0p5()
             .elevation_2(cx)
-            .bg(cx.theme().colors().surface_background)
             .occlude()
+            .gap_0p5()
             .child(Label::new("Error interacting with language model").weight(FontWeight::SEMIBOLD))
             .child(
                 div()

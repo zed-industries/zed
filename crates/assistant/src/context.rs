@@ -285,7 +285,7 @@ impl ContextOperation {
 
 #[derive(Debug, Clone)]
 pub enum ContextEvent {
-    AssistError(String),
+    ShowAssistError(SharedString),
     MessagesEdited,
     SummaryChanged,
     WorkflowStepsRemoved(Vec<Range<language::Anchor>>),
@@ -1780,7 +1780,9 @@ impl Context {
                         .map(|error| error.to_string().trim().to_string());
 
                     if let Some(error_message) = error_message.as_ref() {
-                        cx.emit(ContextEvent::AssistError(error_message.to_string()));
+                        cx.emit(ContextEvent::ShowAssistError(SharedString::from(
+                            error_message.clone(),
+                        )));
                     }
 
                     this.update_metadata(assistant_message_id, cx, |metadata| {
