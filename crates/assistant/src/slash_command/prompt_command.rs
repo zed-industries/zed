@@ -29,12 +29,13 @@ impl SlashCommand for PromptSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        query: String,
+        arguments: &[String],
         _cancellation_flag: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let store = PromptStore::global(cx);
+        let query = arguments.last().cloned().unwrap_or_default();
         cx.background_executor().spawn(async move {
             let prompts = store.await?.search(query).await;
             Ok(prompts
@@ -53,12 +54,12 @@ impl SlashCommand for PromptSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        title: Option<&str>,
+        arguments: &[String],
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let Some(title) = title else {
+        let Some(title) = arguments.first() else {
             return Task::ready(Err(anyhow!("missing prompt name")));
         };
 

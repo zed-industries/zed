@@ -117,7 +117,7 @@ impl SlashCommand for FetchSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut WindowContext,
@@ -127,12 +127,12 @@ impl SlashCommand for FetchSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let Some(argument) = argument else {
+        let Some(argument) = arguments.first() else {
             return Task::ready(Err(anyhow!("missing URL")));
         };
         let Some(workspace) = workspace.upgrade() else {

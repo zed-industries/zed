@@ -154,7 +154,7 @@ impl zed::Extension for GleamExtension {
     fn complete_slash_command_argument(
         &self,
         command: SlashCommand,
-        _query: String,
+        _arguments: Vec<String>,
     ) -> Result<Vec<SlashCommandArgumentCompletion>, String> {
         match command.name.as_str() {
             "gleam-project" => Ok(vec![
@@ -181,12 +181,12 @@ impl zed::Extension for GleamExtension {
     fn run_slash_command(
         &self,
         command: SlashCommand,
-        argument: Option<String>,
+        args: Vec<String>,
         worktree: Option<&zed::Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         match command.name.as_str() {
             "gleam-docs" => {
-                let argument = argument.ok_or_else(|| "missing argument".to_string())?;
+                let argument = args.last().ok_or_else(|| "missing argument".to_string())?;
 
                 let mut components = argument.split('/');
                 let package_name = components

@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
     default_command, diagnostics_command, docs_command, fetch_command, file_command, now_command,
-    project_command, prompt_command, search_command, symbols_command, tabs_command,
+    project_command, prompt_command, search_command, symbols_command, tab_command,
     terminal_command, workflow_command,
 };
 use std::sync::Arc;
@@ -294,7 +294,7 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     let slash_command_registry = SlashCommandRegistry::global(cx);
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
     slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
-    slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
+    slash_command_registry.register_command(tab_command::TabSlashCommand, true);
     slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, false);

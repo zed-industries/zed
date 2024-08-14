@@ -34,7 +34,7 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn menu_text(&self) -> String;
     fn complete_argument(
         self: Arc<Self>,
-        query: String,
+        arguments: &[String],
         cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
@@ -42,7 +42,7 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn requires_argument(&self) -> bool;
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         // TODO: We're just using the `LspAdapterDelegate` here because that is
         // what the extension API is already expecting.

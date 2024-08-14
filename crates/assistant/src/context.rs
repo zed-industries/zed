@@ -1206,21 +1206,31 @@ impl Context {
             while let Some(line) = lines.next() {
                 if let Some(command_line) = SlashCommandLine::parse(line) {
                     let name = &line[command_line.name.clone()];
-                    let argument = command_line.argument.as_ref().and_then(|argument| {
-                        (!argument.is_empty()).then_some(&line[argument.clone()])
-                    });
+                    let arguments = command_line
+                        .arguments
+                        .iter()
+                        .filter_map(|argument_range| {
+                            if argument_range.is_empty() {
+                                None
+                            } else {
+                                line.get(argument_range.clone())
+                            }
+                        })
+                        .map(ToOwned::to_owned)
+                        .collect::<SmallVec<_>>();
                     if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
-                        if !command.requires_argument() || argument.is_some() {
+                        if !command.requires_argument() || !arguments.is_empty() {
                             let start_ix = offset + command_line.name.start - 1;
                             let end_ix = offset
                                 + command_line
-                                    .argument
+                                    .arguments
+                                    .last()
                                     .map_or(command_line.name.end, |argument| argument.end);
                             let source_range =
                                 buffer.anchor_after(start_ix)..buffer.anchor_after(end_ix);
                             let pending_command = PendingSlashCommand {
                                 name: name.to_string(),
-                                argument: argument.map(ToString::to_string),
+                                arguments,
                                 source_range,
                                 status: PendingSlashCommandStatus::Idle,
                             };
@@ -2457,7 +2467,7 @@ impl ContextVersion {
 #[derive(Debug, Clone)]
 pub struct PendingSlashCommand {
     pub name: String,
-    pub argument: Option<String>,
+    pub arguments: SmallVec<[String; 3]>,
     pub status: PendingSlashCommandStatus,
     pub source_range: Range<language::Anchor>,
 }
@@ -3758,7 +3768,7 @@ mod tests {
 
         fn complete_argument(
             self: Arc<Self>,
-            _query: String,
+            _arguments: &[String],
             _cancel: Arc<AtomicBool>,
             _workspace: Option<WeakView<Workspace>>,
             _cx: &mut WindowContext,
@@ -3772,7 +3782,7 @@ mod tests {
 
         fn run(
             self: Arc<Self>,
-            _argument: Option<&str>,
+            _arguments: &[String],
             _workspace: WeakView<Workspace>,
             _delegate: Option<Arc<dyn LspAdapterDelegate>>,
             _cx: &mut WindowContext,

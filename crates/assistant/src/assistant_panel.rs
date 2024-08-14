@@ -1814,7 +1814,7 @@ impl ContextEditor {
         self.run_command(
             command.source_range,
             &command.name,
-            command.argument.as_deref(),
+            &command.arguments,
             false,
             self.workspace.clone(),
             cx,
@@ -2120,7 +2120,7 @@ impl ContextEditor {
                 self.run_command(
                     command.source_range,
                     &command.name,
-                    command.argument.as_deref(),
+                    &command.arguments,
                     true,
                     workspace.clone(),
                     cx,
@@ -2134,19 +2134,13 @@ impl ContextEditor {
         &mut self,
         command_range: Range<language::Anchor>,
         name: &str,
-        argument: Option<&str>,
+        arguments: &[String],
         insert_trailing_newline: bool,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
-            let argument = argument.map(ToString::to_string);
-            let output = command.run(
-                argument.as_deref(),
-                workspace,
-                self.lsp_adapter_delegate.clone(),
-                cx,
-            );
+            let output = command.run(arguments, workspace, self.lsp_adapter_delegate.clone(), cx);
             self.context.update(cx, |context, cx| {
                 context.insert_command_output(command_range, output, insert_trailing_newline, cx)
             });
@@ -2232,7 +2226,7 @@ impl ContextEditor {
                                             context_editor.run_command(
                                                 command.source_range.clone(),
                                                 &command.name,
-                                                command.argument.as_deref(),
+                                                &command.arguments,
                                                 false,
                                                 workspace.clone(),
                                                 cx,
@@ -2345,7 +2339,7 @@ impl ContextEditor {
                         self.run_command(
                             command.source_range,
                             &command.name,
-                            command.argument.as_deref(),
+                            &command.arguments,
                             false,
                             self.workspace.clone(),
                             cx,
@@ -4559,11 +4553,10 @@ fn render_docs_slash_command_trailer(
     command: PendingSlashCommand,
     cx: &mut WindowContext,
 ) -> AnyElement {
-    let Some(argument) = command.argument else {
+    if command.arguments.is_empty() {
         return Empty.into_any();
-    };
-
-    let args = DocsSlashCommandArgs::parse(&argument);
+    }
+    let args = DocsSlashCommandArgs::parse(&command.arguments);
 
     let Some(store) = args
         .provider()

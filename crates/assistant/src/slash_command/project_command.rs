@@ -103,7 +103,7 @@ impl SlashCommand for ProjectSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut WindowContext,
@@ -117,7 +117,7 @@ impl SlashCommand for ProjectSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        _argument: Option<&str>,
+        _arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,

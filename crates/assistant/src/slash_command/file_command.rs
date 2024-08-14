@@ -122,7 +122,7 @@ impl SlashCommand for FileSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        query: String,
+        arguments: &[String],
         cancellation_flag: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
@@ -131,7 +131,12 @@ impl SlashCommand for FileSlashCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let paths = self.search_paths(query, cancellation_flag, &workspace, cx);
+        let paths = self.search_paths(
+            arguments.last().cloned().unwrap_or_default(),
+            cancellation_flag,
+            &workspace,
+            cx,
+        );
         let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
         cx.background_executor().spawn(async move {
             Ok(paths
@@ -168,7 +173,7 @@ impl SlashCommand for FileSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -177,7 +182,7 @@ impl SlashCommand for FileSlashCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let Some(argument) = argument else {
+        let Some(argument) = arguments.first() else {
             return Task::ready(Err(anyhow!("missing path")));
         };
 

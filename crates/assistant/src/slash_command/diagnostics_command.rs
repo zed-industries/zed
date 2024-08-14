@@ -105,7 +105,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        query: String,
+        arguments: &[String],
         cancellation_flag: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
@@ -113,7 +113,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
-        let query = query.split_whitespace().last().unwrap_or("").to_string();
+        let query = arguments.last().cloned().unwrap_or_default();
 
         let paths = self.search_paths(query.clone(), cancellation_flag.clone(), &workspace, cx);
         let executor = cx.background_executor().clone();
@@ -157,7 +157,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -166,7 +166,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let options = Options::parse(argument);
+        let options = Options::parse(arguments);
 
         let task = collect_diagnostics(workspace.read(cx).project().clone(), options, cx);
 
@@ -244,25 +244,20 @@ struct Options {
 const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
 
 impl Options {
-    fn parse(arguments_line: Option<&str>) -> Self {
-        arguments_line
-            .map(|arguments_line| {
-                let args = arguments_line.split_whitespace().collect::<Vec<_>>();
-                let mut include_warnings = false;
-                let mut path_matcher = None;
-                for arg in args {
-                    if arg == INCLUDE_WARNINGS_ARGUMENT {
-                        include_warnings = true;
-                    } else {
-                        path_matcher = PathMatcher::new(&[arg.to_owned()]).log_err();
-                    }
-                }
-                Self {
-                    include_warnings,
-                    path_matcher,
-                }
-            })
-            .unwrap_or_default()
+    fn parse(arguments: &[String]) -> Self {
+        let mut include_warnings = false;
+        let mut path_matcher = None;
+        for arg in arguments {
+            if arg == INCLUDE_WARNINGS_ARGUMENT {
+                include_warnings = true;
+            } else {
+                path_matcher = PathMatcher::new(&[arg.to_owned()]).log_err();
+            }
+        }
+        Self {
+            include_warnings,
+            path_matcher,
+        }
     }
 
     fn match_candidates_for_args() -> [StringMatchCandidate; 1] {
