@@ -1833,7 +1833,9 @@ impl Context {
     pub fn cancel_last_assist(&mut self, cx: &mut ModelContext<Self>) -> bool {
         if let Some(pending_completion) = self.pending_completions.pop() {
             self.update_metadata(pending_completion.assistant_message_id, cx, |metadata| {
-                metadata.status = MessageStatus::Canceled;
+                if metadata.status == MessageStatus::Pending {
+                    metadata.status = MessageStatus::Canceled;
+                }
             });
             true
         } else {
