@@ -1973,6 +1973,8 @@ impl ContextEditor {
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
+        self.error_message = None;
+
         if self
             .context
             .update(cx, |context, cx| context.cancel_last_assist(cx))
@@ -3585,10 +3587,13 @@ impl ContextEditor {
         };
 
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
-        let disabled = self.show_accept_terms
+
+        let needs_to_accept_terms = self.show_accept_terms
             && provider
                 .as_ref()
                 .map_or(false, |provider| provider.must_accept_terms(cx));
+        let has_active_error = self.error_message.is_some();
+        let disabled = needs_to_accept_terms || has_active_error;
 
         ButtonLike::new("send_button")
             .disabled(disabled)
@@ -3681,6 +3686,37 @@ impl Render for ContextEditor {
                         .bg(cx.theme().colors().surface_background)
                         .occlude()
                         .child(element),
+                )
+            })
+            .when_some(self.error_message.clone(), |this, error_message| {
+                this.child(
+                    div()
+                        .absolute()
+                        .right_4()
+                        .bottom_10()
+                        .max_w_96()
+                        .py_2()
+                        .px_3()
+                        .elevation_2(cx)
+                        .bg(cx.theme().colors().surface_background)
+                        .occlude()
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(
+                                    Label::new("Error interacting with language model")
+                                        .weight(FontWeight::SEMIBOLD),
+                                )
+                                .child(Label::new(error_message))
+                                .child(h_flex().justify_end().mt_1().child(
+                                    Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                                        |this, _, cx| {
+                                            this.error_message = None;
+                                            cx.notify();
+                                        },
+                                    )),
+                                )),
+                        ),
                 )
             })
             .child(
