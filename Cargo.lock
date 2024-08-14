@@ -10509,6 +10509,7 @@ dependencies = [
  "theme",
  "ui",
  "util",
+ "windows 0.58.0",
 ]
 
 [[package]]
