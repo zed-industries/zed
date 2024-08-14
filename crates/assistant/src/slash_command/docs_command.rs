@@ -233,7 +233,7 @@ impl SlashCommand for DocsSlashCommand {
                         .map(|package_name| ArgumentCompletion {
                             label: format!("{package_name} (unindexed)").into(),
                             new_text: format!("{package_name}"),
-                            run_command: false,
+                            run_command: true,
                         })
                         .collect::<Vec<_>>();
                     items.extend(workspace_crate_completions);
