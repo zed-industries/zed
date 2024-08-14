@@ -192,7 +192,7 @@ impl SlashCommand for DocsSlashCommand {
                 items
                     .into_iter()
                     .map(|item| ArgumentCompletion {
-                        label: item.clone(),
+                        label: item.clone().into(),
                         new_text: format!("{provider} {item}"),
                         run_command: true,
                     })
@@ -204,7 +204,7 @@ impl SlashCommand for DocsSlashCommand {
                     let providers = indexed_docs_registry.list_providers();
                     if providers.is_empty() {
                         return Ok(vec![ArgumentCompletion {
-                            label: "No available docs providers.".to_string(),
+                            label: "No available docs providers.".into(),
                             new_text: String::new(),
                             run_command: false,
                         }]);
@@ -213,7 +213,7 @@ impl SlashCommand for DocsSlashCommand {
                     Ok(providers
                         .into_iter()
                         .map(|provider| ArgumentCompletion {
-                            label: provider.to_string(),
+                            label: provider.to_string().into(),
                             new_text: provider.to_string(),
                             run_command: false,
                         })
@@ -244,10 +244,10 @@ impl SlashCommand for DocsSlashCommand {
                             .filter(|crate_name| {
                                 !all_items
                                     .iter()
-                                    .any(|item| item.label.as_str() == crate_name.as_ref())
+                                    .any(|item| item.label.text() == crate_name.as_ref())
                             })
                             .map(|crate_name| ArgumentCompletion {
-                                label: format!("{crate_name} (unindexed)"),
+                                label: format!("{crate_name} (unindexed)").into(),
                                 new_text: format!("{provider} {crate_name}"),
                                 run_command: true,
                             })
@@ -262,13 +262,14 @@ impl SlashCommand for DocsSlashCommand {
                                 label: format!(
                                     "Enter a {package_term} name or try one of these:",
                                     package_term = package_term(&provider)
-                                ),
+                                )
+                                .into(),
                                 new_text: provider.to_string(),
                                 run_command: false,
                             })
                             .chain(DocsDotRsProvider::AUTO_SUGGESTED_CRATES.into_iter().map(
                                 |crate_name| ArgumentCompletion {
-                                    label: crate_name.to_string(),
+                                    label: (*crate_name).into(),
                                     new_text: format!("{provider} {crate_name}"),
                                     run_command: true,
                                 },
@@ -280,7 +281,8 @@ impl SlashCommand for DocsSlashCommand {
                             label: format!(
                                 "Enter a {package_term} name.",
                                 package_term = package_term(&provider)
-                            ),
+                            )
+                            .into(),
                             new_text: provider.to_string(),
                             run_command: false,
                         }]);

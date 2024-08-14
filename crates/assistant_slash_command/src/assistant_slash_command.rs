@@ -18,7 +18,7 @@ pub fn init(cx: &mut AppContext) {
 #[derive(Debug)]
 pub struct ArgumentCompletion {
     /// The label to display for this completion.
-    pub label: String,
+    pub label: CodeLabel,
     /// The new text that should be inserted into the command when this completion is accepted.
     pub new_text: String,
     /// Whether the command should be run when accepting this completion.

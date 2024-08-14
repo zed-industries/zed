@@ -43,6 +43,7 @@ impl DiagnosticsSlashCommand {
                         worktree_id: entry.worktree_id.to_usize(),
                         path: entry.path.clone(),
                         path_prefix: path_prefix.clone(),
+                        is_dir: false, // Diagnostics can't be produced for directories
                         distance_to_relative_ancestor: 0,
                     })
                     .collect(),
@@ -146,7 +147,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
             Ok(matches
                 .into_iter()
                 .map(|completion| ArgumentCompletion {
-                    label: completion.clone(),
+                    label: completion.clone().into(),
                     new_text: completion,
                     run_command: true,
                 })

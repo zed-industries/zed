@@ -211,7 +211,7 @@ impl SlashCommandCompletionProvider {
 
                         project::Completion {
                             old_range: argument_range.clone(),
-                            label: CodeLabel::plain(command_argument.label, None),
+                            label: command_argument.label,
                             new_text,
                             documentation: None,
                             server_id: LanguageServerId(0),

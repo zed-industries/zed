@@ -48,7 +48,7 @@ impl SlashCommand for TerminalSlashCommand {
         _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(vec![ArgumentCompletion {
-            label: LINE_COUNT_ARG.to_string(),
+            label: LINE_COUNT_ARG.into(),
             new_text: LINE_COUNT_ARG.to_string(),
             run_command: true,
         }]))

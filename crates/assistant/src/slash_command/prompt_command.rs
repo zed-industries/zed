@@ -42,7 +42,7 @@ impl SlashCommand for PromptSlashCommand {
                 .filter_map(|prompt| {
                     let prompt_title = prompt.title?.to_string();
                     Some(ArgumentCompletion {
-                        label: prompt_title.clone(),
+                        label: prompt_title.clone().into(),
                         new_text: prompt_title,
                         run_command: true,
                     })

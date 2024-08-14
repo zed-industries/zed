@@ -11033,10 +11033,12 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         self.traversal.next().map(|entry| match entry.kind {
             EntryKind::Dir => fuzzy::PathMatchCandidate {
+                is_dir: true,
                 path: &entry.path,
                 char_bag: CharBag::from_iter(entry.path.to_string_lossy().to_lowercase().chars()),
             },
             EntryKind::File(char_bag) => fuzzy::PathMatchCandidate {
+                is_dir: false,
                 path: &entry.path,
                 char_bag,
             },
