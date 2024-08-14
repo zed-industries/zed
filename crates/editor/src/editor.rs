@@ -9748,9 +9748,14 @@ impl Editor {
         if trigger == FormatTrigger::Save {
             buffers.retain(|buffer| buffer.read(cx).is_dirty());
         }
+        let selection = self.selections.first::<Point>(cx);
+        let start= selection.start;
+        let end= selection.end;
+
+        println!("{start:?}:{end:?}");
 
         let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
-        let format = project.update(cx, |project, cx| project.format(buffers, true, trigger, cx));
+        let format = project.update(cx, |project, cx| project.format(buffers, true, trigger, Some(selection),cx));
 
         cx.spawn(|_, mut cx| async move {
             let transaction = futures::select_biased! {

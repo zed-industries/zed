@@ -41,22 +41,13 @@ use gpui::{
 };
 use http_client::HttpClient;
 use itertools::Itertools;
-use language::{
-    language_settings::{
-        language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
-        LanguageSettings, SelectedFormatter,
-    },
-    markdown, point_to_lsp, prepare_completion_documentation,
-    proto::{
-        deserialize_anchor, deserialize_version, serialize_anchor, serialize_line_ending,
-        serialize_version, split_operations,
-    },
-    range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
-    ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
-    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
-    LspAdapterDelegate, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
-    ToPointUtf16, Transaction, Unclipped,
-};
+use language::{language_settings::{
+    language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
+    LanguageSettings, SelectedFormatter,
+}, markdown, point_to_lsp, prepare_completion_documentation, proto::{
+    deserialize_anchor, deserialize_version, serialize_anchor, serialize_line_ending,
+    serialize_version, split_operations,
+}, range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel, ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation, Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate, Patch, PendingLanguageServer, Point, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped};
 use log::error;
 use lsp::{
     CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
@@ -113,7 +104,7 @@ use task::{
     HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate, TaskVariables, VariableName,
 };
 use terminals::Terminals;
-use text::{Anchor, BufferId, LineEnding};
+use text::{Anchor, BufferId, LineEnding, Selection};
 use unicase::UniCase;
 use util::{
     debug_panic, defer, maybe, merge_json_value_into, parse_env_output, post_inc,
@@ -4856,6 +4847,7 @@ impl Project {
         buffers: HashSet<Model<Buffer>>,
         push_to_history: bool,
         trigger: FormatTrigger,
+        selection: Option<Selection<Point>>,
         cx: &mut ModelContext<Project>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
         if self.is_local() {
@@ -4875,6 +4867,7 @@ impl Project {
                     buffers_with_paths,
                     push_to_history,
                     trigger,
+                    selection,
                     cx.clone(),
                 )
                 .await;
@@ -4920,6 +4913,7 @@ impl Project {
         mut buffers_with_paths: Vec<(Model<Buffer>, Option<PathBuf>)>,
         push_to_history: bool,
         trigger: FormatTrigger,
+        selection: Option<Selection<Point>>,
         mut cx: AsyncAppContext,
     ) -> anyhow::Result<ProjectTransaction> {
         // Do not allow multiple concurrent formatting requests for the
@@ -5049,6 +5043,7 @@ impl Project {
                                                     &settings,
                                                     &adapters_and_servers,
                                                     push_to_history,
+                                                    selection.as_ref(),
                                                     &mut project_transaction,
                                                     &mut cx,
                                                 )
@@ -5063,6 +5058,7 @@ impl Project {
                                                     &settings,
                                                     &adapters_and_servers,
                                                     push_to_history,
+                                                    selection.as_ref(),
                                                     &mut project_transaction,
                                                     &mut cx,
                                                 )
@@ -5086,6 +5082,7 @@ impl Project {
                                                 &settings,
                                                 &adapters_and_servers,
                                                 push_to_history,
+                                                selection.as_ref(),
                                                 &mut project_transaction,
                                                 &mut cx,
                                             )
@@ -5112,6 +5109,7 @@ impl Project {
                                         &settings,
                                         &adapters_and_servers,
                                         push_to_history,
+                                        selection.as_ref(),
                                         &mut project_transaction,
                                         &mut cx,
                                     )
@@ -5140,6 +5138,7 @@ impl Project {
                                             &settings,
                                             &adapters_and_servers,
                                             push_to_history,
+                                            selection.as_ref(),
                                             &mut project_transaction,
                                             &mut cx,
                                         )
@@ -5154,6 +5153,7 @@ impl Project {
                                             &settings,
                                             &adapters_and_servers,
                                             push_to_history,
+                                            selection.as_ref(),
                                             &mut project_transaction,
                                             &mut cx,
                                         )
@@ -5179,6 +5179,7 @@ impl Project {
                                         &settings,
                                         &adapters_and_servers,
                                         push_to_history,
+                                        selection.as_ref(),
                                         &mut project_transaction,
                                         &mut cx,
                                     )
@@ -5251,6 +5252,7 @@ impl Project {
         settings: &LanguageSettings,
         adapters_and_servers: &Vec<(Arc<CachedLspAdapter>, Arc<LanguageServer>)>,
         push_to_history: bool,
+        selection: Option<&Selection<Point>>,
         transaction: &mut ProjectTransaction,
         mut cx: &mut AsyncAppContext,
     ) -> Result<Option<FormatOperation>, anyhow::Error> {
@@ -5268,12 +5270,16 @@ impl Project {
                         language_server
                     };
                     Some(FormatOperation::Lsp(
+
+
+
                         Self::format_via_lsp(
                             &project,
                             buffer,
                             buffer_abs_path,
                             language_server,
                             settings,
+                            selection,
                             cx,
                         )
                         .await
@@ -5332,6 +5338,7 @@ impl Project {
         abs_path: &Path,
         language_server: &Arc<LanguageServer>,
         settings: &LanguageSettings,
+        selection: Option<&Selection<Point>>,
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
         let uri = lsp::Url::from_file_path(abs_path)
@@ -5351,8 +5358,19 @@ impl Project {
                 })
                 .await?
         } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
-            let buffer_start = lsp::Position::new(0, 0);
-            let buffer_end = buffer.update(cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
+            let (buffer_start, buffer_end) = if let Some(selection) = selection {
+                let selection_start = selection.start;
+                let selection_end = selection.end;
+
+                (lsp::Position::new(selection_start.row, selection_start.column), lsp::Position::new(selection_end.row, selection_end.column))
+            } else {
+
+                let buffer_start = lsp::Position::new(0, 0);
+                let buffer_end = buffer.update(cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
+                (buffer_start, buffer_end)
+            };
+
+            println!("{buffer_start:?}:{buffer_end:?}");
 
             language_server
                 .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
@@ -9063,7 +9081,7 @@ impl Project {
                 buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
             }
             let trigger = FormatTrigger::from_proto(envelope.payload.trigger);
-            Ok::<_, anyhow::Error>(this.format(buffers, false, trigger, cx))
+            Ok::<_, anyhow::Error>(this.format(buffers, false, trigger, None, cx))
         })??;
 
         let project_transaction = format.await?;
