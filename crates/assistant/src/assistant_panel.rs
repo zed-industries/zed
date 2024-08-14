@@ -3523,7 +3523,13 @@ impl Render for ContextEditor {
         } else {
             None
         };
-
+        let focus_handle = self
+            .workspace
+            .update(cx, |workspace, cx| {
+                Some(workspace.active_item_as::<Editor>(cx)?.focus_handle(cx))
+            })
+            .ok()
+            .flatten();
         v_flex()
             .key_context("ContextEditor")
             .capture_action(cx.listener(ContextEditor::cancel))
@@ -3583,13 +3589,26 @@ impl Render for ContextEditor {
                                 .child(
                                     IconButton::new("quote-button", IconName::Quote)
                                         .icon_size(IconSize::Small)
-                                        .tooltip(|cx| {
-                                            Tooltip::with_meta(
-                                                "Insert Selection",
-                                                None,
-                                                "Press to quote via keyboard",
-                                                cx,
-                                            )
+                                        .on_click(|_, cx| {
+                                            cx.dispatch_action(QuoteSelection.boxed_clone());
+                                        })
+                                        .tooltip(move |cx| {
+                                            cx.new_view(|cx| {
+                                                let key_binding = focus_handle
+                                                    .as_ref()
+                                                    .map(|handle| {
+                                                        KeyBinding::for_action_in(
+                                                            &QuoteSelection,
+                                                            &handle,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .flatten();
+                                                Tooltip::new("Insert Selection")
+                                                    .meta("Press to quote via keyboard")
+                                                    .key_binding(key_binding)
+                                            })
+                                            .into()
                                         }),
                                 ),
                         )
