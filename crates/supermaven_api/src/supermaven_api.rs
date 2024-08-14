@@ -260,7 +260,6 @@ pub fn get_supermaven_agent_path(
         }
 
         let request = HttpRequest::get(&download_info.download_url);
-        let proxy = client.proxy();
 
         let mut response = client
             .send(request.body(AsyncBody::default())?)
