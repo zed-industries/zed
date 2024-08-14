@@ -1,6 +1,7 @@
 use gpui::{
-    px, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle,
+    px, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle, RenderOnce, ImageSource, Styled, img
 };
+use ui::{div, IntoElement, ParentElement};
 use language::HighlightId;
 use std::{fmt::Display, ops::Range, path::PathBuf};
 
@@ -210,6 +211,8 @@ pub struct ParsedRegion {
     pub code: bool,
     /// The link contained in this region, if it has one.
     pub link: Option<Link>,
+    /// The image contained in this region, if it has one.
+    pub image: Option<Image>,
 }
 
 /// A Markdown link.
@@ -267,3 +270,73 @@ impl Display for Link {
         }
     }
 }
+
+
+/// A Markdown Image
+#[derive(Debug, Clone, IntoElement)]
+#[cfg_attr(test, derive(PartialEq))]
+
+pub enum Image {
+     Web {
+        /// The URL of the Image.
+        url: String,
+    },
+    ///  Image path on the filesystem.
+    Path {
+        /// The path as provided in the Markdown document.
+        display_path: PathBuf,
+        /// The absolute path to the item.
+        path: PathBuf,
+    },
+}
+
+impl Image {
+    pub fn identify(file_location_directory: Option<PathBuf>, text: String) -> Option<Image> {
+        if text.starts_with("http") {
+            return Some(Image::Web { url: text });
+        }
+        let path = PathBuf::from(&text);
+        if path.is_absolute() && path.exists() {
+            return Some(Image::Path {
+                display_path: path.clone(),
+                path,
+            });
+            }
+        if let Some(file_location_directory) = file_location_directory {
+            let display_path = path;
+            let path = file_location_directory.join(text);
+            if path.exists() {
+                return Some(Image::Path { display_path, path });
+            }
+        }
+        None
+    }
+}
+
+impl Display for Image {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Image::Web { url } => write!(f, "{}", url),
+            Image::Path {
+                display_path,
+                path: _,
+            } => write!(f, "{}", display_path.display()),
+        }
+    }
+}
+
+impl RenderOnce for Image{
+    fn render(self, _: &mut ui::WindowContext) -> impl ui::IntoElement {
+        let image_src = match self {
+            Image::Web { url } => ImageSource::Uri(url.into()),
+            Image::Path { path, .. } => ImageSource::File(path.into()),
+        };
+        div().child(
+            div()
+                .flex_row()
+                .size_full()
+                .child(img(image_src))
+        )
+    }
+}
+

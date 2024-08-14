@@ -194,6 +194,7 @@ impl<'a> MarkdownParser<'a> {
         let mut italic_depth = 0;
         let mut strikethrough_depth = 0;
         let mut link: Option<Link> = None;
+        let mut image: Option<Image> = None;
         let mut region_ranges: Vec<Range<usize>> = vec![];
         let mut regions: Vec<ParsedRegion> = vec![];
         let mut highlights: Vec<(Range<usize>, MarkdownHighlight)> = vec![];
@@ -244,6 +245,7 @@ impl<'a> MarkdownParser<'a> {
                         regions.push(ParsedRegion {
                             code: false,
                             link: Some(link),
+                            image: None,
                         });
                         style.underline = true;
                         prev_len
@@ -282,6 +284,7 @@ impl<'a> MarkdownParser<'a> {
                                 link: Some(Link::Web {
                                     url: link.as_str().to_string(),
                                 }),
+                                image: None,
                             });
 
                             last_link_len = end;
@@ -301,9 +304,40 @@ impl<'a> MarkdownParser<'a> {
                         }
                         if new_highlight {
                             highlights
-                                .push((last_run_len..text.len(), MarkdownHighlight::Style(style)));
+                                .push((last_run_len..text.len(), MarkdownHighlight::Style(style.clone())));
                         }
                     }
+                    if let Some(image) = image.clone() {
+                        let is_valid_image = match image.clone() {
+                            Image::Path { display_path, path:_ } => {
+                                display_path.is_file()
+                            }
+                            Image::Web { url } => {
+                                match isahc::get(url) {
+                                    Ok(response) => {
+                                        match response.status().as_u16() {
+                                            200 => true,
+                                            404 => false,
+                                            _ => false, 
+                                        }
+                                    }
+                                    Err(_) => false
+                                }
+                            }
+                        };
+
+                        if is_valid_image {
+                            text.truncate(text.len() - t.len());
+                        }
+                        region_ranges.push(prev_len..text.len());
+                        regions.push(ParsedRegion {
+                            code: false,
+                            link: None,
+                            image: Some(image),
+
+                        });
+                        style.underline = true;
+                    };
                 }
 
                 // Note: This event means "inline code" and not "code block"
@@ -324,6 +358,7 @@ impl<'a> MarkdownParser<'a> {
                     regions.push(ParsedRegion {
                         code: true,
                         link: link.clone(),
+                        image: image.clone(),
                     });
                 }
 
@@ -341,7 +376,18 @@ impl<'a> MarkdownParser<'a> {
                             self.file_location_directory.clone(),
                             dest_url.to_string(),
                         );
-                    }
+                    },
+                    Tag::Image {
+                        link_type: _,
+                        dest_url,
+                        title: _,
+                        id: _
+                        } => {
+                            image = Image::identify(
+                                self.file_location_directory.clone(),
+                                dest_url.to_string()
+                            );
+                        },
                     _ => {
                         break;
                     }
@@ -359,6 +405,9 @@ impl<'a> MarkdownParser<'a> {
                     }
                     TagEnd::Link => {
                         link = None;
+                    }
+                    TagEnd::Image => {
+                        image = None;
                     }
                     TagEnd::Paragraph => {
                         self.cursor += 1;
@@ -844,7 +893,7 @@ mod tests {
     #[gpui::test]
     async fn test_raw_links_detection() {
         let parsed = parse("Checkout this https://zed.dev link").await;
-
+     
         assert_eq!(
             parsed.children,
             vec![p("Checkout this https://zed.dev link", 0..34)]
@@ -855,6 +904,7 @@ mod tests {
         } else {
             panic!("Expected a paragraph");
         };
+        println!("{:?}", paragraph);
         assert_eq!(
             paragraph.highlights,
             vec![(
@@ -872,9 +922,33 @@ mod tests {
                 link: Some(Link::Web {
                     url: "https://zed.dev".to_string()
                 }),
+                image: None
             }]
         );
         assert_eq!(paragraph.region_ranges, vec![14..29]);
+    }
+
+    #[gpui::test]
+    async fn test_image_links_detection() {
+        let parsed = parse("Check out this![Zed logo](https://zed.dev/logo.png) link").await;
+
+        let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
+            text
+        } else {
+            panic!("Expected a paragraph");
+        };
+
+        assert_eq!(
+            paragraph.regions,
+            vec![ParsedRegion {
+                code: false,
+                link: None,
+                image: Some(Image::Web {
+                    url: "https://zed.dev/logo.png".to_string()
+                }),   
+            }]
+        );
+        assert_eq!(paragraph.region_ranges, vec![14..14]);
     }
 
     #[gpui::test]
@@ -1087,6 +1161,7 @@ Some other content
 * `code`
 * **bold**
 * [link](https://example.com)
+* ![image]()
 ",
         )
         .await;
@@ -1096,7 +1171,8 @@ Some other content
             vec![
                 list_item(0..8, 1, Unordered, vec![p("code", 2..8)]),
                 list_item(9..19, 1, Unordered, vec![p("bold", 11..19)]),
-                list_item(20..49, 1, Unordered, vec![p("link", 22..49)],)
+                list_item(20..49, 1, Unordered, vec![p("link", 22..49)]),
+                list_item(50..63, 1, Unordered, vec![p("image", 52..61)]),
             ],
         );
     }

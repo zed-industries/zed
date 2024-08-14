@@ -331,6 +331,7 @@ fn render_markdown_code_block(
 fn render_markdown_paragraph(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> AnyElement {
     cx.with_common_p(div())
         .child(render_markdown_text(parsed, cx))
+        .child(render_markdown_text_image(parsed, cx))
         .into_any_element()
 }
 
@@ -405,6 +406,19 @@ fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> 
         },
     )
     .into_any_element()
+}
+
+fn render_markdown_text_image(parsed: &ParsedMarkdownText, _: &mut RenderContext) -> AnyElement {
+    let mut images = Vec::new();
+    let mut image_ranges = Vec::new();
+    for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
+        if let Some(image) = region.image.clone() {
+            images.push(image);
+            image_ranges.push(range.clone());
+        }
+    }
+    
+    div().flex_grow().children(images).size_full().into_any()
 }
 
 fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
