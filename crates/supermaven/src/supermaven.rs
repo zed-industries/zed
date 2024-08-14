@@ -92,7 +92,6 @@ impl Supermaven {
             cx.spawn(|this, mut cx| async move {
                 let binary_path =
                     supermaven_api::get_supermaven_agent_path(client.http_client()).await?;
-                println!("==> SM path: {}", binary_path.display());
 
                 this.update(&mut cx, |this, cx| {
                     if let Self::Starting = this {
