@@ -19,9 +19,4 @@ description = "Returns information about the current Gleam project."
 requires_argument = false
 tooltip_text = "Insert Gleam project data"
 
-[slash_commands.gleam-docs]
-description = "Returns Gleam docs."
-requires_argument = true
-tooltip_text = "Insert Gleam docs"
-
 [indexed_docs_providers.gleam-hexdocs]
