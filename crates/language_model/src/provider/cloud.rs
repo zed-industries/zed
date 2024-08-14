@@ -256,9 +256,9 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         let state = self.state.read(cx);
 
         let terms = [(
-            "anthropic_terms_of_service",
-            "Anthropic Terms of Service",
-            "https://www.anthropic.com/legal/consumer-terms",
+            "terms_of_service",
+            "Terms of Service",
+            "https://zed.dev/terms-of-service",
         )]
         .map(|(id, label, url)| {
             Button::new(id, label)
@@ -278,8 +278,13 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     .gap_2()
                     .child(
                         v_flex()
-                            .child(Label::new("Terms & Conditions").weight(FontWeight::MEDIUM))
-                            .child(Label::new("Please read and accept the terms and conditions of Zed AI and our provider partners to continue.").size(LabelSize::Small))
+                            .child(Label::new("Terms and Conditions").weight(FontWeight::MEDIUM))
+                            .child(
+                                Label::new(
+                                    "Please read and accept our terms and conditions to continue.",
+                                )
+                                .size(LabelSize::Small),
+                            ),
                     )
                     .child(v_flex().gap_1().children(terms))
                     .child(
