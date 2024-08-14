@@ -212,7 +212,11 @@ pub async fn latest_release(
 }
 
 pub fn version_path(version: u64) -> PathBuf {
-    supermaven_dir().join(format!("sm-agent-{}", version))
+    supermaven_dir().join(format!(
+        "sm-agent-{}{}",
+        version,
+        std::env::consts::EXE_SUFFIX
+    ))
 }
 
 pub async fn has_version(version_path: &Path) -> bool {
@@ -256,6 +260,7 @@ pub fn get_supermaven_agent_path(
         }
 
         let request = HttpRequest::get(&download_info.download_url);
+        let proxy = client.proxy();
 
         let mut response = client
             .send(request.body(AsyncBody::default())?)
