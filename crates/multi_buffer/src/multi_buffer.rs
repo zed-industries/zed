@@ -742,6 +742,33 @@ impl MultiBuffer {
         tail(self, buffer_edits, autoindent_mode, edited_excerpt_ids, cx);
     }
 
+    // Inserts newlines at the given position to create an empty line, returning the start of the new line.
+    // You can also request the insertion of empty lines above and below the line starting at the returned point.
+    // Panics if the given position is invalid.
+    pub fn insert_empty_line(
+        &mut self,
+        position: impl ToPoint,
+        space_above: bool,
+        space_below: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Point {
+        let multibuffer_point = position.to_point(&self.read(cx));
+        if let Some(buffer) = self.as_singleton() {
+            buffer.update(cx, |buffer, cx| {
+                buffer.insert_empty_line(multibuffer_point, space_above, space_below, cx)
+            })
+        } else {
+            let (buffer, buffer_point, _) =
+                self.point_to_buffer_point(multibuffer_point, cx).unwrap();
+            self.start_transaction(cx);
+            let empty_line_start = buffer.update(cx, |buffer, cx| {
+                buffer.insert_empty_line(buffer_point, space_above, space_below, cx)
+            });
+            self.end_transaction(cx);
+            multibuffer_point + (empty_line_start - buffer_point)
+        }
+    }
+
     pub fn start_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         self.start_transaction_at(Instant::now(), cx)
     }
@@ -1442,6 +1469,29 @@ impl MultiBuffer {
         cursor.item().map(|excerpt| {
             let excerpt_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
             let buffer_point = excerpt_start + offset - *cursor.start();
+            let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
+
+            (buffer, buffer_point, excerpt.id)
+        })
+    }
+
+    // If point is at the end of the buffer, the last excerpt is returned
+    pub fn point_to_buffer_point<T: ToPoint>(
+        &self,
+        point: T,
+        cx: &AppContext,
+    ) -> Option<(Model<Buffer>, Point, ExcerptId)> {
+        let snapshot = self.read(cx);
+        let point = point.to_point(&snapshot);
+        let mut cursor = snapshot.excerpts.cursor::<Point>();
+        cursor.seek(&point, Bias::Right, &());
+        if cursor.item().is_none() {
+            cursor.prev(&());
+        }
+
+        cursor.item().map(|excerpt| {
+            let excerpt_start = excerpt.range.context.start.to_point(&excerpt.buffer);
+            let buffer_point = excerpt_start + point - *cursor.start();
             let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
 
             (buffer, buffer_point, excerpt.id)

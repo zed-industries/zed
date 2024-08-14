@@ -2597,7 +2597,9 @@ impl<'a> WindowContext<'a> {
             .insert_primitive(MonochromeSprite {
                 order: 0,
                 pad: 0,
-                bounds,
+                bounds: bounds
+                    .map_origin(|origin| origin.floor())
+                    .map_size(|size| size.ceil()),
                 content_mask,
                 color,
                 tile,

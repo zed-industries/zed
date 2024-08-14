@@ -184,6 +184,20 @@ pub fn prompts_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path to the prompt templates directory.
+///
+/// This is where the prompt templates for core features can be overridden with templates.
+pub fn prompt_templates_dir() -> &'static PathBuf {
+    static PROMPT_TEMPLATES_DIR: OnceLock<PathBuf> = OnceLock::new();
+    PROMPT_TEMPLATES_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            config_dir().join("prompts").join("templates")
+        } else {
+            support_dir().join("prompts").join("templates")
+        }
+    })
+}
+
 /// Returns the path to the semantic search's embeddings directory.
 ///
 /// This is where the embeddings used to power semantic search are stored.

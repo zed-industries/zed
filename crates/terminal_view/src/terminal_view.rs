@@ -211,7 +211,8 @@ impl TerminalView {
         cx: &mut ViewContext<Self>,
     ) {
         let context_menu = ContextMenu::build(cx, |menu, _| {
-            menu.action("New Terminal", Box::new(NewTerminal))
+            menu.context(self.focus_handle.clone())
+                .action("New Terminal", Box::new(NewTerminal))
                 .separator()
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))

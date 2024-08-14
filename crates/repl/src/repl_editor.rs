@@ -37,7 +37,7 @@ pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) ->
 
         let kernel_specification = store.update(cx, |store, cx| {
             store
-                .kernelspec(&language, cx)
+                .kernelspec(language.code_fence_block_name().as_ref(), cx)
                 .with_context(|| format!("No kernel found for language: {}", language.name()))
         })?;
 
@@ -114,7 +114,9 @@ pub fn session(editor: WeakView<Editor>, cx: &mut AppContext) -> SessionSupport 
     let Some(language) = get_language(editor, cx) else {
         return SessionSupport::Unsupported;
     };
-    let kernelspec = store.update(cx, |store, cx| store.kernelspec(&language, cx));
+    let kernelspec = store.update(cx, |store, cx| {
+        store.kernelspec(language.code_fence_block_name().as_ref(), cx)
+    });
 
     match kernelspec {
         Some(kernelspec) => SessionSupport::Inactive(Box::new(kernelspec)),

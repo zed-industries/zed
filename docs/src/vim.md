@@ -17,8 +17,10 @@ Vim mode has several "core Zed" key bindings, that will help you make the most o
 ```
 # Language server
 g d     Go to definition
-g D     Go to type definition
-g cmd-d Go to implementation
+g D     Go to declaration
+g y     Go to type definition
+g I     Go to implementation
+
 c d     Rename (change definition)
 g A     Go to All references to the current word
 

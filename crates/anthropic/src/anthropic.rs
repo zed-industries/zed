@@ -1,3 +1,5 @@
+mod supported_countries;
+
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
@@ -5,6 +7,8 @@ use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use strum::EnumIter;
+
+pub use supported_countries::*;
 
 pub const ANTHROPIC_API_URL: &'static str = "https://api.anthropic.com";
 

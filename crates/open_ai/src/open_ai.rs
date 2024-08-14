@@ -1,11 +1,15 @@
+mod supported_countries;
+
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::{convert::TryFrom, future::Future, time::Duration};
 use strum::EnumIter;
+
+pub use supported_countries::*;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
@@ -121,23 +125,32 @@ pub struct Request {
     pub stop: Vec<String>,
     pub temperature: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<String>,
+    pub tool_choice: Option<ToolChoice>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct FunctionDefinition {
-    pub name: String,
-    pub description: Option<String>,
-    pub parameters: Option<Map<String, Value>>,
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolChoice {
+    Auto,
+    Required,
+    None,
+    Other(ToolDefinition),
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolDefinition {
     #[allow(dead_code)]
     Function { function: FunctionDefinition },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub description: Option<String>,
+    pub parameters: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

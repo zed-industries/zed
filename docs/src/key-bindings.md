@@ -218,6 +218,8 @@ See the [tasks documentation](/docs/tasks#custom-keybindings-for-tasks) for more
 | Format                           | Editor     | `⌘ + Shift + I`                 |
 | Go to definition                 | Editor     | `F12`                           |
 | Go to definition split           | Editor     | `Alt + F12`                     |
+| Go to declaration                | Editor     | `Ctrl + F12`                    |
+| Go to declaration split          | Editor     | `Alt + Ctrl + F12`              |
 | Go to diagnostic                 | Editor     | `F8`                            |
 | Go to implementation             | Editor     | `Shift + F12`                   |
 | Go to prev diagnostic            | Editor     | `Shift + F8`                    |

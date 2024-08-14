@@ -1,6 +1,6 @@
 use crate::{
-    prompt_library::PromptStore, slash_command::SlashCommandLine, InitialInsertion, MessageId,
-    MessageStatus,
+    prompts::PromptBuilder, slash_command::SlashCommandLine, AssistantPanel, InitialInsertion,
+    InlineAssistId, InlineAssistant, MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -9,14 +9,19 @@ use assistant_slash_command::{
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
+use editor::Editor;
 use fs::{Fs, RemoveOptions};
 use futures::{
     future::{self, Shared},
     FutureExt, StreamExt,
 };
-use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task};
+use gpui::{
+    AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task, UpdateGlobal,
+    View, WeakView,
+};
 use language::{
-    AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, ParseStatus, Point, ToOffset,
+    AnchorRangeExt, Bias, Buffer, BufferSnapshot, LanguageRegistry, OffsetRangeExt, ParseStatus,
+    Point, ToOffset,
 };
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, LanguageModelTool,
@@ -37,9 +42,10 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::AssistantKind;
-use ui::SharedString;
+use ui::{SharedString, WindowContext};
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
+use workspace::Workspace;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
@@ -275,9 +281,10 @@ impl ContextOperation {
 
 #[derive(Debug, Clone)]
 pub enum ContextEvent {
+    AssistError(String),
     MessagesEdited,
     SummaryChanged,
-    EditStepsChanged,
+    WorkflowStepsChanged,
     StreamedCompletion,
     PendingSlashCommandsUpdated {
         removed: Vec<Range<language::Anchor>>,
@@ -339,427 +346,241 @@ struct PendingCompletion {
 pub struct SlashCommandId(clock::Lamport);
 
 #[derive(Debug)]
-pub struct EditStep {
-    pub source_range: Range<language::Anchor>,
-    pub state: Option<EditStepState>,
+pub struct WorkflowStep {
+    pub tagged_range: Range<language::Anchor>,
+    pub edit_suggestions: WorkflowStepEditSuggestions,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedWorkflowStepEditSuggestions {
+    pub title: String,
+    pub edit_suggestions: HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>,
+}
+
+pub enum WorkflowStepEditSuggestions {
+    Pending(Task<Option<()>>),
+    Resolved(ResolvedWorkflowStepEditSuggestions),
+}
+
+impl WorkflowStepEditSuggestions {
+    pub fn as_resolved(&self) -> Option<&ResolvedWorkflowStepEditSuggestions> {
+        match self {
+            WorkflowStepEditSuggestions::Resolved(suggestions) => Some(suggestions),
+            WorkflowStepEditSuggestions::Pending(_) => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditSuggestionGroup {
     pub context_range: Range<language::Anchor>,
     pub suggestions: Vec<EditSuggestion>,
 }
 
-#[derive(Debug)]
-pub struct EditSuggestion {
-    pub range: Range<language::Anchor>,
-    /// If None, assume this is a suggestion to delete the range rather than transform it.
-    pub description: Option<String>,
-    pub initial_insertion: Option<InitialInsertion>,
-}
-
-pub struct EditStepSuggestions {
-    pub title: String,
-    pub suggestions: HashMap<Model<Buffer>, Vec<EditSuggestionGroup>>,
-}
-
-impl EditStep {
-    pub fn edit_suggestions(
-        &self,
-        project: &Model<Project>,
-        cx: &AppContext,
-    ) -> Option<Task<EditStepSuggestions>> {
-        let Some(EditStepState::Resolved(resolution)) = &self.state else {
-            return None;
-        };
-
-        let title = resolution.step_title.clone();
-        let suggestion_tasks: Vec<_> = resolution
-            .operations
-            .iter()
-            .map(|operation| operation.edit_suggestion(project.clone(), cx))
-            .collect();
-
-        Some(cx.spawn(|mut cx| async move {
-            let suggestions = future::join_all(suggestion_tasks)
-                .await
-                .into_iter()
-                .filter_map(|task| task.log_err())
-                .collect::<Vec<_>>();
-
-            let mut suggestions_by_buffer = HashMap::default();
-            for (buffer, suggestion) in suggestions {
-                suggestions_by_buffer
-                    .entry(buffer)
-                    .or_insert_with(Vec::new)
-                    .push(suggestion);
-            }
-
-            let mut suggestion_groups_by_buffer = HashMap::default();
-            for (buffer, mut suggestions) in suggestions_by_buffer {
-                let mut suggestion_groups = Vec::<EditSuggestionGroup>::new();
-                buffer
-                    .update(&mut cx, |buffer, _cx| {
-                        // Sort suggestions by their range
-                        suggestions.sort_by(|a, b| a.range.cmp(&b.range, buffer));
-
-                        // Dedup overlapping suggestions
-                        suggestions.dedup_by(|a, b| {
-                            let a_range = a.range.to_offset(buffer);
-                            let b_range = b.range.to_offset(buffer);
-                            if a_range.start <= b_range.end && b_range.start <= a_range.end {
-                                if b_range.start < a_range.start {
-                                    a.range.start = b.range.start;
-                                }
-                                if b_range.end > a_range.end {
-                                    a.range.end = b.range.end;
-                                }
-
-                                if let (Some(a_desc), Some(b_desc)) =
-                                    (a.description.as_mut(), b.description.as_mut())
-                                {
-                                    b_desc.push('\n');
-                                    b_desc.push_str(a_desc);
-                                } else if a.description.is_some() {
-                                    b.description = a.description.take();
-                                }
-
-                                true
-                            } else {
-                                false
-                            }
-                        });
-
-                        // Create context ranges for each suggestion
-                        for suggestion in suggestions {
-                            let context_range = {
-                                let suggestion_point_range = suggestion.range.to_point(buffer);
-                                let start_row = suggestion_point_range.start.row.saturating_sub(5);
-                                let end_row = cmp::min(
-                                    suggestion_point_range.end.row + 5,
-                                    buffer.max_point().row,
-                                );
-                                let start = buffer.anchor_before(Point::new(start_row, 0));
-                                let end = buffer
-                                    .anchor_after(Point::new(end_row, buffer.line_len(end_row)));
-                                start..end
-                            };
-
-                            if let Some(last_group) = suggestion_groups.last_mut() {
-                                if last_group
-                                    .context_range
-                                    .end
-                                    .cmp(&context_range.start, buffer)
-                                    .is_ge()
-                                {
-                                    // Merge with the previous group if context ranges overlap
-                                    last_group.context_range.end = context_range.end;
-                                    last_group.suggestions.push(suggestion);
-                                } else {
-                                    // Create a new group
-                                    suggestion_groups.push(EditSuggestionGroup {
-                                        context_range,
-                                        suggestions: vec![suggestion],
-                                    });
-                                }
-                            } else {
-                                // Create the first group
-                                suggestion_groups.push(EditSuggestionGroup {
-                                    context_range,
-                                    suggestions: vec![suggestion],
-                                });
-                            }
-                        }
-                    })
-                    .ok();
-                suggestion_groups_by_buffer.insert(buffer, suggestion_groups);
-            }
-
-            EditStepSuggestions {
-                title,
-                suggestions: suggestion_groups_by_buffer,
-            }
-        }))
-    }
-}
-
-pub enum EditStepState {
-    Pending(Task<Option<()>>),
-    Resolved(EditStepResolution),
-}
-
-impl Debug for EditStepState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            EditStepState::Pending(_) => write!(f, "EditStepOperations::Pending"),
-            EditStepState::Resolved(operations) => f
-                .debug_struct("EditStepOperations::Parsed")
-                .field("operations", operations)
-                .finish(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct EditStepResolution {
-    /// An extremely short title for the edit step represented by these operations.
-    pub step_title: String,
-    /// A sequence of operations to apply to the codebase.
-    /// When multiple operations are required for a step, be sure to include multiple operations in this list.
-    pub operations: Vec<EditOperation>,
-}
-
-impl LanguageModelTool for EditStepResolution {
-    fn name() -> String {
-        "edit".into()
-    }
-
-    fn description() -> String {
-        "suggest edits to one or more locations in the codebase".into()
-    }
-}
-
-/// A description of an operation to apply to one location in the codebase.
-///
-/// This object represents a single edit operation that can be performed on a specific file
-/// in the codebase. It encapsulates both the location (file path) and the nature of the
-/// edit to be made.
-///
-/// # Fields
-///
-/// * `path`: A string representing the file path where the edit operation should be applied.
-///           This path is relative to the root of the project or repository.
-///
-/// * `kind`: An enum representing the specific type of edit operation to be performed.
-///
-/// # Usage
-///
-/// `EditOperation` is used within a code editor to represent and apply
-/// programmatic changes to source code. It provides a structured way to describe
-/// edits for features like refactoring tools or AI-assisted coding suggestions.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
-pub struct EditOperation {
-    /// The path to the file containing the relevant operation
-    pub path: String,
-    #[serde(flatten)]
-    pub kind: EditOperationKind,
-}
-
-impl EditOperation {
-    fn edit_suggestion(
-        &self,
-        project: Model<Project>,
-        cx: &AppContext,
-    ) -> Task<Result<(Model<language::Buffer>, EditSuggestion)>> {
-        let path = self.path.clone();
-        let kind = self.kind.clone();
-        cx.spawn(move |mut cx| async move {
-            let buffer = project
-                .update(&mut cx, |project, cx| {
-                    let project_path = project
-                        .find_project_path(Path::new(&path), cx)
-                        .with_context(|| format!("worktree not found for {:?}", path))?;
-                    anyhow::Ok(project.open_buffer(project_path, cx))
-                })??
-                .await?;
-
-            let mut parse_status = buffer.read_with(&cx, |buffer, _cx| buffer.parse_status())?;
-            while *parse_status.borrow() != ParseStatus::Idle {
-                parse_status.changed().await?;
-            }
-
-            let initial_insertion = kind.initial_insertion();
-            let suggestion_range = if let Some(symbol) = kind.symbol() {
-                let outline = buffer
-                    .update(&mut cx, |buffer, _| buffer.snapshot().outline(None))?
-                    .context("no outline for buffer")?;
-                let candidate = outline
-                    .path_candidates
-                    .iter()
-                    .max_by(|a, b| {
-                        strsim::jaro_winkler(&a.string, symbol)
-                            .total_cmp(&strsim::jaro_winkler(&b.string, symbol))
-                    })
-                    .with_context(|| {
-                        format!(
-                            "symbol {:?} not found in path {:?}.\ncandidates: {:?}.\nparse status: {:?}. text:\n{}",
-                            symbol,
-                            path,
-                            outline
-                                .path_candidates
-                                .iter()
-                                .map(|candidate| &candidate.string)
-                                .collect::<Vec<_>>(),
-                            *parse_status.borrow(),
-                            buffer.read_with(&cx, |buffer, _| buffer.text()).unwrap_or_else(|_| "error".to_string())
-                        )
-                    })?;
-
-                buffer.update(&mut cx, |buffer, _| {
-                    let outline_item = &outline.items[candidate.id];
-                    let symbol_range = outline_item.range.to_point(buffer);
-                    let annotation_range = outline_item
-                        .annotation_range
-                        .as_ref()
-                        .map(|range| range.to_point(buffer));
-                    let body_range = outline_item
-                        .body_range
-                        .as_ref()
-                        .map(|range| range.to_point(buffer))
-                        .unwrap_or(symbol_range.clone());
-
-                    match kind {
-                        EditOperationKind::PrependChild { .. } => {
-                            let anchor = buffer.anchor_after(body_range.start);
-                            anchor..anchor
-                        }
-                        EditOperationKind::AppendChild { .. } => {
-                            let anchor = buffer.anchor_before(body_range.end);
-                            anchor..anchor
-                        }
-                        EditOperationKind::InsertSiblingBefore { .. } => {
-                            let anchor = buffer.anchor_before(
-                                annotation_range.map_or(symbol_range.start, |annotation_range| {
-                                    annotation_range.start
-                                }),
-                            );
-                            anchor..anchor
-                        }
-                        EditOperationKind::InsertSiblingAfter { .. } => {
-                            let anchor = buffer.anchor_after(symbol_range.end);
-                            anchor..anchor
-                        }
-                        EditOperationKind::Update { .. } | EditOperationKind::Delete { .. } => {
-                            let start = annotation_range.map_or(symbol_range.start, |range| range.start);
-                            let start = Point::new(start.row, 0);
-                            let end = Point::new(
-                                symbol_range.end.row,
-                                buffer.line_len(symbol_range.end.row),
-                            );
-                            buffer.anchor_before(start)..buffer.anchor_after(end)
-                        }
-                        EditOperationKind::Create { .. } => unreachable!(),
-                    }
-                })?
-            } else {
-                match kind {
-                    EditOperationKind::PrependChild { .. } => {
-                        language::Anchor::MIN..language::Anchor::MIN
-                    }
-                    EditOperationKind::AppendChild { .. } | EditOperationKind::Create { .. } => {
-                        language::Anchor::MAX..language::Anchor::MAX
-                    }
-                    _ => unreachable!("All other operations should have a symbol"),
-                }
-            };
-
-            Ok((
-                buffer,
-                EditSuggestion {
-                    range: suggestion_range,
-                    description: kind.description().map(ToString::to_string),
-                    initial_insertion,
-                },
-            ))
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
-#[serde(tag = "kind")]
-pub enum EditOperationKind {
-    /// Rewrites the specified symbol entirely based on the given description.
-    /// This operation completely replaces the existing symbol with new content.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EditSuggestion {
     Update {
-        /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
-        /// The path should uniquely identify the symbol within the containing file.
-        symbol: String,
-        /// A brief description of the transformation to apply to the symbol.
+        range: Range<language::Anchor>,
         description: String,
     },
-    /// Creates a new file with the given path based on the provided description.
-    /// This operation adds a new file to the codebase.
-    Create {
-        /// A brief description of the file to be created.
+    CreateFile {
         description: String,
     },
-    /// Inserts a new symbol based on the given description before the specified symbol.
-    /// This operation adds new content immediately preceding an existing symbol.
     InsertSiblingBefore {
-        /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
-        /// The new content will be inserted immediately before this symbol.
-        symbol: String,
-        /// A brief description of the new symbol to be inserted.
+        position: language::Anchor,
         description: String,
     },
-    /// Inserts a new symbol based on the given description after the specified symbol.
-    /// This operation adds new content immediately following an existing symbol.
     InsertSiblingAfter {
-        /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
-        /// The new content will be inserted immediately after this symbol.
-        symbol: String,
-        /// A brief description of the new symbol to be inserted.
+        position: language::Anchor,
         description: String,
     },
-    /// Inserts a new symbol as a child of the specified symbol at the start.
-    /// This operation adds new content as the first child of an existing symbol (or file if no symbol is provided).
     PrependChild {
-        /// An optional fully-qualified reference to the symbol after the code you want to insert, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
-        /// If provided, the new content will be inserted as the first child of this symbol.
-        /// If not provided, the new content will be inserted at the top of the file.
-        symbol: Option<String>,
-        /// A brief description of the new symbol to be inserted.
+        position: language::Anchor,
         description: String,
     },
-    /// Inserts a new symbol as a child of the specified symbol at the end.
-    /// This operation adds new content as the last child of an existing symbol (or file if no symbol is provided).
     AppendChild {
-        /// An optional fully-qualified reference to the symbol before the code you want to insert, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
-        /// If provided, the new content will be inserted as the last child of this symbol.
-        /// If not provided, the new content will be applied at the bottom of the file.
-        symbol: Option<String>,
-        /// A brief description of the new symbol to be inserted.
+        position: language::Anchor,
         description: String,
     },
-    /// Deletes the specified symbol from the containing file.
     Delete {
-        /// An fully-qualified reference to the symbol to be deleted, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
-        symbol: String,
+        range: Range<language::Anchor>,
     },
 }
 
-impl EditOperationKind {
-    pub fn symbol(&self) -> Option<&str> {
+impl EditSuggestion {
+    pub fn range(&self) -> Range<language::Anchor> {
         match self {
-            Self::Update { symbol, .. } => Some(symbol),
-            Self::InsertSiblingBefore { symbol, .. } => Some(symbol),
-            Self::InsertSiblingAfter { symbol, .. } => Some(symbol),
-            Self::PrependChild { symbol, .. } => symbol.as_deref(),
-            Self::AppendChild { symbol, .. } => symbol.as_deref(),
-            Self::Delete { symbol } => Some(symbol),
-            Self::Create { .. } => None,
+            EditSuggestion::Update { range, .. } => range.clone(),
+            EditSuggestion::CreateFile { .. } => language::Anchor::MIN..language::Anchor::MAX,
+            EditSuggestion::InsertSiblingBefore { position, .. }
+            | EditSuggestion::InsertSiblingAfter { position, .. }
+            | EditSuggestion::PrependChild { position, .. }
+            | EditSuggestion::AppendChild { position, .. } => *position..*position,
+            EditSuggestion::Delete { range } => range.clone(),
         }
     }
 
     pub fn description(&self) -> Option<&str> {
         match self {
-            Self::Update { description, .. } => Some(description),
-            Self::Create { description } => Some(description),
-            Self::InsertSiblingBefore { description, .. } => Some(description),
-            Self::InsertSiblingAfter { description, .. } => Some(description),
-            Self::PrependChild { description, .. } => Some(description),
-            Self::AppendChild { description, .. } => Some(description),
-            Self::Delete { .. } => None,
+            EditSuggestion::Update { description, .. }
+            | EditSuggestion::CreateFile { description }
+            | EditSuggestion::InsertSiblingBefore { description, .. }
+            | EditSuggestion::InsertSiblingAfter { description, .. }
+            | EditSuggestion::PrependChild { description, .. }
+            | EditSuggestion::AppendChild { description, .. } => Some(description),
+            EditSuggestion::Delete { .. } => None,
         }
     }
 
-    pub fn initial_insertion(&self) -> Option<InitialInsertion> {
+    fn description_mut(&mut self) -> Option<&mut String> {
         match self {
-            EditOperationKind::InsertSiblingBefore { .. } => Some(InitialInsertion::NewlineAfter),
-            EditOperationKind::InsertSiblingAfter { .. } => Some(InitialInsertion::NewlineBefore),
-            EditOperationKind::PrependChild { .. } => Some(InitialInsertion::NewlineAfter),
-            EditOperationKind::AppendChild { .. } => Some(InitialInsertion::NewlineBefore),
-            _ => None,
+            EditSuggestion::Update { description, .. }
+            | EditSuggestion::CreateFile { description }
+            | EditSuggestion::InsertSiblingBefore { description, .. }
+            | EditSuggestion::InsertSiblingAfter { description, .. }
+            | EditSuggestion::PrependChild { description, .. }
+            | EditSuggestion::AppendChild { description, .. } => Some(description),
+            EditSuggestion::Delete { .. } => None,
+        }
+    }
+
+    fn try_merge(&mut self, other: &Self, buffer: &BufferSnapshot) -> bool {
+        let range = self.range();
+        let other_range = other.range();
+
+        // Don't merge if we don't contain the other suggestion.
+        if range.start.cmp(&other_range.start, buffer).is_gt()
+            || range.end.cmp(&other_range.end, buffer).is_lt()
+        {
+            return false;
+        }
+
+        if let Some(description) = self.description_mut() {
+            if let Some(other_description) = other.description() {
+                description.push('\n');
+                description.push_str(other_description);
+            }
+        }
+        true
+    }
+
+    pub fn show(
+        &self,
+        editor: &View<Editor>,
+        excerpt_id: editor::ExcerptId,
+        workspace: &WeakView<Workspace>,
+        assistant_panel: &View<AssistantPanel>,
+        cx: &mut WindowContext,
+    ) -> Option<InlineAssistId> {
+        let mut initial_transaction_id = None;
+        let initial_prompt;
+        let suggestion_range;
+        let buffer = editor.read(cx).buffer().clone();
+        let snapshot = buffer.read(cx).snapshot(cx);
+
+        match self {
+            EditSuggestion::Update { range, description } => {
+                initial_prompt = description.clone();
+                suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
+                    ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
+            }
+            EditSuggestion::CreateFile { description } => {
+                initial_prompt = description.clone();
+                suggestion_range = editor::Anchor::min()..editor::Anchor::min();
+            }
+            EditSuggestion::InsertSiblingBefore {
+                position,
+                description,
+            } => {
+                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                initial_prompt = description.clone();
+                suggestion_range = buffer.update(cx, |buffer, cx| {
+                    buffer.start_transaction(cx);
+                    let line_start = buffer.insert_empty_line(position, true, true, cx);
+                    initial_transaction_id = buffer.end_transaction(cx);
+
+                    let line_start = buffer.read(cx).anchor_before(line_start);
+                    line_start..line_start
+                });
+            }
+            EditSuggestion::InsertSiblingAfter {
+                position,
+                description,
+            } => {
+                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                initial_prompt = description.clone();
+                suggestion_range = buffer.update(cx, |buffer, cx| {
+                    buffer.start_transaction(cx);
+                    let line_start = buffer.insert_empty_line(position, true, true, cx);
+                    initial_transaction_id = buffer.end_transaction(cx);
+
+                    let line_start = buffer.read(cx).anchor_before(line_start);
+                    line_start..line_start
+                });
+            }
+            EditSuggestion::PrependChild {
+                position,
+                description,
+            } => {
+                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                initial_prompt = description.clone();
+                suggestion_range = buffer.update(cx, |buffer, cx| {
+                    buffer.start_transaction(cx);
+                    let line_start = buffer.insert_empty_line(position, false, true, cx);
+                    initial_transaction_id = buffer.end_transaction(cx);
+
+                    let line_start = buffer.read(cx).anchor_before(line_start);
+                    line_start..line_start
+                });
+            }
+            EditSuggestion::AppendChild {
+                position,
+                description,
+            } => {
+                let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                initial_prompt = description.clone();
+                suggestion_range = buffer.update(cx, |buffer, cx| {
+                    buffer.start_transaction(cx);
+                    let line_start = buffer.insert_empty_line(position, true, false, cx);
+                    initial_transaction_id = buffer.end_transaction(cx);
+
+                    let line_start = buffer.read(cx).anchor_before(line_start);
+                    line_start..line_start
+                });
+            }
+            EditSuggestion::Delete { range } => {
+                initial_prompt = "Delete".to_string();
+                suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
+                    ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
+            }
+        }
+
+        InlineAssistant::update_global(cx, |inline_assistant, cx| {
+            Some(inline_assistant.suggest_assist(
+                editor,
+                suggestion_range,
+                initial_prompt,
+                initial_transaction_id,
+                Some(workspace.clone()),
+                Some(assistant_panel),
+                cx,
+            ))
+        })
+    }
+}
+
+impl Debug for WorkflowStepEditSuggestions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WorkflowStepEditSuggestions::Pending(_) => write!(f, "EditStepOperations::Pending"),
+            WorkflowStepEditSuggestions::Resolved(ResolvedWorkflowStepEditSuggestions {
+                title,
+                edit_suggestions,
+            }) => f
+                .debug_struct("EditStepOperations::Parsed")
+                .field("title", title)
+                .field("edit_suggestions", edit_suggestions)
+                .finish(),
         }
     }
 }
@@ -788,7 +609,9 @@ pub struct Context {
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    edit_steps: Vec<EditStep>,
+    workflow_steps: Vec<WorkflowStep>,
+    project: Option<Model<Project>>,
+    prompt_builder: Arc<PromptBuilder>,
 }
 
 impl EventEmitter<ContextEvent> for Context {}
@@ -796,7 +619,9 @@ impl EventEmitter<ContextEvent> for Context {}
 impl Context {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
+        project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
+        prompt_builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::new(
@@ -804,16 +629,21 @@ impl Context {
             ReplicaId::default(),
             language::Capability::ReadWrite,
             language_registry,
+            prompt_builder,
+            project,
             telemetry,
             cx,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: ContextId,
         replica_id: ReplicaId,
         capability: language::Capability,
         language_registry: Arc<LanguageRegistry>,
+        prompt_builder: Arc<PromptBuilder>,
+        project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -852,8 +682,10 @@ impl Context {
             path: None,
             buffer,
             telemetry,
+            project,
             language_registry,
-            edit_steps: Vec::new(),
+            workflow_steps: Vec::new(),
+            prompt_builder,
         };
 
         let first_message_id = MessageId(clock::Lamport {
@@ -923,6 +755,8 @@ impl Context {
         saved_context: SavedContext,
         path: PathBuf,
         language_registry: Arc<LanguageRegistry>,
+        prompt_builder: Arc<PromptBuilder>,
+        project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -932,6 +766,8 @@ impl Context {
             ReplicaId::default(),
             language::Capability::ReadWrite,
             language_registry,
+            prompt_builder,
+            project,
             telemetry,
             cx,
         );
@@ -1171,8 +1007,14 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub fn edit_steps(&self) -> &[EditStep] {
-        &self.edit_steps
+    pub fn workflow_steps(&self) -> &[WorkflowStep] {
+        &self.workflow_steps
+    }
+
+    pub fn workflow_step_for_range(&self, range: Range<language::Anchor>) -> Option<&WorkflowStep> {
+        self.workflow_steps
+            .iter()
+            .find(|step| step.tagged_range == range)
     }
 
     pub fn pending_slash_commands(&self) -> &[PendingSlashCommand] {
@@ -1317,78 +1159,86 @@ impl Context {
 
     fn prune_invalid_edit_steps(&mut self, cx: &mut ModelContext<Self>) {
         let buffer = self.buffer.read(cx);
-        let prev_len = self.edit_steps.len();
-        self.edit_steps.retain(|step| {
-            step.source_range.start.is_valid(buffer) && step.source_range.end.is_valid(buffer)
+        let prev_len = self.workflow_steps.len();
+        self.workflow_steps.retain(|step| {
+            step.tagged_range.start.is_valid(buffer) && step.tagged_range.end.is_valid(buffer)
         });
-        if self.edit_steps.len() != prev_len {
-            cx.emit(ContextEvent::EditStepsChanged);
+        if self.workflow_steps.len() != prev_len {
+            cx.emit(ContextEvent::WorkflowStepsChanged);
             cx.notify();
         }
     }
 
-    fn parse_edit_steps_in_range(&mut self, range: Range<usize>, cx: &mut ModelContext<Self>) {
+    fn parse_edit_steps_in_range(
+        &mut self,
+        range: Range<usize>,
+        project: Model<Project>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let mut new_edit_steps = Vec::new();
 
-        self.buffer.update(cx, |buffer, _cx| {
-            let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
-            let mut in_step = false;
-            let mut step_start = 0;
-            let mut line_start_offset = message_lines.offset();
+        let buffer = self.buffer.read(cx).snapshot();
+        let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
+        let mut in_step = false;
+        let mut step_start = 0;
+        let mut line_start_offset = message_lines.offset();
 
-            while let Some(line) = message_lines.next() {
-                if let Some(step_start_index) = line.find("<step>") {
-                    if !in_step {
-                        in_step = true;
-                        step_start = line_start_offset + step_start_index;
-                    }
+        while let Some(line) = message_lines.next() {
+            if let Some(step_start_index) = line.find("<step>") {
+                if !in_step {
+                    in_step = true;
+                    step_start = line_start_offset + step_start_index;
                 }
-
-                if let Some(step_end_index) = line.find("</step>") {
-                    if in_step {
-                        let start_anchor = buffer.anchor_after(step_start);
-                        let end_anchor = buffer
-                            .anchor_before(line_start_offset + step_end_index + "</step>".len());
-                        let source_range = start_anchor..end_anchor;
-
-                        // Check if a step with the same range already exists
-                        let existing_step_index = self.edit_steps.binary_search_by(|probe| {
-                            probe.source_range.cmp(&source_range, buffer)
-                        });
-
-                        if let Err(ix) = existing_step_index {
-                            // Step doesn't exist, so add it
-                            new_edit_steps.push((
-                                ix,
-                                EditStep {
-                                    source_range,
-                                    state: None,
-                                },
-                            ));
-                        }
-
-                        in_step = false;
-                    }
-                }
-
-                line_start_offset = message_lines.offset();
             }
-        });
 
-        // Insert new steps and generate their corresponding tasks
-        for (index, mut step) in new_edit_steps.into_iter().rev() {
-            let task = self.generate_edit_step_operations(&step, cx);
-            step.state = Some(EditStepState::Pending(task));
-            self.edit_steps.insert(index, step);
+            if let Some(step_end_index) = line.find("</step>") {
+                if in_step {
+                    let start_anchor = buffer.anchor_after(step_start);
+                    let end_anchor =
+                        buffer.anchor_before(line_start_offset + step_end_index + "</step>".len());
+                    let tagged_range = start_anchor..end_anchor;
+
+                    // Check if a step with the same range already exists
+                    let existing_step_index = self
+                        .workflow_steps
+                        .binary_search_by(|probe| probe.tagged_range.cmp(&tagged_range, &buffer));
+
+                    if let Err(ix) = existing_step_index {
+                        // Step doesn't exist, so add it
+                        let task = self.compute_workflow_step_edit_suggestions(
+                            tagged_range.clone(),
+                            project.clone(),
+                            cx,
+                        );
+                        new_edit_steps.push((
+                            ix,
+                            WorkflowStep {
+                                tagged_range,
+                                edit_suggestions: WorkflowStepEditSuggestions::Pending(task),
+                            },
+                        ));
+                    }
+
+                    in_step = false;
+                }
+            }
+
+            line_start_offset = message_lines.offset();
         }
 
-        cx.emit(ContextEvent::EditStepsChanged);
+        // Insert new steps and generate their corresponding tasks
+        for (index, step) in new_edit_steps.into_iter().rev() {
+            self.workflow_steps.insert(index, step);
+        }
+
+        cx.emit(ContextEvent::WorkflowStepsChanged);
         cx.notify();
     }
 
-    fn generate_edit_step_operations(
+    fn compute_workflow_step_edit_suggestions(
         &self,
-        edit_step: &EditStep,
+        tagged_range: Range<language::Anchor>,
+        project: Model<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Option<()>> {
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
@@ -1396,18 +1246,17 @@ impl Context {
         };
 
         let mut request = self.to_completion_request(cx);
-        let edit_step_range = edit_step.source_range.clone();
         let step_text = self
             .buffer
             .read(cx)
-            .text_for_range(edit_step_range.clone())
+            .text_for_range(tagged_range.clone())
             .collect::<String>();
 
         cx.spawn(|this, mut cx| {
             async move {
-                let prompt_store = cx.update(|cx| PromptStore::global(cx))?.await?;
-
-                let mut prompt = prompt_store.step_resolution_prompt()?;
+                let mut prompt = this.update(&mut cx, |this, _| {
+                    this.prompt_builder.generate_step_resolution_prompt()
+                })??;
                 prompt.push_str(&step_text);
 
                 request.messages.push(LanguageModelRequestMessage {
@@ -1415,19 +1264,102 @@ impl Context {
                     content: prompt,
                 });
 
-                let resolution = model.use_tool::<EditStepResolution>(request, &cx).await?;
+                // Invoke the model to get its edit suggestions for this workflow step.
+                let step_suggestions = model
+                    .use_tool::<tool::WorkflowStepEditSuggestions>(request, &cx)
+                    .await?;
+
+                // Translate the parsed suggestions to our internal types, which anchor the suggestions to locations in the code.
+                let suggestion_tasks: Vec<_> = step_suggestions
+                    .edit_suggestions
+                    .iter()
+                    .map(|suggestion| suggestion.resolve(project.clone(), cx.clone()))
+                    .collect();
+
+                // Expand the context ranges of each suggestion and group suggestions with overlapping context ranges.
+                let suggestions = future::join_all(suggestion_tasks)
+                    .await
+                    .into_iter()
+                    .filter_map(|task| task.log_err())
+                    .collect::<Vec<_>>();
+
+                let mut suggestions_by_buffer = HashMap::default();
+                for (buffer, suggestion) in suggestions {
+                    suggestions_by_buffer
+                        .entry(buffer)
+                        .or_insert_with(Vec::new)
+                        .push(suggestion);
+                }
+
+                let mut suggestion_groups_by_buffer = HashMap::default();
+                for (buffer, mut suggestions) in suggestions_by_buffer {
+                    let mut suggestion_groups = Vec::<EditSuggestionGroup>::new();
+                    let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+                    // Sort suggestions by their range so that earlier, larger ranges come first
+                    suggestions.sort_by(|a, b| a.range().cmp(&b.range(), &snapshot));
+
+                    // Merge overlapping suggestions
+                    suggestions.dedup_by(|a, b| b.try_merge(&a, &snapshot));
+
+                    // Create context ranges for each suggestion
+                    for suggestion in suggestions {
+                        let context_range = {
+                            let suggestion_point_range = suggestion.range().to_point(&snapshot);
+                            let start_row = suggestion_point_range.start.row.saturating_sub(5);
+                            let end_row = cmp::min(
+                                suggestion_point_range.end.row + 5,
+                                snapshot.max_point().row,
+                            );
+                            let start = snapshot.anchor_before(Point::new(start_row, 0));
+                            let end = snapshot
+                                .anchor_after(Point::new(end_row, snapshot.line_len(end_row)));
+                            start..end
+                        };
+
+                        if let Some(last_group) = suggestion_groups.last_mut() {
+                            if last_group
+                                .context_range
+                                .end
+                                .cmp(&context_range.start, &snapshot)
+                                .is_ge()
+                            {
+                                // Merge with the previous group if context ranges overlap
+                                last_group.context_range.end = context_range.end;
+                                last_group.suggestions.push(suggestion);
+                            } else {
+                                // Create a new group
+                                suggestion_groups.push(EditSuggestionGroup {
+                                    context_range,
+                                    suggestions: vec![suggestion],
+                                });
+                            }
+                        } else {
+                            // Create the first group
+                            suggestion_groups.push(EditSuggestionGroup {
+                                context_range,
+                                suggestions: vec![suggestion],
+                            });
+                        }
+                    }
+
+                    suggestion_groups_by_buffer.insert(buffer, suggestion_groups);
+                }
 
                 this.update(&mut cx, |this, cx| {
                     let step_index = this
-                        .edit_steps
+                        .workflow_steps
                         .binary_search_by(|step| {
-                            step.source_range
-                                .cmp(&edit_step_range, this.buffer.read(cx))
+                            step.tagged_range.cmp(&tagged_range, this.buffer.read(cx))
                         })
                         .map_err(|_| anyhow!("edit step not found"))?;
-                    if let Some(edit_step) = this.edit_steps.get_mut(step_index) {
-                        edit_step.state = Some(EditStepState::Resolved(resolution));
-                        cx.emit(ContextEvent::EditStepsChanged);
+                    if let Some(edit_step) = this.workflow_steps.get_mut(step_index) {
+                        edit_step.edit_suggestions = WorkflowStepEditSuggestions::Resolved(
+                            ResolvedWorkflowStepEditSuggestions {
+                                title: step_suggestions.step_title,
+                                edit_suggestions: suggestion_groups_by_buffer,
+                            },
+                        );
+                        cx.emit(ContextEvent::WorkflowStepsChanged);
                     }
                     anyhow::Ok(())
                 })?
@@ -1651,7 +1583,9 @@ impl Context {
                                 );
                                 message_start_offset..message_new_end_offset
                             });
-                            this.parse_edit_steps_in_range(message_range, cx);
+                            if let Some(project) = this.project.clone() {
+                                this.parse_edit_steps_in_range(message_range, project, cx);
+                            }
                             cx.emit(ContextEvent::StreamedCompletion);
 
                             Some(())
@@ -1674,6 +1608,10 @@ impl Context {
                     let error_message = result
                         .err()
                         .map(|error| error.to_string().trim().to_string());
+
+                    if let Some(error_message) = error_message.as_ref() {
+                        cx.emit(ContextEvent::AssistError(error_message.to_string()));
+                    }
 
                     this.update_metadata(assistant_message_id, cx, |metadata| {
                         if let Some(error_message) = error_message.as_ref() {
@@ -2514,12 +2452,13 @@ mod tests {
     #[gpui::test]
     fn test_inserting_and_removing_messages(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        language_model::LanguageModelRegistry::test(cx);
+        LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-
-        let context = cx.new_model(|cx| Context::local(registry, None, cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context =
+            cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
         let buffer = context.read(cx).buffer.clone();
 
         let message_1 = context.read(cx).message_anchors[0].clone();
@@ -2646,11 +2585,13 @@ mod tests {
     fn test_message_splitting(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        language_model::LanguageModelRegistry::test(cx);
+        LanguageModelRegistry::test(cx);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
-        let context = cx.new_model(|cx| Context::local(registry, None, cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context =
+            cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
         let buffer = context.read(cx).buffer.clone();
 
         let message_1 = context.read(cx).message_anchors[0].clone();
@@ -2739,11 +2680,13 @@ mod tests {
     #[gpui::test]
     fn test_messages_for_offsets(cx: &mut AppContext) {
         let settings_store = SettingsStore::test(cx);
-        language_model::LanguageModelRegistry::test(cx);
+        LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
         assistant_panel::init(cx);
         let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let context = cx.new_model(|cx| Context::local(registry, None, cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context =
+            cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
         let buffer = context.read(cx).buffer.clone();
 
         let message_1 = context.read(cx).message_anchors[0].clone();
@@ -2824,7 +2767,7 @@ mod tests {
     async fn test_slash_commands(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.update(language_model::LanguageModelRegistry::test);
+        cx.update(LanguageModelRegistry::test);
         cx.update(Project::init_settings);
         cx.update(assistant_panel::init);
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -2848,7 +2791,10 @@ mod tests {
         slash_command_registry.register_command(active_command::ActiveSlashCommand, false);
 
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context = cx.new_model(|cx| {
+            Context::local(registry.clone(), None, None, prompt_builder.clone(), cx)
+        });
 
         let output_ranges = Rc::new(RefCell::new(HashSet::default()));
         context.update(cx, |_, cx| {
@@ -2949,24 +2895,53 @@ mod tests {
         cx.update(prompt_library::init);
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
+        cx.update(Project::init_settings);
+        let fs = FakeFs::new(cx.executor());
+        fs.as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "hello.rs": r#"
+                    fn hello() {
+                        println!("Hello, World!");
+                    }
+                "#.unindent()
+                }),
+            )
+            .await;
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        cx.update(LanguageModelRegistry::test);
 
-        let fake_provider = cx.update(language_model::LanguageModelRegistry::test);
-
-        let fake_model = fake_provider.test_model();
+        let model = cx.read(|cx| {
+            LanguageModelRegistry::read_global(cx)
+                .active_model()
+                .unwrap()
+        });
         cx.update(assistant_panel::init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
 
         // Create a new context
-        let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context = cx.new_model(|cx| {
+            Context::local(
+                registry.clone(),
+                Some(project),
+                None,
+                prompt_builder.clone(),
+                cx,
+            )
+        });
         let buffer = context.read_with(cx, |context, _| context.buffer.clone());
 
         // Simulate user input
         let user_message = indoc! {r#"
-            Please refactor this code:
+            Please add unnecessary complexity to this code:
 
+            ```hello.rs
             fn main() {
                 println!("Hello, World!");
             }
+            ```
         "#};
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(0..0, user_message)], None, cx);
@@ -2974,7 +2949,7 @@ mod tests {
 
         // Simulate LLM response with edit steps
         let llm_response = indoc! {r#"
-            Sure, I can help you refactor that code. Here's a step-by-step process:
+            Sure, I can help you with that. Here's a step-by-step process:
 
             <step>
             First, let's extract the greeting into a separate function:
@@ -3018,8 +2993,10 @@ mod tests {
         });
 
         // Simulate the LLM completion
-        fake_model.send_last_completion_chunk(llm_response.to_string());
-        fake_model.finish_last_completion();
+        model
+            .as_fake()
+            .stream_last_completion_response(llm_response.to_string());
+        model.as_fake().end_last_completion_stream();
 
         // Wait for the completion to be processed
         cx.run_until_parked();
@@ -3027,21 +3004,85 @@ mod tests {
         // Verify that the edit steps were parsed correctly
         context.read_with(cx, |context, cx| {
             assert_eq!(
-                edit_steps(context, cx),
+                workflow_steps(context, cx),
                 vec![
-                    Point::new(response_start_row + 2, 0)..Point::new(response_start_row + 14, 7),
-                    Point::new(response_start_row + 16, 0)..Point::new(response_start_row + 28, 7),
+                    (
+                        Point::new(response_start_row + 2, 0)
+                            ..Point::new(response_start_row + 14, 7),
+                        WorkflowStepEditSuggestionStatus::Pending
+                    ),
+                    (
+                        Point::new(response_start_row + 16, 0)
+                            ..Point::new(response_start_row + 28, 7),
+                        WorkflowStepEditSuggestionStatus::Pending
+                    ),
                 ]
             );
         });
 
-        fn edit_steps(context: &Context, cx: &AppContext) -> Vec<Range<Point>> {
+        model
+            .as_fake()
+            .respond_to_last_tool_use(Ok(serde_json::to_value(
+                tool::WorkflowStepEditSuggestions {
+                    step_title: "Title".into(),
+                    edit_suggestions: vec![tool::EditSuggestion {
+                        path: "/root/hello.rs".into(),
+                        // Simulate a symbol name that's slightly different than our outline query
+                        kind: tool::EditSuggestionKind::Update {
+                            symbol: "fn main()".into(),
+                            description: "Extract a greeting function".into(),
+                        },
+                    }],
+                },
+            )
+            .unwrap()));
+
+        // Wait for tool use to be processed.
+        cx.run_until_parked();
+
+        // Verify that the last edit step is not pending anymore.
+        context.read_with(cx, |context, cx| {
+            assert_eq!(
+                workflow_steps(context, cx),
+                vec![
+                    (
+                        Point::new(response_start_row + 2, 0)
+                            ..Point::new(response_start_row + 14, 7),
+                        WorkflowStepEditSuggestionStatus::Pending
+                    ),
+                    (
+                        Point::new(response_start_row + 16, 0)
+                            ..Point::new(response_start_row + 28, 7),
+                        WorkflowStepEditSuggestionStatus::Resolved
+                    ),
+                ]
+            );
+        });
+
+        #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+        enum WorkflowStepEditSuggestionStatus {
+            Pending,
+            Resolved,
+        }
+
+        fn workflow_steps(
+            context: &Context,
+            cx: &AppContext,
+        ) -> Vec<(Range<Point>, WorkflowStepEditSuggestionStatus)> {
             context
-                .edit_steps
+                .workflow_steps
                 .iter()
                 .map(|step| {
                     let buffer = context.buffer.read(cx);
-                    step.source_range.to_point(buffer)
+                    let status = match &step.edit_suggestions {
+                        WorkflowStepEditSuggestions::Pending(_) => {
+                            WorkflowStepEditSuggestionStatus::Pending
+                        }
+                        WorkflowStepEditSuggestions::Resolved { .. } => {
+                            WorkflowStepEditSuggestionStatus::Resolved
+                        }
+                    };
+                    (step.tagged_range.to_point(buffer), status)
                 })
                 .collect()
         }
@@ -3051,10 +3092,13 @@ mod tests {
     async fn test_serialization(cx: &mut TestAppContext) {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.update(language_model::LanguageModelRegistry::test);
+        cx.update(LanguageModelRegistry::test);
         cx.update(assistant_panel::init);
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context = cx.new_model(|cx| {
+            Context::local(registry.clone(), None, None, prompt_builder.clone(), cx)
+        });
         let buffer = context.read_with(cx, |context, _| context.buffer.clone());
         let message_0 = context.read_with(cx, |context, _| context.message_anchors[0].id);
         let message_1 = context.update(cx, |context, cx| {
@@ -3093,6 +3137,8 @@ mod tests {
                 serialized_context,
                 Default::default(),
                 registry.clone(),
+                prompt_builder.clone(),
+                None,
                 None,
                 cx,
             )
@@ -3127,7 +3173,7 @@ mod tests {
 
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
-        cx.update(language_model::LanguageModelRegistry::test);
+        cx.update(LanguageModelRegistry::test);
 
         cx.update(assistant_panel::init);
         let slash_commands = cx.update(SlashCommandRegistry::default_global);
@@ -3141,6 +3187,7 @@ mod tests {
 
         let num_peers = rng.gen_range(min_peers..=max_peers);
         let context_id = ContextId::new();
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         for i in 0..num_peers {
             let context = cx.new_model(|cx| {
                 Context::new(
@@ -3148,6 +3195,8 @@ mod tests {
                     i as ReplicaId,
                     language::Capability::ReadWrite,
                     registry.clone(),
+                    prompt_builder.clone(),
+                    None,
                     None,
                     cx,
                 )
@@ -3431,6 +3480,317 @@ mod tests {
                 sections: vec![],
                 run_commands_in_text: false,
             }))
+        }
+    }
+}
+
+mod tool {
+    use gpui::AsyncAppContext;
+
+    use super::*;
+
+    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+    pub struct WorkflowStepEditSuggestions {
+        /// An extremely short title for the edit step represented by these operations.
+        pub step_title: String,
+        /// A sequence of operations to apply to the codebase.
+        /// When multiple operations are required for a step, be sure to include multiple operations in this list.
+        pub edit_suggestions: Vec<EditSuggestion>,
+    }
+
+    impl LanguageModelTool for WorkflowStepEditSuggestions {
+        fn name() -> String {
+            "edit".into()
+        }
+
+        fn description() -> String {
+            "suggest edits to one or more locations in the codebase".into()
+        }
+    }
+
+    /// A description of an operation to apply to one location in the codebase.
+    ///
+    /// This object represents a single edit operation that can be performed on a specific file
+    /// in the codebase. It encapsulates both the location (file path) and the nature of the
+    /// edit to be made.
+    ///
+    /// # Fields
+    ///
+    /// * `path`: A string representing the file path where the edit operation should be applied.
+    ///           This path is relative to the root of the project or repository.
+    ///
+    /// * `kind`: An enum representing the specific type of edit operation to be performed.
+    ///
+    /// # Usage
+    ///
+    /// `EditOperation` is used within a code editor to represent and apply
+    /// programmatic changes to source code. It provides a structured way to describe
+    /// edits for features like refactoring tools or AI-assisted coding suggestions.
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+    pub struct EditSuggestion {
+        /// The path to the file containing the relevant operation
+        pub path: String,
+        #[serde(flatten)]
+        pub kind: EditSuggestionKind,
+    }
+
+    impl EditSuggestion {
+        pub(super) async fn resolve(
+            &self,
+            project: Model<Project>,
+            mut cx: AsyncAppContext,
+        ) -> Result<(Model<Buffer>, super::EditSuggestion)> {
+            let path = self.path.clone();
+            let kind = self.kind.clone();
+            let buffer = project
+                .update(&mut cx, |project, cx| {
+                    let project_path = project
+                        .find_project_path(Path::new(&path), cx)
+                        .with_context(|| format!("worktree not found for {:?}", path))?;
+                    anyhow::Ok(project.open_buffer(project_path, cx))
+                })??
+                .await?;
+
+            let mut parse_status = buffer.read_with(&cx, |buffer, _cx| buffer.parse_status())?;
+            while *parse_status.borrow() != ParseStatus::Idle {
+                parse_status.changed().await?;
+            }
+
+            let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+            let outline = snapshot.outline(None).context("no outline for buffer")?;
+
+            let suggestion;
+            match kind {
+                EditSuggestionKind::Update {
+                    symbol,
+                    description,
+                } => {
+                    let symbol = outline
+                        .find_most_similar(&symbol)
+                        .with_context(|| format!("symbol not found: {:?}", symbol))?
+                        .to_point(&snapshot);
+                    let start = symbol
+                        .annotation_range
+                        .map_or(symbol.range.start, |range| range.start);
+                    let start = Point::new(start.row, 0);
+                    let end = Point::new(
+                        symbol.range.end.row,
+                        snapshot.line_len(symbol.range.end.row),
+                    );
+                    let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                    suggestion = super::EditSuggestion::Update { range, description };
+                }
+                EditSuggestionKind::Create { description } => {
+                    suggestion = super::EditSuggestion::CreateFile { description };
+                }
+                EditSuggestionKind::InsertSiblingBefore {
+                    symbol,
+                    description,
+                } => {
+                    let symbol = outline
+                        .find_most_similar(&symbol)
+                        .with_context(|| format!("symbol not found: {:?}", symbol))?
+                        .to_point(&snapshot);
+                    let position = snapshot.anchor_before(
+                        symbol
+                            .annotation_range
+                            .map_or(symbol.range.start, |annotation_range| {
+                                annotation_range.start
+                            }),
+                    );
+                    suggestion = super::EditSuggestion::InsertSiblingBefore {
+                        position,
+                        description,
+                    };
+                }
+                EditSuggestionKind::InsertSiblingAfter {
+                    symbol,
+                    description,
+                } => {
+                    let symbol = outline
+                        .find_most_similar(&symbol)
+                        .with_context(|| format!("symbol not found: {:?}", symbol))?
+                        .to_point(&snapshot);
+                    let position = snapshot.anchor_after(symbol.range.end);
+                    suggestion = super::EditSuggestion::InsertSiblingAfter {
+                        position,
+                        description,
+                    };
+                }
+                EditSuggestionKind::PrependChild {
+                    symbol,
+                    description,
+                } => {
+                    if let Some(symbol) = symbol {
+                        let symbol = outline
+                            .find_most_similar(&symbol)
+                            .with_context(|| format!("symbol not found: {:?}", symbol))?
+                            .to_point(&snapshot);
+
+                        let position = snapshot.anchor_after(
+                            symbol
+                                .body_range
+                                .map_or(symbol.range.start, |body_range| body_range.start),
+                        );
+                        suggestion = super::EditSuggestion::PrependChild {
+                            position,
+                            description,
+                        };
+                    } else {
+                        suggestion = super::EditSuggestion::PrependChild {
+                            position: language::Anchor::MIN,
+                            description,
+                        };
+                    }
+                }
+                EditSuggestionKind::AppendChild {
+                    symbol,
+                    description,
+                } => {
+                    if let Some(symbol) = symbol {
+                        let symbol = outline
+                            .find_most_similar(&symbol)
+                            .with_context(|| format!("symbol not found: {:?}", symbol))?
+                            .to_point(&snapshot);
+
+                        let position = snapshot.anchor_before(
+                            symbol
+                                .body_range
+                                .map_or(symbol.range.end, |body_range| body_range.end),
+                        );
+                        suggestion = super::EditSuggestion::AppendChild {
+                            position,
+                            description,
+                        };
+                    } else {
+                        suggestion = super::EditSuggestion::PrependChild {
+                            position: language::Anchor::MAX,
+                            description,
+                        };
+                    }
+                }
+                EditSuggestionKind::Delete { symbol } => {
+                    let symbol = outline
+                        .find_most_similar(&symbol)
+                        .with_context(|| format!("symbol not found: {:?}", symbol))?
+                        .to_point(&snapshot);
+                    let start = symbol
+                        .annotation_range
+                        .map_or(symbol.range.start, |range| range.start);
+                    let start = Point::new(start.row, 0);
+                    let end = Point::new(
+                        symbol.range.end.row,
+                        snapshot.line_len(symbol.range.end.row),
+                    );
+                    let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                    suggestion = super::EditSuggestion::Delete { range };
+                }
+            }
+
+            Ok((buffer, suggestion))
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+    #[serde(tag = "kind")]
+    pub enum EditSuggestionKind {
+        /// Rewrites the specified symbol entirely based on the given description.
+        /// This operation completely replaces the existing symbol with new content.
+        Update {
+            /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+            /// The path should uniquely identify the symbol within the containing file.
+            symbol: String,
+            /// A brief description of the transformation to apply to the symbol.
+            description: String,
+        },
+        /// Creates a new file with the given path based on the provided description.
+        /// This operation adds a new file to the codebase.
+        Create {
+            /// A brief description of the file to be created.
+            description: String,
+        },
+        /// Inserts a new symbol based on the given description before the specified symbol.
+        /// This operation adds new content immediately preceding an existing symbol.
+        InsertSiblingBefore {
+            /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+            /// The new content will be inserted immediately before this symbol.
+            symbol: String,
+            /// A brief description of the new symbol to be inserted.
+            description: String,
+        },
+        /// Inserts a new symbol based on the given description after the specified symbol.
+        /// This operation adds new content immediately following an existing symbol.
+        InsertSiblingAfter {
+            /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+            /// The new content will be inserted immediately after this symbol.
+            symbol: String,
+            /// A brief description of the new symbol to be inserted.
+            description: String,
+        },
+        /// Inserts a new symbol as a child of the specified symbol at the start.
+        /// This operation adds new content as the first child of an existing symbol (or file if no symbol is provided).
+        PrependChild {
+            /// An optional fully-qualified reference to the symbol after the code you want to insert, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+            /// If provided, the new content will be inserted as the first child of this symbol.
+            /// If not provided, the new content will be inserted at the top of the file.
+            symbol: Option<String>,
+            /// A brief description of the new symbol to be inserted.
+            description: String,
+        },
+        /// Inserts a new symbol as a child of the specified symbol at the end.
+        /// This operation adds new content as the last child of an existing symbol (or file if no symbol is provided).
+        AppendChild {
+            /// An optional fully-qualified reference to the symbol before the code you want to insert, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+            /// If provided, the new content will be inserted as the last child of this symbol.
+            /// If not provided, the new content will be applied at the bottom of the file.
+            symbol: Option<String>,
+            /// A brief description of the new symbol to be inserted.
+            description: String,
+        },
+        /// Deletes the specified symbol from the containing file.
+        Delete {
+            /// An fully-qualified reference to the symbol to be deleted, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+            symbol: String,
+        },
+    }
+
+    impl EditSuggestionKind {
+        pub fn symbol(&self) -> Option<&str> {
+            match self {
+                Self::Update { symbol, .. } => Some(symbol),
+                Self::InsertSiblingBefore { symbol, .. } => Some(symbol),
+                Self::InsertSiblingAfter { symbol, .. } => Some(symbol),
+                Self::PrependChild { symbol, .. } => symbol.as_deref(),
+                Self::AppendChild { symbol, .. } => symbol.as_deref(),
+                Self::Delete { symbol } => Some(symbol),
+                Self::Create { .. } => None,
+            }
+        }
+
+        pub fn description(&self) -> Option<&str> {
+            match self {
+                Self::Update { description, .. } => Some(description),
+                Self::Create { description } => Some(description),
+                Self::InsertSiblingBefore { description, .. } => Some(description),
+                Self::InsertSiblingAfter { description, .. } => Some(description),
+                Self::PrependChild { description, .. } => Some(description),
+                Self::AppendChild { description, .. } => Some(description),
+                Self::Delete { .. } => None,
+            }
+        }
+
+        pub fn initial_insertion(&self) -> Option<InitialInsertion> {
+            match self {
+                EditSuggestionKind::InsertSiblingBefore { .. } => {
+                    Some(InitialInsertion::NewlineAfter)
+                }
+                EditSuggestionKind::InsertSiblingAfter { .. } => {
+                    Some(InitialInsertion::NewlineBefore)
+                }
+                EditSuggestionKind::PrependChild { .. } => Some(InitialInsertion::NewlineAfter),
+                EditSuggestionKind::AppendChild { .. } => Some(InitialInsertion::NewlineBefore),
+                _ => None,
+            }
         }
     }
 }

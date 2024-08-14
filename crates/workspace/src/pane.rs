@@ -237,7 +237,8 @@ pub struct Pane {
         Option<Arc<dyn Fn(&mut Pane, &dyn Any, &mut ViewContext<Pane>) -> ControlFlow<(), ()>>>,
     can_split: bool,
     should_display_tab_bar: Rc<dyn Fn(&ViewContext<Pane>) -> bool>,
-    render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> Option<AnyElement>>,
+    render_tab_bar_buttons:
+        Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> (Option<AnyElement>, Option<AnyElement>)>,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
     /// Is None if navigation buttons are permanently turned off (and should not react to setting changes).
@@ -357,11 +358,11 @@ impl Pane {
             should_display_tab_bar: Rc::new(|cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
                 if !pane.has_focus(cx) {
-                    return None;
+                    return (None, None);
                 }
                 // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
                 // `end_slot`, but due to needing a view here that isn't possible.
-                h_flex()
+                let right_children = h_flex()
                     // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
                     .gap(Spacing::Small.rems(cx))
                     .child(
@@ -441,7 +442,8 @@ impl Pane {
                         el.child(Self::render_menu_overlay(split_item_menu))
                     })
                     .into_any_element()
-                    .into()
+                    .into();
+                (None, right_children)
             }),
             display_nav_history_buttons: Some(
                 TabBarSettings::get_global(cx).show_nav_history_buttons,
@@ -586,7 +588,8 @@ impl Pane {
 
     pub fn set_render_tab_bar_buttons<F>(&mut self, cx: &mut ViewContext<Self>, render: F)
     where
-        F: 'static + Fn(&mut Pane, &mut ViewContext<Pane>) -> Option<AnyElement>,
+        F: 'static
+            + Fn(&mut Pane, &mut ViewContext<Pane>) -> (Option<AnyElement>, Option<AnyElement>),
     {
         self.render_tab_bar_buttons = Rc::new(render);
         cx.notify();
@@ -1888,11 +1891,11 @@ impl Pane {
             )
             .map(|tab_bar| {
                 let render_tab_buttons = self.render_tab_bar_buttons.clone();
-                if let Some(buttons) = render_tab_buttons(self, cx) {
-                    tab_bar.end_child(buttons)
-                } else {
-                    tab_bar
-                }
+                let (left_children, right_children) = render_tab_buttons(self, cx);
+
+                tab_bar
+                    .start_children(left_children)
+                    .end_children(right_children)
             })
             .children(
                 self.items
