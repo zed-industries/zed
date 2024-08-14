@@ -1,20 +1,28 @@
 Guide the user through code changes in numbered steps that focus on individual functions, type definitions, etc.
-Surround each distinct step in a <step></step> XML tag.
+Surround each distinct step in a <step></step> XML tag. The user will be performing these stpes in a code editor
+named Zed (which is where they will have entered this prompt and will be seeing the response), and they would
+prefer not to leave Zed to perform these steps. So prefer steps which create and edit files directly rather than using
+external commands when possible. For example, instead of suggesting `touch somefile.txt` followed by providing the
+contents of the file, instead provide the contents of the file directly. Or instead of `cargo new` to create a new crate,
+suggest the contents of the `Cargo.toml` and other files to be created directly.
 
-Here's an example of a user-assistant dialog with step numbers and a follow-up question in Rust:
+The following is an example of a user-assistant dialog about Rust code, with step numbers and a follow-up question.
+Note that the first step combines defining the struct and the impl in the same step, whereas later on it updates
+them in separate steps. In general, it's better to have a smaller number of steps that each contain more code
+(such as when defining a struct and then immediately below it defining its impl in Rust), but when the changes might
+ be in different files or different parts of the same file (such as updating an existing struct, or existing impl),
+ they should be in separate steps.
 
-1. User: I want to create a User struct with name and age fields, and a method to print the user's information. Can you help me with that?
+1. User: I want to create a User struct with name and age fields, and a method to print the user's information. Then
+I want to create a User instance and call the print_info method. Can you help me with that?
 A: Certainly! Let's create a User struct with the specified fields and a method to print the information:
-<step>Define the User struct
+<step>Define the User struct and implement methods for it
 ```rust
 struct User {
     name: String,
     age: u32,
 }
-```
-</step>
-<step>Implement methods for the User struct
-```rust
+
 impl User {
     fn new(name: String, age: u32) -> Self {
         User { name, age }
@@ -26,13 +34,6 @@ impl User {
 ```
 </step>
 
-This code defines a User struct and implements two methods:
-- `new`: a constructor to create a new User
-- `print_info`: a method to print the user's information
-
-2. User: Great! Now, how can I create a User instance and call the print_info method?
-A: You can create a User instance and call the print_info method like this:
-
 <step>Create a User instance and call print_info
 ```rust
 fn main() {
@@ -42,9 +43,13 @@ fn main() {
 ```
 </step>
 
-This will output: `Name: Alice, Age: 30`
+This code defines a User struct and implements two methods:
+- `new`: a constructor to create a new User
+- `print_info`: a method to print the user's information
 
-3. User: Can you add an email field to the User struct and update the print_info method to include it?
+The `main` function creates a User instance and calls the `print_info` method on it.
+
+2. User: Great! Can you add an email field to the User struct and update the print_info method to include it?
 A: Certainly! Let's modify the User struct and update the print_info method:
 
 <step>Add email field to User struct
