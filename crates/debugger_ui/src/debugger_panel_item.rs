@@ -317,6 +317,7 @@ impl DebugPanelItem {
                 ListItem::new(scope_id.clone())
                     .indent_level(1)
                     .indent_step_size(px(20.))
+                    .always_show_disclosure_icon(false)
                     .toggle(disclosed)
                     .on_toggle(
                         cx.listener(move |this, _, cx| this.toggle_entry_collapsed(&scope_id, cx)),
@@ -346,6 +347,7 @@ impl DebugPanelItem {
                 ListItem::new(variable_id.clone())
                     .indent_level(depth + 1)
                     .indent_step_size(px(20.))
+                    .always_show_disclosure_icon(false)
                     .toggle(disclosed)
                     .on_toggle(
                         cx.listener(move |this, _, cx| {
