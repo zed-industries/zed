@@ -3698,24 +3698,37 @@ impl Render for ContextEditor {
                         .py_2()
                         .px_3()
                         .elevation_2(cx)
-                        .bg(cx.theme().colors().surface_background)
                         .occlude()
                         .child(
                             v_flex()
                                 .gap_0p5()
                                 .child(
-                                    Label::new("Error interacting with language model")
-                                        .weight(FontWeight::SEMIBOLD),
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .child(Icon::new(IconName::XCircle).color(Color::Error))
+                                        .child(
+                                            Label::new("Error interacting with language model")
+                                                .weight(FontWeight::SEMIBOLD),
+                                        ),
                                 )
-                                .child(Label::new(error_message))
-                                .child(h_flex().justify_end().mt_1().child(
-                                    Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                                        |this, _, cx| {
-                                            this.error_message = None;
-                                            cx.notify();
-                                        },
-                                    )),
-                                )),
+                                .child(
+                                    div()
+                                        .id("error-message")
+                                        .max_h_24()
+                                        .overflow_y_scroll()
+                                        .child(Label::new(error_message)),
+                                )
+                                .child(
+                                    h_flex().justify_end().mt_1().child(
+                                        Button::new("dismiss", "Dismiss")
+                                            .style(ButtonStyle::Filled)
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                this.error_message = None;
+                                                cx.notify();
+                                            })),
+                                    ),
+                                ),
                         ),
                 )
             })
@@ -3758,7 +3771,13 @@ impl Render for ErrorPopover {
             .bg(cx.theme().colors().surface_background)
             .occlude()
             .child(Label::new("Error interacting with language model").weight(FontWeight::SEMIBOLD))
-            .child(Label::new(self.error.clone()))
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(self.error.clone())),
+            )
             .child(
                 h_flex().justify_end().mt_1().child(
                     Button::new("dismiss", "Dismiss")
