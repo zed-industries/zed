@@ -3574,18 +3574,11 @@ impl Render for ContextEditor {
                         .child(
                             h_flex()
                                 .gap_2()
-                                .child(
-                                    IconButton::new("slash-button", IconName::Slash)
-                                        .icon_size(IconSize::Small)
-                                        .tooltip(|cx| {
-                                            Tooltip::with_meta(
-                                                "Insert Context",
-                                                None,
-                                                "Type / to insert via keyboard",
-                                                cx,
-                                            )
-                                        }),
-                                )
+                                .child(render_inject_context_menu(
+                                    self.workspace.clone(),
+                                    Some(cx.view().downgrade()),
+                                    cx,
+                                ))
                                 .child(
                                     IconButton::new("quote-button", IconName::Quote)
                                         .icon_size(IconSize::Small)
@@ -3900,6 +3893,75 @@ pub struct ContextEditorToolbarItem {
     model_summary_editor: View<Editor>,
 }
 
+fn render_inject_context_menu(
+    workspace: WeakView<Workspace>,
+    active_context_editor: Option<WeakView<ContextEditor>>,
+    cx: &mut WindowContext<'_>,
+) -> impl Element {
+    let commands = SlashCommandRegistry::global(cx);
+    let active_editor_focus_handle = workspace.upgrade().and_then(|workspace| {
+        Some(
+            workspace
+                .read(cx)
+                .active_item_as::<Editor>(cx)?
+                .focus_handle(cx),
+        )
+    });
+
+    PopoverMenu::new("inject-context-menu")
+        .trigger(IconButton::new("trigger", IconName::Slash).tooltip(|cx| {
+            Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
+        }))
+        .menu(move |cx| {
+            let active_context_editor = active_context_editor.clone()?;
+            ContextMenu::build(cx, |mut menu, _cx| {
+                for command_name in commands.featured_command_names() {
+                    if let Some(command) = commands.command(&command_name) {
+                        let menu_text = SharedString::from(Arc::from(command.menu_text()));
+                        menu = menu.custom_entry(
+                            {
+                                let command_name = command_name.clone();
+                                move |_cx| {
+                                    h_flex()
+                                        .gap_4()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(Label::new(menu_text.clone()))
+                                        .child(
+                                            Label::new(format!("/{command_name}"))
+                                                .color(Color::Muted),
+                                        )
+                                        .into_any()
+                                }
+                            },
+                            {
+                                let active_context_editor = active_context_editor.clone();
+                                move |cx| {
+                                    active_context_editor
+                                        .update(cx, |context_editor, cx| {
+                                            context_editor.insert_command(&command_name, cx)
+                                        })
+                                        .ok();
+                                }
+                            },
+                        )
+                    }
+                }
+
+                if let Some(active_editor_focus_handle) = active_editor_focus_handle.clone() {
+                    menu = menu
+                        .context(active_editor_focus_handle)
+                        .action("Quote Selection", Box::new(QuoteSelection));
+                }
+
+                menu
+            })
+            .into()
+        })
+        .anchor(gpui::AnchorCorner::BottomLeft)
+        .offset(point(px(0.), rems(-0.5).to_pixels(cx.rem_size())))
+}
+
 impl ContextEditorToolbarItem {
     pub fn new(
         workspace: &Workspace,
@@ -3912,70 +3974,6 @@ impl ContextEditorToolbarItem {
             active_context_editor: None,
             model_summary_editor,
         }
-    }
-
-    fn render_inject_context_menu(&self, cx: &mut ViewContext<Self>) -> impl Element {
-        let commands = SlashCommandRegistry::global(cx);
-        let active_editor_focus_handle = self.workspace.upgrade().and_then(|workspace| {
-            Some(
-                workspace
-                    .read(cx)
-                    .active_item_as::<Editor>(cx)?
-                    .focus_handle(cx),
-            )
-        });
-        let active_context_editor = self.active_context_editor.clone();
-
-        PopoverMenu::new("inject-context-menu")
-            .trigger(IconButton::new("trigger", IconName::Quote).tooltip(|cx| {
-                Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
-            }))
-            .menu(move |cx| {
-                let active_context_editor = active_context_editor.clone()?;
-                ContextMenu::build(cx, |mut menu, _cx| {
-                    for command_name in commands.featured_command_names() {
-                        if let Some(command) = commands.command(&command_name) {
-                            let menu_text = SharedString::from(Arc::from(command.menu_text()));
-                            menu = menu.custom_entry(
-                                {
-                                    let command_name = command_name.clone();
-                                    move |_cx| {
-                                        h_flex()
-                                            .gap_4()
-                                            .w_full()
-                                            .justify_between()
-                                            .child(Label::new(menu_text.clone()))
-                                            .child(
-                                                Label::new(format!("/{command_name}"))
-                                                    .color(Color::Muted),
-                                            )
-                                            .into_any()
-                                    }
-                                },
-                                {
-                                    let active_context_editor = active_context_editor.clone();
-                                    move |cx| {
-                                        active_context_editor
-                                            .update(cx, |context_editor, cx| {
-                                                context_editor.insert_command(&command_name, cx)
-                                            })
-                                            .ok();
-                                    }
-                                },
-                            )
-                        }
-                    }
-
-                    if let Some(active_editor_focus_handle) = active_editor_focus_handle.clone() {
-                        menu = menu
-                            .context(active_editor_focus_handle)
-                            .action("Quote Selection", Box::new(QuoteSelection));
-                    }
-
-                    menu
-                })
-                .into()
-            })
     }
 
     fn render_remaining_tokens(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
@@ -4087,8 +4085,7 @@ impl Render for ContextEditorToolbarItem {
                         Tooltip::for_action("Change Model", &ToggleModelSelector, cx)
                     }),
             ))
-            .children(self.render_remaining_tokens(cx))
-            .child(self.render_inject_context_menu(cx));
+            .children(self.render_remaining_tokens(cx));
 
         h_flex()
             .size_full()
