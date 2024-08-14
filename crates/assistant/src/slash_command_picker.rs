@@ -1,5 +1,4 @@
 use assistant_slash_command::SlashCommandRegistry;
-use gpui::point;
 use gpui::DismissEvent;
 use picker::PickerEditorPosition;
 
@@ -136,16 +135,16 @@ impl PickerDelegate for SlashCommandDelegate {
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let command_info = self.filtered_commands.get(ix)?;
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .child(
-                    h_flex().w_full().justify_between().min_w(px(220.)).child(
+                    h_flex().w_full().min_w(px(220.)).child(
                         v_flex()
-                            .gap_1()
-                            .child(Label::new(command_info.name.clone()))
+                            .child(Label::new(command_info.name.clone()).size(LabelSize::Small))
                             .child(
                                 Label::new(command_info.description.clone())
                                     .size(LabelSize::Small)
@@ -183,12 +182,12 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             let picker = Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into()));
             picker
         });
+
         div().max_h_8().child(
             PopoverMenu::new("model-switcher")
                 .menu(move |_cx| Some(picker_view.clone()))
                 .trigger(self.trigger)
-                .attach(gpui::AnchorCorner::TopLeft)
-                .offset(point(px(0.), px(-250.))),
+                .attach(gpui::AnchorCorner::TopLeft),
         )
     }
 }

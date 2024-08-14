@@ -3919,11 +3919,14 @@ fn render_inject_context_menu(
 ) -> impl IntoElement {
     let commands = SlashCommandRegistry::global(cx);
     let active_editor_focus_handle = active_editor_focus_handle(&workspace, cx);
+
     slash_command_picker::SlashCommandSelector::new(
         commands.clone(),
-        IconButton::new("trigger", IconName::Slash).tooltip(|cx| {
-            Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
-        }),
+        IconButton::new("trigger", IconName::SlashSquare)
+            .icon_size(IconSize::Small)
+            .tooltip(|cx| {
+                Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
+            }),
     )
 }
 
