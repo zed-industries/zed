@@ -10,6 +10,7 @@ use crate::{
         file_command::codeblock_fence_for_path,
         SlashCommandCompletionProvider, SlashCommandRegistry,
     },
+    slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
     DebugWorkflowSteps, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
@@ -3915,63 +3916,15 @@ fn render_inject_context_menu(
     active_context_editor: WeakView<ContextEditor>,
     slash_menu_handle: PopoverMenuHandle<ContextMenu>,
     cx: &mut WindowContext<'_>,
-) -> impl Element {
+) -> impl IntoElement {
     let commands = SlashCommandRegistry::global(cx);
     let active_editor_focus_handle = active_editor_focus_handle(&workspace, cx);
-
-    PopoverMenu::new("inject-context-menu")
-        .with_handle(slash_menu_handle)
-        .trigger(IconButton::new("trigger", IconName::Slash).tooltip(|cx| {
+    slash_command_picker::SlashCommandSelector::new(
+        commands.clone(),
+        IconButton::new("trigger", IconName::Slash).tooltip(|cx| {
             Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
-        }))
-        .menu(move |cx| {
-            let active_context_editor = active_context_editor.clone();
-            ContextMenu::build(cx, |mut menu, _cx| {
-                for command_name in commands.featured_command_names() {
-                    if let Some(command) = commands.command(&command_name) {
-                        let menu_text = SharedString::from(Arc::from(command.menu_text()));
-                        menu = menu.custom_entry(
-                            {
-                                let command_name = command_name.clone();
-                                move |_cx| {
-                                    h_flex()
-                                        .gap_4()
-                                        .w_full()
-                                        .justify_between()
-                                        .child(Label::new(menu_text.clone()))
-                                        .child(
-                                            Label::new(format!("/{command_name}"))
-                                                .color(Color::Muted),
-                                        )
-                                        .into_any()
-                                }
-                            },
-                            {
-                                let active_context_editor = active_context_editor.clone();
-                                move |cx| {
-                                    active_context_editor
-                                        .update(cx, |context_editor, cx| {
-                                            context_editor.insert_command(&command_name, cx)
-                                        })
-                                        .ok();
-                                }
-                            },
-                        )
-                    }
-                }
-
-                if let Some(active_editor_focus_handle) = active_editor_focus_handle.clone() {
-                    menu = menu
-                        .context(active_editor_focus_handle)
-                        .action("Quote Selection", Box::new(QuoteSelection));
-                }
-
-                menu
-            })
-            .into()
-        })
-        .anchor(gpui::AnchorCorner::BottomLeft)
-        .offset(point(px(0.), rems(-0.5).to_pixels(cx.rem_size())))
+        }),
+    )
 }
 
 impl ContextEditorToolbarItem {
