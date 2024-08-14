@@ -3740,48 +3740,6 @@ impl Render for ContextEditor {
     }
 }
 
-struct ErrorPopover {
-    error: SharedString,
-    focus_handle: FocusHandle,
-}
-
-impl EventEmitter<DismissEvent> for ErrorPopover {}
-
-impl FocusableView for ErrorPopover {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl Render for ErrorPopover {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex()
-            .track_focus(&self.focus_handle)
-            .mt_2()
-            .max_w_96()
-            .py_2()
-            .px_3()
-            .gap_0p5()
-            .elevation_2(cx)
-            .occlude()
-            .gap_0p5()
-            .child(Label::new("Error interacting with language model").weight(FontWeight::SEMIBOLD))
-            .child(
-                div()
-                    .id("error-message")
-                    .max_h_24()
-                    .overflow_y_scroll()
-                    .child(Label::new(self.error.clone())),
-            )
-            .child(
-                h_flex().justify_end().mt_1().child(
-                    Button::new("dismiss", "Dismiss")
-                        .on_click(cx.listener(|_, _, cx| cx.emit(DismissEvent))),
-                ),
-            )
-    }
-}
-
 impl FocusableView for ContextEditor {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.editor.focus_handle(cx)
