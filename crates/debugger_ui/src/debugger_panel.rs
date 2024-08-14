@@ -1,12 +1,12 @@
 use crate::debugger_panel_item::DebugPanelItem;
 use anyhow::Result;
 use dap::client::{DebugAdapterClientId, ThreadState, ThreadStatus};
-use dap::requests::{Disconnect, Request, Scopes, StackTrace, StartDebugging, Variables};
+use dap::requests::{Request, Scopes, StackTrace, StartDebugging, Variables};
 use dap::transport::Payload;
 use dap::{client::DebugAdapterClient, transport::Events};
 use dap::{
-    Capabilities, ContinuedEvent, DisconnectArguments, ExitedEvent, OutputEvent, ScopesArguments,
-    StackFrame, StackTraceArguments, StartDebuggingRequestArguments, StoppedEvent, TerminatedEvent,
+    Capabilities, ContinuedEvent, ExitedEvent, OutputEvent, ScopesArguments, StackFrame,
+    StackTraceArguments, StartDebuggingRequestArguments, StoppedEvent, TerminatedEvent,
     ThreadEvent, ThreadEventReason, Variable, VariablesArguments,
 };
 use editor::Editor;
@@ -158,11 +158,17 @@ impl DebugPanel {
 
             thread_panel.update(cx, |pane, cx| {
                 let thread_id = pane.thread_id();
-                let client = pane.client().clone();
-                cx.spawn(
-                    |_, _| async move { client.terminate_threads(Some(vec![thread_id; 1])).await },
-                )
-                .detach_and_log_err(cx);
+                let client = pane.client();
+                let thread_status = client.thread_state_by_id(thread_id).status;
+
+                // only terminate thread if the thread has not yet ended
+                if thread_status != ThreadStatus::Ended && thread_status != ThreadStatus::Exited {
+                    let client = client.clone();
+                    cx.spawn(|_, _| async move {
+                        client.terminate_threads(Some(vec![thread_id; 1])).await
+                    })
+                    .detach_and_log_err(cx);
+                }
             });
         };
     }
@@ -637,26 +643,24 @@ impl DebugPanel {
         let restart_args = event.clone().and_then(|e| e.restart);
         let workspace = this.workspace.clone();
 
-        cx.spawn(|_, cx| async move {
-            let should_restart = restart_args.is_some();
+        cx.spawn(|_, mut cx| async move {
+            Self::remove_highlights(workspace.clone(), client.clone(), cx.clone()).await?;
 
-            Self::remove_highlights(workspace, client.clone(), cx).await?;
+            if restart_args.is_some() {
+                client.disconnect(Some(true), None, None).await?;
 
-            client
-                .request::<Disconnect>(DisconnectArguments {
-                    restart: Some(should_restart),
-                    terminate_debuggee: None,
-                    suspend_debuggee: None,
-                })
-                .await?;
-
-            if should_restart {
                 match client.request_type() {
                     DebugRequestType::Launch => client.launch(restart_args).await,
                     DebugRequestType::Attach => client.attach(restart_args).await,
                 }
             } else {
-                anyhow::Ok(())
+                cx.update(|cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.project().update(cx, |project, cx| {
+                            project.stop_debug_adapter_client(client.id(), false, cx)
+                        })
+                    })
+                })?
             }
         })
         .detach_and_log_err(cx);

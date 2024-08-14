@@ -1292,15 +1292,28 @@ impl Project {
             .insert(id, DebugAdapterClientState::Starting(task));
     }
 
+    pub fn stop_debug_adapter_client(
+        &mut self,
+        client_id: DebugAdapterClientId,
+        should_terminate: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let Some(debug_client) = self.debug_adapters.remove(&client_id) else {
+            return;
+        };
+
+        if !should_terminate {
+            return;
+        }
+
+        if let DebugAdapterClientState::Running(client) = debug_client {
+            cx.spawn(|_, _| async move { client.terminate().await })
+                .detach_and_log_err(cx)
+        }
+    }
+
     pub fn update_file_breakpoints(&self, buffer_id: BufferId, cx: &mut ModelContext<Self>) {
-        let clients = self
-            .debug_adapters
-            .iter()
-            .filter_map(|(_, state)| match state {
-                DebugAdapterClientState::Starting(_) => None,
-                DebugAdapterClientState::Running(client) => Some(client.clone()),
-            })
-            .collect::<Vec<_>>();
+        let clients = self.running_debug_adapters().collect::<Vec<_>>();
 
         let Some(buffer) = self.buffer_for_id(buffer_id, cx) else {
             return;
