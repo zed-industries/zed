@@ -15,17 +15,17 @@ use crate::DEFAULT_CONTEXT_LINES;
 
 use super::create_label_for_command;
 
-pub(crate) struct TermSlashCommand;
+pub(crate) struct TerminalSlashCommand;
 
 const LINE_COUNT_ARG: &str = "--line-count";
 
-impl SlashCommand for TermSlashCommand {
+impl SlashCommand for TerminalSlashCommand {
     fn name(&self) -> String {
-        "term".into()
+        "terminal".into()
     }
 
     fn label(&self, cx: &AppContext) -> CodeLabel {
-        create_label_for_command("term", &[LINE_COUNT_ARG], cx)
+        create_label_for_command("terminal", &[LINE_COUNT_ARG], cx)
     }
 
     fn description(&self) -> String {
@@ -42,21 +42,26 @@ impl SlashCommand for TermSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
-        Task::ready(Ok(vec![ArgumentCompletion {
-            label: LINE_COUNT_ARG.to_string(),
-            new_text: LINE_COUNT_ARG.to_string(),
-            run_command: true,
-        }]))
+        let completions = if arguments.iter().any(|arg| arg == LINE_COUNT_ARG) {
+            Vec::new()
+        } else {
+            vec![ArgumentCompletion {
+                label: LINE_COUNT_ARG.into(),
+                new_text: LINE_COUNT_ARG.to_string(),
+                run_command: false,
+            }]
+        };
+        Task::ready(Ok(completions))
     }
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -75,9 +80,13 @@ impl SlashCommand for TermSlashCommand {
             return Task::ready(Err(anyhow::anyhow!("no active terminal")));
         };
 
-        let line_count = argument
-            .and_then(|a| parse_argument(a))
-            .unwrap_or(DEFAULT_CONTEXT_LINES);
+        let mut line_count = DEFAULT_CONTEXT_LINES;
+        if arguments.get(0).map(|s| s.as_str()) == Some(LINE_COUNT_ARG) {
+            if let Some(parsed_line_count) = arguments.get(1).and_then(|s| s.parse::<usize>().ok())
+            {
+                line_count = parsed_line_count;
+            }
+        }
 
         let lines = active_terminal
             .read(cx)
@@ -100,14 +109,4 @@ impl SlashCommand for TermSlashCommand {
             run_commands_in_text: false,
         }))
     }
-}
-
-fn parse_argument(argument: &str) -> Option<usize> {
-    let mut args = argument.split(' ');
-    if args.next() == Some(LINE_COUNT_ARG) {
-        if let Some(line_count) = args.next().and_then(|s| s.parse::<usize>().ok()) {
-            return Some(line_count);
-        }
-    }
-    None
 }

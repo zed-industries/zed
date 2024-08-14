@@ -400,6 +400,19 @@
       "model": "gpt-4o"
     }
   },
+  // The settings for slash commands.
+  "slash_commands": {
+    // Settings for the `/docs` slash command.
+    "docs": {
+      // Whether `/docs` is enabled.
+      "enabled": false
+    },
+    // Settings for the `/project` slash command.
+    "project": {
+      // Whether `/project` is enabled.
+      "enabled": false
+    }
+  },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.

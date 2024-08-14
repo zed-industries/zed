@@ -5,9 +5,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
-use futures::AsyncReadExt;
 use futures::{io::BufReader, FutureExt as _};
+use futures::{lock::Mutex, AsyncReadExt};
 use indexed_docs::IndexedDocsDatabase;
+use isahc::config::{Configurable, RedirectPolicy};
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
 };
@@ -21,28 +22,29 @@ use std::{
 use util::maybe;
 use wasmtime::component::{Linker, Resource};
 
-pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 7);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 7);
+pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 1, 0);
+pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 1, 0);
 
 wasmtime::component::bindgen!({
     async: true,
     trappable_imports: true,
-    path: "../extension_api/wit/since_v0.0.7",
+    path: "../extension_api/wit/since_v0.1.0",
     with: {
          "worktree": ExtensionWorktree,
-         "key-value-store": ExtensionKeyValueStore
+         "key-value-store": ExtensionKeyValueStore,
+         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream
     },
 });
 
 pub use self::zed::extension::*;
 
 mod settings {
-    include!("../../../../extension_api/wit/since_v0.0.7/settings.rs");
+    include!(concat!(env!("OUT_DIR"), "/since_v0.1.0/settings.rs"));
 }
 
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
-
 pub type ExtensionKeyValueStore = Arc<IndexedDocsDatabase>;
+pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
 
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
@@ -130,35 +132,122 @@ impl common::Host for WasmState {}
 impl http_client::Host for WasmState {
     async fn fetch(
         &mut self,
-        req: http_client::HttpRequest,
+        request: http_client::HttpRequest,
     ) -> wasmtime::Result<Result<http_client::HttpResponse, String>> {
         maybe!(async {
-            let url = &req.url;
-
-            let mut response = self
-                .host
-                .http_client
-                .get(url, AsyncBody::default(), true)
-                .await?;
+            let url = &request.url;
+            let request = convert_request(&request)?;
+            let mut response = self.host.http_client.send(request).await?;
 
             if response.status().is_client_error() || response.status().is_server_error() {
                 bail!("failed to fetch '{url}': status code {}", response.status())
             }
-
-            let mut body = Vec::new();
-            response
-                .body_mut()
-                .read_to_end(&mut body)
-                .await
-                .with_context(|| format!("failed to read response body from '{url}'"))?;
-
-            Ok(http_client::HttpResponse {
-                body: String::from_utf8(body)?,
-            })
+            convert_response(&mut response).await
         })
         .await
         .to_wasmtime_result()
     }
+
+    async fn fetch_stream(
+        &mut self,
+        request: http_client::HttpRequest,
+    ) -> wasmtime::Result<Result<Resource<ExtensionHttpResponseStream>, String>> {
+        let request = convert_request(&request)?;
+        let response = self.host.http_client.send(request);
+        maybe!(async {
+            let response = response.await?;
+            let stream = Arc::new(Mutex::new(response));
+            let resource = self.table.push(stream)?;
+            Ok(resource)
+        })
+        .await
+        .to_wasmtime_result()
+    }
+}
+
+#[async_trait]
+impl http_client::HostHttpResponseStream for WasmState {
+    async fn next_chunk(
+        &mut self,
+        resource: Resource<ExtensionHttpResponseStream>,
+    ) -> wasmtime::Result<Result<Option<Vec<u8>>, String>> {
+        let stream = self.table.get(&resource)?.clone();
+        maybe!(async move {
+            let mut response = stream.lock().await;
+            let mut buffer = vec![0; 8192]; // 8KB buffer
+            let bytes_read = response.body_mut().read(&mut buffer).await?;
+            if bytes_read == 0 {
+                Ok(None)
+            } else {
+                buffer.truncate(bytes_read);
+                Ok(Some(buffer))
+            }
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    fn drop(&mut self, _resource: Resource<ExtensionHttpResponseStream>) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl From<http_client::HttpMethod> for ::http_client::Method {
+    fn from(value: http_client::HttpMethod) -> Self {
+        match value {
+            http_client::HttpMethod::Get => Self::GET,
+            http_client::HttpMethod::Post => Self::POST,
+            http_client::HttpMethod::Put => Self::PUT,
+            http_client::HttpMethod::Delete => Self::DELETE,
+            http_client::HttpMethod::Head => Self::HEAD,
+            http_client::HttpMethod::Options => Self::OPTIONS,
+            http_client::HttpMethod::Patch => Self::PATCH,
+        }
+    }
+}
+
+fn convert_request(
+    extension_request: &http_client::HttpRequest,
+) -> Result<::http_client::Request<AsyncBody>, anyhow::Error> {
+    let mut request = ::http_client::Request::builder()
+        .method(::http_client::Method::from(extension_request.method))
+        .uri(&extension_request.url)
+        .redirect_policy(match extension_request.redirect_policy {
+            http_client::RedirectPolicy::NoFollow => RedirectPolicy::None,
+            http_client::RedirectPolicy::FollowLimit(limit) => RedirectPolicy::Limit(limit),
+            http_client::RedirectPolicy::FollowAll => RedirectPolicy::Follow,
+        });
+    for (key, value) in &extension_request.headers {
+        request = request.header(key, value);
+    }
+    let body = extension_request
+        .body
+        .clone()
+        .map(AsyncBody::from)
+        .unwrap_or_default();
+    request.body(body).map_err(anyhow::Error::from)
+}
+
+async fn convert_response(
+    response: &mut ::http_client::Response<AsyncBody>,
+) -> Result<http_client::HttpResponse, anyhow::Error> {
+    let mut extension_response = http_client::HttpResponse {
+        body: Vec::new(),
+        headers: Vec::new(),
+    };
+
+    for (key, value) in response.headers() {
+        extension_response
+            .headers
+            .push((key.to_string(), value.to_str().unwrap_or("").to_string()));
+    }
+
+    response
+        .body_mut()
+        .read_to_end(&mut extension_response.body)
+        .await?;
+
+    Ok(extension_response)
 }
 
 #[async_trait]

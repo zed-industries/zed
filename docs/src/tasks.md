@@ -94,7 +94,7 @@ The same task modal opened via `task: spawn` supports arbitrary bash-like comman
 
 Task modal will persist list of those command for current Zed session, `task: rerun` will also rerun such tasks if they were the last ones spawned.
 
-You can also adjust currently selected task in a modal (`opt-e` is a default key binding). Doing so will put it's command into a prompt that can then be edited & spawned as an oneshot task.
+You can also adjust currently selected task in a modal (`tab` is a default key binding). Doing so will put it's command into a prompt that can then be edited & spawned as an oneshot task.
 
 ### Ephemeral tasks
 
@@ -103,7 +103,7 @@ The intended use of ephemeral tasks is to stay in the flow with continuous `task
 
 ## Custom keybindings for tasks
 
-You can define your own keybindings for your tasks via additional argument to `task::Spawn`. If you wanted to bind the aforementioned `echo current file's path` task to `alt-g`, you would add the following snippet in your [`keymap.json`](./key-bindings/) file:
+You can define your own keybindings for your tasks via additional argument to `task::Spawn`. If you wanted to bind the aforementioned `echo current file's path` task to `alt-g`, you would add the following snippet in your [`keymap.json`](./key-bindings.md) file:
 
 ```json
 {

@@ -69,13 +69,13 @@ use git::blame::GitBlame;
 use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
-    AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
-    Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle, FocusOutEvent,
-    FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext,
-    ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString,
-    Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle,
-    UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle,
-    WeakView, WindowContext,
+    AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardEntry,
+    ClipboardItem, Context, DispatchPhase, ElementId, EntityId, EventEmitter, FocusHandle,
+    FocusOutEvent, FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText,
+    KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
+    SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
+    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
+    WeakFocusHandle, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -115,7 +115,7 @@ use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{
-    CodeAction, Completion, FormatTrigger, Item, Location, Project, ProjectPath,
+    CodeAction, Completion, CompletionIntent, FormatTrigger, Item, Location, Project, ProjectPath,
     ProjectTransaction, TaskSourceKind, WorktreeId,
 };
 use rand::prelude::*;
@@ -176,6 +176,7 @@ pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub fn render_parsed_markdown(
     element_id: impl Into<ElementId>,
@@ -570,6 +571,26 @@ pub struct Editor {
     file_header_size: u32,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
+    next_scroll_position: NextScrollCursorCenterTopBottom,
+    _scroll_cursor_center_top_bottom_task: Task<()>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+enum NextScrollCursorCenterTopBottom {
+    #[default]
+    Center,
+    Top,
+    Bottom,
+}
+
+impl NextScrollCursorCenterTopBottom {
+    fn next(&self) -> Self {
+        match self {
+            Self::Center => Self::Top,
+            Self::Top => Self::Bottom,
+            Self::Bottom => Self::Center,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1912,6 +1933,8 @@ impl Editor {
             previous_search_ranges: None,
             breadcrumb_header: None,
             focused_block: None,
+            next_scroll_position: NextScrollCursorCenterTopBottom::default(),
+            _scroll_cursor_center_top_bottom_task: Task::ready(()),
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -2298,7 +2321,7 @@ impl Editor {
             }
 
             if !text.is_empty() {
-                cx.write_to_primary(ClipboardItem::new(text));
+                cx.write_to_primary(ClipboardItem::new_string(text));
             }
         }
 
@@ -4207,6 +4230,23 @@ impl Editor {
         action: &ConfirmCompletion,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
+        self.do_completion(action.item_ix, CompletionIntent::Complete, cx)
+    }
+
+    pub fn compose_completion(
+        &mut self,
+        action: &ComposeCompletion,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        self.do_completion(action.item_ix, CompletionIntent::Compose, cx)
+    }
+
+    fn do_completion(
+        &mut self,
+        item_ix: Option<usize>,
+        intent: CompletionIntent,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
         use language::ToOffset as _;
 
         let completions_menu = if let ContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
@@ -4217,7 +4257,7 @@ impl Editor {
 
         let mat = completions_menu
             .matches
-            .get(action.item_ix.unwrap_or(completions_menu.selected_item))?;
+            .get(item_ix.unwrap_or(completions_menu.selected_item))?;
         let buffer_handle = completions_menu.buffer;
         let completions = completions_menu.completions.read();
         let completion = completions.get(mat.candidate_id)?;
@@ -4352,7 +4392,7 @@ impl Editor {
         });
 
         if let Some(confirm) = completion.confirm.as_ref() {
-            (confirm)(cx);
+            (confirm)(intent, cx);
         }
 
         if completion.show_new_completions_on_confirm {
@@ -5943,6 +5983,22 @@ impl Editor {
         })
     }
 
+    pub fn revert_file(&mut self, _: &RevertFile, cx: &mut ViewContext<Self>) {
+        let mut revert_changes = HashMap::default();
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        for hunk in hunks_for_rows(
+            Some(MultiBufferRow(0)..multi_buffer_snapshot.max_buffer_row()).into_iter(),
+            &multi_buffer_snapshot,
+        ) {
+            Self::prepare_revert_change(&mut revert_changes, &self.buffer(), &hunk, cx);
+        }
+        if !revert_changes.is_empty() {
+            self.transact(cx, |editor, cx| {
+                editor.revert(revert_changes, cx);
+            });
+        }
+    }
+
     pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
         let revert_changes = self.gather_revert_changes(&self.selections.disjoint_anchors(), cx);
         if !revert_changes.is_empty() {
@@ -6636,7 +6692,10 @@ impl Editor {
                 s.select(selections);
             });
             this.insert("", cx);
-            cx.write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
+            cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+                text,
+                clipboard_selections,
+            ));
         });
     }
 
@@ -6675,7 +6734,10 @@ impl Editor {
             }
         }
 
-        cx.write_to_clipboard(ClipboardItem::new(text).with_metadata(clipboard_selections));
+        cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+            text,
+            clipboard_selections,
+        ));
     }
 
     pub fn do_paste(
@@ -6759,13 +6821,21 @@ impl Editor {
 
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         if let Some(item) = cx.read_from_clipboard() {
-            self.do_paste(
-                item.text(),
-                item.metadata::<Vec<ClipboardSelection>>(),
-                true,
-                cx,
-            )
-        };
+            let entries = item.entries();
+
+            match entries.first() {
+                // For now, we only support applying metadata if there's one string. In the future, we can incorporate all the selections
+                // of all the pasted entries.
+                Some(ClipboardEntry::String(clipboard_string)) if entries.len() == 1 => self
+                    .do_paste(
+                        clipboard_string.text(),
+                        clipboard_string.metadata_json::<Vec<ClipboardSelection>>(),
+                        true,
+                        cx,
+                    ),
+                _ => self.do_paste(&item.text().unwrap_or_default(), None, true, cx),
+            }
+        }
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
@@ -9729,6 +9799,7 @@ impl Editor {
                                 }
                             }),
                             disposition: BlockDisposition::Below,
+                            priority: 0,
                         }],
                         Some(Autoscroll::fit()),
                         cx,
@@ -9992,6 +10063,7 @@ impl Editor {
                             height: message_height,
                             render: diagnostic_block_renderer(diagnostic, None, true, true),
                             disposition: BlockDisposition::Below,
+                            priority: 0,
                         }
                     }),
                     cx,
@@ -10297,6 +10369,7 @@ impl Editor {
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
+        cx.notify();
         blocks
     }
 
@@ -10311,6 +10384,7 @@ impl Editor {
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
+        cx.notify();
     }
 
     pub fn replace_blocks(
@@ -10323,9 +10397,8 @@ impl Editor {
             .update(cx, |display_map, _cx| display_map.replace_blocks(renderers));
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
-        } else {
-            cx.notify();
         }
+        cx.notify();
     }
 
     pub fn remove_blocks(
@@ -10340,6 +10413,7 @@ impl Editor {
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
+        cx.notify();
     }
 
     pub fn row_for_block(
@@ -10607,7 +10681,7 @@ impl Editor {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 if let Some(path) = file.abs_path(cx).to_str() {
-                    cx.write_to_clipboard(ClipboardItem::new(path.to_string()));
+                    cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
                 }
             }
         }
@@ -10617,7 +10691,7 @@ impl Editor {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 if let Some(path) = file.path().to_str() {
-                    cx.write_to_clipboard(ClipboardItem::new(path.to_string()));
+                    cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
                 }
             }
         }
@@ -10807,7 +10881,7 @@ impl Editor {
 
         match permalink {
             Ok(permalink) => {
-                cx.write_to_clipboard(ClipboardItem::new(permalink.to_string()));
+                cx.write_to_clipboard(ClipboardItem::new_string(permalink.to_string()));
             }
             Err(err) => {
                 let message = format!("Failed to copy permalink: {err}");
@@ -11743,7 +11817,7 @@ impl Editor {
         let Some(lines) = serde_json::to_string_pretty(&lines).log_err() else {
             return;
         };
-        cx.write_to_clipboard(ClipboardItem::new(lines));
+        cx.write_to_clipboard(ClipboardItem::new_string(lines));
     }
 
     pub fn inlay_hint_cache(&self) -> &InlayHintCache {
@@ -13010,7 +13084,9 @@ pub fn diagnostic_block_renderer(
                     .visible_on_hover(group_id.clone())
                     .on_click({
                         let message = diagnostic.message.clone();
-                        move |_click, cx| cx.write_to_clipboard(ClipboardItem::new(message.clone()))
+                        move |_click, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
+                        }
                     })
                     .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
             )

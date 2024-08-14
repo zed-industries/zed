@@ -2,7 +2,7 @@ use super::{SlashCommand, SlashCommandOutput};
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Context, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
-use gpui::{AppContext, Task, WeakView};
+use gpui::{Task, WeakView};
 use language::LspAdapterDelegate;
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::prelude::*;
@@ -29,12 +29,13 @@ impl SlashCommand for PromptSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        query: String,
+        arguments: &[String],
         _cancellation_flag: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let store = PromptStore::global(cx);
+        let query = arguments.last().cloned().unwrap_or_default();
         cx.background_executor().spawn(async move {
             let prompts = store.await?.search(query).await;
             Ok(prompts
@@ -42,7 +43,7 @@ impl SlashCommand for PromptSlashCommand {
                 .filter_map(|prompt| {
                     let prompt_title = prompt.title?.to_string();
                     Some(ArgumentCompletion {
-                        label: prompt_title.clone(),
+                        label: prompt_title.clone().into(),
                         new_text: prompt_title,
                         run_command: true,
                     })
@@ -53,12 +54,12 @@ impl SlashCommand for PromptSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        title: Option<&str>,
+        arguments: &[String],
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let Some(title) = title else {
+        let Some(title) = arguments.first() else {
             return Task::ready(Err(anyhow!("missing prompt name")));
         };
 
@@ -77,6 +78,11 @@ impl SlashCommand for PromptSlashCommand {
         });
         cx.foreground_executor().spawn(async move {
             let mut prompt = prompt.await?;
+
+            if prompt.starts_with('/') {
+                // Prevent an edge case where the inserted prompt starts with a slash command (that leads to funky rendering).
+                prompt.insert(0, '\n');
+            }
             if prompt.is_empty() {
                 prompt.push('\n');
             }

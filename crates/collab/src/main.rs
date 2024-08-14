@@ -52,10 +52,18 @@ async fn main() -> Result<()> {
         Some("seed") => {
             let config = envy::from_env::<Config>().expect("error loading config");
             let db_options = db::ConnectOptions::new(config.database_url.clone());
+
             let mut db = Database::new(db_options, Executor::Production).await?;
             db.initialize_notification_kinds().await?;
 
-            collab::seed::seed(&config, &db, true).await?;
+            collab::seed::seed(&config, &db, false).await?;
+
+            if let Some(llm_database_url) = config.llm_database_url.clone() {
+                let db_options = db::ConnectOptions::new(llm_database_url);
+                let mut db = LlmDatabase::new(db_options.clone(), Executor::Production).await?;
+                db.initialize().await?;
+                collab::llm::db::seed_database(&config, &mut db, true).await?;
+            }
         }
         Some("serve") => {
             let mode = match args.next().as_deref() {
@@ -142,6 +150,7 @@ async fn main() -> Result<()> {
                             "http_request",
                             method = ?request.method(),
                             matched_path,
+                            authn.jti = tracing::field::Empty
                         )
                     })
                     .on_response(
@@ -240,11 +249,6 @@ async fn setup_app_database(config: &Config) -> Result<()> {
 }
 
 async fn setup_llm_database(config: &Config) -> Result<()> {
-    // TODO: This is temporary until we have the LLM database stood up.
-    if !config.is_development() {
-        return Ok(());
-    }
-
     let database_url = config
         .llm_database_url
         .as_ref()
@@ -290,7 +294,12 @@ async fn handle_liveness_probe(
         state.db.get_all_users(0, 1).await?;
     }
 
-    if let Some(_llm_state) = llm_state {}
+    if let Some(llm_state) = llm_state {
+        llm_state
+            .db
+            .get_active_user_count(chrono::Utc::now())
+            .await?;
+    }
 
     Ok("ok".to_string())
 }

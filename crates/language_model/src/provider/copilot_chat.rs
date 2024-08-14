@@ -18,8 +18,8 @@ use settings::{Settings, SettingsStore};
 use std::time::Duration;
 use strum::IntoEnumIterator;
 use ui::{
-    div, h_flex, v_flex, Button, ButtonCommon, Clickable, Color, Context, FixedWidth, IconName,
-    IconPosition, IconSize, Indicator, IntoElement, Label, LabelCommon, ParentElement, Styled,
+    div, h_flex, v_flex, Button, ButtonCommon, Clickable, Color, Context, FixedWidth, Icon,
+    IconName, IconPosition, IconSize, IntoElement, Label, LabelCommon, ParentElement, Styled,
     ViewContext, VisualContext, WindowContext,
 };
 
@@ -193,7 +193,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         if let Some(message) = request.messages.last() {
-            if message.content.trim().is_empty() {
+            if message.contents_empty() {
                 const EMPTY_PROMPT_MSG: &str =
                     "Empty prompts aren't allowed. Please provide a non-empty prompt.";
                 return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
@@ -270,7 +270,7 @@ impl CopilotChatLanguageModel {
                         Role::Assistant => CopilotChatRole::Assistant,
                         Role::System => CopilotChatRole::System,
                     },
-                    content: msg.content,
+                    content: msg.string_contents(),
                 })
                 .collect(),
         )
@@ -305,8 +305,8 @@ impl Render for ConfigurationView {
         if self.state.read(cx).is_authenticated(cx) {
             const LABEL: &str = "Authorized.";
             h_flex()
-                .gap_2()
-                .child(Indicator::dot().color(Color::Success))
+                .gap_1()
+                .child(Icon::new(IconName::Check).color(Color::Success))
                 .child(Label::new(LABEL))
         } else {
             let loading_icon = svg()

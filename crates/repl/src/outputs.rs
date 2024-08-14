@@ -5,7 +5,7 @@ use crate::stdio::TerminalOutput;
 use anyhow::Result;
 use base64::prelude::*;
 use gpui::{
-    img, percentage, Animation, AnimationExt, AnyElement, FontWeight, ImageData, Render, Task,
+    img, percentage, Animation, AnimationExt, AnyElement, FontWeight, Render, RenderImage, Task,
     TextRun, Transformation, View,
 };
 use runtimelib::datatable::TableSchema;
@@ -38,7 +38,7 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
 pub struct ImageView {
     height: u32,
     width: u32,
-    image: Arc<ImageData>,
+    image: Arc<RenderImage>,
 }
 
 impl ImageView {
@@ -76,7 +76,7 @@ impl ImageView {
         let height = data.height();
         let width = data.width();
 
-        let gpui_image_data = ImageData::new(vec![image::Frame::new(data)]);
+        let gpui_image_data = RenderImage::new(vec![image::Frame::new(data)]);
 
         return Ok(ImageView {
             height,

@@ -738,6 +738,7 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,
+    keymap_changed: impl Fn(Option<anyhow::Error>, &mut AppContext) + 'static,
 ) {
     BaseKeymap::register(cx);
     VimModeSetting::register(cx);
@@ -766,10 +767,14 @@ pub fn handle_keymap_file_changes(
                 _ = base_keymap_rx.next() => {}
                 user_keymap_content = user_keymap_file_rx.next() => {
                     if let Some(user_keymap_content) = user_keymap_content {
-                        if let Some(keymap_content) = KeymapFile::parse(&user_keymap_content).log_err() {
-                            user_keymap = keymap_content;
-                        } else {
-                            continue
+                        match KeymapFile::parse(&user_keymap_content) {
+                            Ok(keymap_content) => {
+                                cx.update(|cx| keymap_changed(None, cx)).log_err();
+                                user_keymap = keymap_content;
+                            }
+                            Err(error) => {
+                                cx.update(|cx| keymap_changed(Some(error), cx)).log_err();
+                            }
                         }
                     }
                 }
@@ -1018,6 +1023,8 @@ fn open_settings_file(
 
 #[cfg(test)]
 mod tests {
+    use crate::stdout_is_a_pty;
+
     use super::*;
     use anyhow::anyhow;
     use assets::Assets;
@@ -3102,7 +3109,7 @@ mod tests {
                 PathBuf::from("/keymap.json"),
             );
             handle_settings_file_changes(settings_rx, cx, |_, _| {});
-            handle_keymap_file_changes(keymap_rx, cx);
+            handle_keymap_file_changes(keymap_rx, cx, |_, _| {});
         });
         workspace
             .update(cx, |workspace, cx| {
@@ -3242,7 +3249,7 @@ mod tests {
             );
 
             handle_settings_file_changes(settings_rx, cx, |_, _| {});
-            handle_keymap_file_changes(keymap_rx, cx);
+            handle_keymap_file_changes(keymap_rx, cx, |_, _| {});
         });
 
         cx.background_executor.run_until_parked();
@@ -3485,8 +3492,12 @@ mod tests {
                 app_state.fs.clone(),
                 cx,
             );
-            let prompt_builder =
-                assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
+            let prompt_builder = assistant::init(
+                app_state.fs.clone(),
+                app_state.client.clone(),
+                stdout_is_a_pty(),
+                cx,
+            );
             repl::init(
                 app_state.fs.clone(),
                 app_state.client.telemetry().clone(),

@@ -187,7 +187,12 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) -> Arc<PromptBuild
     );
     snippet_provider::init(cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
-    let prompt_builder = assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
+    let prompt_builder = assistant::init(
+        app_state.fs.clone(),
+        app_state.client.clone(),
+        stdout_is_a_pty(),
+        cx,
+    );
     repl::init(
         app_state.fs.clone(),
         app_state.client.telemetry().clone(),
@@ -430,7 +435,7 @@ fn main() {
 
         settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
-        handle_keymap_file_changes(user_keymap_file_rx, cx);
+        handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
 
         client::init_settings(cx);
         let client = Client::production(cx);
@@ -544,15 +549,39 @@ fn main() {
     });
 }
 
-fn handle_settings_changed(result: Result<()>, cx: &mut AppContext) {
+fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
+    struct KeymapParseErrorNotification;
+    let id = NotificationId::unique::<KeymapParseErrorNotification>();
+
+    for workspace in workspace::local_workspace_windows(cx) {
+        workspace
+            .update(cx, |workspace, cx| match &error {
+                Some(error) => {
+                    workspace.show_notification(id.clone(), cx, |cx| {
+                        cx.new_view(|_| {
+                            MessageNotification::new(format!("Invalid keymap file\n{error}"))
+                                .with_click_message("Open keymap file")
+                                .on_click(|cx| {
+                                    cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
+                                    cx.emit(DismissEvent);
+                                })
+                        })
+                    });
+                }
+                None => workspace.dismiss_notification(&id, cx),
+            })
+            .log_err();
+    }
+}
+
+fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
     struct SettingsParseErrorNotification;
     let id = NotificationId::unique::<SettingsParseErrorNotification>();
 
     for workspace in workspace::local_workspace_windows(cx) {
         workspace
-            .update(cx, |workspace, cx| match &result {
-                Ok(()) => workspace.dismiss_notification(&id, cx),
-                Err(error) => {
+            .update(cx, |workspace, cx| match &error {
+                Some(error) => {
                     workspace.show_notification(id.clone(), cx, |cx| {
                         cx.new_view(|_| {
                             MessageNotification::new(format!("Invalid settings file\n{error}"))
@@ -564,6 +593,7 @@ fn handle_settings_changed(result: Result<()>, cx: &mut AppContext) {
                         })
                     });
                 }
+                None => workspace.dismiss_notification(&id, cx),
             })
             .log_err();
     }

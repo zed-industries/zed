@@ -4,9 +4,9 @@ Welcome to Zed's documentation.
 
 This is built on push to `main` and published automatically to [https://zed.dev/docs](https://zed.dev/docs).
 
-To preview the docs locally you will need to install [mdBook](https://rust-lang.github.io/mdBook/), and then run:
+To preview the docs locally you will need to install [mdBook](https://rust-lang.github.io/mdBook/) (`cargo install mdbook`) and then run:
 
-```
+```sh
 mdbook serve docs
 ```
 

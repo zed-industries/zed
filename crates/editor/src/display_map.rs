@@ -1281,12 +1281,14 @@ pub mod tests {
                                         position.to_point(&buffer),
                                         height
                                     );
+                                    let priority = rng.gen_range(1..100);
                                     BlockProperties {
                                         style: BlockStyle::Fixed,
                                         position,
                                         height,
                                         disposition,
                                         render: Box::new(|_| div().into_any()),
+                                        priority: priority,
                                     }
                                 })
                                 .collect::<Vec<_>>();
