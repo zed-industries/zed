@@ -14,4 +14,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 html_to_markdown = "0.1.0"
-zed_extension_api = { path = "../../crates/extension_api" }
+zed_extension_api = "0.1.0"
