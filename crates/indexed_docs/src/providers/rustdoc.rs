@@ -44,34 +44,6 @@ impl LocalRustdocProvider {
             cargo_workspace_root,
         }
     }
-
-    /// Returns the list of all crates in the Cargo workspace.
-    ///
-    /// Includes the list of workspace crates as well as all dependency crates.
-    pub fn list_workspace_crates() -> Result<Vec<Arc<str>>> {
-        static WORKSPACE_CRATES: LazyLock<RwLock<Option<(BTreeSet<Arc<str>>, Instant)>>> =
-            LazyLock::new(|| RwLock::new(None));
-
-        if let Some((crates, fetched_at)) = &*WORKSPACE_CRATES.read() {
-            if fetched_at.elapsed() < Duration::from_secs(300) {
-                return Ok(crates.iter().cloned().collect());
-            }
-        }
-
-        let workspace = MetadataCommand::new()
-            .exec()
-            .context("failed to load cargo metadata")?;
-
-        let workspace_crates = workspace
-            .packages
-            .into_iter()
-            .map(|package| package.name.into())
-            .collect::<BTreeSet<_>>();
-
-        *WORKSPACE_CRATES.write() = Some((workspace_crates.clone(), Instant::now()));
-
-        Ok(workspace_crates.iter().cloned().collect())
-    }
 }
 
 #[async_trait]
@@ -82,6 +54,32 @@ impl IndexedDocsProvider for LocalRustdocProvider {
 
     fn database_path(&self) -> PathBuf {
         paths::support_dir().join("docs/rust/rustdoc-db.1.mdb")
+    }
+
+    async fn suggest_packages(&self) -> Result<Vec<PackageName>> {
+        static WORKSPACE_CRATES: LazyLock<RwLock<Option<(BTreeSet<PackageName>, Instant)>>> =
+            LazyLock::new(|| RwLock::new(None));
+
+        if let Some((crates, fetched_at)) = &*WORKSPACE_CRATES.read() {
+            if fetched_at.elapsed() < Duration::from_secs(300) {
+                return Ok(crates.iter().cloned().collect());
+            }
+        }
+
+        let workspace = MetadataCommand::new()
+            .manifest_path(self.cargo_workspace_root.join("Cargo.toml"))
+            .exec()
+            .context("failed to load cargo metadata")?;
+
+        let workspace_crates = workspace
+            .packages
+            .into_iter()
+            .map(|package| PackageName::from(package.name.as_str()))
+            .collect::<BTreeSet<_>>();
+
+        *WORKSPACE_CRATES.write() = Some((workspace_crates.clone(), Instant::now()));
+
+        Ok(workspace_crates.iter().cloned().collect())
     }
 
     async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {
@@ -130,26 +128,6 @@ pub struct DocsDotRsProvider {
 }
 
 impl DocsDotRsProvider {
-    /// The list of crates to auto-suggest for the docs.rs provider when
-    /// the index is empty.
-    ///
-    /// List has been chosen loosely based on [this list](https://lib.rs/std) of
-    /// popular Rust libraries.
-    ///
-    /// Keep this alphabetized.
-    pub const AUTO_SUGGESTED_CRATES: &'static [&'static str] = &[
-        "anyhow",
-        "axum",
-        "chrono",
-        "itertools",
-        "rand",
-        "regex",
-        "serde",
-        "strum",
-        "thiserror",
-        "tokio",
-    ];
-
     pub fn id() -> ProviderId {
         ProviderId("docs-rs".into())
     }
@@ -167,6 +145,18 @@ impl IndexedDocsProvider for DocsDotRsProvider {
 
     fn database_path(&self) -> PathBuf {
         paths::support_dir().join("docs/rust/docs-rs-db.1.mdb")
+    }
+
+    async fn suggest_packages(&self) -> Result<Vec<PackageName>> {
+        static POPULAR_CRATES: LazyLock<Vec<PackageName>> = LazyLock::new(|| {
+            include_str!("./rustdoc/popular_crates.txt")
+                .lines()
+                .filter(|line| !line.starts_with('#'))
+                .map(|line| PackageName::from(line.trim()))
+                .collect()
+        });
+
+        Ok(POPULAR_CRATES.clone())
     }
 
     async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {

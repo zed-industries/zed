@@ -1465,7 +1465,7 @@ impl WorkflowStepStatus {
                     ("resolving-suggestion-animation", id),
                     Animation::new(Duration::from_secs(2))
                         .repeat()
-                        .with_easing(pulsating_between(0.2, 1.0)),
+                        .with_easing(pulsating_between(0.4, 0.8)),
                     |label, delta| label.alpha(delta),
                 )
                 .into_any_element(),
@@ -1552,7 +1552,7 @@ impl WorkflowStepStatus {
                             ("applying-step-transformation-label", id),
                             Animation::new(Duration::from_secs(2))
                                 .repeat()
-                                .with_easing(pulsating_between(0.2, 1.0)),
+                                .with_easing(pulsating_between(0.4, 0.8)),
                             |label, delta| label.alpha(delta),
                         ),
                 )
@@ -3005,7 +3005,7 @@ impl ContextEditor {
                                                 "pulsating-label",
                                                 Animation::new(Duration::from_secs(2))
                                                     .repeat()
-                                                    .with_easing(pulsating_between(0.2, 1.0)),
+                                                    .with_easing(pulsating_between(0.4, 0.8)),
                                                 |label, delta| label.alpha(delta),
                                             )
                                             .into_any_element()
@@ -4141,6 +4141,7 @@ impl Render for ContextEditorToolbarItem {
 
         h_flex()
             .size_full()
+            .gap_2()
             .justify_between()
             .child(left_side)
             .child(right_side)
@@ -4469,7 +4470,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> 
                 ButtonLike::new(fold_id)
                     .style(ButtonStyle::Filled)
                     .layer(ElevationIndex::ElevatedSurface)
-                    .child(Icon::new(IconName::FileText))
+                    .child(Icon::new(IconName::TextSelect))
                     .child(Label::new(title.clone()).single_line())
                     .on_click(move |_, cx| {
                         editor

@@ -45,7 +45,6 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
-use text::ToOffset as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
@@ -139,18 +138,23 @@ impl InlineAssistant {
         cx: &mut WindowContext,
     ) {
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-
         struct CodegenRange {
             transform_range: Range<Point>,
             selection_ranges: Vec<Range<Point>>,
             focus_assist: bool,
         }
 
-        let newest_selection = editor.read(cx).selections.newest::<Point>(cx);
+        let newest_selection_range = editor.read(cx).selections.newest::<Point>(cx).range();
         let mut codegen_ranges: Vec<CodegenRange> = Vec::new();
-        for selection in editor.read(cx).selections.all::<Point>(cx) {
-            let selection_is_newest = selection.id == newest_selection.id;
-            let mut transform_range = selection.start..selection.end;
+
+        let selection_ranges = snapshot
+            .split_ranges(editor.read(cx).selections.disjoint_anchor_ranges())
+            .map(|range| range.to_point(&snapshot))
+            .collect::<Vec<Range<Point>>>();
+
+        for selection_range in selection_ranges {
+            let selection_is_newest = newest_selection_range.contains_inclusive(&selection_range);
+            let mut transform_range = selection_range.start..selection_range.end;
 
             // Expand the transform range to start/end of lines.
             // If a non-empty selection ends at the start of the last line, clip at the end of the penultimate line.
@@ -159,7 +163,8 @@ impl InlineAssistant {
                 transform_range.end.row -= 1;
             }
             transform_range.end.column = snapshot.line_len(MultiBufferRow(transform_range.end.row));
-            let selection_range = selection.start..selection.end.min(transform_range.end);
+            let selection_range =
+                selection_range.start..selection_range.end.min(transform_range.end);
 
             // If we intersect the previous transform range,
             if let Some(CodegenRange {
@@ -2343,7 +2348,7 @@ impl Codegen {
         let language_name = language_name.as_deref();
         let start = buffer.point_to_buffer_offset(self.transform_range.start);
         let end = buffer.point_to_buffer_offset(self.transform_range.end);
-        let (buffer, range) = if let Some((start, end)) = start.zip(end) {
+        let (transform_buffer, transform_range) = if let Some((start, end)) = start.zip(end) {
             let (start_buffer, start_buffer_offset) = start;
             let (end_buffer, end_buffer_offset) = end;
             if start_buffer.remote_id() == end_buffer.remote_id() {
@@ -2358,16 +2363,26 @@ impl Codegen {
         let selected_ranges = self
             .selected_ranges
             .iter()
-            .map(|range| {
-                let start = range.start.text_anchor.to_offset(&buffer);
-                let end = range.end.text_anchor.to_offset(&buffer);
-                start..end
+            .filter_map(|selected_range| {
+                let start = buffer
+                    .point_to_buffer_offset(selected_range.start)
+                    .map(|(_, offset)| offset)?;
+                let end = buffer
+                    .point_to_buffer_offset(selected_range.end)
+                    .map(|(_, offset)| offset)?;
+                Some(start..end)
             })
             .collect::<Vec<_>>();
 
         let prompt = self
             .prompt_builder
-            .generate_content_prompt(user_prompt, language_name, buffer, range, selected_ranges)
+            .generate_content_prompt(
+                user_prompt,
+                language_name,
+                transform_buffer,
+                transform_range,
+                selected_ranges,
+            )
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
 
         let mut messages = Vec::new();
