@@ -1,22 +1,15 @@
 use assistant_slash_command::SlashCommandRegistry;
 use gpui::point;
 use gpui::DismissEvent;
-use language_model::LanguageModelRegistry;
+use picker::PickerEditorPosition;
 
 use std::sync::Arc;
 use ui::ListItemSpacing;
 
-use crate::assistant_settings::AssistantSettings;
-use crate::ShowConfiguration;
-use fs::Fs;
-use gpui::Action;
 use gpui::SharedString;
 use gpui::Task;
 use picker::{Picker, PickerDelegate};
-use settings::update_settings_file;
 use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
-
-const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
 #[derive(IntoElement)]
 pub struct SlashCommandSelector<T: PopoverTrigger> {
@@ -131,6 +124,10 @@ impl PickerDelegate for SlashCommandDelegate {
     }
 
     fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+
+    fn editor_position(&self) -> PickerEditorPosition {
+        PickerEditorPosition::End
+    }
 
     fn render_match(
         &self,
