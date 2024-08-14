@@ -3587,7 +3587,7 @@ impl Render for ContextEditor {
                                             Tooltip::with_meta(
                                                 "Insert Selection",
                                                 None,
-                                                "Type / to insert via keyboard",
+                                                "Press to quote via keyboard",
                                                 cx,
                                             )
                                         }),
