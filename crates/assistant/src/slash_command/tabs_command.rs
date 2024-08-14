@@ -47,7 +47,7 @@ impl SlashCommand for TabsSlashCommand {
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let all_tabs_completion_item = if ALL_TABS_COMPLETION_ITEM.contains(&query) {
             Some(ArgumentCompletion {
-                label: ALL_TABS_COMPLETION_ITEM.to_owned(),
+                label: ALL_TABS_COMPLETION_ITEM.into(),
                 new_text: ALL_TABS_COMPLETION_ITEM.to_owned(),
                 run_command: true,
             })
@@ -63,7 +63,7 @@ impl SlashCommand for TabsSlashCommand {
                     .filter_map(|(path, ..)| {
                         let path_string = path.as_deref()?.to_string_lossy().to_string();
                         Some(ArgumentCompletion {
-                            label: path_string.clone(),
+                            label: path_string.clone().into(),
                             new_text: path_string,
                             run_command: true,
                         })

@@ -182,7 +182,7 @@ impl SlashCommand for DocsSlashCommand {
                 items
                     .into_iter()
                     .map(|item| ArgumentCompletion {
-                        label: item.clone(),
+                        label: item.clone().into(),
                         new_text: format!("{provider} {item}"),
                         run_command: true,
                     })
@@ -194,7 +194,7 @@ impl SlashCommand for DocsSlashCommand {
                     let providers = indexed_docs_registry.list_providers();
                     if providers.is_empty() {
                         return Ok(vec![ArgumentCompletion {
-                            label: "No available docs providers.".to_string(),
+                            label: "No available docs providers.".into(),
                             new_text: String::new(),
                             run_command: false,
                         }]);
@@ -203,7 +203,7 @@ impl SlashCommand for DocsSlashCommand {
                     Ok(providers
                         .into_iter()
                         .map(|provider| ArgumentCompletion {
-                            label: provider.to_string(),
+                            label: provider.to_string().into(),
                             new_text: provider.to_string(),
                             run_command: false,
                         })
@@ -231,10 +231,10 @@ impl SlashCommand for DocsSlashCommand {
                         .filter(|package_name| {
                             !items
                                 .iter()
-                                .any(|item| item.label.as_str() == package_name.as_ref())
+                                .any(|item| item.label.text() == package_name.as_ref())
                         })
                         .map(|package_name| ArgumentCompletion {
-                            label: format!("{package_name} (unindexed)"),
+                            label: format!("{package_name} (unindexed)").into(),
                             new_text: format!("{provider} {package_name}"),
                             run_command: true,
                         })
@@ -246,7 +246,8 @@ impl SlashCommand for DocsSlashCommand {
                             label: format!(
                                 "Enter a {package_term} name.",
                                 package_term = package_term(&provider)
-                            ),
+                            )
+                            .into(),
                             new_text: provider.to_string(),
                             run_command: false,
                         }]);
