@@ -18,13 +18,13 @@ use std::{
 use ui::WindowContext;
 use workspace::Workspace;
 
-pub(crate) struct TabsSlashCommand;
+pub(crate) struct TabSlashCommand;
 
 const ALL_TABS_COMPLETION_ITEM: &str = "all";
 
-impl SlashCommand for TabsSlashCommand {
+impl SlashCommand for TabSlashCommand {
     fn name(&self) -> String {
-        "tabs".into()
+        "tab".into()
     }
 
     fn description(&self) -> String {
