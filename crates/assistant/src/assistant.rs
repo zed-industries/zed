@@ -65,7 +65,7 @@ actions!(
     ]
 );
 
-const DEFAULT_CONTEXT_LINES: usize = 20;
+const DEFAULT_CONTEXT_LINES: usize = 50;
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct InlineAssist {
