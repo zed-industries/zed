@@ -3802,6 +3802,7 @@ mod tests {
 
 mod tool {
     use gpui::AsyncAppContext;
+    use project::ProjectPath;
 
     use super::*;
 
@@ -3862,6 +3863,20 @@ mod tool {
                 .update(&mut cx, |project, cx| {
                     let project_path = project
                         .find_project_path(Path::new(&path), cx)
+                        .or_else(|| {
+                            // If we couldn't find a project path for it, put it in the active worktree
+                            // so that when we create the buffer, it can be saved.
+                            let worktree = project
+                                .active_entry()
+                                .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
+                                .or_else(|| project.worktrees(cx).next())?;
+                            let worktree = worktree.read(cx);
+
+                            Some(ProjectPath {
+                                worktree_id: worktree.id(),
+                                path: Arc::from(Path::new(&path)),
+                            })
+                        })
                         .with_context(|| format!("worktree not found for {:?}", path))?;
                     anyhow::Ok(project.open_buffer(project_path, cx))
                 })??
