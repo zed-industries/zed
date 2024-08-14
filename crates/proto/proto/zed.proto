@@ -2310,6 +2310,7 @@ message ContextMessageStatus {
         Done done = 1;
         Pending pending = 2;
         Error error = 3;
+        Canceled canceled = 4;
     }
 
     message Done {}
@@ -2319,6 +2320,8 @@ message ContextMessageStatus {
     message Error {
         string message = 1;
     }
+
+    message Canceled {}
 }
 
 message ContextMessage {

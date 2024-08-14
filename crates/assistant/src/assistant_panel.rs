@@ -1975,7 +1975,7 @@ impl ContextEditor {
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
         if self
             .context
-            .update(cx, |context, _| context.cancel_last_assist())
+            .update(cx, |context, cx| context.cancel_last_assist(cx))
         {
             return;
         }
@@ -3042,22 +3042,6 @@ impl ContextEditor {
                                     }
                                 });
 
-                            let trigger = Button::new("show-error", "Error")
-                                .color(Color::Error)
-                                .selected_label_color(Color::Error)
-                                .selected_icon_color(Color::Error)
-                                .icon(IconName::XCircle)
-                                .icon_color(Color::Error)
-                                .icon_size(IconSize::Small)
-                                .icon_position(IconPosition::Start)
-                                .tooltip(move |cx| {
-                                    Tooltip::with_meta(
-                                        "Error interacting with language model",
-                                        None,
-                                        "Click for more details",
-                                        cx,
-                                    )
-                                });
                             h_flex()
                                 .id(("message_header", message_id.as_u64()))
                                 .pl(cx.gutter_dimensions.full_width())
@@ -3066,22 +3050,63 @@ impl ContextEditor {
                                 .relative()
                                 .gap_1()
                                 .child(sender)
-                                .children(
-                                    if let MessageStatus::Error(error) = message.status.clone() {
+                                .children(match &message.status {
+                                    MessageStatus::Error(error) => {
+                                        let error_popover_trigger =
+                                            Button::new("show-error", "Error")
+                                                .color(Color::Error)
+                                                .selected_label_color(Color::Error)
+                                                .selected_icon_color(Color::Error)
+                                                .icon(IconName::XCircle)
+                                                .icon_color(Color::Error)
+                                                .icon_size(IconSize::Small)
+                                                .icon_position(IconPosition::Start)
+                                                .tooltip(move |cx| {
+                                                    Tooltip::with_meta(
+                                                        "Error interacting with language model",
+                                                        None,
+                                                        "Click for more details",
+                                                        cx,
+                                                    )
+                                                });
+
                                         Some(
                                             PopoverMenu::new("show-error-popover")
-                                                .menu(move |cx| {
-                                                    Some(cx.new_view(|cx| ErrorPopover {
-                                                        error: error.clone(),
-                                                        focus_handle: cx.focus_handle(),
-                                                    }))
+                                                .menu({
+                                                    let error = error.clone();
+                                                    move |cx| {
+                                                        Some(cx.new_view(|cx| ErrorPopover {
+                                                            error: error.clone(),
+                                                            focus_handle: cx.focus_handle(),
+                                                        }))
+                                                    }
                                                 })
-                                                .trigger(trigger),
+                                                .trigger(error_popover_trigger)
+                                                .into_any_element(),
                                         )
-                                    } else {
-                                        None
-                                    },
-                                )
+                                    }
+                                    MessageStatus::Canceled => Some(
+                                        ButtonLike::new("canceled")
+                                            .child(
+                                                Icon::new(IconName::XCircle).color(Color::Disabled),
+                                            )
+                                            .child(
+                                                Label::new("Canceled")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Disabled),
+                                            )
+                                            .tooltip(move |cx| {
+                                                Tooltip::with_meta(
+                                                    "Canceled",
+                                                    None,
+                                                    "Interaction with the assistant was canceled",
+                                                    cx,
+                                                )
+                                            })
+                                            .into_any_element(),
+                                    ),
+                                    _ => None,
+                                })
                                 .into_any_element()
                         }
                     }),
