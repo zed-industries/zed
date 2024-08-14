@@ -159,7 +159,6 @@ impl SlashCommand for DocsSlashCommand {
         true
     }
 
-    // TODO kb fix
     fn complete_argument(
         self: Arc<Self>,
         arguments: &[String],

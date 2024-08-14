@@ -167,28 +167,31 @@ impl SlashCommandCompletionProvider {
             let command_name: Arc<str> = command_name.into();
             let editor = self.editor.clone();
             let workspace = self.workspace.clone();
+            let arguments = arguments.to_vec();
             cx.background_executor().spawn(async move {
                 Ok(completions
                     .await?
                     .into_iter()
-                    .map(|command_argument| {
-                        let confirm = if command_argument.run_command {
+                    .map(|new_argument| {
+                        let confirm = if new_argument.run_command {
                             editor
                                 .clone()
                                 .zip(workspace.clone())
                                 .map(|(editor, workspace)| {
                                     Arc::new({
+                                        let mut completed_arguments = arguments.clone();
+                                        completed_arguments.pop();
+                                        completed_arguments.push(new_argument.new_text.clone());
+
                                         let command_range = command_range.clone();
                                         let command_name = command_name.clone();
-                                        let command_argument = command_argument.new_text.clone();
                                         move |_: CompletionIntent, cx: &mut WindowContext| {
-                                            let command_argument = command_argument.clone();
                                             editor
                                                 .update(cx, |editor, cx| {
                                                     editor.run_command(
                                                         command_range.clone(),
                                                         &command_name,
-                                                        &[command_argument],
+                                                        &completed_arguments,
                                                         true,
                                                         workspace.clone(),
                                                         cx,
@@ -202,19 +205,19 @@ impl SlashCommandCompletionProvider {
                             None
                         };
 
-                        let mut new_text = command_argument.new_text.clone();
-                        if !command_argument.run_command {
+                        let mut new_text = new_argument.new_text.clone();
+                        if !new_argument.run_command {
                             new_text.push(' ');
                         }
 
                         project::Completion {
                             old_range: argument_range.clone(),
-                            label: command_argument.label,
+                            label: new_argument.label,
                             new_text,
                             documentation: None,
                             server_id: LanguageServerId(0),
                             lsp_completion: Default::default(),
-                            show_new_completions_on_confirm: !command_argument.run_command,
+                            show_new_completions_on_confirm: !new_argument.run_command,
                             confirm,
                         }
                     })
