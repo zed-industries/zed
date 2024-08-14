@@ -56,6 +56,10 @@ impl ContextInspector {
             crate::WorkflowStepStatus::Resolved(ResolvedWorkflowStep { title, suggestions }) => {
                 writeln!(output, "Resolution:").ok()?;
                 writeln!(output, "  {title:?}").ok()?;
+                if suggestions.is_empty() {
+                    writeln!(output, "  No suggestions").ok()?;
+                }
+
                 for (buffer, suggestion_groups) in suggestions {
                     let buffer = buffer.read(cx);
                     let buffer_path = buffer
