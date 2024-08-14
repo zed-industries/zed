@@ -142,17 +142,16 @@ impl PickerDelegate for SlashCommandDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .font_buffer(cx)
-                        .min_w(px(200.))
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(Label::new(command_info.name.clone()))
-                                .child(Label::new(command_info.description.clone())),
-                        ),
+                    h_flex().w_full().justify_between().min_w(px(220.)).child(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new(command_info.name.clone()))
+                            .child(
+                                Label::new(command_info.description.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    ),
                 ),
         )
     }
@@ -188,8 +187,8 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             PopoverMenu::new("model-switcher")
                 .menu(move |_cx| Some(picker_view.clone()))
                 .trigger(self.trigger)
-                .attach(gpui::AnchorCorner::BottomLeft)
-                .offset(point(px(0.), rems(-0.5).to_pixels(cx.rem_size()))),
+                .attach(gpui::AnchorCorner::TopLeft)
+                .offset(point(px(0.), px(-250.))),
         )
     }
 }
