@@ -114,7 +114,7 @@ pub trait Extension: Send + Sync {
     fn complete_slash_command_argument(
         &self,
         _command: SlashCommand,
-        _query: String,
+        _args: Vec<String>,
     ) -> Result<Vec<SlashCommandArgumentCompletion>, String> {
         Ok(Vec::new())
     }
@@ -123,7 +123,7 @@ pub trait Extension: Send + Sync {
     fn run_slash_command(
         &self,
         _command: SlashCommand,
-        _argument: Option<String>,
+        _args: Vec<String>,
         _worktree: Option<&Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         Err("`run_slash_command` not implemented".to_string())
@@ -257,17 +257,17 @@ impl wit::Guest for Component {
 
     fn complete_slash_command_argument(
         command: SlashCommand,
-        query: String,
+        args: Vec<String>,
     ) -> Result<Vec<SlashCommandArgumentCompletion>, String> {
-        extension().complete_slash_command_argument(command, query)
+        extension().complete_slash_command_argument(command, args)
     }
 
     fn run_slash_command(
         command: SlashCommand,
-        argument: Option<String>,
+        args: Vec<String>,
         worktree: Option<&Worktree>,
     ) -> Result<SlashCommandOutput, String> {
-        extension().run_slash_command(command, argument, worktree)
+        extension().run_slash_command(command, args, worktree)
     }
 
     fn suggest_docs_packages(provider: String) -> Result<Vec<String>, String> {

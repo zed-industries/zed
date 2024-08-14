@@ -181,22 +181,20 @@ impl SlashCommandCompletionProvider {
                                         let command_range = command_range.clone();
                                         let command_name = command_name.clone();
                                         let command_argument = command_argument.new_text.clone();
-                                        move |intent: CompletionIntent, cx: &mut WindowContext| {
-                                            if intent.is_complete() {
-                                                let command_argument = command_argument.clone();
-                                                editor
-                                                    .update(cx, |editor, cx| {
-                                                        editor.run_command(
-                                                            command_range.clone(),
-                                                            &command_name,
-                                                            &[command_argument],
-                                                            true,
-                                                            workspace.clone(),
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .ok();
-                                            }
+                                        move |_: CompletionIntent, cx: &mut WindowContext| {
+                                            let command_argument = command_argument.clone();
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.run_command(
+                                                        command_range.clone(),
+                                                        &command_name,
+                                                        &[command_argument],
+                                                        true,
+                                                        workspace.clone(),
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
                                         }
                                     }) as Arc<_>
                                 })

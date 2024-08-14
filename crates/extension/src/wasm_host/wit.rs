@@ -266,13 +266,8 @@ impl Extension {
     ) -> Result<Result<Vec<SlashCommandArgumentCompletion>, String>> {
         match self {
             Extension::V010(ext) => {
-                // TODO kb new API version?
-                ext.call_complete_slash_command_argument(
-                    store,
-                    command,
-                    arguments.first().map(|s| s.as_str()).unwrap_or_default(),
-                )
-                .await
+                ext.call_complete_slash_command_argument(store, command, arguments)
+                    .await
             }
             Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Ok(Ok(Vec::new())),
         }
@@ -287,14 +282,8 @@ impl Extension {
     ) -> Result<Result<SlashCommandOutput, String>> {
         match self {
             Extension::V010(ext) => {
-                ext.call_run_slash_command(
-                    store,
-                    command,
-                    // TODO kb new API version?
-                    arguments.first().map(|s| s.as_str()),
-                    resource,
-                )
-                .await
+                ext.call_run_slash_command(store, command, arguments, resource)
+                    .await
             }
             Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => {
                 Err(anyhow!("`run_slash_command` not available prior to v0.1.0"))

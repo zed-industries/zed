@@ -42,16 +42,21 @@ impl SlashCommand for TerminalSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _arguments: &[String],
+        arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
-        Task::ready(Ok(vec![ArgumentCompletion {
-            label: LINE_COUNT_ARG.into(),
-            new_text: LINE_COUNT_ARG.to_string(),
-            run_command: true,
-        }]))
+        let completions = if arguments.iter().any(|arg| arg == LINE_COUNT_ARG) {
+            Vec::new()
+        } else {
+            vec![ArgumentCompletion {
+                label: LINE_COUNT_ARG.into(),
+                new_text: LINE_COUNT_ARG.to_string(),
+                run_command: false,
+            }]
+        };
+        Task::ready(Ok(completions))
     }
 
     fn run(
