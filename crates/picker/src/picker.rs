@@ -51,6 +51,15 @@ pub struct Picker<D: PickerDelegate> {
     is_modal: bool,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub enum PickerEditorPosition {
+    #[default]
+    /// Render the editor at the start of the picker. Usually the top
+    Start,
+    /// Render the editor at the end of the picker. Usually the bottom
+    End,
+}
+
 pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
 
@@ -101,6 +110,10 @@ pub trait PickerDelegate: Sized + 'static {
     }
     fn confirm_completion(&self, _query: String) -> Option<String> {
         None
+    }
+
+    fn editor_position(&self) -> PickerEditorPosition {
+        PickerEditorPosition::default()
     }
 
     fn render_editor(&self, editor: &View<Editor>, _cx: &mut ViewContext<Picker<Self>>) -> Div {
@@ -555,6 +568,8 @@ impl<D: PickerDelegate> ModalView for Picker<D> {}
 
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let editor_position = self.delegate.editor_position();
+
         v_flex()
             .key_context("Picker")
             .size_full()
@@ -574,9 +589,15 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .on_action(cx.listener(Self::secondary_confirm))
             .on_action(cx.listener(Self::confirm_completion))
             .on_action(cx.listener(Self::confirm_input))
-            .child(match &self.head {
-                Head::Editor(editor) => self.delegate.render_editor(&editor.clone(), cx),
-                Head::Empty(empty_head) => div().child(empty_head.clone()),
+            .children(match &self.head {
+                Head::Editor(editor) => {
+                    if editor_position == PickerEditorPosition::Start {
+                        Some(self.delegate.render_editor(&editor.clone(), cx))
+                    } else {
+                        None
+                    }
+                }
+                Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
             })
             .when(self.delegate.match_count() > 0, |el| {
                 el.child(
@@ -602,5 +623,15 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 )
             })
             .children(self.delegate.render_footer(cx))
+            .children(match &self.head {
+                Head::Editor(editor) => {
+                    if editor_position == PickerEditorPosition::End {
+                        Some(self.delegate.render_editor(&editor.clone(), cx))
+                    } else {
+                        None
+                    }
+                }
+                Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
+            })
     }
 }
