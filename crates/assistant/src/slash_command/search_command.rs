@@ -49,7 +49,7 @@ impl SlashCommand for SearchSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut WindowContext,
@@ -67,13 +67,13 @@ impl SlashCommand for SearchSlashCommand {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
-        let Some(argument) = arguments.first() else {
+        if arguments.is_empty() {
             return Task::ready(Err(anyhow::anyhow!("missing search query")));
         };
 
         let mut limit = None;
         let mut query = String::new();
-        for part in argument.split(' ') {
+        for part in arguments {
             if let Some(parameter) = part.strip_prefix("--") {
                 if let Ok(count) = parameter.parse::<usize>() {
                     limit = Some(count);

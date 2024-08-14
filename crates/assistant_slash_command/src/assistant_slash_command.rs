@@ -34,7 +34,7 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn menu_text(&self) -> String;
     fn complete_argument(
         self: Arc<Self>,
-        query: String,
+        arguments: &[String],
         cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,

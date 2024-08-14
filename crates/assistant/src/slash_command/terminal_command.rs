@@ -42,7 +42,7 @@ impl SlashCommand for TerminalSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut WindowContext,
@@ -75,10 +75,13 @@ impl SlashCommand for TerminalSlashCommand {
             return Task::ready(Err(anyhow::anyhow!("no active terminal")));
         };
 
-        let line_count = arguments
-            .first()
-            .and_then(|argument| parse_argument(argument))
-            .unwrap_or(DEFAULT_CONTEXT_LINES);
+        let mut line_count = DEFAULT_CONTEXT_LINES;
+        if arguments.get(0).map(|s| s.as_str()) == Some(LINE_COUNT_ARG) {
+            if let Some(parsed_line_count) = arguments.get(1).and_then(|s| s.parse::<usize>().ok())
+            {
+                line_count = parsed_line_count;
+            }
+        }
 
         let lines = active_terminal
             .read(cx)
@@ -101,14 +104,4 @@ impl SlashCommand for TerminalSlashCommand {
             run_commands_in_text: false,
         }))
     }
-}
-
-fn parse_argument(argument: &str) -> Option<usize> {
-    let mut args = argument.split(' ');
-    if args.next() == Some(LINE_COUNT_ARG) {
-        if let Some(line_count) = args.next().and_then(|s| s.parse::<usize>().ok()) {
-            return Some(line_count);
-        }
-    }
-    None
 }

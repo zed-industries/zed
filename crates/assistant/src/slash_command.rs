@@ -147,7 +147,7 @@ impl SlashCommandCompletionProvider {
     fn complete_command_argument(
         &self,
         command_name: &str,
-        argument: String,
+        arguments: &[String],
         command_range: Range<Anchor>,
         argument_range: Range<Anchor>,
         cx: &mut WindowContext,
@@ -159,7 +159,7 @@ impl SlashCommandCompletionProvider {
         let commands = SlashCommandRegistry::global(cx);
         if let Some(command) = commands.command(command_name) {
             let completions = command.complete_argument(
-                argument,
+                arguments,
                 new_cancel_flag.clone(),
                 self.workspace.clone(),
                 cx,
@@ -236,7 +236,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         _: editor::CompletionContext,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Vec<project::Completion>>> {
-        let Some((name, argument, command_range, argument_range)) =
+        let Some((name, arguments, command_range, argument_range)) =
             buffer.update(cx, |buffer, _cx| {
                 let position = buffer_position.to_point(buffer);
                 let line_start = Point::new(position.row, 0);
@@ -253,25 +253,29 @@ impl CompletionProvider for SlashCommandCompletionProvider {
                     ..buffer.anchor_after(command_range_end);
 
                 let name = line[call.name.clone()].to_string();
-                let (argument, argument_range) = if let Some(argument) = call.arguments.last() {
+                let (arguments, argument_range) = if let Some(argument) = call.arguments.last() {
                     let start =
                         buffer.anchor_after(Point::new(position.row, argument.start as u32));
-                    let argument = line[argument.clone()].to_string();
-                    (Some(argument), start..buffer_position)
+                    let arguments = call
+                        .arguments
+                        .iter()
+                        .filter_map(|argument| Some(line.get(argument.clone())?.to_string()))
+                        .collect::<Vec<_>>();
+                    (Some(arguments), start..buffer_position)
                 } else {
                     let start =
                         buffer.anchor_after(Point::new(position.row, call.name.start as u32));
                     (None, start..buffer_position)
                 };
 
-                Some((name, argument, command_range, argument_range))
+                Some((name, arguments, command_range, argument_range))
             })
         else {
             return Task::ready(Ok(Vec::new()));
         };
 
-        if let Some(argument) = argument {
-            self.complete_command_argument(&name, argument, command_range, argument_range, cx)
+        if let Some(arguments) = arguments {
+            self.complete_command_argument(&name, &arguments, command_range, argument_range, cx)
         } else {
             self.complete_command_name(&name, command_range, argument_range, cx)
         }
@@ -332,7 +336,7 @@ impl SlashCommandLine {
                             argument.start = next_ix;
                             argument.end = next_ix;
                         } else {
-                            argument.end = next_ix;
+                            argument.end = ix;
                             call.arguments.push(next_ix..next_ix);
                         }
                     } else {

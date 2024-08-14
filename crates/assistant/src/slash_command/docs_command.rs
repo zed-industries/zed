@@ -161,7 +161,7 @@ impl SlashCommand for DocsSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        query: String,
+        arguments: &[String],
         _cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
@@ -169,7 +169,7 @@ impl SlashCommand for DocsSlashCommand {
         self.ensure_rust_doc_providers_are_registered(workspace, cx);
 
         let indexed_docs_registry = IndexedDocsRegistry::global(cx);
-        let args = DocsSlashCommandArgs::parse(&query);
+        let args = DocsSlashCommandArgs::parse(arguments);
         let store = args
             .provider()
             .ok_or_else(|| anyhow!("no docs provider specified"))
@@ -275,11 +275,11 @@ impl SlashCommand for DocsSlashCommand {
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let Some(argument) = arguments.first() else {
+        if arguments.is_empty() {
             return Task::ready(Err(anyhow!("missing an argument")));
         };
 
-        let args = DocsSlashCommandArgs::parse(argument);
+        let args = DocsSlashCommandArgs::parse(arguments);
         let executor = cx.background_executor().clone();
         let task = cx.background_executor().spawn({
             let store = args
@@ -379,8 +379,10 @@ pub(crate) enum DocsSlashCommandArgs {
 }
 
 impl DocsSlashCommandArgs {
-    pub fn parse(argument: &str) -> Self {
-        let Some((provider, argument)) = argument.split_once(' ') else {
+    pub fn parse(arguments: &[String]) -> Self {
+        let provider = arguments.get(0).cloned();
+        let argument = arguments.get(1);
+        let Some((provider, argument)) = provider.zip(argument) else {
             return Self::NoProvider;
         };
 
@@ -444,16 +446,16 @@ mod tests {
     #[test]
     fn test_parse_docs_slash_command_args() {
         assert_eq!(
-            DocsSlashCommandArgs::parse(""),
+            DocsSlashCommandArgs::parse(&["".to_string()]),
             DocsSlashCommandArgs::NoProvider
         );
         assert_eq!(
-            DocsSlashCommandArgs::parse("rustdoc"),
+            DocsSlashCommandArgs::parse(&["rustdoc".to_string()]),
             DocsSlashCommandArgs::NoProvider
         );
 
         assert_eq!(
-            DocsSlashCommandArgs::parse("rustdoc "),
+            DocsSlashCommandArgs::parse(&["rustdoc ".to_string()]),
             DocsSlashCommandArgs::SearchPackageDocs {
                 provider: ProviderId("rustdoc".into()),
                 package: "".into(),
@@ -461,7 +463,7 @@ mod tests {
             }
         );
         assert_eq!(
-            DocsSlashCommandArgs::parse("gleam "),
+            DocsSlashCommandArgs::parse(&["gleam ".to_string()]),
             DocsSlashCommandArgs::SearchPackageDocs {
                 provider: ProviderId("gleam".into()),
                 package: "".into(),
@@ -470,7 +472,7 @@ mod tests {
         );
 
         assert_eq!(
-            DocsSlashCommandArgs::parse("rustdoc gpui"),
+            DocsSlashCommandArgs::parse(&["rustdoc gpui".to_string()]),
             DocsSlashCommandArgs::SearchPackageDocs {
                 provider: ProviderId("rustdoc".into()),
                 package: "gpui".into(),
@@ -478,7 +480,7 @@ mod tests {
             }
         );
         assert_eq!(
-            DocsSlashCommandArgs::parse("gleam gleam_stdlib"),
+            DocsSlashCommandArgs::parse(&["gleam gleam_stdlib".to_string()]),
             DocsSlashCommandArgs::SearchPackageDocs {
                 provider: ProviderId("gleam".into()),
                 package: "gleam_stdlib".into(),
@@ -488,7 +490,7 @@ mod tests {
 
         // Adding an item path delimiter indicates we can start indexing.
         assert_eq!(
-            DocsSlashCommandArgs::parse("rustdoc gpui:"),
+            DocsSlashCommandArgs::parse(&["rustdoc gpui:".to_string()]),
             DocsSlashCommandArgs::SearchPackageDocs {
                 provider: ProviderId("rustdoc".into()),
                 package: "gpui".into(),
@@ -496,7 +498,7 @@ mod tests {
             }
         );
         assert_eq!(
-            DocsSlashCommandArgs::parse("gleam gleam_stdlib/"),
+            DocsSlashCommandArgs::parse(&["gleam gleam_stdlib/".to_string()]),
             DocsSlashCommandArgs::SearchPackageDocs {
                 provider: ProviderId("gleam".into()),
                 package: "gleam_stdlib".into(),
@@ -505,7 +507,7 @@ mod tests {
         );
 
         assert_eq!(
-            DocsSlashCommandArgs::parse("rustdoc gpui::foo::bar::Baz"),
+            DocsSlashCommandArgs::parse(&["rustdoc gpui::foo::bar::Baz".to_string()]),
             DocsSlashCommandArgs::SearchItemDocs {
                 provider: ProviderId("rustdoc".into()),
                 package: "gpui".into(),
@@ -513,7 +515,7 @@ mod tests {
             }
         );
         assert_eq!(
-            DocsSlashCommandArgs::parse("gleam gleam_stdlib/gleam/int"),
+            DocsSlashCommandArgs::parse(&["gleam gleam_stdlib/gleam/int".to_string()]),
             DocsSlashCommandArgs::SearchItemDocs {
                 provider: ProviderId("gleam".into()),
                 package: "gleam_stdlib".into(),

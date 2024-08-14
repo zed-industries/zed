@@ -4528,11 +4528,10 @@ fn render_docs_slash_command_trailer(
     command: PendingSlashCommand,
     cx: &mut WindowContext,
 ) -> AnyElement {
-    let Some(argument) = command.arguments.first() else {
+    if command.arguments.is_empty() {
         return Empty.into_any();
-    };
-
-    let args = DocsSlashCommandArgs::parse(&argument);
+    }
+    let args = DocsSlashCommandArgs::parse(&command.arguments);
 
     let Some(store) = args
         .provider()

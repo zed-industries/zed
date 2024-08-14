@@ -1219,7 +1219,6 @@ impl Context {
                         .collect::<SmallVec<_>>();
                     if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
                         if !command.requires_argument() || !arguments.is_empty() {
-                            // TODO kb should it be a last argument's start instead?
                             let start_ix = offset + command_line.name.start - 1;
                             let end_ix = offset
                                 + command_line
@@ -3759,7 +3758,7 @@ mod tests {
 
         fn complete_argument(
             self: Arc<Self>,
-            _query: String,
+            _arguments: &[String],
             _cancel: Arc<AtomicBool>,
             _workspace: Option<WeakView<Workspace>>,
             _cx: &mut WindowContext,

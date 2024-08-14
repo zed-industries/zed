@@ -262,12 +262,17 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         command: &SlashCommand,
-        query: &str,
+        arguments: &[String],
     ) -> Result<Result<Vec<SlashCommandArgumentCompletion>, String>> {
         match self {
             Extension::V010(ext) => {
-                ext.call_complete_slash_command_argument(store, command, query)
-                    .await
+                // TODO kb new API version?
+                ext.call_complete_slash_command_argument(
+                    store,
+                    command,
+                    arguments.first().map(|s| s.as_str()).unwrap_or_default(),
+                )
+                .await
             }
             Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Ok(Ok(Vec::new())),
         }

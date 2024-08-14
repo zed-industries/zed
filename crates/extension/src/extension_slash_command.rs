@@ -39,11 +39,12 @@ impl SlashCommand for ExtensionSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        query: String,
+        arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
+        let arguments = arguments.to_owned();
         cx.background_executor().spawn(async move {
             self.extension
                 .call({
@@ -54,7 +55,7 @@ impl SlashCommand for ExtensionSlashCommand {
                                 .call_complete_slash_command_argument(
                                     store,
                                     &this.command,
-                                    query.as_ref(),
+                                    &arguments,
                                 )
                                 .await?
                                 .map_err(|e| anyhow!("{}", e))?;
