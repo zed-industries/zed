@@ -42,7 +42,7 @@ impl SlashCommand for NowSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        _argument: Option<&str>,
+        _arguments: &[String],
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _cx: &mut WindowContext,

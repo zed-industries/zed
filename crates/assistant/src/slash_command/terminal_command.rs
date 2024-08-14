@@ -56,7 +56,7 @@ impl SlashCommand for TerminalSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -75,8 +75,9 @@ impl SlashCommand for TerminalSlashCommand {
             return Task::ready(Err(anyhow::anyhow!("no active terminal")));
         };
 
-        let line_count = argument
-            .and_then(|a| parse_argument(a))
+        let line_count = arguments
+            .first()
+            .and_then(|argument| parse_argument(argument))
             .unwrap_or(DEFAULT_CONTEXT_LINES);
 
         let lines = active_terminal

@@ -157,7 +157,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -166,7 +166,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let options = Options::parse(argument);
+        let options = Options::parse(arguments);
 
         let task = collect_diagnostics(workspace.read(cx).project().clone(), options, cx);
 
@@ -244,8 +244,9 @@ struct Options {
 const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
 
 impl Options {
-    fn parse(arguments_line: Option<&str>) -> Self {
-        arguments_line
+    fn parse(arguments: &[String]) -> Self {
+        arguments
+            .first()
             .map(|arguments_line| {
                 let args = arguments_line.split_whitespace().collect::<Vec<_>>();
                 let mut include_warnings = false;

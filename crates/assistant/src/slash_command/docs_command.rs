@@ -270,13 +270,13 @@ impl SlashCommand for DocsSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let Some(argument) = argument else {
-            return Task::ready(Err(anyhow!("missing argument")));
+        let Some(argument) = arguments.first() else {
+            return Task::ready(Err(anyhow!("missing an argument")));
         };
 
         let args = DocsSlashCommandArgs::parse(argument);

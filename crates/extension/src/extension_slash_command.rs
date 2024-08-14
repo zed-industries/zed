@@ -79,12 +79,12 @@ impl SlashCommand for ExtensionSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         _workspace: WeakView<Workspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let argument = argument.map(|arg| arg.to_string());
+        let arguments = arguments.to_owned();
         let output = cx.background_executor().spawn(async move {
             self.extension
                 .call({
@@ -97,12 +97,7 @@ impl SlashCommand for ExtensionSlashCommand {
                                 None
                             };
                             let output = extension
-                                .call_run_slash_command(
-                                    store,
-                                    &this.command,
-                                    argument.as_deref(),
-                                    resource,
-                                )
+                                .call_run_slash_command(store, &this.command, &arguments, resource)
                                 .await?
                                 .map_err(|e| anyhow!("{}", e))?;
 

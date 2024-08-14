@@ -82,14 +82,14 @@ impl SlashCommand for TabsSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let tab_items_search = tab_items_for_query(
             Some(workspace),
-            argument.map(ToOwned::to_owned).unwrap_or_default(),
+            arguments.first().cloned().unwrap_or_default(),
             Arc::new(AtomicBool::new(false)),
             true,
             cx,

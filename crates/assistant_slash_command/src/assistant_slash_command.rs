@@ -42,7 +42,7 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn requires_argument(&self) -> bool;
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         // TODO: We're just using the `LspAdapterDelegate` here because that is
         // what the extension API is already expecting.

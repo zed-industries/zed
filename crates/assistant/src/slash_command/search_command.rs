@@ -59,7 +59,7 @@ impl SlashCommand for SearchSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -67,7 +67,7 @@ impl SlashCommand for SearchSlashCommand {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
-        let Some(argument) = argument else {
+        let Some(argument) = arguments.first() else {
             return Task::ready(Err(anyhow::anyhow!("missing search query")));
         };
 

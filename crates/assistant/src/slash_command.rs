@@ -41,8 +41,8 @@ pub(crate) struct SlashCommandCompletionProvider {
 pub(crate) struct SlashCommandLine {
     /// The range within the line containing the command name.
     pub name: Range<usize>,
-    /// The range within the line containing the command argument.
-    pub argument: Option<Range<usize>>,
+    /// Ranges within the line containing the command arguments.
+    pub arguments: Vec<Range<usize>>,
 }
 
 impl SlashCommandCompletionProvider {
@@ -115,7 +115,7 @@ impl SlashCommandCompletionProvider {
                                                         editor.run_command(
                                                             command_range.clone(),
                                                             &command_name,
-                                                            None,
+                                                            &[],
                                                             true,
                                                             workspace.clone(),
                                                             cx,
@@ -183,12 +183,13 @@ impl SlashCommandCompletionProvider {
                                         let command_argument = command_argument.new_text.clone();
                                         move |intent: CompletionIntent, cx: &mut WindowContext| {
                                             if intent.is_complete() {
+                                                let command_argument = command_argument.clone();
                                                 editor
                                                     .update(cx, |editor, cx| {
                                                         editor.run_command(
                                                             command_range.clone(),
                                                             &command_name,
-                                                            Some(&command_argument),
+                                                            &[command_argument],
                                                             true,
                                                             workspace.clone(),
                                                             cx,
@@ -222,8 +223,7 @@ impl SlashCommandCompletionProvider {
                     .collect())
             })
         } else {
-            cx.background_executor()
-                .spawn(async move { Ok(Vec::new()) })
+            Task::ready(Ok(Vec::new()))
         }
     }
 }
@@ -247,23 +247,24 @@ impl CompletionProvider for SlashCommandCompletionProvider {
                 let command_range_start = Point::new(position.row, call.name.start as u32 - 1);
                 let command_range_end = Point::new(
                     position.row,
-                    call.argument.as_ref().map_or(call.name.end, |arg| arg.end) as u32,
+                    call.arguments.last().map_or(call.name.end, |arg| arg.end) as u32,
                 );
                 let command_range = buffer.anchor_after(command_range_start)
                     ..buffer.anchor_after(command_range_end);
 
                 let name = line[call.name.clone()].to_string();
-
-                Some(if let Some(argument) = call.argument {
+                let (argument, argument_range) = if let Some(argument) = call.arguments.last() {
                     let start =
                         buffer.anchor_after(Point::new(position.row, argument.start as u32));
                     let argument = line[argument.clone()].to_string();
-                    (name, Some(argument), command_range, start..buffer_position)
+                    (Some(argument), start..buffer_position)
                 } else {
                     let start =
                         buffer.anchor_after(Point::new(position.row, call.name.start as u32));
-                    (name, None, command_range, start..buffer_position)
-                })
+                    (None, start..buffer_position)
+                };
+
+                Some((name, argument, command_range, argument_range))
             })
         else {
             return Task::ready(Ok(Vec::new()));
@@ -325,16 +326,23 @@ impl SlashCommandLine {
             if let Some(call) = &mut call {
                 // The command arguments start at the first non-whitespace character
                 // after the command name, and continue until the end of the line.
-                if let Some(argument) = &mut call.argument {
-                    if (*argument).is_empty() && c.is_whitespace() {
-                        argument.start = next_ix;
+                if let Some(argument) = call.arguments.last_mut() {
+                    if c.is_whitespace() {
+                        if (*argument).is_empty() {
+                            argument.start = next_ix;
+                            argument.end = next_ix;
+                        } else {
+                            argument.end = next_ix;
+                            call.arguments.push(next_ix..next_ix);
+                        }
+                    } else {
+                        argument.end = next_ix;
                     }
-                    argument.end = next_ix;
                 }
                 // The command name ends at the first whitespace character.
                 else if !call.name.is_empty() {
                     if c.is_whitespace() {
-                        call.argument = Some(next_ix..next_ix);
+                        call.arguments = vec![next_ix..next_ix];
                     } else {
                         call.name.end = next_ix;
                     }
@@ -350,7 +358,7 @@ impl SlashCommandLine {
             else if c == '/' {
                 call = Some(SlashCommandLine {
                     name: next_ix..next_ix,
-                    argument: None,
+                    arguments: Vec::new(),
                 });
             }
             // The line can't contain anything before the slash except for whitespace.

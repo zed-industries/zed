@@ -168,7 +168,7 @@ impl SlashCommand for FileSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -177,7 +177,7 @@ impl SlashCommand for FileSlashCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let Some(argument) = argument else {
+        let Some(argument) = arguments.first() else {
             return Task::ready(Err(anyhow!("missing path")));
         };
 

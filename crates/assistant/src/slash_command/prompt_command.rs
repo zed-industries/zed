@@ -53,12 +53,12 @@ impl SlashCommand for PromptSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        title: Option<&str>,
+        arguments: &[String],
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let Some(title) = title else {
+        let Some(title) = arguments.first() else {
             return Task::ready(Err(anyhow!("missing prompt name")));
         };
 
