@@ -7,18 +7,16 @@ This is under active development and subject to change. Please download [Zed Pre
 ## Prompts
 
 - `/default` inserts your default system prompts
-- `/prompt` inserts a prompt from your Promp Library
+- `/prompt` inserts a prompt from your Prompt Library
 
 ## Workspace
 
-- `/tabs` insert the contents of an open tab
-- `/file` insert the contents of a file or directory in the workspace
-- `/project` insert project metadata (Summary of `Cargo.toml` for Rust, `package.json` for Node.js, etc.)
-- `/terminal` insert the contents of a Zed terminal
-- `/symbols` insert symbols from the active tab
+- `/tab` insert the contents of an open tab
+- `/file` insert the contents of a file or directory
+- `/symbols` insert symbols for active tab
 - `/diagnostics` insert errors from the diagnostics panel
-- `/diagnostics --warnings` insert errors and warnings from the diagnostic panel
-- `/symbols` insert symbols tree for the active tab (e.g. functions, classes, etc.)
+- `/diagnostics --include-warnings` insert errors and warnings from the diagnostic panel
+- `/terminal` insert the contents of a Zed terminal
 
 ## Workflow
 
@@ -27,11 +25,4 @@ This is under active development and subject to change. Please download [Zed Pre
 ## Other Commands
 
 - `/now` inserts the current date and time, e.g. `Today is Tue, 20 Aug 2024 13:05:06 -0400.`
-
-<!--
-TBD: Document additional slash commands
-- `/docs` inserts documentation
-- `/search` insert semantic search results
--->
-
-## Quote Selection `cmd + >`
+- `cmd + >` inserts the active editor buffer selection as a quoted code block
