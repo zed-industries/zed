@@ -252,7 +252,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         _description: String,
         _schema: serde_json::Value,
         _cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         future::ready(Err(anyhow!("not implemented"))).boxed()
     }
 }

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
@@ -243,6 +243,7 @@ impl OpenAiLanguageModel {
         async move { Ok(future.await?.boxed()) }.boxed()
     }
 }
+
 impl LanguageModel for OpenAiLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -293,55 +294,32 @@ impl LanguageModel for OpenAiLanguageModel {
         tool_description: String,
         schema: serde_json::Value,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
         let mut request = request.into_open_ai(self.model.id().into());
-        let mut function = FunctionDefinition {
-            name: tool_name.clone(),
-            description: None,
-            parameters: None,
-        };
-        let func = ToolDefinition::Function {
-            function: function.clone(),
-        };
-        request.tool_choice = Some(ToolChoice::Other(func.clone()));
-        // Fill in description and params separately, as they're not needed for tool_choice field.
-        function.description = Some(tool_description);
-        function.parameters = Some(schema);
-        request.tools = vec![ToolDefinition::Function { function }];
+        request.tool_choice = Some(ToolChoice::Other(ToolDefinition::Function {
+            function: FunctionDefinition {
+                name: tool_name.clone(),
+                description: None,
+                parameters: None,
+            },
+        }));
+        request.tools = vec![ToolDefinition::Function {
+            function: FunctionDefinition {
+                name: tool_name.clone(),
+                description: Some(tool_description),
+                parameters: Some(schema),
+            },
+        }];
+
         let response = self.stream_completion(request, cx);
         self.request_limiter
             .run(async move {
-                let mut response = response.await?;
-
-                // Call arguments are gonna be streamed in over multiple chunks.
-                let mut load_state = None;
-                while let Some(Ok(part)) = response.next().await {
-                    for choice in part.choices {
-                        let Some(tool_calls) = choice.delta.tool_calls else {
-                            continue;
-                        };
-
-                        for call in tool_calls {
-                            if let Some(func) = call.function {
-                                if func.name.as_deref() == Some(tool_name.as_str()) {
-                                    load_state = Some((String::default(), call.index));
-                                }
-                                if let Some((arguments, (output, index))) =
-                                    func.arguments.zip(load_state.as_mut())
-                                {
-                                    if call.index == *index {
-                                        output.push_str(&arguments);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if let Some((arguments, _)) = load_state {
-                    return Ok(serde_json::from_str(&arguments)?);
-                } else {
-                    bail!("tool not used");
-                }
+                let response = response.await?;
+                Ok(
+                    open_ai::extract_tool_args_from_events(tool_name, Box::pin(response))
+                        .await?
+                        .boxed(),
+                )
             })
             .boxed()
     }
