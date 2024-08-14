@@ -367,6 +367,7 @@ dependencies = [
  "fs",
  "futures 0.3.30",
  "fuzzy",
+ "globset",
  "gpui",
  "handlebars",
  "heed",

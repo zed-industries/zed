@@ -1,7 +1,8 @@
 use super::{diagnostics_command::write_single_file_diagnostics, SlashCommand, SlashCommandOutput};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use fuzzy::PathMatch;
+use globset::{Glob, GlobSetBuilder};
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Project};
@@ -12,7 +13,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use ui::prelude::*;
-use util::{paths::PathMatcher, ResultExt};
+use util::ResultExt;
 use workspace::Workspace;
 
 pub(crate) struct FileSlashCommand;
@@ -221,17 +222,7 @@ fn collect_files(
     glob_inputs: &[String],
     cx: &mut AppContext,
 ) -> Task<Result<(String, Vec<(Range<usize>, PathBuf, EntryType)>)>> {
-    let Ok(matchers) = glob_inputs
-        .into_iter()
-        .map(|glob_input| {
-            PathMatcher::new(&[glob_input.to_owned()])
-                .with_context(|| format!("invalid path {glob_input}"))
-        })
-        .collect::<anyhow::Result<Vec<PathMatcher>>>()
-    else {
-        return Task::ready(Err(anyhow!("invalid path")));
-    };
-
+    let glob_inputs = glob_inputs.to_vec();
     let project_handle = project.downgrade();
     let snapshots = project
         .read(cx)
@@ -239,6 +230,12 @@ fn collect_files(
         .map(|worktree| worktree.read(cx).snapshot())
         .collect::<Vec<_>>();
     cx.spawn(|mut cx| async move {
+        let mut globset = GlobSetBuilder::new();
+        for input in glob_inputs {
+            globset.add(Glob::new(&input)?);
+        }
+        let globset = globset.build()?;
+
         let mut text = String::new();
         let mut ranges = Vec::new();
         for snapshot in snapshots {
@@ -246,14 +243,13 @@ fn collect_files(
             let mut directory_stack: Vec<(Arc<Path>, String, usize)> = Vec::new();
             let mut folded_directory_names_stack = Vec::new();
             let mut is_top_level_directory = true;
+
             for entry in snapshot.entries(false, 0) {
                 let mut path_including_worktree_name = PathBuf::new();
                 path_including_worktree_name.push(snapshot.root_name());
                 path_including_worktree_name.push(&entry.path);
-                if !matchers
-                    .iter()
-                    .any(|matcher| matcher.is_match(&path_including_worktree_name))
-                {
+
+                if !globset.is_match(&path_including_worktree_name) {
                     continue;
                 }
 

@@ -39,6 +39,7 @@ feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
+globset.workspace = true
 gpui.workspace = true
 handlebars.workspace = true
 heed.workspace = true
