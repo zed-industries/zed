@@ -164,7 +164,7 @@ impl SlashCommand for FileSlashCommand {
                     Some(ArgumentCompletion {
                         label,
                         new_text: text,
-                        run_command: false,
+                        run_command: true,
                     })
                 })
                 .collect())

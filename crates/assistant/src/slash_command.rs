@@ -185,19 +185,21 @@ impl SlashCommandCompletionProvider {
 
                                         let command_range = command_range.clone();
                                         let command_name = command_name.clone();
-                                        move |_: CompletionIntent, cx: &mut WindowContext| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.run_command(
-                                                        command_range.clone(),
-                                                        &command_name,
-                                                        &completed_arguments,
-                                                        true,
-                                                        workspace.clone(),
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
+                                        move |intent: CompletionIntent, cx: &mut WindowContext| {
+                                            if intent.is_complete() {
+                                                editor
+                                                    .update(cx, |editor, cx| {
+                                                        editor.run_command(
+                                                            command_range.clone(),
+                                                            &command_name,
+                                                            &completed_arguments,
+                                                            true,
+                                                            workspace.clone(),
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
                                         }
                                     }) as Arc<_>
                                 })
