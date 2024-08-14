@@ -150,6 +150,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
                     label: completion.clone().into(),
                     new_text: completion,
                     run_command: true,
+                    replace_previous_arguments: false,
                 })
                 .collect())
         })

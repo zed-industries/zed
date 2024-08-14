@@ -182,6 +182,7 @@ impl SlashCommand for DocsSlashCommand {
                         label: item.clone().into(),
                         new_text: item.to_string(),
                         run_command: true,
+                        replace_previous_arguments: false,
                     })
                     .collect()
             }
@@ -194,6 +195,7 @@ impl SlashCommand for DocsSlashCommand {
                             label: "No available docs providers.".into(),
                             new_text: String::new(),
                             run_command: false,
+                            replace_previous_arguments: false,
                         }]);
                     }
 
@@ -203,6 +205,7 @@ impl SlashCommand for DocsSlashCommand {
                             label: provider.to_string().into(),
                             new_text: provider.to_string(),
                             run_command: false,
+                            replace_previous_arguments: false,
                         })
                         .collect())
                 }
@@ -234,6 +237,7 @@ impl SlashCommand for DocsSlashCommand {
                             label: format!("{package_name} (unindexed)").into(),
                             new_text: format!("{package_name}"),
                             run_command: true,
+                            replace_previous_arguments: false,
                         })
                         .collect::<Vec<_>>();
                     items.extend(workspace_crate_completions);
@@ -247,6 +251,7 @@ impl SlashCommand for DocsSlashCommand {
                             .into(),
                             new_text: provider.to_string(),
                             run_command: false,
+                            replace_previous_arguments: false,
                         }]);
                     }
 
