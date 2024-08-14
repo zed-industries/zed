@@ -1,5 +1,5 @@
 use super::{diagnostics_command::write_single_file_diagnostics, SlashCommand, SlashCommandOutput};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
@@ -164,7 +164,7 @@ impl SlashCommand for FileSlashCommand {
                     Some(ArgumentCompletion {
                         label,
                         new_text: text,
-                        run_command: true,
+                        run_command: false,
                     })
                 })
                 .collect())
@@ -182,11 +182,11 @@ impl SlashCommand for FileSlashCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let Some(argument) = arguments.first() else {
+        if arguments.is_empty() {
             return Task::ready(Err(anyhow!("missing path")));
         };
 
-        let task = collect_files(workspace.read(cx).project().clone(), argument, cx);
+        let task = collect_files(workspace.read(cx).project().clone(), arguments, cx);
 
         cx.foreground_executor().spawn(async move {
             let (text, ranges) = task.await?;
@@ -217,10 +217,17 @@ enum EntryType {
 
 fn collect_files(
     project: Model<Project>,
-    glob_input: &str,
+    glob_inputs: &[String],
     cx: &mut AppContext,
 ) -> Task<Result<(String, Vec<(Range<usize>, PathBuf, EntryType)>)>> {
-    let Ok(matcher) = PathMatcher::new(&[glob_input.to_owned()]) else {
+    let Ok(matchers) = glob_inputs
+        .into_iter()
+        .map(|glob_input| {
+            PathMatcher::new(&[glob_input.to_owned()])
+                .with_context(|| format!("invalid path {glob_input}"))
+        })
+        .collect::<anyhow::Result<Vec<PathMatcher>>>()
+    else {
         return Task::ready(Err(anyhow!("invalid path")));
     };
 
@@ -242,7 +249,10 @@ fn collect_files(
                 let mut path_including_worktree_name = PathBuf::new();
                 path_including_worktree_name.push(snapshot.root_name());
                 path_including_worktree_name.push(&entry.path);
-                if !matcher.is_match(&path_including_worktree_name) {
+                if !matchers
+                    .iter()
+                    .any(|matcher| matcher.is_match(&path_including_worktree_name))
+                {
                     continue;
                 }
 
