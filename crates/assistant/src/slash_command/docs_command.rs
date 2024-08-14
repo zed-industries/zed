@@ -180,7 +180,7 @@ impl SlashCommand for DocsSlashCommand {
                     .into_iter()
                     .map(|item| ArgumentCompletion {
                         label: item.clone().into(),
-                        new_text: format!("{item}"),
+                        new_text: item.to_string(),
                         run_command: true,
                     })
                     .collect()
