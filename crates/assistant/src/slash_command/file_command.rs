@@ -29,6 +29,7 @@ impl FileSlashCommand {
             let workspace = workspace.read(cx);
             let project = workspace.project().read(cx);
             let entries = workspace.recent_navigation_history(Some(10), cx);
+
             let entries = entries
                 .into_iter()
                 .map(|entries| (entries.0, false))
@@ -73,6 +74,7 @@ impl FileSlashCommand {
                 .into_iter()
                 .map(|worktree| {
                     let worktree = worktree.read(cx);
+
                     PathMatchCandidateSet {
                         snapshot: worktree.snapshot(),
                         include_ignored: worktree

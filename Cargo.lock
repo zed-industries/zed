@@ -8085,7 +8085,6 @@ dependencies = [
  "tempfile",
  "terminal",
  "text",
- "unicase",
  "unindent",
  "util",
  "which 6.0.2",
