@@ -155,6 +155,14 @@ impl PickerDelegate for PromptPickerDelegate {
         self.matches.len()
     }
 
+    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+        if self.store.prompt_count() == 0 {
+            "No prompts yet. Click the + above to create one.".into()
+        } else {
+            "No prompts found matching your search.".into()
+        }
+    }
+
     fn selected_index(&self) -> usize {
         self.selected_index
     }
@@ -1340,6 +1348,11 @@ impl PromptStore {
             txn.commit()?;
             Ok(())
         })
+    }
+
+    /// Returns the number of prompts in the store.
+    fn prompt_count(&self) -> usize {
+        self.metadata_cache.read().metadata.len()
     }
 
     fn metadata(&self, id: PromptId) -> Option<PromptMetadata> {
