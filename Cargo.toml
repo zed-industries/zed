@@ -310,7 +310,7 @@ async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "8
 async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
-async-tungstenite = "0.23"
+async-tungstenite = "0.27"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
