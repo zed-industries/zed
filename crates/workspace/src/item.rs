@@ -287,6 +287,10 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
         None
     }
+
+    fn preserve_preview(&self, _cx: &AppContext) -> bool {
+        false
+    }
 }
 
 pub trait SerializableItem: Item {
@@ -427,10 +431,12 @@ pub trait ItemHandle: 'static + Send {
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
     fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings;
+    fn preserve_preview(&self, cx: &AppContext) -> bool;
 }
 
 pub trait WeakItemHandle: Send + Sync {
     fn id(&self) -> EntityId;
+    fn boxed_clone(&self) -> Box<dyn WeakItemHandle>;
     fn upgrade(&self) -> Option<Box<dyn ItemHandle>>;
 }
 
@@ -818,6 +824,10 @@ impl<T: Item> ItemHandle for View<T> {
     ) -> Option<Box<dyn SerializableItemHandle>> {
         SerializableItemRegistry::view_to_serializable_item_handle(self.to_any(), cx)
     }
+
+    fn preserve_preview(&self, cx: &AppContext) -> bool {
+        self.read(cx).preserve_preview(cx)
+    }
 }
 
 impl From<Box<dyn ItemHandle>> for AnyView {
@@ -841,6 +851,10 @@ impl Clone for Box<dyn ItemHandle> {
 impl<T: Item> WeakItemHandle for WeakView<T> {
     fn id(&self) -> EntityId {
         self.entity_id()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn WeakItemHandle> {
+        Box::new(self.clone())
     }
 
     fn upgrade(&self) -> Option<Box<dyn ItemHandle>> {

@@ -170,6 +170,8 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
 }
 
 mod easing {
+    use std::f32::consts::PI;
+
     /// The linear easing function, or delta itself
     pub fn linear(delta: f32) -> f32 {
         delta
@@ -198,6 +200,22 @@ mod easing {
             } else {
                 easing((1.0 - delta) * 2.0)
             }
+        }
+    }
+
+    /// A custom easing function for pulsating alpha that slows down as it approaches 0.1
+    pub fn pulsating_between(min: f32, max: f32) -> impl Fn(f32) -> f32 {
+        let range = max - min;
+
+        move |delta| {
+            // Use a combination of sine and cubic functions for a more natural breathing rhythm
+            let t = (delta * 2.0 * PI).sin();
+            let breath = (t * t * t + t) / 2.0;
+
+            // Map the breath to our desired alpha range
+            let normalized_alpha = (breath + 1.0) / 2.0;
+
+            min + (normalized_alpha * range)
         }
     }
 }

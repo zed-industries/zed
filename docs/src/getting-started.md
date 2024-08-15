@@ -56,7 +56,7 @@ Any time you see instructions that include commands of the form `zed: ...` or `e
 
 ## Configure Zed
 
-Use `⌘` + `,` to open your custom settings to set things like fonts, formatting settings, per-language settings, and more.
+Use `⌘` + `,`, or `ctrl` - `,` to open your custom settings to set things like fonts, formatting settings, per-language settings, and more.
 
 On macOS, you can access the default configuration using the `Zed > Settings > Open Default Settings` menu item. See [Configuring Zed](./configuring-zed.md) for all available settings.
 

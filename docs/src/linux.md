@@ -1,6 +1,6 @@
 # Zed on Linux
 
-For most people we recommend using the script on the [download](/download) page to install Zed:
+For most people we recommend using the script on the [download](https://zed.dev/download) page to install Zed:
 
 ```sh
 curl -f https://zed.dev/install.sh | sh

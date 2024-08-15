@@ -84,6 +84,7 @@ pub struct CustomBlock {
     style: BlockStyle,
     render: Arc<Mutex<RenderBlock>>,
     disposition: BlockDisposition,
+    priority: usize,
 }
 
 pub struct BlockProperties<P> {
@@ -92,6 +93,7 @@ pub struct BlockProperties<P> {
     pub style: BlockStyle,
     pub render: RenderBlock,
     pub disposition: BlockDisposition,
+    pub priority: usize,
 }
 
 impl<P: Debug> Debug for BlockProperties<P> {
@@ -182,6 +184,7 @@ pub(crate) enum BlockType {
 pub(crate) trait BlockLike {
     fn block_type(&self) -> BlockType;
     fn disposition(&self) -> BlockDisposition;
+    fn priority(&self) -> usize;
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -214,6 +217,14 @@ impl BlockLike for Block {
 
     fn disposition(&self) -> BlockDisposition {
         self.disposition()
+    }
+
+    fn priority(&self) -> usize {
+        match self {
+            Block::Custom(block) => block.priority,
+            Block::ExcerptHeader { .. } => usize::MAX,
+            Block::ExcerptFooter { .. } => 0,
+        }
     }
 }
 
@@ -660,7 +671,10 @@ impl BlockMap {
                         (BlockType::Header, BlockType::Header) => Ordering::Equal,
                         (BlockType::Header, _) => Ordering::Less,
                         (_, BlockType::Header) => Ordering::Greater,
-                        (BlockType::Custom(a_id), BlockType::Custom(b_id)) => a_id.cmp(&b_id),
+                        (BlockType::Custom(a_id), BlockType::Custom(b_id)) => block_b
+                            .priority()
+                            .cmp(&block_a.priority())
+                            .then_with(|| a_id.cmp(&b_id)),
                     })
             })
         });
@@ -802,6 +816,7 @@ impl<'a> BlockMapWriter<'a> {
                 render: Arc::new(Mutex::new(block.render)),
                 disposition: block.disposition,
                 style: block.style,
+                priority: block.priority,
             });
             self.0.custom_blocks.insert(block_ix, new_block.clone());
             self.0.custom_blocks_by_id.insert(id, new_block);
@@ -832,6 +847,7 @@ impl<'a> BlockMapWriter<'a> {
                         style: block.style,
                         render: block.render.clone(),
                         disposition: block.disposition,
+                        priority: block.priority,
                     };
                     let new_block = Arc::new(new_block);
                     *block = new_block.clone();
@@ -1463,6 +1479,7 @@ mod tests {
                 height: 1,
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1470,6 +1487,7 @@ mod tests {
                 height: 2,
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1477,6 +1495,7 @@ mod tests {
                 height: 3,
                 disposition: BlockDisposition::Below,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
         ]);
 
@@ -1716,6 +1735,7 @@ mod tests {
                 height: 1,
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1723,6 +1743,7 @@ mod tests {
                 height: 2,
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1730,6 +1751,7 @@ mod tests {
                 height: 3,
                 disposition: BlockDisposition::Below,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
         ]);
 
@@ -1819,6 +1841,7 @@ mod tests {
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
                 height: 1,
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1826,6 +1849,7 @@ mod tests {
                 disposition: BlockDisposition::Below,
                 render: Box::new(|_| div().into_any()),
                 height: 1,
+                priority: 0,
             },
         ]);
 
@@ -1924,6 +1948,7 @@ mod tests {
                                 height,
                                 disposition,
                                 render: Box::new(|_| div().into_any()),
+                                priority: 0,
                             }
                         })
                         .collect::<Vec<_>>();
@@ -1944,6 +1969,7 @@ mod tests {
                             style: props.style,
                             render: Box::new(|_| div().into_any()),
                             disposition: props.disposition,
+                            priority: 0,
                         }));
                     for (block_id, props) in block_ids.into_iter().zip(block_properties) {
                         custom_blocks.push((block_id, props));
@@ -2014,6 +2040,7 @@ mod tests {
                         disposition: block.disposition,
                         id: *id,
                         height: block.height,
+                        priority: block.priority,
                     },
                 )
             }));
@@ -2235,6 +2262,7 @@ mod tests {
                 disposition: BlockDisposition,
                 id: CustomBlockId,
                 height: u32,
+                priority: usize,
             },
         }
 
@@ -2249,6 +2277,14 @@ mod tests {
 
             fn disposition(&self) -> BlockDisposition {
                 self.disposition()
+            }
+
+            fn priority(&self) -> usize {
+                match self {
+                    ExpectedBlock::Custom { priority, .. } => *priority,
+                    ExpectedBlock::ExcerptHeader { .. } => usize::MAX,
+                    ExpectedBlock::ExcerptFooter { .. } => 0,
+                }
             }
         }
 
@@ -2277,6 +2313,7 @@ mod tests {
                         id: block.id,
                         disposition: block.disposition,
                         height: block.height,
+                        priority: block.priority,
                     },
                     Block::ExcerptHeader {
                         height,

@@ -700,7 +700,7 @@ impl DebugAdapterClient {
             self.request::<TerminateThreads>(TerminateThreadsArguments { thread_ids })
                 .await
         } else {
-            self.disconnect(None, Some(true), None).await
+            self.terminate().await
         }
     }
 }

@@ -1,20 +1,26 @@
 mod ids;
 mod queries;
+mod seed;
 mod tables;
 
 #[cfg(test)]
 mod tests;
 
+use collections::HashMap;
 pub use ids::*;
+use rpc::LanguageModelProvider;
+pub use seed::*;
 pub use tables::*;
 
 #[cfg(test)]
 pub use tests::TestLlmDb;
+use usage_measure::UsageMeasure;
 
 use std::future::Future;
 use std::sync::Arc;
 
 use anyhow::anyhow;
+pub use queries::usages::ActiveUserCount;
 use sea_orm::prelude::*;
 pub use sea_orm::ConnectOptions;
 use sea_orm::{
@@ -31,6 +37,9 @@ pub struct LlmDatabase {
     pool: DatabaseConnection,
     #[allow(unused)]
     executor: Executor,
+    provider_ids: HashMap<LanguageModelProvider, ProviderId>,
+    models: HashMap<(LanguageModelProvider, String), model::Model>,
+    usage_measure_ids: HashMap<UsageMeasure, UsageMeasureId>,
     #[cfg(test)]
     runtime: Option<tokio::runtime::Runtime>,
 }
@@ -43,9 +52,26 @@ impl LlmDatabase {
             options: options.clone(),
             pool: sea_orm::Database::connect(options).await?,
             executor,
+            provider_ids: HashMap::default(),
+            models: HashMap::default(),
+            usage_measure_ids: HashMap::default(),
             #[cfg(test)]
             runtime: None,
         })
+    }
+
+    pub async fn initialize(&mut self) -> Result<()> {
+        self.initialize_providers().await?;
+        self.initialize_models().await?;
+        self.initialize_usage_measures().await?;
+        Ok(())
+    }
+
+    pub fn model(&self, provider: LanguageModelProvider, name: &str) -> Result<&model::Model> {
+        Ok(self
+            .models
+            .get(&(provider, name.to_string()))
+            .ok_or_else(|| anyhow!("unknown model {provider:?}:{name}"))?)
     }
 
     pub fn options(&self) -> &ConnectOptions {
