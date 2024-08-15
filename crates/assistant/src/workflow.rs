@@ -93,6 +93,12 @@ impl WorkflowStepResolution {
                     return Err(anyhow!("no model selected"));
                 };
 
+                this.update(&mut cx, |this, cx| {
+                    this.output.clear();
+                    this.result = None;
+                    cx.notify();
+                })?;
+
                 let mut prompt = prompt_builder.generate_step_resolution_prompt()?;
                 prompt.push_str(&step_text);
                 request.messages.push(LanguageModelRequestMessage {
