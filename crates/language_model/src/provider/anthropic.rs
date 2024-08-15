@@ -7,7 +7,7 @@ use anthropic::AnthropicError;
 use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryStreamExt as _};
 use gpui::{
     AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
     View, WhiteSpace,
@@ -264,29 +264,6 @@ pub fn count_anthropic_tokens(
 }
 
 impl AnthropicModel {
-    fn request_completion(
-        &self,
-        request: anthropic::Request,
-        cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<anthropic::Response>> {
-        let http_client = self.http_client.clone();
-
-        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
-            (state.api_key.clone(), settings.api_url.clone())
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            anthropic::complete(http_client.as_ref(), &api_url, &api_key, request)
-                .await
-                .context("failed to retrieve completion")
-        }
-        .boxed()
-    }
-
     fn stream_completion(
         &self,
         request: anthropic::Request,
@@ -381,7 +358,7 @@ impl LanguageModel for AnthropicModel {
         tool_description: String,
         input_schema: serde_json::Value,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let mut request = request.into_anthropic(self.model.tool_model_id().into());
         request.tool_choice = Some(anthropic::ToolChoice::Tool {
             name: tool_name.clone(),
@@ -392,25 +369,16 @@ impl LanguageModel for AnthropicModel {
             input_schema,
         }];
 
-        let response = self.request_completion(request, cx);
+        let response = self.stream_completion(request, cx);
         self.request_limiter
             .run(async move {
                 let response = response.await?;
-                response
-                    .content
-                    .into_iter()
-                    .find_map(|content| {
-                        if let anthropic::Content::ToolUse { name, input, .. } = content {
-                            if name == tool_name {
-                                Some(input)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
-                    .context("tool not used")
+                Ok(anthropic::extract_tool_args_from_events(
+                    tool_name,
+                    Box::pin(response.map_err(|e| anyhow!(e))),
+                )
+                .await?
+                .boxed())
             })
             .boxed()
     }

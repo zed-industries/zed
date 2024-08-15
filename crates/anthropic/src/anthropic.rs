@@ -5,8 +5,8 @@ use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, S
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 use std::time::Duration;
+use std::{pin::Pin, str::FromStr};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
 
@@ -239,6 +239,50 @@ pub fn extract_text_from_events(
             Err(error) => Some(Err(error)),
         }
     })
+}
+
+pub async fn extract_tool_args_from_events(
+    tool_name: String,
+    mut events: Pin<Box<dyn Send + Stream<Item = Result<Event>>>>,
+) -> Result<impl Send + Stream<Item = Result<String>>> {
+    let mut tool_use_index = None;
+    while let Some(event) = events.next().await {
+        if let Event::ContentBlockStart {
+            index,
+            content_block,
+        } = event?
+        {
+            if let Content::ToolUse { name, .. } = content_block {
+                if name == tool_name {
+                    tool_use_index = Some(index);
+                    break;
+                }
+            }
+        }
+    }
+
+    let Some(tool_use_index) = tool_use_index else {
+        return Err(anyhow!("tool not used"));
+    };
+
+    Ok(events.filter_map(move |event| {
+        let result = match event {
+            Err(error) => Some(Err(error)),
+            Ok(Event::ContentBlockDelta { index, delta }) => match delta {
+                ContentDelta::TextDelta { .. } => None,
+                ContentDelta::InputJsonDelta { partial_json } => {
+                    if index == tool_use_index {
+                        Some(Ok(partial_json))
+                    } else {
+                        None
+                    }
+                }
+            },
+            _ => None,
+        };
+
+        async move { result }
+    }))
 }
 
 #[derive(Debug, Serialize, Deserialize)]

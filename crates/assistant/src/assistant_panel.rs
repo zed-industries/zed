@@ -1469,7 +1469,6 @@ impl WorkflowStepStatus {
                     |label, delta| label.alpha(delta),
                 )
                 .into_any_element(),
-
             WorkflowStepStatus::Error(error) => {
                 let error = error.clone();
                 h_flex()
@@ -1504,9 +1503,8 @@ impl WorkflowStepStatus {
                     )
                     .into_any()
             }
-
             WorkflowStepStatus::Idle => Button::new(("transform", id), "Transform")
-                .icon(IconName::Sparkle)
+                .icon(IconName::SparkleAlt)
                 .icon_position(IconPosition::Start)
                 .icon_size(IconSize::Small)
                 .label_size(LabelSize::Small)
@@ -1559,7 +1557,8 @@ impl WorkflowStepStatus {
                 .child(
                     IconButton::new(("stop-transformation", id), IconName::Stop)
                         .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Tinted(TintColor::Negative))
+                        .icon_color(Color::Error)
+                        .style(ButtonStyle::Subtle)
                         .tooltip({
                             let step_range = step_range.clone();
                             let editor = editor.clone();
@@ -1885,9 +1884,8 @@ impl ContextEditor {
         range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.context.update(cx, |context, cx| {
-            context.resolve_workflow_step(range, self.project.clone(), cx)
-        });
+        self.context
+            .update(cx, |context, cx| context.resolve_workflow_step(range, cx));
     }
 
     fn stop_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
@@ -2011,19 +2009,16 @@ impl ContextEditor {
                     .text_for_range(step.tagged_range.clone())
                     .collect::<String>()
             ));
-            match &step.status {
-                crate::WorkflowStepStatus::Resolved(ResolvedWorkflowStep {
-                    title,
-                    suggestions,
-                }) => {
+            match &step.resolution.read(cx).result {
+                Some(Ok(ResolvedWorkflowStep { title, suggestions })) => {
                     output.push_str("Resolution:\n");
                     output.push_str(&format!("  {:?}\n", title));
                     output.push_str(&format!("  {:?}\n", suggestions));
                 }
-                crate::WorkflowStepStatus::Pending(_) => {
+                None => {
                     output.push_str("Resolution: Pending\n");
                 }
-                crate::WorkflowStepStatus::Error(error) => {
+                Some(Err(error)) => {
                     writeln!(output, "Resolution: Error\n{:?}", error).unwrap();
                 }
             }
@@ -2486,7 +2481,7 @@ impl ContextEditor {
             return;
         };
 
-        let resolved_step = step.status.into_resolved();
+        let resolved_step = step.resolution.read(cx).result.clone();
         if let Some(existing_step) = self.workflow_steps.get_mut(&step_range) {
             existing_step.resolved_step = resolved_step;
             if let Some(debug) = self.debug_inspector.as_mut() {
@@ -2568,9 +2563,11 @@ impl ContextEditor {
                                         .child(
                                             h_flex()
                                                 .w_full()
+                                                .h_8()
                                                 .border_b_1()
                                                 .border_color(border_color)
-                                                .pb_1p5()
+                                                .pb_2()
+                                                .items_center()
                                                 .justify_between()
                                                 .gap_2()
                                                 .child(h_flex().justify_start().gap_2().child(step_label).children(
@@ -2608,7 +2605,6 @@ impl ContextEditor {
                                                                 }
                                                             })
                                                     })
-
                                                 ))
                                                 .children(current_status.as_ref().map(|status| {
                                                     h_flex().w_full().justify_end().child(
