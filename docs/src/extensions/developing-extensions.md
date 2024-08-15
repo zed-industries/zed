@@ -6,6 +6,7 @@ Extensions can add the following capabilities to Zed:
 
 - [Languages](./languages.md)
 - [Themes](./themes.md)
+- [Slash Commands](./slash-commands.md)
 
 ## Directory Structure of a Zed Extension
 
@@ -21,10 +22,6 @@ authors = ["Your Name <you@example.com>"]
 description = "My cool extension"
 repository = "https://github.com/your-name/my-zed-extension"
 ```
-
-<!--
-TBD: Document `slash_commands`, `indexed_docs_providers` (see: extensions/gleam/extension.toml)
--->
 
 In addition to this, there are several other optional files and directories that can be used to add functionality to a Zed extension. An example directory structure of an extension that provides all capabilities is as follows:
 
