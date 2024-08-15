@@ -714,10 +714,11 @@ impl EditorElement {
                 position_map.point_for_position(text_hitbox.bounds, event.position);
             let position = point_for_position.previous_valid;
             editor.gutter_breakpoint_indicator = Some(position);
-            cx.notify();
         } else {
             editor.gutter_breakpoint_indicator = None;
         }
+
+        cx.notify();
 
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_hitbox.is_hovered(cx) {

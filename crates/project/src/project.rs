@@ -1396,8 +1396,10 @@ impl Project {
                     .entry(buffer_id)
                     .or_default()
                     .insert(Breakpoint {
-                        position: snapshot
-                            .anchor_at(Point::new(serialized_bp.position - 1, 0), Bias::Left),
+                        position: snapshot.anchor_at(
+                            Point::new(serialized_bp.position.saturating_sub(1), 0),
+                            Bias::Left,
+                        ),
                     }); // Serialized breakpoints start at index one so we shift when converting to open breakpoints
             }
         }
@@ -1449,14 +1451,7 @@ impl Project {
     /// to send breakpoints from closed files because those breakpoints can't change
     /// without opening a buffer.
     pub fn update_file_breakpoints(&self, buffer_id: BufferId, cx: &ModelContext<Self>) {
-        let clients = self
-            .debug_adapters
-            .iter()
-            .filter_map(|(_, state)| match state {
-                DebugAdapterClientState::Starting(_) => None,
-                DebugAdapterClientState::Running(client) => Some(client.clone()),
-            })
-            .collect::<Vec<_>>();
+        let clients = self.running_debug_adapters().collect::<Vec<_>>();
 
         if clients.is_empty() {
             return;
@@ -2376,10 +2371,12 @@ impl Project {
                     let buffer_breakpoints = write_guard.entry(buffer_id).or_default();
 
                     for serialized_bp in serialized_breakpoints {
-                        // serialized breakpoints are start at index one and need to converted
+                        // serialized breakpoints start at index one and need to converted
                         // to index zero in order to display/work properly with open breakpoints
-                        let position = snapshot
-                            .anchor_at(Point::new(serialized_bp.position - 1, 0), Bias::Left);
+                        let position = snapshot.anchor_at(
+                            Point::new(serialized_bp.position.saturating_sub(1), 0),
+                            Bias::Left,
+                        );
 
                         buffer_breakpoints.insert(Breakpoint { position });
                     }

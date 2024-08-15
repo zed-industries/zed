@@ -1780,7 +1780,7 @@ impl Editor {
         };
 
         let opened_breakpoints = if let Some(project) = project.as_ref() {
-            project.update(cx, |project, _cx| Some(project.open_breakpoints.clone()))
+            project.read_with(cx, |project, _cx| Some(project.open_breakpoints.clone()))
         } else {
             None
         };
@@ -5247,7 +5247,7 @@ impl Editor {
             .icon_color(color)
             .on_click(cx.listener(move |editor, _e, cx| {
                 editor.focus(cx);
-                editor.toggle_breakpoint_at_anchor(position, cx) //TODO handle folded
+                editor.toggle_breakpoint_at_anchor(position, cx)
             }))
     }
 
