@@ -313,11 +313,12 @@ fn register_context_server_handlers(cx: &mut AppContext) {
             }
             context_servers::manager::Event::ServerStopped { server_id } => {
                 let slash_command_registry = SlashCommandRegistry::global(cx);
-                let cs_registry = context_server_command::ContextServerRegistry::global(cx);
-                if let Some(commands) = cs_registry.get_commands(server_id) {
+                let context_server_registry =
+                    context_server_command::ContextServerRegistry::global(cx);
+                if let Some(commands) = context_server_registry.get_commands(server_id) {
                     for command_name in commands {
-                        slash_command_registry.deregister_command(&command_name);
-                        cs_registry.deregister_command(&server_id, &command_name);
+                        slash_command_registry.unregister_command_by_name(&command_name);
+                        context_server_registry.unregister_command(&server_id, &command_name);
                     }
                 }
             }

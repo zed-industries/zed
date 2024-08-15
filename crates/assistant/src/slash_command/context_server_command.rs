@@ -11,10 +11,9 @@ use language::LspAdapterDelegate;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::RwLock;
 use ui::{IconName, SharedString};
 use workspace::Workspace;
-
-use std::sync::RwLock;
 
 struct GlobalContextServerRegistry(Arc<ContextServerRegistry>);
 
@@ -42,7 +41,7 @@ impl ContextServerRegistry {
         registry.entry(server_id).or_default().push(command_name);
     }
 
-    pub fn deregister_command(&self, server_id: &str, command_name: &str) {
+    pub fn unregister_command(&self, server_id: &str, command_name: &str) {
         let mut registry = self.registry.write().unwrap();
         if let Some(commands) = registry.get_mut(server_id) {
             commands.retain(|name| name != command_name);
@@ -54,6 +53,7 @@ impl ContextServerRegistry {
         registry.get(server_id).cloned()
     }
 }
+
 pub struct ContextServerSlashCommand {
     server_id: String,
     prompt: PromptInfo,
@@ -90,24 +90,24 @@ impl SlashCommand for ContextServerSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let server_id = self.server_id.clone();
         let prompt_name = self.prompt.name.clone();
-        let argument = argument.map(String::from);
+        let argument = arguments.first().cloned();
 
         let manager = ContextServerManager::global(cx);
         let manager = manager.read(cx);
