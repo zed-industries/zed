@@ -551,7 +551,7 @@ impl TerminalElement {
         }
     }
 
-    fn rem_size(&self, cx: &WindowContext) -> Option<Pixels> {
+    pub fn rem_size(cx: &WindowContext) -> Option<Pixels> {
         let settings = ThemeSettings::get_global(cx).clone();
         let buffer_font_size = settings.buffer_font_size(cx);
         let rem_size_scale = {
@@ -605,7 +605,7 @@ impl Element for TerminalElement {
         _: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Self::PrepaintState {
-        let rem_size = self.rem_size(cx);
+        let rem_size = Self::rem_size(cx);
         self.interactivity
             .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, cx| {
                 let hitbox = hitbox.unwrap();

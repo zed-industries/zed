@@ -423,7 +423,7 @@ pub fn observe_buffer_font_size_adjustment<V: 'static>(
     cx.observe_global::<AdjustedBufferFontSize>(f)
 }
 
-pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
+pub fn adjusted_font_size(size: Pixels, cx: &AppContext) -> Pixels {
     if let Some(AdjustedBufferFontSize(adjusted_size)) = cx.try_global::<AdjustedBufferFontSize>() {
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
         let delta = *adjusted_size - buffer_font_size;

@@ -1,9 +1,11 @@
 use crate::outputs::ExecutionView;
 use alacritty_terminal::{term::Config, vte::ansi::Processor};
-use gpui::{canvas, size, AnyElement};
+use gpui::{canvas, size, AnyElement, FontStyle, TextStyle, WhiteSpace};
+use settings::Settings as _;
 use std::mem;
-use terminal::ZedListener;
+use terminal::{terminal_settings::TerminalSettings, ZedListener};
 use terminal_view::terminal_element::TerminalElement;
+use theme::ThemeSettings;
 use ui::{prelude::*, IntoElement, ViewContext};
 
 /// Implements the most basic of terminal output for use by Jupyter outputs
@@ -87,8 +89,57 @@ impl TerminalOutput {
     }
 
     pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
-        let text_style = cx.text_style();
+        // let mut text_style = cx.text_style();
         let text_system = cx.text_system();
+
+        let settings = ThemeSettings::get_global(cx).clone();
+        let buffer_font_size = settings.buffer_font_size(cx);
+
+        let terminal_settings = TerminalSettings::get_global(cx);
+
+        let font_family = terminal_settings
+            .font_family
+            .as_ref()
+            .unwrap_or(&settings.buffer_font.family)
+            .clone();
+
+        let font_fallbacks = terminal_settings
+            .font_fallbacks
+            .as_ref()
+            .or(settings.buffer_font.fallbacks.as_ref())
+            .map(|fallbacks| fallbacks.clone());
+
+        let font_features = terminal_settings
+            .font_features
+            .as_ref()
+            .unwrap_or(&settings.buffer_font.features)
+            .clone();
+
+        let font_weight = terminal_settings.font_weight.unwrap_or_default();
+
+        let line_height = terminal_settings.line_height.value();
+        let font_size = terminal_settings.font_size;
+
+        let font_size =
+            font_size.map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx));
+
+        let theme = cx.theme().clone();
+
+        let text_style = TextStyle {
+            font_family,
+            font_features,
+            font_weight,
+            font_fallbacks,
+            font_size: font_size.into(),
+            font_style: FontStyle::Normal,
+            line_height: line_height.into(),
+            background_color: Some(theme.colors().terminal_background),
+            white_space: WhiteSpace::Normal,
+            // These are going to be overridden per-cell
+            underline: None,
+            strikethrough: None,
+            color: theme.colors().terminal_foreground,
+        };
 
         let grid = self
             .handler
@@ -119,30 +170,32 @@ impl TerminalOutput {
             move |_bounds, _| {},
             // paint
             move |bounds, _, cx| {
-                for rect in rects {
-                    rect.paint(
-                        bounds.origin,
-                        &terminal::TerminalSize {
-                            cell_width,
-                            line_height,
-                            size: bounds.size,
-                        },
-                        cx,
-                    );
-                }
+                cx.with_rem_size(TerminalElement::rem_size(cx), |cx| {
+                    for rect in rects {
+                        rect.paint(
+                            bounds.origin,
+                            &terminal::TerminalSize {
+                                cell_width,
+                                line_height,
+                                size: bounds.size,
+                            },
+                            cx,
+                        );
+                    }
 
-                for cell in cells {
-                    cell.paint(
-                        bounds.origin,
-                        &terminal::TerminalSize {
-                            cell_width,
-                            line_height,
-                            size: bounds.size,
-                        },
-                        bounds,
-                        cx,
-                    );
-                }
+                    for cell in cells {
+                        cell.paint(
+                            bounds.origin,
+                            &terminal::TerminalSize {
+                                cell_width,
+                                line_height,
+                                size: bounds.size,
+                            },
+                            bounds,
+                            cx,
+                        );
+                    }
+                });
             },
         )
         // We must set the height explicitly for the editor block to size itself correctly
