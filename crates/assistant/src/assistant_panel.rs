@@ -1469,7 +1469,6 @@ impl WorkflowStepStatus {
                     |label, delta| label.alpha(delta),
                 )
                 .into_any_element(),
-
             WorkflowStepStatus::Error(error) => {
                 let error = error.clone();
                 h_flex()
@@ -1504,9 +1503,8 @@ impl WorkflowStepStatus {
                     )
                     .into_any()
             }
-
             WorkflowStepStatus::Idle => Button::new(("transform", id), "Transform")
-                .icon(IconName::Sparkle)
+                .icon(IconName::SparkleAlt)
                 .icon_position(IconPosition::Start)
                 .icon_size(IconSize::Small)
                 .label_size(LabelSize::Small)
@@ -1559,7 +1557,8 @@ impl WorkflowStepStatus {
                 .child(
                     IconButton::new(("stop-transformation", id), IconName::Stop)
                         .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Tinted(TintColor::Negative))
+                        .icon_color(Color::Error)
+                        .style(ButtonStyle::Subtle)
                         .tooltip({
                             let step_range = step_range.clone();
                             let editor = editor.clone();
@@ -2568,9 +2567,11 @@ impl ContextEditor {
                                         .child(
                                             h_flex()
                                                 .w_full()
+                                                .h_8()
                                                 .border_b_1()
                                                 .border_color(border_color)
-                                                .pb_1p5()
+                                                .pb_2()
+                                                .items_center()
                                                 .justify_between()
                                                 .gap_2()
                                                 .child(h_flex().justify_start().gap_2().child(step_label).children(
@@ -2608,7 +2609,6 @@ impl ContextEditor {
                                                                 }
                                                             })
                                                     })
-
                                                 ))
                                                 .children(current_status.as_ref().map(|status| {
                                                     h_flex().w_full().justify_end().child(
