@@ -26,7 +26,7 @@ fn authorize_access_to_model(
     }
 
     match (provider, model) {
-        (LanguageModelProvider::Anthropic, model) if model.starts_with("claude-3.5-sonnet") => {
+        (LanguageModelProvider::Anthropic, model) if model.starts_with("claude-3-5-sonnet") => {
             Ok(())
         }
         _ => Err(Error::http(
