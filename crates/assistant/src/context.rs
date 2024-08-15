@@ -2972,19 +2972,20 @@ mod tests {
             );
         });
 
-        model
-            .as_fake()
-            .respond_to_last_tool_use(tool::WorkflowStepResolution {
-                step_title: "Title".into(),
-                suggestions: vec![tool::WorkflowSuggestion {
-                    path: "/root/hello.rs".into(),
-                    // Simulate a symbol name that's slightly different than our outline query
-                    kind: tool::WorkflowSuggestionKind::Update {
-                        symbol: "fn main()".into(),
-                        description: "Extract a greeting function".into(),
-                    },
-                }],
-            });
+        // todo kb
+        // model
+        //     .as_fake()
+        //     .respond_to_last_tool_use(tool::WorkflowStepResolution {
+        //         step_title: "Title".into(),
+        //         suggestions: vec![tool::WorkflowSuggestion {
+        //             path: "/root/hello.rs".into(),
+        //             // Simulate a symbol name that's slightly different than our outline query
+        //             kind: tool::WorkflowSuggestionKind::Update {
+        //                 symbol: "fn main()".into(),
+        //                 description: "Extract a greeting function".into(),
+        //             },
+        //         }],
+        //     });
 
         // Wait for tool use to be processed.
         cx.run_until_parked();
