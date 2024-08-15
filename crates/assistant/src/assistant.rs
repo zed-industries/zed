@@ -21,7 +21,7 @@ use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
-use context_servers::{self};
+use context_servers::ContextServerRegistry;
 pub use context_store::*;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
@@ -224,7 +224,6 @@ pub fn init(
     assistant_slash_command::init(cx);
     assistant_panel::init(cx);
     context_servers::init(cx);
-    context_server_command::ContextServerRegistry::register(cx);
 
     let prompt_builder = prompts::PromptBuilder::new(Some(PromptOverrideContext {
         dev_mode,
@@ -279,8 +278,7 @@ fn register_context_server_handlers(cx: &mut AppContext) {
                     &manager,
                     |manager: &mut context_servers::manager::ContextServerManager, cx| {
                         let slash_command_registry = SlashCommandRegistry::global(cx);
-                        let context_server_registry =
-                            context_server_command::ContextServerRegistry::global(cx);
+                        let context_server_registry = ContextServerRegistry::global(cx);
                         if let Some(server) = manager.get_server(server_id) {
                             cx.spawn(|_, _| async move {
                                 let Some(protocol) = server.client.read().clone() else {
@@ -316,8 +314,7 @@ fn register_context_server_handlers(cx: &mut AppContext) {
             }
             context_servers::manager::Event::ServerStopped { server_id } => {
                 let slash_command_registry = SlashCommandRegistry::global(cx);
-                let context_server_registry =
-                    context_server_command::ContextServerRegistry::global(cx);
+                let context_server_registry = ContextServerRegistry::global(cx);
                 if let Some(commands) = context_server_registry.get_commands(server_id) {
                     for command_name in commands {
                         slash_command_registry.unregister_command_by_name(&command_name);

@@ -6,53 +6,13 @@ use context_servers::{
     manager::{ContextServer, ContextServerManager},
     protocol::PromptInfo,
 };
-use gpui::{AppContext, Global, ReadGlobal, Task, WeakView, WindowContext};
+use gpui::{Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::sync::RwLock;
 use ui::{IconName, SharedString};
 use workspace::Workspace;
-
-struct GlobalContextServerRegistry(Arc<ContextServerRegistry>);
-
-impl Global for GlobalContextServerRegistry {}
-
-pub struct ContextServerRegistry {
-    registry: RwLock<HashMap<String, Vec<String>>>,
-}
-
-impl ContextServerRegistry {
-    pub fn global(cx: &AppContext) -> Arc<Self> {
-        GlobalContextServerRegistry::global(cx).0.clone()
-    }
-
-    pub fn register(cx: &mut AppContext) {
-        cx.set_global(GlobalContextServerRegistry(Arc::new(
-            ContextServerRegistry {
-                registry: RwLock::new(HashMap::new()),
-            },
-        )))
-    }
-
-    pub fn register_command(&self, server_id: String, command_name: String) {
-        let mut registry = self.registry.write().unwrap();
-        registry.entry(server_id).or_default().push(command_name);
-    }
-
-    pub fn unregister_command(&self, server_id: &str, command_name: &str) {
-        let mut registry = self.registry.write().unwrap();
-        if let Some(commands) = registry.get_mut(server_id) {
-            commands.retain(|name| name != command_name);
-        }
-    }
-
-    pub fn get_commands(&self, server_id: &str) -> Option<Vec<String>> {
-        let registry = self.registry.read().unwrap();
-        registry.get(server_id).cloned()
-    }
-}
 
 pub struct ContextServerSlashCommand {
     server_id: String,

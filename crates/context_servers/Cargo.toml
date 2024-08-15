@@ -13,6 +13,7 @@ path = "src/context_servers.rs"
 
 [dependencies]
 anyhow.workspace = true
+collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
 log.workspace = true

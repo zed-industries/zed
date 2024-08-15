@@ -2674,6 +2674,7 @@ name = "context_servers"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "futures 0.3.30",
  "gpui",
  "log",
