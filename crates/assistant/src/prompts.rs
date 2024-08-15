@@ -31,6 +31,15 @@ pub struct TerminalAssistantPromptContext {
     pub user_prompt: String,
 }
 
+/// Context required to generate a workflow step resolution prompt.
+#[derive(Debug, Serialize)]
+pub struct StepResolutionContext {
+    /// The full context, including <step>...</step> tags
+    pub workflow_context: String,
+    /// The text of the specific step from the context to resolve
+    pub step_to_resolve: String,
+}
+
 pub struct PromptBuilder {
     handlebars: Arc<Mutex<Handlebars<'static>>>,
 }
@@ -278,7 +287,10 @@ impl PromptBuilder {
         self.handlebars.lock().render("edit_workflow", &())
     }
 
-    pub fn generate_step_resolution_prompt(&self) -> Result<String, RenderError> {
-        self.handlebars.lock().render("step_resolution", &())
+    pub fn generate_step_resolution_prompt(
+        &self,
+        context: &StepResolutionContext,
+    ) -> Result<String, RenderError> {
+        self.handlebars.lock().render("step_resolution", context)
     }
 }

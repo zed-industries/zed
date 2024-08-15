@@ -148,39 +148,40 @@ impl WorkflowStepView {
         let step = self.step.upgrade()?;
         let result = step.read(cx).result.as_ref()?;
         match result {
-            Ok(result) => {
-                Some(
-                    v_flex()
-                        .child(result.title.clone())
-                        .children(result.suggestion_groups.iter().filter_map(
-                            |(buffer, suggestion_groups)| {
-                                let path = buffer.read(cx).file().map(|f| f.path());
-                                v_flex()
-                                    .mb_2()
-                                    .border_b_1()
-                                    .children(path.map(|path| format!("path: {}", path.display())))
-                                    .children(suggestion_groups.iter().map(|group| {
-                                        v_flex().pl_2().children(group.suggestions.iter().map(
-                                            |suggestion| {
-                                                v_flex()
-                                                    .children(
-                                                        suggestion.description().map(|desc| {
-                                                            format!("description: {desc}")
-                                                        }),
-                                                    )
-                                                    .child(format!("kind: {}", suggestion.kind()))
-                                                    .children(suggestion.symbol_path().map(
-                                                        |path| format!("symbol path: {}", path.0),
-                                                    ))
-                                            },
-                                        ))
-                                    }))
-                                    .into()
-                            },
-                        ))
-                        .into_any_element(),
-                )
-            }
+            Ok(result) => Some(
+                v_flex()
+                    .child(result.title.clone())
+                    .children(result.suggestion_groups.iter().filter_map(
+                        |(buffer, suggestion_groups)| {
+                            let path = buffer.read(cx).file().map(|f| f.path());
+                            v_flex()
+                                .mb_2()
+                                .border_b_1()
+                                .children(path.map(|path| format!("path: {}", path.display())))
+                                .children(suggestion_groups.iter().map(|group| {
+                                    v_flex().pl_2().children(group.suggestions.iter().map(
+                                        |suggestion| {
+                                            v_flex()
+                                                .children(
+                                                    suggestion
+                                                        .kind
+                                                        .description()
+                                                        .map(|desc| format!("description: {desc}")),
+                                                )
+                                                .child(format!("kind: {}", suggestion.kind.kind()))
+                                                .children(
+                                                    suggestion.kind.symbol_path().map(|path| {
+                                                        format!("symbol path: {}", path.0)
+                                                    }),
+                                                )
+                                        },
+                                    ))
+                                }))
+                                .into()
+                        },
+                    ))
+                    .into_any_element(),
+            ),
             Err(error) => Some(format!("{:?}", error).into_any_element()),
         }
     }

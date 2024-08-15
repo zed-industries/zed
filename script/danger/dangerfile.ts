@@ -37,7 +37,7 @@ if (!hasReleaseNotes) {
 }
 
 const ISSUE_LINK_PATTERN = new RegExp(
-  "(?:https://github\\.com/[\\w-]+/[\\w-]+/issues/\\d+|#\\d+)",
+  "https://github\\.com/[\\w-]+/[\\w-]+/issues/\\d+",
   "g",
 );
 
