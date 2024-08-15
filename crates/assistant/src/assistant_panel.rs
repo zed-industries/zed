@@ -2080,9 +2080,8 @@ impl ContextEditor {
                         editor.newline(&Newline, cx);
                     }
 
-                    dbg!(&name);
                     editor.insert(&format!("/{name}"), cx);
-                    if dbg!(command.accepts_arguments()) {
+                    if command.accepts_arguments() {
                         editor.insert(" ", cx);
                         editor.show_completions(&ShowCompletions::default(), cx);
                     }
