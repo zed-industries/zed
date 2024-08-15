@@ -100,16 +100,18 @@ impl SlashCommandCompletionProvider {
                             new_text.push(' ');
                         }
 
-                        let confirm = editor.clone().zip(workspace.clone()).and_then(
-                            |(editor, workspace)| {
-                                (!requires_argument).then(|| {
+                        let confirm =
+                            editor
+                                .clone()
+                                .zip(workspace.clone())
+                                .map(|(editor, workspace)| {
                                     let command_name = mat.string.clone();
                                     let command_range = command_range.clone();
                                     let editor = editor.clone();
                                     let workspace = workspace.clone();
                                     Arc::new(
                                         move |intent: CompletionIntent, cx: &mut WindowContext| {
-                                            if intent.is_complete() {
+                                            if !requires_argument || intent.is_complete() {
                                                 editor
                                                     .update(cx, |editor, cx| {
                                                         editor.run_command(
@@ -125,9 +127,7 @@ impl SlashCommandCompletionProvider {
                                             }
                                         },
                                     ) as Arc<_>
-                                })
-                            },
-                        );
+                                });
                         Some(project::Completion {
                             old_range: name_range.clone(),
                             documentation: Some(Documentation::SingleLine(command.description())),
@@ -174,7 +174,7 @@ impl SlashCommandCompletionProvider {
                     .await?
                     .into_iter()
                     .map(|new_argument| {
-                        let confirm = if new_argument.run_command {
+                        let confirm =
                             editor
                                 .clone()
                                 .zip(workspace.clone())
@@ -191,7 +191,7 @@ impl SlashCommandCompletionProvider {
                                         let command_range = command_range.clone();
                                         let command_name = command_name.clone();
                                         move |intent: CompletionIntent, cx: &mut WindowContext| {
-                                            if intent.is_complete() {
+                                            if new_argument.run_command || intent.is_complete() {
                                                 editor
                                                     .update(cx, |editor, cx| {
                                                         editor.run_command(
@@ -207,10 +207,7 @@ impl SlashCommandCompletionProvider {
                                             }
                                         }
                                     }) as Arc<_>
-                                })
-                        } else {
-                            None
-                        };
+                                });
 
                         let mut new_text = new_argument.new_text.clone();
                         if !new_argument.run_command {
