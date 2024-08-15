@@ -296,7 +296,7 @@ fn register_context_server_handlers(cx: &mut AppContext) {
                                         );
                                         context_server_registry.register_command(
                                             server.id.clone(),
-                                            prompt.name.clone(),
+                                            prompt.name.as_str(),
                                         );
                                         slash_command_registry.register_command(
                                             context_server_command::ContextServerSlashCommand::new(
