@@ -103,6 +103,10 @@ impl SlashCommand for DiagnosticsSlashCommand {
         false
     }
 
+    fn accepts_arguments(&self) -> bool {
+        true
+    }
+
     fn complete_argument(
         self: Arc<Self>,
         arguments: &[String],

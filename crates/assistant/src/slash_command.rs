@@ -89,6 +89,9 @@ impl SlashCommandCompletionProvider {
             )
             .await;
 
+            // TODO kb this always works, but:
+            // * command name + enter leaves the completion list open
+            // * argument + enter replaces too much text and leaves the completion list open
             cx.update(|cx| {
                 matches
                     .into_iter()
@@ -96,6 +99,7 @@ impl SlashCommandCompletionProvider {
                         let command = commands.command(&mat.string)?;
                         let mut new_text = mat.string.clone();
                         let requires_argument = command.requires_argument();
+                        let accepts_arguments = command.accepts_arguments();
                         if requires_argument {
                             new_text.push(' ');
                         }
@@ -111,7 +115,9 @@ impl SlashCommandCompletionProvider {
                                     let workspace = workspace.clone();
                                     Arc::new(
                                         move |intent: CompletionIntent, cx: &mut WindowContext| {
-                                            if !requires_argument || intent.is_complete() {
+                                            if !requires_argument
+                                                && (!accepts_arguments || intent.is_complete())
+                                            {
                                                 editor
                                                     .update(cx, |editor, cx| {
                                                         editor.run_command(
