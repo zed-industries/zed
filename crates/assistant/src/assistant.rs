@@ -279,7 +279,8 @@ fn register_context_server_handlers(cx: &mut AppContext) {
                     &manager,
                     |manager: &mut context_servers::manager::ContextServerManager, cx| {
                         let slash_command_registry = SlashCommandRegistry::global(cx);
-                        let cs_registry = context_server_command::ContextServerRegistry::global(cx);
+                        let context_server_registry =
+                            context_server_command::ContextServerRegistry::global(cx);
                         if let Some(server) = manager.get_server(server_id) {
                             cx.spawn(|_, _| async move {
                                 let Some(protocol) = server.client.read().clone() else {
@@ -295,7 +296,7 @@ fn register_context_server_handlers(cx: &mut AppContext) {
                                             "registering context server command: {:?}",
                                             prompt.name
                                         );
-                                        cs_registry.register_command(
+                                        context_server_registry.register_command(
                                             server.id.clone(),
                                             prompt.name.clone(),
                                         );
