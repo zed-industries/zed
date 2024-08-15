@@ -2997,7 +2997,10 @@ impl<'a> WindowContext<'a> {
 
         if let Some(input) = keystroke.ime_key {
             if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
+                #[cfg(not(target_os = "macos"))]
                 input_handler.dispatch_input(&input, self);
+                #[cfg(target_os = "macos")]
+                input_handler.dispatch_input(crate::ImeInput::InsertText(None, input), self);
                 self.window.platform_window.set_input_handler(input_handler);
                 return true;
             }
@@ -3207,6 +3210,8 @@ impl<'a> WindowContext<'a> {
                             key: key.to_string(),
                             ime_key: None,
                             modifiers: Modifiers::default(),
+                            #[cfg(target_os = "macos")]
+                            ime_inputs: SmallVec::new(),
                         });
                     }
                 }
@@ -3283,6 +3288,12 @@ impl<'a> WindowContext<'a> {
         for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref());
             if !self.propagate_event {
+                #[cfg(target_os = "macos")]
+                if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
+                    input_handler.dispatch_input(crate::ImeInput::UnmarkText, self);
+                    self.window.platform_window.discard_marked_text();
+                    self.window.platform_window.set_input_handler(input_handler)
+                }
                 self.dispatch_keystroke_observers(event, Some(binding.action));
                 return;
             }
@@ -3419,11 +3430,19 @@ impl<'a> WindowContext<'a> {
             if !self.propagate_event {
                 continue 'replay;
             }
+            #[cfg(not(target_os = "macos"))]
             if let Some(input) = replay.keystroke.ime_key.as_ref().cloned() {
                 if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
                     input_handler.dispatch_input(&input, self);
                     self.window.platform_window.set_input_handler(input_handler)
                 }
+            }
+            #[cfg(target_os = "macos")]
+            if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
+                for input in replay.keystroke.ime_inputs {
+                    input_handler.dispatch_input(input, self);
+                }
+                self.window.platform_window.set_input_handler(input_handler)
             }
         }
     }

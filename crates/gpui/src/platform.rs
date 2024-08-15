@@ -361,6 +361,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     // macOS specific methods
     fn set_edited(&mut self, _edited: bool) {}
     fn show_character_palette(&self) {}
+    fn discard_marked_text(&mut self) {}
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
@@ -584,8 +585,22 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn dispatch_input(&mut self, input: &str, cx: &mut WindowContext) {
         self.handler.replace_text_in_range(None, input, cx);
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn dispatch_input(&mut self, input: ImeInput, cx: &mut WindowContext) {
+        match input {
+            ImeInput::InsertText(range, text) => {
+                self.handler.replace_text_in_range(range, &text, cx)
+            }
+            ImeInput::SetMarkedText(range, text, marked_range) => self
+                .handler
+                .replace_and_mark_text_in_range(range, &text, marked_range, cx),
+            ImeInput::UnmarkText => self.handler.unmark_text(cx),
+        }
     }
 }
 

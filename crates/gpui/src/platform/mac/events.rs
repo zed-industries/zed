@@ -8,38 +8,119 @@ use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},
     base::{id, YES},
 };
-use core_graphics::{
-    event::{CGEvent, CGEventFlags, CGKeyCode},
-    event_source::{CGEventSource, CGEventSourceStateID},
-};
-use metal::foreign_types::ForeignType as _;
-use objc::{class, msg_send, sel, sel_impl};
-use std::{borrow::Cow, mem, ptr, sync::Once};
+use std::borrow::Cow;
 
 const BACKSPACE_KEY: u16 = 0x7f;
 const SPACE_KEY: u16 = b' ' as u16;
-const ENTER_KEY: u16 = 0x0d;
-const NUMPAD_ENTER_KEY: u16 = 0x03;
-const ESCAPE_KEY: u16 = 0x1b;
-const TAB_KEY: u16 = 0x09;
-const SHIFT_TAB_KEY: u16 = 0x19;
 
-fn synthesize_keyboard_event(code: CGKeyCode) -> CGEvent {
-    static mut EVENT_SOURCE: core_graphics::sys::CGEventSourceRef = ptr::null_mut();
-    static INIT_EVENT_SOURCE: Once = Once::new();
-
-    INIT_EVENT_SOURCE.call_once(|| {
-        let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
-        unsafe {
-            EVENT_SOURCE = source.as_ptr();
-        };
-        mem::forget(source);
-    });
-
-    let source = unsafe { core_graphics::event_source::CGEventSource::from_ptr(EVENT_SOURCE) };
-    let event = CGEvent::new_keyboard_event(source.clone(), code, true).unwrap();
-    mem::forget(source);
-    event
+fn physical_key_from_scancode(scancode: u16) -> Option<&'static str> {
+    match scancode {
+        0x00 => Some("a"),
+        0x01 => Some("s"),
+        0x02 => Some("d"),
+        0x03 => Some("f"),
+        0x04 => Some("h"),
+        0x05 => Some("g"),
+        0x06 => Some("z"),
+        0x07 => Some("x"),
+        0x08 => Some("c"),
+        0x09 => Some("v"),
+        0x0b => Some("b"),
+        0x0c => Some("q"),
+        0x0d => Some("w"),
+        0x0e => Some("e"),
+        0x0f => Some("r"),
+        0x10 => Some("y"),
+        0x11 => Some("t"),
+        0x12 => Some("1"),
+        0x13 => Some("2"),
+        0x14 => Some("3"),
+        0x15 => Some("4"),
+        0x16 => Some("6"),
+        0x17 => Some("5"),
+        0x18 => Some("="),
+        0x19 => Some("9"),
+        0x1a => Some("7"),
+        0x1b => Some("-"),
+        0x1c => Some("8"),
+        0x1d => Some("0"),
+        0x1e => Some("]"),
+        0x1f => Some("o"),
+        0x20 => Some("u"),
+        0x21 => Some("["),
+        0x22 => Some("i"),
+        0x23 => Some("p"),
+        0x24 => Some("enter"),
+        0x25 => Some("l"),
+        0x26 => Some("j"),
+        0x27 => Some("'"),
+        0x28 => Some("k"),
+        0x29 => Some(";"),
+        0x2a => Some("\\"),
+        0x2b => Some(","),
+        0x2c => Some("/"),
+        0x2d => Some("n"),
+        0x2e => Some("m"),
+        0x2f => Some("."),
+        0x30 => Some("tab"),
+        0x31 => Some("space"),
+        0x32 => Some("`"),
+        0x33 => Some("backspace"),
+        0x35 => Some("escape"),
+        0x40 => Some("f17"),
+        0x41 => Some("."),
+        0x43 => Some("*"),
+        0x45 => Some("+"),
+        0x4b => Some("/"),
+        0x4c => Some("enter"),
+        0x4e => Some("-"),
+        0x4f => Some("f18"),
+        0x50 => Some("f19"),
+        0x51 => Some("="),
+        0x52 => Some("0"),
+        0x53 => Some("1"),
+        0x54 => Some("2"),
+        0x55 => Some("3"),
+        0x56 => Some("4"),
+        0x57 => Some("5"),
+        0x58 => Some("6"),
+        0x59 => Some("7"),
+        0x5a => Some("f20"),
+        0x5b => Some("8"),
+        0x5c => Some("9"),
+        0x5d => Some("¥"),
+        0x60 => Some("f5"),
+        0x61 => Some("f6"),
+        0x62 => Some("f7"),
+        0x63 => Some("f3"),
+        0x64 => Some("f8"),
+        0x65 => Some("f9"),
+        0x67 => Some("f11"),
+        0x69 => Some("f13"),
+        0x6a => Some("f16"),
+        0x6b => Some("f14"),
+        0x6d => Some("f10"),
+        0x6f => Some("f12"),
+        0x71 => Some("f15"),
+        0x72 => Some("insert"),
+        0x73 => Some("home"),
+        0x74 => Some("pageup"),
+        0x75 => Some("delete"),
+        0x76 => Some("f4"),
+        0x77 => Some("end"),
+        0x78 => Some("f2"),
+        0x79 => Some("pagedown"),
+        0x7a => Some("f1"),
+        0x7b => Some("left"),
+        0x7c => Some("right"),
+        0x7d => Some("down"),
+        0x7e => Some("up"),
+        0xa => Some("`"),
+        _ => {
+            log::error!("Unknown scancode: 0x{:x}", scancode);
+            None
+        }
+    }
 }
 
 pub fn key_to_native(key: &str) -> Cow<str> {
@@ -251,111 +332,23 @@ impl PlatformInput {
 unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     use cocoa::appkit::*;
 
-    let mut chars_ignoring_modifiers = native_event
-        .charactersIgnoringModifiers()
-        .to_str()
+    let ime_key = native_event.characters().to_str().to_string();
+
+    let mut modifiers = read_modifiers(native_event);
+    modifiers.function &= !ime_key.chars().next().map_or(false, |ch| {
+        matches!(ch as u16, NSUpArrowFunctionKey..=NSModeSwitchFunctionKey)
+    });
+
+    let key = physical_key_from_scancode(native_event.keyCode())
+        .unwrap_or_default()
         .to_string();
-    let first_char = chars_ignoring_modifiers.chars().next().map(|ch| ch as u16);
-    let modifiers = native_event.modifierFlags();
 
-    let control = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
-    let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
-    let mut shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
-    let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-    let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask)
-        && first_char.map_or(true, |ch| {
-            !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch)
-        });
-
-    #[allow(non_upper_case_globals)]
-    let key = match first_char {
-        Some(SPACE_KEY) => "space".to_string(),
-        Some(BACKSPACE_KEY) => "backspace".to_string(),
-        Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter".to_string(),
-        Some(ESCAPE_KEY) => "escape".to_string(),
-        Some(TAB_KEY) => "tab".to_string(),
-        Some(SHIFT_TAB_KEY) => "tab".to_string(),
-        Some(NSUpArrowFunctionKey) => "up".to_string(),
-        Some(NSDownArrowFunctionKey) => "down".to_string(),
-        Some(NSLeftArrowFunctionKey) => "left".to_string(),
-        Some(NSRightArrowFunctionKey) => "right".to_string(),
-        Some(NSPageUpFunctionKey) => "pageup".to_string(),
-        Some(NSPageDownFunctionKey) => "pagedown".to_string(),
-        Some(NSHomeFunctionKey) => "home".to_string(),
-        Some(NSEndFunctionKey) => "end".to_string(),
-        Some(NSDeleteFunctionKey) => "delete".to_string(),
-        Some(NSF1FunctionKey) => "f1".to_string(),
-        Some(NSF2FunctionKey) => "f2".to_string(),
-        Some(NSF3FunctionKey) => "f3".to_string(),
-        Some(NSF4FunctionKey) => "f4".to_string(),
-        Some(NSF5FunctionKey) => "f5".to_string(),
-        Some(NSF6FunctionKey) => "f6".to_string(),
-        Some(NSF7FunctionKey) => "f7".to_string(),
-        Some(NSF8FunctionKey) => "f8".to_string(),
-        Some(NSF9FunctionKey) => "f9".to_string(),
-        Some(NSF10FunctionKey) => "f10".to_string(),
-        Some(NSF11FunctionKey) => "f11".to_string(),
-        Some(NSF12FunctionKey) => "f12".to_string(),
-        _ => {
-            let mut chars_ignoring_modifiers_and_shift =
-                chars_for_modified_key(native_event.keyCode(), false, false);
-
-            // Honor ⌘ when Dvorak-QWERTY is used.
-            let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), true, false);
-            if command && chars_ignoring_modifiers_and_shift != chars_with_cmd {
-                chars_ignoring_modifiers =
-                    chars_for_modified_key(native_event.keyCode(), true, shift);
-                chars_ignoring_modifiers_and_shift = chars_with_cmd;
-            }
-
-            if shift {
-                if chars_ignoring_modifiers_and_shift
-                    == chars_ignoring_modifiers.to_ascii_lowercase()
-                {
-                    chars_ignoring_modifiers_and_shift
-                } else if chars_ignoring_modifiers_and_shift != chars_ignoring_modifiers {
-                    shift = false;
-                    chars_ignoring_modifiers
-                } else {
-                    chars_ignoring_modifiers
-                }
-            } else {
-                chars_ignoring_modifiers
-            }
-        }
-    };
+    let ime_key = (!ime_key.is_empty()).then(|| ime_key);
 
     Keystroke {
-        modifiers: Modifiers {
-            control,
-            alt,
-            shift,
-            platform: command,
-            function,
-        },
+        modifiers,
         key,
-        ime_key: None,
-    }
-}
-
-fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
-    // Ideally, we would use `[NSEvent charactersByApplyingModifiers]` but that
-    // always returns an empty string with certain keyboards, e.g. Japanese. Synthesizing
-    // an event with the given flags instead lets us access `characters`, which always
-    // returns a valid string.
-    let event = synthesize_keyboard_event(code);
-
-    let mut flags = CGEventFlags::empty();
-    if cmd {
-        flags |= CGEventFlags::CGEventFlagCommand;
-    }
-    if shift {
-        flags |= CGEventFlags::CGEventFlagShift;
-    }
-    event.set_flags(flags);
-
-    unsafe {
-        let event: id = msg_send![class!(NSEvent), eventWithCGEvent: &*event];
-        event.characters().to_str().to_string()
+        ime_key,
+        ime_inputs: Default::default(),
     }
 }

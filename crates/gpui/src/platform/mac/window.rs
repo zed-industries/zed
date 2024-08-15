@@ -1,10 +1,10 @@
 use super::{ns_string, renderer, MacDisplay, NSRange, NSStringExt};
 use crate::{
-    platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DisplayLink,
-    ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
+    point, px, size, AnyWindowHandle, Bounds, DisplayLink, ExternalPaths, FileDropEvent,
+    ForegroundExecutor, ImeInput, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel, Size,
+    Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -309,14 +309,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     decl.register()
 }
 
-#[allow(clippy::enum_variant_names)]
-#[derive(Clone, Debug)]
-enum ImeInput {
-    InsertText(String, Option<Range<usize>>),
-    SetMarkedText(String, Option<Range<usize>>, Option<Range<usize>>),
-    UnmarkText,
-}
-
 struct MacWindowState {
     handle: AnyWindowHandle,
     executor: ForegroundExecutor,
@@ -332,19 +324,15 @@ struct MacWindowState {
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
-    input_handler: Option<PlatformInputHandler>,
+    input_handler: Option<MacInputHandler>,
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     previous_modifiers_changed_event: Option<PlatformInput>,
-    // State tracking what the IME did after the last request
-    last_ime_inputs: Option<SmallVec<[(String, Option<Range<usize>>); 1]>>,
-    previous_keydown_inserted_text: Option<String>,
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
-    ime_composing: bool,
 }
 
 impl MacWindowState {
@@ -619,12 +607,9 @@ impl MacWindow {
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 previous_modifiers_changed_event: None,
-                last_ime_inputs: None,
-                previous_keydown_inserted_text: None,
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
-                ime_composing: false,
             })));
 
             (*native_window).set_ivar(
@@ -853,11 +838,24 @@ impl PlatformWindow for MacWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.0.as_ref().lock().input_handler = Some(input_handler);
+        self.0.as_ref().lock().input_handler = Some(MacInputHandler::new(input_handler));
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        self.0.as_ref().lock().input_handler.take()
+        self.0
+            .as_ref()
+            .lock()
+            .input_handler
+            .take()
+            .map(|handler| handler.into_inner())
+    }
+
+    fn discard_marked_text(&mut self) {
+        unsafe {
+            let view = self.0.as_ref().lock().native_view.as_mut();
+            let input_context: id = msg_send![view, inputContext];
+            let _: () = msg_send![input_context, discardMarkedText];
+        }
     }
 
     fn prompt(
@@ -1143,6 +1141,191 @@ impl rwh::HasDisplayHandle for MacWindow {
     }
 }
 
+struct MacInputHandler {
+    handler: PlatformInputHandler,
+    simulated_ime_state: Option<SimulatedImeState>,
+}
+
+impl MacInputHandler {
+    fn new(handler: PlatformInputHandler) -> Self {
+        Self {
+            handler,
+            simulated_ime_state: None,
+        }
+    }
+
+    fn send(&mut self, input: ImeInput) {
+        match input {
+            ImeInput::InsertText(replacement_range, text) => {
+                self.insert_text(replacement_range, &text);
+            }
+            ImeInput::SetMarkedText(replacement_range, text, selected_range) => {
+                self.set_marked_text(replacement_range, &text, selected_range);
+            }
+            ImeInput::UnmarkText => {
+                self.unmark_text();
+            }
+        }
+    }
+
+    fn into_inner(self) -> PlatformInputHandler {
+        self.handler
+    }
+
+    fn start_new_simulation(&mut self) {
+        let marked_range = self.handler.marked_text_range();
+        let selected_range = self.handler.selected_text_range();
+        let ime_state = SimulatedImeState {
+            marked_range,
+            selected_range,
+            inputs: SmallVec::new(),
+        };
+        self.simulated_ime_state = Some(ime_state);
+    }
+
+    fn take_simulation_result(&mut self) -> Option<SimulatedImeState> {
+        self.simulated_ime_state.take()
+    }
+
+    fn selected_text_range(&mut self) -> Option<Range<usize>> {
+        if let Some(state) = &self.simulated_ime_state {
+            state.selected_range.clone()
+        } else {
+            self.handler.selected_text_range()
+        }
+    }
+
+    fn marked_text_range(&mut self) -> Option<Range<usize>> {
+        if let Some(state) = &self.simulated_ime_state {
+            state.marked_range.clone()
+        } else {
+            self.handler.marked_text_range()
+        }
+    }
+
+    fn has_marked_text(&mut self) -> bool {
+        if let Some(state) = &self.simulated_ime_state {
+            state.marked_range.is_some()
+        } else {
+            self.handler.marked_text_range().is_some()
+        }
+    }
+
+    fn insert_text(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
+        if let Some(state) = &mut self.simulated_ime_state {
+            state.insert_text(replacement_range, text)
+        } else {
+            self.handler.replace_text_in_range(replacement_range, text)
+        }
+    }
+
+    fn set_marked_text(
+        &mut self,
+        replacement_range: Option<Range<usize>>,
+        text: &str,
+        selected_range: Option<Range<usize>>,
+    ) {
+        if let Some(state) = &mut self.simulated_ime_state {
+            state.set_marked_text(replacement_range, text, selected_range)
+        } else {
+            self.handler
+                .replace_and_mark_text_in_range(replacement_range, text, selected_range)
+        }
+    }
+
+    fn unmark_text(&mut self) {
+        if let Some(state) = &mut self.simulated_ime_state {
+            state.unmark_text()
+        } else {
+            self.handler.unmark_text()
+        }
+    }
+
+    fn text_for_range(&mut self, range: Range<usize>) -> Option<String> {
+        self.handler.text_for_range(range.clone())
+    }
+
+    fn bounds_for_range(&mut self, range: Range<usize>) -> Option<Bounds<Pixels>> {
+        self.handler.bounds_for_range(range.clone())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SimulatedImeState {
+    selected_range: Option<Range<usize>>,
+    marked_range: Option<Range<usize>>,
+    inputs: SmallVec<[ImeInput; 1]>,
+}
+
+impl SimulatedImeState {
+    fn insert_text(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
+        self.inputs.push(ImeInput::InsertText(
+            replacement_range.clone(),
+            text.to_string(),
+        ));
+
+        let Some(replacement_range) = replacement_range
+            .as_ref()
+            .or(self.marked_range.as_ref())
+            .or(self.selected_range.as_ref())
+        else {
+            return;
+        };
+        let end = replacement_range.start + text.encode_utf16().count();
+        self.selected_range = Some(end..end);
+        self.marked_range = None;
+    }
+
+    fn set_marked_text(
+        &mut self,
+        replacement_range: Option<Range<usize>>,
+        text: &str,
+        selected_range: Option<Range<usize>>,
+    ) {
+        self.inputs.push(ImeInput::SetMarkedText(
+            replacement_range.clone(),
+            text.to_string(),
+            selected_range.clone(),
+        ));
+
+        let Some(marked_range) = self.marked_range.as_ref().or(self.selected_range.as_ref()) else {
+            return;
+        };
+
+        let mut replacement_range = replacement_range.unwrap_or_else(|| 0..marked_range.len());
+        replacement_range.start += marked_range.start;
+        replacement_range.end += marked_range.start;
+
+        let text_count = text.encode_utf16().count();
+        self.marked_range = if text_count > 0 {
+            Some(replacement_range.start..replacement_range.start + text_count)
+        } else {
+            None
+        };
+
+        if let Some(selected_range) = selected_range {
+            let mut selected_range = selected_range;
+            selected_range.start += replacement_range.start;
+            selected_range.end += replacement_range.start;
+            self.selected_range = Some(selected_range);
+        } else {
+            let end = self.marked_range.as_ref().unwrap().end;
+            self.selected_range = Some(end..end);
+        }
+    }
+
+    fn unmark_text(&mut self) {
+        self.inputs.push(ImeInput::UnmarkText);
+
+        if self.selected_range.is_none() || self.marked_range.is_none() {
+            return;
+        }
+        let end = self.marked_range.as_ref().unwrap().end;
+        self.selected_range = Some(end..end);
+        self.marked_range = None;
+    }
+}
+
 fn get_scale_factor(native_window: id) -> f32 {
     let factor = unsafe {
         let screen: id = msg_send![native_window, screen];
@@ -1226,6 +1409,33 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 //   - in vim mode `option-4`  should go to end of line (same as $)
 //  Japanese (Romaji) layout:
 //   - type `a i left down up enter enter` should create an unmarked text "愛"
+//   - In vim mode, with this keybinding:
+//     ```
+//        {
+//          "context": "vim_mode == insert",
+//          "bindings": {
+//            "d f": "vim::NormalBefore",
+//            "j k": ["workspace::SendKeystrokes", "_"]
+//          }
+//        }
+//     ```
+//     - Typing `a i d f` in insert mode will create a marked text "あい", unmark it,
+//        and switch to normal mode with the cursor block over "い".
+//     - Typing `z j k` in insert mode will insert a text "z_".
+//     - Typing `z j j i` in insert mode will create a marked text "↓じ".
+//  Korean (2-Set-Korean) layout:
+//   - type `g k s backspace backspace backspace` should transform the marked text in sequence as follows:
+//      "ㅎ" -> "하" -> "한" -> "하" -> "ㅎ" -> "" (unmarked, empty)
+//   - In vim's normal mode, typing `r 1` should change the character under the cursor to "1".
+//  Russian layout:
+//   - In vim's normal mode, typing `r r` should change the character under the cursor to "к".
+//  Chinese (Pinyin - Simplified/Traditional) layout:
+//   - In vim's normal/visual mode, typing should not open the IME's candidate list.
+//  Vim mode (especially check for 2-Set-Korean, Russian, and U.S. layout)
+//   - In vim's normal mode, commands `h`, `j`, `k`, `l`, `^`, `$`, `A`, `I` should work correctly.
+//   - In vim's normal mode, typing `d i b` should delete the contents inside the parentheses.
+//   - In vim's visual mode, typing `U` should convert the selected Latin lowercase letters to uppercase.
+//     (Currently does not work for Korean and Russian)
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
@@ -1243,81 +1453,137 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         } else if lock.last_key_equivalent.take().as_ref() == Some(&event) {
             return NO;
         }
-
-        let keydown = event.keystroke.clone();
-        let fn_modifier = keydown.modifiers.function;
-        lock.last_ime_inputs = Some(Default::default());
         drop(lock);
+
+        let input_context: id = unsafe { msg_send![this, inputContext] };
+
+        let (
+            input_source_may_open_candidates_popup,
+            is_ime_handling_key,
+            is_propagatable_ime_handling_key,
+        ) = {
+            let key = event.keystroke.key.as_str();
+            let modifiers = event.keystroke.modifiers;
+
+            let input_source: id = unsafe { msg_send![input_context, selectedKeyboardInputSource] };
+            let input_source = unsafe { input_source.to_str() };
+
+            let is_simplified_chinese = input_source.starts_with("com.apple.inputmethod.SCIM");
+            let is_traditional_chinese = input_source.starts_with("com.apple.inputmethod.TCIM");
+            let is_japanese = input_source.starts_with("com.apple.inputmethod.Kotoeri");
+            let is_korean = input_source.starts_with("com.apple.inputmethod.Korean");
+
+            let input_source_may_open_candidates_popup =
+                is_simplified_chinese || is_traditional_chinese || is_japanese;
+
+            let is_ime_handling_key = if input_source_may_open_candidates_popup {
+                modifiers.control
+                    || matches!(
+                        key,
+                        "escape"
+                            | "enter"
+                            | "backspace"
+                            | "space"
+                            | "tab"
+                            | "left"
+                            | "right"
+                            | "up"
+                            | "down"
+                    )
+            } else if is_korean {
+                key == "backspace"
+            } else {
+                false
+            };
+
+            let is_propagatable_ime_handling_key = is_ime_handling_key
+                && if input_source_may_open_candidates_popup {
+                    modifiers.control || matches!(key, |"left"| "right" | "up" | "down")
+                } else if is_korean {
+                    key == "backspace"
+                } else {
+                    false
+                };
+
+            (
+                input_source_may_open_candidates_popup,
+                is_ime_handling_key,
+                is_propagatable_ime_handling_key,
+            )
+        };
+
+        if input_source_may_open_candidates_popup
+            && with_input_handler(this, |handler| handler.selected_text_range())
+                .flatten()
+                .is_none()
+        {
+            return send_new_event(window_state.as_ref(), PlatformInput::KeyDown(event))
+                .unwrap_or(false);
+        }
 
         // Send the event to the input context for IME handling, unless the `fn` modifier is
         // being pressed.
         // this will call back into `insert_text`, etc.
-        if !fn_modifier {
-            unsafe {
-                let input_context: id = msg_send![this, inputContext];
-                let _: BOOL = msg_send![input_context, handleEvent: native_event];
-            }
-        }
+        let mut simulated_ime_state = if !event.keystroke.modifiers.function {
+            with_input_handler(this, |handler| handler.start_new_simulation());
+            let _: BOOL = unsafe { msg_send![input_context, handleEvent: native_event] };
+            with_input_handler(this, |handler| handler.take_simulation_result()).flatten()
+        } else {
+            None
+        };
+
+        let previously_ime_composing =
+            with_input_handler(this, |handler| handler.has_marked_text()).unwrap_or(false);
+
+        let now_ime_composing = simulated_ime_state
+            .as_ref()
+            .map_or(false, |state| state.marked_range.is_some());
+
+        let simulated_inputs = simulated_ime_state.map_or(SmallVec::new(), |state| state.inputs);
+        event.keystroke.ime_inputs = simulated_inputs.clone();
+
+        let platform_input = PlatformInput::KeyDown(event);
+
+        // If this event should be handled solely by the IME,
+        // send a dummy keystroke to replay any pending input up to that point.
+        let fake_platform_input = PlatformInput::KeyDown(KeyDownEvent {
+            keystroke: Keystroke::default(),
+            is_held: false,
+        });
 
         let mut handled = false;
-        let mut lock = window_state.lock();
-        let previous_keydown_inserted_text = lock.previous_keydown_inserted_text.take();
-        let mut last_inserts = lock.last_ime_inputs.take().unwrap();
-        let ime_composing = std::mem::take(&mut lock.ime_composing);
 
-        let mut callback = lock.event_callback.take();
-        drop(lock);
+        if is_ime_handling_key && previously_ime_composing && !now_ime_composing {
+            if !simulated_inputs.is_empty() {
+                send_new_event(window_state.as_ref(), fake_platform_input);
+            }
 
-        let last_insert = last_inserts.pop();
-        // on a brazilian keyboard typing `"` and then hitting `up` will cause two IME
-        // events, one to unmark the quote, and one to send the up arrow.
-        for (text, range) in last_inserts {
-            send_to_input_handler(this, ImeInput::InsertText(text, range));
-        }
-
-        let is_composing =
-            with_input_handler(this, |input_handler| input_handler.marked_text_range())
-                .flatten()
-                .is_some()
-                || ime_composing;
-
-        if let Some((text, range)) = last_insert {
-            if !is_composing {
-                window_state.lock().previous_keydown_inserted_text = Some(text.clone());
-                if let Some(callback) = callback.as_mut() {
-                    event.keystroke.ime_key = Some(text.clone());
-                    handled = !callback(PlatformInput::KeyDown(event)).propagate;
+            with_input_handler(this, |handler| {
+                for input in simulated_inputs {
+                    handler.send(input);
+                    handled |= true;
                 }
+            });
+
+            if is_propagatable_ime_handling_key {
+                handled |= send_new_event(window_state.as_ref(), platform_input).unwrap_or(false)
+            }
+        } else {
+            if is_ime_handling_key && now_ime_composing {
+                send_new_event(window_state.as_ref(), fake_platform_input);
+            } else {
+                handled |= send_new_event(window_state.as_ref(), platform_input).unwrap_or(false);
             }
 
             if !handled {
-                handled = true;
-                send_to_input_handler(this, ImeInput::InsertText(text, range));
-            }
-        } else if !is_composing {
-            let is_held = event.is_held;
-
-            if let Some(callback) = callback.as_mut() {
-                handled = !callback(PlatformInput::KeyDown(event)).propagate;
-            }
-
-            if !handled && is_held {
-                if let Some(text) = previous_keydown_inserted_text {
-                    // MacOS IME is a bit funky, and even when you've told it there's nothing to
-                    // enter it will still swallow certain keys (e.g. 'f', 'j') and not others
-                    // (e.g. 'n'). This is a problem for certain kinds of views, like the terminal.
-                    with_input_handler(this, |input_handler| {
-                        if input_handler.selected_text_range().is_none() {
-                            handled = true;
-                            input_handler.replace_text_in_range(None, &text)
-                        }
-                    });
-                    window_state.lock().previous_keydown_inserted_text = Some(text);
-                }
+                with_input_handler(this, |handler| {
+                    for input in simulated_inputs {
+                        handler.send(input);
+                        handled |= true;
+                    }
+                });
             }
         }
-
-        window_state.lock().event_callback = callback;
 
         handled as BOOL
     } else {
@@ -1453,6 +1719,7 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
         modifiers: Default::default(),
         key: ".".into(),
         ime_key: None,
+        ime_inputs: SmallVec::new(),
     };
     let event = PlatformInput::KeyDown(KeyDownEvent {
         keystroke: keystroke.clone(),
@@ -1666,9 +1933,9 @@ extern "C" fn valid_attributes_for_marked_text(_: &Object, _: Sel) -> id {
 
 extern "C" fn has_marked_text(this: &Object, _: Sel) -> BOOL {
     let has_marked_text_result =
-        with_input_handler(this, |input_handler| input_handler.marked_text_range()).flatten();
+        with_input_handler(this, |input_handler| input_handler.has_marked_text()).unwrap_or(false);
 
-    has_marked_text_result.is_some() as BOOL
+    has_marked_text_result as BOOL
 }
 
 extern "C" fn marked_range(this: &Object, _: Sel) -> NSRange {
@@ -1731,10 +1998,7 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
 
         let text = text.to_str();
         let replacement_range = replacement_range.to_range();
-        send_to_input_handler(
-            this,
-            ImeInput::InsertText(text.to_string(), replacement_range),
-        );
+        with_input_handler(this, |handler| handler.insert_text(replacement_range, text));
     }
 }
 
@@ -1757,14 +2021,14 @@ extern "C" fn set_marked_text(
         let replacement_range = replacement_range.to_range();
         let text = text.to_str();
 
-        send_to_input_handler(
-            this,
-            ImeInput::SetMarkedText(text.to_string(), replacement_range, selected_range),
-        );
+        with_input_handler(this, |handler| {
+            handler.set_marked_text(replacement_range, text, selected_range)
+        });
     }
 }
+
 extern "C" fn unmark_text(this: &Object, _: Sel) {
-    send_to_input_handler(this, ImeInput::UnmarkText);
+    with_input_handler(this, |handler| handler.unmark_text());
 }
 
 extern "C" fn attributed_substring_for_proposed_range(
@@ -1818,7 +2082,7 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
     if let Some(event) =
         paths.map(|paths| PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }))
     {
-        if send_new_event(&window_state, event) {
+        if send_new_event(&window_state, event).is_some() {
             window_state.lock().external_files_dragged = true;
             return NSDragOperationCopy;
         }
@@ -1832,7 +2096,9 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
     if send_new_event(
         &window_state,
         PlatformInput::FileDrop(FileDropEvent::Pending { position }),
-    ) {
+    )
+    .is_some()
+    {
         NSDragOperationCopy
     } else {
         NSDragOperationNone
@@ -1854,7 +2120,9 @@ extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -
     if send_new_event(
         &window_state,
         PlatformInput::FileDrop(FileDropEvent::Submit { position }),
-    ) {
+    )
+    .is_some()
+    {
         YES
     } else {
         NO
@@ -1908,14 +2176,14 @@ async fn synthetic_drag(
     }
 }
 
-fn send_new_event(window_state_lock: &Mutex<MacWindowState>, e: PlatformInput) -> bool {
+fn send_new_event(window_state_lock: &Mutex<MacWindowState>, e: PlatformInput) -> Option<bool> {
     let window_state = window_state_lock.lock().event_callback.take();
     if let Some(mut callback) = window_state {
-        callback(e);
+        let handled = !callback(e).propagate;
         window_state_lock.lock().event_callback = Some(callback);
-        true
+        Some(handled)
     } else {
-        false
+        None
     }
 }
 
@@ -1926,7 +2194,7 @@ fn drag_event_position(window_state: &Mutex<MacWindowState>, dragging_info: id) 
 
 fn with_input_handler<F, R>(window: &Object, f: F) -> Option<R>
 where
-    F: FnOnce(&mut PlatformInputHandler) -> R,
+    F: FnOnce(&mut MacInputHandler) -> R,
 {
     let window_state = unsafe { get_window_state(window) };
     let mut lock = window_state.as_ref().lock();
@@ -1940,50 +2208,39 @@ where
     }
 }
 
-fn send_to_input_handler(window: &Object, ime: ImeInput) {
-    unsafe {
-        let window_state = get_window_state(window);
-        let mut lock = window_state.lock();
-
-        if let Some(mut input_handler) = lock.input_handler.take() {
-            match ime {
-                ImeInput::InsertText(text, range) => {
-                    if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
-                        ime_input.push((text, range));
-                        lock.input_handler = Some(input_handler);
-                        return;
-                    }
-                    drop(lock);
-                    input_handler.replace_text_in_range(range, &text)
-                }
-                ImeInput::SetMarkedText(text, range, marked_range) => {
-                    lock.ime_composing = true;
-                    drop(lock);
-                    input_handler.replace_and_mark_text_in_range(range, &text, marked_range)
-                }
-                ImeInput::UnmarkText => {
-                    drop(lock);
-                    input_handler.unmark_text()
-                }
-            }
-            window_state.lock().input_handler = Some(input_handler);
-        } else {
-            match ime {
-                ImeInput::InsertText(text, range) => {
-                    if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
-                        ime_input.push((text, range));
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
 unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
     let device_description = NSScreen::deviceDescription(screen);
     let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
     let screen_number = device_description.objectForKey_(screen_number_key);
     let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
     screen_number as CGDirectDisplayID
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simulated_ime_state_set_marked_text() {
+        let mut state = SimulatedImeState {
+            selected_range: Some(10..10),
+            marked_range: None,
+            inputs: SmallVec::new(),
+        };
+
+        state.set_marked_text(None, "あ", Some(1..1));
+
+        assert_eq!(
+            state,
+            SimulatedImeState {
+                selected_range: Some(11..11),
+                marked_range: Some(10..11),
+                inputs: SmallVec::from_slice(&[ImeInput::SetMarkedText(
+                    None,
+                    "あ".to_string(),
+                    Some(1..1)
+                )]),
+            }
+        )
+    }
 }
