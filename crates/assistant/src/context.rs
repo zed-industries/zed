@@ -18,8 +18,8 @@ use gpui::{
 
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
-    LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    Role,
+    LanguageModel, LanguageModelCacheConfiguration, LanguageModelImage, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use open_ai::Model as OpenAiModel;
 use paths::{context_images_dir, contexts_dir};
@@ -27,7 +27,7 @@ use project::Project;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
-    cmp::Ordering,
+    cmp::{max, Ordering},
     collections::hash_map,
     fmt::Debug,
     iter, mem,
@@ -105,6 +105,7 @@ impl ContextOperation {
                         ),
                         timestamp: id.0,
                         should_cache: false,
+                        is_cache_anchor: false,
                     },
                     version: language::proto::deserialize_version(&insert.version),
                 })
@@ -120,6 +121,7 @@ impl ContextOperation {
                         update.timestamp.context("invalid timestamp")?,
                     ),
                     should_cache: false,
+                    is_cache_anchor: false,
                 },
                 version: language::proto::deserialize_version(&update.version),
             }),
@@ -313,6 +315,7 @@ pub struct MessageMetadata {
     status: MessageStatus,
     timestamp: clock::Lamport,
     should_cache: bool,
+    is_cache_anchor: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -544,6 +547,7 @@ impl Context {
                 status: MessageStatus::Done,
                 timestamp: first_message_id.0,
                 should_cache: false,
+                is_cache_anchor: false,
             },
         );
         this.message_anchors.push(message);
@@ -932,10 +936,7 @@ impl Context {
                 let token_count = cx.update(|cx| model.count_tokens(request, cx))?.await?;
                 this.update(&mut cx, |this, cx| {
                     this.token_count = Some(token_count);
-
-                    if model.supports_caching() && token_count > 2_048 {
-                        this.start_cache_warming(cx)
-                    }
+                    this.start_cache_warming(&model, cx);
                     cx.notify()
                 })
             }
@@ -945,9 +946,19 @@ impl Context {
 
     pub fn mark_longest_messages_for_cache(
         &mut self,
+        cache_configuration: &Option<LanguageModelCacheConfiguration>,
         speculative: bool,
         cx: &mut ModelContext<Self>,
     ) -> bool {
+        let cache_configuration =
+            cache_configuration
+                .as_ref()
+                .unwrap_or(&LanguageModelCacheConfiguration {
+                    max_cache_anchors: 0,
+                    should_speculate: false,
+                    min_total_token: 0,
+                });
+
         let messages: Vec<Message> = self
             .messages_from_anchors(
                 self.message_anchors.iter().take(if speculative {
@@ -960,28 +971,32 @@ impl Context {
             .filter(|message| message.offset_range.len() >= 5_000)
             .collect();
 
-        if messages.is_empty() {
-            return false;
-        }
-
         let mut sorted_messages = messages.clone();
         sorted_messages.sort_by(|a, b| b.offset_range.len().cmp(&a.offset_range.len()));
-        sorted_messages.truncate(3);
+        if cache_configuration.max_cache_anchors == 0 && cache_configuration.should_speculate {
+            // Some models support caching, but don't support anchors.  In that case we want to
+            // mark the largest message as needing to be cached, but we will not mark it as an
+            // anchor.
+            sorted_messages.truncate(1);
+        } else {
+            // Save 1 anchor for the inline assistant.
+            sorted_messages.truncate(max(cache_configuration.max_cache_anchors, 1) - 1);
+        }
 
         let longest_message_ids: HashSet<MessageId> = sorted_messages
             .into_iter()
             .map(|message| message.id)
             .collect();
 
-        let mut cache_changed = false;
-
         let cache_deltas: HashSet<MessageId> = self
             .messages_metadata
             .iter()
             .filter_map(|(id, metadata)| {
                 let should_cache = longest_message_ids.contains(id);
-                if metadata.should_cache != should_cache {
-                    cache_changed = true;
+                let should_be_anchor = should_cache && cache_configuration.max_cache_anchors > 0;
+                if metadata.should_cache != should_cache
+                    || metadata.is_cache_anchor != should_be_anchor
+                {
                     Some(*id)
                 } else {
                     None
@@ -989,21 +1004,27 @@ impl Context {
             })
             .collect();
 
+        let mut newly_cached_item = false;
         for id in cache_deltas {
+            newly_cached_item = newly_cached_item || longest_message_ids.contains(&id);
             self.update_metadata(id, cx, |metadata| {
-                metadata.should_cache = longest_message_ids.contains(&id)
+                metadata.should_cache = longest_message_ids.contains(&id);
+                metadata.is_cache_anchor =
+                    metadata.should_cache && (cache_configuration.max_cache_anchors > 0);
             });
         }
-        cache_changed
+        newly_cached_item
     }
 
-    fn start_cache_warming(&mut self, cx: &mut ModelContext<Self>) {
-        let model = LanguageModelRegistry::read_global(cx)
-            .active_model()
-            .unwrap();
-
-        if !self.mark_longest_messages_for_cache(true, cx) {
+    fn start_cache_warming(&mut self, model: &Arc<dyn LanguageModel>, cx: &mut ModelContext<Self>) {
+        let cache_configuration = model.cache_configuration();
+        if !self.mark_longest_messages_for_cache(&cache_configuration, true, cx) {
             return;
+        }
+        if let Some(cache_configuration) = cache_configuration {
+            if !cache_configuration.should_speculate {
+                return;
+            }
         }
 
         let request = {
@@ -1019,12 +1040,9 @@ impl Context {
             req
         };
 
+        let model = Arc::clone(model);
         self.pending_cache_warming_task = cx.spawn(|_, cx| {
             async move {
-                cx.background_executor()
-                    .timer(Duration::from_millis(200))
-                    .await;
-
                 match model.stream_completion(request, &cx).await {
                     Ok(mut stream) => {
                         stream.next().await;
@@ -1458,7 +1476,7 @@ impl Context {
             return None;
         }
         // Compute which messages to cache, including the last one.
-        self.mark_longest_messages_for_cache(false, cx);
+        self.mark_longest_messages_for_cache(&model.cache_configuration(), false, cx);
 
         let request = self.to_completion_request(cx);
         let assistant_message = self
@@ -1674,6 +1692,7 @@ impl Context {
                 status,
                 timestamp: anchor.id.0,
                 should_cache: false,
+                is_cache_anchor: false,
             };
             self.insert_message(anchor.clone(), metadata.clone(), cx);
             self.push_op(
@@ -1791,6 +1810,7 @@ impl Context {
                 status: MessageStatus::Done,
                 timestamp: suffix.id.0,
                 should_cache: false,
+                is_cache_anchor: false,
             };
             self.insert_message(suffix.clone(), suffix_metadata.clone(), cx);
             self.push_op(
@@ -1841,6 +1861,7 @@ impl Context {
                         status: MessageStatus::Done,
                         timestamp: selection.id.0,
                         should_cache: false,
+                        is_cache_anchor: false,
                     };
                     self.insert_message(selection.clone(), selection_metadata.clone(), cx);
                     self.push_op(
@@ -2074,7 +2095,7 @@ impl Context {
                     anchor: message_anchor.start,
                     role: metadata.role,
                     status: metadata.status.clone(),
-                    cache: metadata.should_cache,
+                    cache: metadata.is_cache_anchor,
                     image_offsets,
                 });
             }
@@ -2322,6 +2343,7 @@ impl SavedContext {
                         status: message.metadata.status,
                         timestamp: message.metadata.timestamp,
                         should_cache: false,
+                        is_cache_anchor: false,
                     },
                     version: version.clone(),
                 });
@@ -2339,6 +2361,7 @@ impl SavedContext {
                     status: metadata.status,
                     timestamp,
                     should_cache: false,
+                    is_cache_anchor: false,
                 },
                 version: version.clone(),
             });
@@ -2434,6 +2457,7 @@ impl SavedContextV0_3_0 {
                             status: metadata.status.clone(),
                             timestamp,
                             should_cache: false,
+                            is_cache_anchor: false,
                         },
                         image_offsets: Vec::new(),
                     })

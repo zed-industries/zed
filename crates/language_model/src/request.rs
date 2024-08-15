@@ -214,7 +214,7 @@ impl LanguageModelRequestMessage {
                 .content
                 .get(0)
                 .map(|content| match content {
-                    MessageContent::Text(s) => s.is_empty(),
+                    MessageContent::Text(s) => s.trim().is_empty(),
                     MessageContent::Image(_) => true,
                 })
                 .unwrap_or(false)

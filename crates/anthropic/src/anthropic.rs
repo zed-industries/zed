@@ -15,6 +15,14 @@ pub use supported_countries::*;
 pub const ANTHROPIC_API_URL: &'static str = "https://api.anthropic.com";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct AnthropicModelCacheConfiguration {
+    pub min_total_token: usize,
+    pub should_speculate: bool,
+    pub max_cache_anchors: usize,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[default]
@@ -33,7 +41,7 @@ pub enum Model {
         /// Override this model with a different Anthropic model for tool calls.
         tool_override: Option<String>,
         /// Indicates whether this custom model supports caching.
-        supports_caching: Option<bool>,
+        cache_configuration: Option<AnthropicModelCacheConfiguration>,
     },
 }
 
@@ -72,14 +80,18 @@ impl Model {
         }
     }
 
-    pub fn supports_caching(&self) -> bool {
+    pub fn cache_configuration(&self) -> Option<AnthropicModelCacheConfiguration> {
         match self {
-            Self::Claude3_5Sonnet | Self::Claude3Haiku => true,
+            Self::Claude3_5Sonnet | Self::Claude3Haiku => Some(AnthropicModelCacheConfiguration {
+                min_total_token: 2_048,
+                should_speculate: true,
+                max_cache_anchors: 4,
+            }),
             Self::Custom {
-                supports_caching: Some(supports_caching),
+                cache_configuration,
                 ..
-            } => *supports_caching,
-            _ => false,
+            } => cache_configuration.clone(),
+            _ => None,
         }
     }
 

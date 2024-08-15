@@ -1,7 +1,7 @@
 use crate::{
-    settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    settings::AllLanguageModelSettings, LanguageModel, LanguageModelCacheConfiguration,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
 use anthropic::AnthropicError;
 use anyhow::{anyhow, Context as _, Result};
@@ -38,7 +38,7 @@ pub struct AvailableModel {
     pub name: String,
     pub max_tokens: usize,
     pub tool_override: Option<String>,
-    pub supports_caching: Option<bool>,
+    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -172,7 +172,13 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     name: model.name.clone(),
                     max_tokens: model.max_tokens,
                     tool_override: model.tool_override.clone(),
-                    supports_caching: model.supports_caching,
+                    cache_configuration: model.cache_configuration.as_ref().map(|config| {
+                        anthropic::AnthropicModelCacheConfiguration {
+                            max_cache_anchors: config.max_cache_anchors,
+                            should_speculate: config.should_speculate,
+                            min_total_token: config.min_total_token,
+                        }
+                    }),
                 },
             );
         }
@@ -353,8 +359,14 @@ impl LanguageModel for AnthropicModel {
         .boxed()
     }
 
-    fn supports_caching(&self) -> bool {
-        return self.model.supports_caching();
+    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
+        self.model
+            .cache_configuration()
+            .map(|config| LanguageModelCacheConfiguration {
+                max_cache_anchors: config.max_cache_anchors,
+                should_speculate: config.should_speculate,
+                min_total_token: config.min_total_token,
+            })
     }
 
     fn use_any_tool(

@@ -1,7 +1,7 @@
 use super::open_ai::count_open_ai_tokens;
 use crate::{
-    settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelId,
-    LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
+    settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
+    LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, ZedModel,
 };
 use anthropic::AnthropicError;
@@ -56,7 +56,7 @@ pub struct AvailableModel {
     name: String,
     max_tokens: usize,
     tool_override: Option<String>,
-    supports_caching: Option<bool>,
+    cache_configuration: Option<LanguageModelCacheConfiguration>,
 }
 
 pub struct CloudLanguageModelProvider {
@@ -203,7 +203,13 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                             name: model.name.clone(),
                             max_tokens: model.max_tokens,
                             tool_override: model.tool_override.clone(),
-                            supports_caching: model.supports_caching,
+                            cache_configuration: model.cache_configuration.as_ref().map(|config| {
+                                anthropic::AnthropicModelCacheConfiguration {
+                                    max_cache_anchors: config.max_cache_anchors,
+                                    should_speculate: config.should_speculate,
+                                    min_total_token: config.min_total_token,
+                                }
+                            }),
                         })
                     }
                     AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
