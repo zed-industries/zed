@@ -38,6 +38,7 @@
 - [Developing Extensions](./extensions/developing-extensions.md)
 - [Language Extensions](./extensions/languages.md)
 - [Theme Extensions](./extensions/themes.md)
+- [Slash Commands](./extensions/slash-commands.md)
 
 # Language Support
 
