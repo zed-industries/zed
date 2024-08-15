@@ -2974,12 +2974,12 @@ mod tests {
 
         model
             .as_fake()
-            .respond_to_last_tool_use(tool::WorkflowStepResolution {
+            .respond_to_last_tool_use(tool::WorkflowStepResolutionTool {
                 step_title: "Title".into(),
-                suggestions: vec![tool::WorkflowSuggestion {
+                suggestions: vec![tool::WorkflowSuggestionTool {
                     path: "/root/hello.rs".into(),
                     // Simulate a symbol name that's slightly different than our outline query
-                    kind: tool::WorkflowSuggestionKind::Update {
+                    kind: tool::WorkflowSuggestionToolKind::Update {
                         symbol: "fn main()".into(),
                         description: "Extract a greeting function".into(),
                     },

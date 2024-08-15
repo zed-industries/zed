@@ -11,7 +11,7 @@ use ui::{
     div, h_flex, px, Color, Element as _, ParentElement as _, Styled, ViewContext, WindowContext,
 };
 
-use crate::{Context, ResolvedWorkflowStep, WorkflowSuggestion};
+use crate::{Context, ResolvedWorkflowStep, WorkflowSuggestion, WorkflowSuggestionKind};
 
 type StepRange = Range<language::Anchor>;
 
@@ -68,7 +68,7 @@ impl ContextInspector {
                         .and_then(|file| file.path().to_str())
                         .unwrap_or("untitled");
                     let snapshot = buffer.text_snapshot();
-                    writeln!(output, "  {buffer_path}:").ok()?;
+                    writeln!(output, "Path: {buffer_path}:").ok()?;
                     for group in suggestion_groups {
                         for suggestion in &group.suggestions {
                             pretty_print_workflow_suggestion(&mut output, suggestion, &snapshot);
@@ -163,7 +163,7 @@ impl ContextInspector {
 }
 fn pretty_print_anchor(
     out: &mut String,
-    anchor: &language::Anchor,
+    anchor: language::Anchor,
     snapshot: &text::BufferSnapshot,
 ) {
     use std::fmt::Write;
@@ -177,9 +177,9 @@ fn pretty_print_range(
 ) {
     use std::fmt::Write;
     write!(out, "    Range: ").ok();
-    pretty_print_anchor(out, &range.start, snapshot);
+    pretty_print_anchor(out, range.start, snapshot);
     write!(out, "..").ok();
-    pretty_print_anchor(out, &range.end, snapshot);
+    pretty_print_anchor(out, range.end, snapshot);
 }
 
 fn pretty_print_workflow_suggestion(
@@ -188,37 +188,46 @@ fn pretty_print_workflow_suggestion(
     snapshot: &text::BufferSnapshot,
 ) {
     use std::fmt::Write;
-    let (range, description, position) = match suggestion {
-        WorkflowSuggestion::Update { range, description } => (Some(range), Some(description), None),
-        WorkflowSuggestion::CreateFile { description } => (None, Some(description), None),
-        WorkflowSuggestion::AppendChild {
-            position,
-            description,
+    let (position, description, range) = match &suggestion.kind {
+        WorkflowSuggestionKind::Update { range, description } => {
+            (None, Some(description), Some(range))
         }
-        | WorkflowSuggestion::InsertSiblingBefore {
+        WorkflowSuggestionKind::CreateFile { description } => (None, Some(description), None),
+        WorkflowSuggestionKind::AppendChild {
             position,
             description,
-        }
-        | WorkflowSuggestion::InsertSiblingAfter {
+        } => (Some(position), Some(description), None),
+        WorkflowSuggestionKind::InsertSiblingBefore {
             position,
             description,
-        }
-        | WorkflowSuggestion::PrependChild {
+        } => (Some(position), Some(description), None),
+        WorkflowSuggestionKind::InsertSiblingAfter {
             position,
             description,
-        } => (None, Some(description), Some(position)),
-
-        WorkflowSuggestion::Delete { range } => (Some(range), None, None),
+        } => (Some(position), Some(description), None),
+        WorkflowSuggestionKind::PrependChild {
+            position,
+            description,
+        } => (Some(position), Some(description), None),
+        WorkflowSuggestionKind::Delete { range } => (None, None, Some(range)),
     };
+    writeln!(out, "    Tool input: {}", suggestion.tool_input).ok();
+    writeln!(
+        out,
+        "    Tool output: {}",
+        serde_json::to_string_pretty(&suggestion.tool_output)
+            .expect("Should not fail on valid struct serialization")
+    )
+    .ok();
     if let Some(description) = description {
         writeln!(out, "    Description: {description}").ok();
     }
     if let Some(range) = range {
-        pretty_print_range(out, range, snapshot);
+        pretty_print_range(out, &range, snapshot);
     }
     if let Some(position) = position {
         write!(out, "    Position: ").ok();
-        pretty_print_anchor(out, position, snapshot);
+        pretty_print_anchor(out, *position, snapshot);
         write!(out, "\n").ok();
     }
     write!(out, "\n").ok();

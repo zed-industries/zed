@@ -2911,7 +2911,7 @@ impl ContextEditor {
         let mut assist_ids = Vec::new();
         for (excerpt_id, suggestion_group) in suggestion_groups {
             for suggestion in &suggestion_group.suggestions {
-                assist_ids.extend(suggestion.show(
+                assist_ids.extend(suggestion.kind.show(
                     &editor,
                     excerpt_id,
                     workspace,

@@ -1,4 +1,6 @@
-use crate::{AssistantPanel, Context, InlineAssistId, InlineAssistant};
+use crate::{
+    prompts::StepResolutionContext, AssistantPanel, Context, InlineAssistId, InlineAssistant,
+};
 use anyhow::{anyhow, Error, Result};
 use collections::HashMap;
 use editor::Editor;
@@ -10,7 +12,7 @@ use project::Project;
 use rope::Point;
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
-use std::{cmp, ops::Range, sync::Arc};
+use std::{cmp, fmt::Write, ops::Range, sync::Arc};
 use text::{AnchorRangeExt as _, OffsetRangeExt as _};
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -34,7 +36,36 @@ pub struct WorkflowSuggestionGroup {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum WorkflowSuggestion {
+pub struct WorkflowSuggestion {
+    pub kind: WorkflowSuggestionKind,
+    pub tool_input: String,
+    pub tool_output: tool::WorkflowSuggestionTool,
+}
+
+impl WorkflowSuggestion {
+    pub fn range(&self) -> Range<Anchor> {
+        self.kind.range()
+    }
+
+    pub fn show(
+        &self,
+        editor: &View<Editor>,
+        excerpt_id: editor::ExcerptId,
+        workspace: &WeakView<Workspace>,
+        assistant_panel: &View<AssistantPanel>,
+        cx: &mut ui::ViewContext<crate::assistant_panel::ContextEditor>,
+    ) -> Option<InlineAssistId> {
+        self.kind
+            .show(editor, excerpt_id, workspace, assistant_panel, cx)
+    }
+
+    fn try_merge(&mut self, other: &mut WorkflowSuggestion, snapshot: &BufferSnapshot) -> bool {
+        self.kind.try_merge(&other.kind, snapshot)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkflowSuggestionKind {
     Update {
         range: Range<language::Anchor>,
         description: String,
@@ -87,6 +118,15 @@ impl WorkflowStepResolution {
             .text_for_range(self.tagged_range.clone())
             .collect::<String>();
 
+        let mut workflow_context = String::new();
+        for message in context.messages(cx) {
+            write!(&mut workflow_context, "<message role={}>", message.role).unwrap();
+            for chunk in context_buffer.read(cx).text_for_range(message.offset_range) {
+                write!(&mut workflow_context, "{chunk}").unwrap();
+            }
+            write!(&mut workflow_context, "</message>").unwrap();
+        }
+
         Some(cx.spawn(|this, mut cx| async move {
             let result = async {
                 let Some(model) = model else {
@@ -99,7 +139,12 @@ impl WorkflowStepResolution {
                     cx.notify();
                 })?;
 
-                let mut prompt = prompt_builder.generate_step_resolution_prompt()?;
+                let resolution_context = StepResolutionContext {
+                    workflow_context,
+                    step_to_resolve: step_text.clone(),
+                };
+                let mut prompt =
+                    prompt_builder.generate_step_resolution_prompt(&resolution_context)?;
                 prompt.push_str(&step_text);
                 request.messages.push(LanguageModelRequestMessage {
                     role: Role::User,
@@ -108,7 +153,7 @@ impl WorkflowStepResolution {
 
                 // Invoke the model to get its edit suggestions for this workflow step.
                 let mut stream = model
-                    .use_tool_stream::<tool::WorkflowStepResolution>(request, &cx)
+                    .use_tool_stream::<tool::WorkflowStepResolutionTool>(request, &cx)
                     .await?;
                 while let Some(chunk) = stream.next().await {
                     let chunk = chunk?;
@@ -119,14 +164,16 @@ impl WorkflowStepResolution {
                 }
 
                 let resolution = this.update(&mut cx, |this, _| {
-                    serde_json::from_str::<tool::WorkflowStepResolution>(&this.output)
+                    serde_json::from_str::<tool::WorkflowStepResolutionTool>(&this.output)
                 })??;
 
                 // Translate the parsed suggestions to our internal types, which anchor the suggestions to locations in the code.
                 let suggestion_tasks: Vec<_> = resolution
                     .suggestions
                     .iter()
-                    .map(|suggestion| suggestion.resolve(project.clone(), cx.clone()))
+                    .map(|suggestion| {
+                        suggestion.resolve(step_text.clone(), project.clone(), cx.clone())
+                    })
                     .collect();
 
                 // Expand the context ranges of each suggestion and group suggestions with overlapping context ranges.
@@ -152,7 +199,7 @@ impl WorkflowStepResolution {
                     suggestions.sort_by(|a, b| a.range().cmp(&b.range(), &snapshot));
 
                     // Merge overlapping suggestions
-                    suggestions.dedup_by(|a, b| b.try_merge(&a, &snapshot));
+                    suggestions.dedup_by(|a, b| b.try_merge(a, &snapshot));
 
                     // Create context ranges for each suggestion
                     for suggestion in suggestions {
@@ -214,40 +261,40 @@ impl WorkflowStepResolution {
     }
 }
 
-impl WorkflowSuggestion {
+impl WorkflowSuggestionKind {
     pub fn range(&self) -> Range<language::Anchor> {
         match self {
-            WorkflowSuggestion::Update { range, .. } => range.clone(),
-            WorkflowSuggestion::CreateFile { .. } => language::Anchor::MIN..language::Anchor::MAX,
-            WorkflowSuggestion::InsertSiblingBefore { position, .. }
-            | WorkflowSuggestion::InsertSiblingAfter { position, .. }
-            | WorkflowSuggestion::PrependChild { position, .. }
-            | WorkflowSuggestion::AppendChild { position, .. } => *position..*position,
-            WorkflowSuggestion::Delete { range } => range.clone(),
+            Self::Update { range, .. } => range.clone(),
+            Self::CreateFile { .. } => language::Anchor::MIN..language::Anchor::MAX,
+            Self::InsertSiblingBefore { position, .. }
+            | Self::InsertSiblingAfter { position, .. }
+            | Self::PrependChild { position, .. }
+            | Self::AppendChild { position, .. } => *position..*position,
+            Self::Delete { range } => range.clone(),
         }
     }
 
     pub fn description(&self) -> Option<&str> {
         match self {
-            WorkflowSuggestion::Update { description, .. }
-            | WorkflowSuggestion::CreateFile { description }
-            | WorkflowSuggestion::InsertSiblingBefore { description, .. }
-            | WorkflowSuggestion::InsertSiblingAfter { description, .. }
-            | WorkflowSuggestion::PrependChild { description, .. }
-            | WorkflowSuggestion::AppendChild { description, .. } => Some(description),
-            WorkflowSuggestion::Delete { .. } => None,
+            Self::Update { description, .. }
+            | Self::CreateFile { description }
+            | Self::InsertSiblingBefore { description, .. }
+            | Self::InsertSiblingAfter { description, .. }
+            | Self::PrependChild { description, .. }
+            | Self::AppendChild { description, .. } => Some(description),
+            Self::Delete { .. } => None,
         }
     }
 
     fn description_mut(&mut self) -> Option<&mut String> {
         match self {
-            WorkflowSuggestion::Update { description, .. }
-            | WorkflowSuggestion::CreateFile { description }
-            | WorkflowSuggestion::InsertSiblingBefore { description, .. }
-            | WorkflowSuggestion::InsertSiblingAfter { description, .. }
-            | WorkflowSuggestion::PrependChild { description, .. }
-            | WorkflowSuggestion::AppendChild { description, .. } => Some(description),
-            WorkflowSuggestion::Delete { .. } => None,
+            Self::Update { description, .. }
+            | Self::CreateFile { description }
+            | Self::InsertSiblingBefore { description, .. }
+            | Self::InsertSiblingAfter { description, .. }
+            | Self::PrependChild { description, .. }
+            | Self::AppendChild { description, .. } => Some(description),
+            Self::Delete { .. } => None,
         }
     }
 
@@ -286,16 +333,16 @@ impl WorkflowSuggestion {
         let snapshot = buffer.read(cx).snapshot(cx);
 
         match self {
-            WorkflowSuggestion::Update { range, description } => {
+            Self::Update { range, description } => {
                 initial_prompt = description.clone();
                 suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
                     ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
             }
-            WorkflowSuggestion::CreateFile { description } => {
+            Self::CreateFile { description } => {
                 initial_prompt = description.clone();
                 suggestion_range = editor::Anchor::min()..editor::Anchor::min();
             }
-            WorkflowSuggestion::InsertSiblingBefore {
+            Self::InsertSiblingBefore {
                 position,
                 description,
             } => {
@@ -311,7 +358,7 @@ impl WorkflowSuggestion {
                     line_start..line_start
                 });
             }
-            WorkflowSuggestion::InsertSiblingAfter {
+            Self::InsertSiblingAfter {
                 position,
                 description,
             } => {
@@ -327,7 +374,7 @@ impl WorkflowSuggestion {
                     line_start..line_start
                 });
             }
-            WorkflowSuggestion::PrependChild {
+            Self::PrependChild {
                 position,
                 description,
             } => {
@@ -343,7 +390,7 @@ impl WorkflowSuggestion {
                     line_start..line_start
                 });
             }
-            WorkflowSuggestion::AppendChild {
+            Self::AppendChild {
                 position,
                 description,
             } => {
@@ -359,7 +406,7 @@ impl WorkflowSuggestion {
                     line_start..line_start
                 });
             }
-            WorkflowSuggestion::Delete { range } => {
+            Self::Delete { range } => {
                 initial_prompt = "Delete".to_string();
                 suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
                     ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
@@ -392,15 +439,15 @@ pub mod tool {
     use schemars::JsonSchema;
 
     #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    pub struct WorkflowStepResolution {
+    pub struct WorkflowStepResolutionTool {
         /// An extremely short title for the edit step represented by these operations.
         pub step_title: String,
         /// A sequence of operations to apply to the codebase.
         /// When multiple operations are required for a step, be sure to include multiple operations in this list.
-        pub suggestions: Vec<WorkflowSuggestion>,
+        pub suggestions: Vec<WorkflowSuggestionTool>,
     }
 
-    impl LanguageModelTool for WorkflowStepResolution {
+    impl LanguageModelTool for WorkflowStepResolutionTool {
         fn name() -> String {
             "edit".into()
         }
@@ -429,16 +476,17 @@ pub mod tool {
     /// programmatic changes to source code. It provides a structured way to describe
     /// edits for features like refactoring tools or AI-assisted coding suggestions.
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-    pub struct WorkflowSuggestion {
+    pub struct WorkflowSuggestionTool {
         /// The path to the file containing the relevant operation
         pub path: String,
         #[serde(flatten)]
-        pub kind: WorkflowSuggestionKind,
+        pub kind: WorkflowSuggestionToolKind,
     }
 
-    impl WorkflowSuggestion {
+    impl WorkflowSuggestionTool {
         pub(super) async fn resolve(
             &self,
+            tool_input: String,
             project: Model<Project>,
             mut cx: AsyncAppContext,
         ) -> Result<(Model<Buffer>, super::WorkflowSuggestion)> {
@@ -475,9 +523,8 @@ pub mod tool {
             let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
             let outline = snapshot.outline(None).context("no outline for buffer")?;
 
-            let suggestion;
-            match kind {
-                WorkflowSuggestionKind::Update {
+            let kind = match kind {
+                WorkflowSuggestionToolKind::Update {
                     symbol,
                     description,
                 } => {
@@ -494,12 +541,12 @@ pub mod tool {
                         snapshot.line_len(symbol.range.end.row),
                     );
                     let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
-                    suggestion = super::WorkflowSuggestion::Update { range, description };
+                    WorkflowSuggestionKind::Update { range, description }
                 }
-                WorkflowSuggestionKind::Create { description } => {
-                    suggestion = super::WorkflowSuggestion::CreateFile { description };
+                WorkflowSuggestionToolKind::Create { description } => {
+                    WorkflowSuggestionKind::CreateFile { description }
                 }
-                WorkflowSuggestionKind::InsertSiblingBefore {
+                WorkflowSuggestionToolKind::InsertSiblingBefore {
                     symbol,
                     description,
                 } => {
@@ -514,12 +561,12 @@ pub mod tool {
                                 annotation_range.start
                             }),
                     );
-                    suggestion = super::WorkflowSuggestion::InsertSiblingBefore {
+                    WorkflowSuggestionKind::InsertSiblingBefore {
                         position,
                         description,
-                    };
+                    }
                 }
-                WorkflowSuggestionKind::InsertSiblingAfter {
+                WorkflowSuggestionToolKind::InsertSiblingAfter {
                     symbol,
                     description,
                 } => {
@@ -528,12 +575,12 @@ pub mod tool {
                         .with_context(|| format!("symbol not found: {:?}", symbol))?
                         .to_point(&snapshot);
                     let position = snapshot.anchor_after(symbol.range.end);
-                    suggestion = super::WorkflowSuggestion::InsertSiblingAfter {
+                    WorkflowSuggestionKind::InsertSiblingAfter {
                         position,
                         description,
-                    };
+                    }
                 }
-                WorkflowSuggestionKind::PrependChild {
+                WorkflowSuggestionToolKind::PrependChild {
                     symbol,
                     description,
                 } => {
@@ -548,18 +595,18 @@ pub mod tool {
                                 .body_range
                                 .map_or(symbol.range.start, |body_range| body_range.start),
                         );
-                        suggestion = super::WorkflowSuggestion::PrependChild {
+                        WorkflowSuggestionKind::PrependChild {
                             position,
                             description,
-                        };
+                        }
                     } else {
-                        suggestion = super::WorkflowSuggestion::PrependChild {
+                        WorkflowSuggestionKind::PrependChild {
                             position: language::Anchor::MIN,
                             description,
-                        };
+                        }
                     }
                 }
-                WorkflowSuggestionKind::AppendChild {
+                WorkflowSuggestionToolKind::AppendChild {
                     symbol,
                     description,
                 } => {
@@ -574,18 +621,18 @@ pub mod tool {
                                 .body_range
                                 .map_or(symbol.range.end, |body_range| body_range.end),
                         );
-                        suggestion = super::WorkflowSuggestion::AppendChild {
+                        WorkflowSuggestionKind::AppendChild {
                             position,
                             description,
-                        };
+                        }
                     } else {
-                        suggestion = super::WorkflowSuggestion::PrependChild {
+                        WorkflowSuggestionKind::PrependChild {
                             position: language::Anchor::MAX,
                             description,
-                        };
+                        }
                     }
                 }
-                WorkflowSuggestionKind::Delete { symbol } => {
+                WorkflowSuggestionToolKind::Delete { symbol } => {
                     let symbol = outline
                         .find_most_similar(&symbol)
                         .with_context(|| format!("symbol not found: {:?}", symbol))?
@@ -599,9 +646,15 @@ pub mod tool {
                         snapshot.line_len(symbol.range.end.row),
                     );
                     let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
-                    suggestion = super::WorkflowSuggestion::Delete { range };
+                    WorkflowSuggestionKind::Delete { range }
                 }
-            }
+            };
+
+            let suggestion = WorkflowSuggestion {
+                kind,
+                tool_output: self.clone(),
+                tool_input,
+            };
 
             Ok((buffer, suggestion))
         }
@@ -609,7 +662,7 @@ pub mod tool {
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
     #[serde(tag = "kind")]
-    pub enum WorkflowSuggestionKind {
+    pub enum WorkflowSuggestionToolKind {
         /// Rewrites the specified symbol entirely based on the given description.
         /// This operation completely replaces the existing symbol with new content.
         Update {
