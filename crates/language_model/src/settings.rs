@@ -93,10 +93,12 @@ impl AnthropicSettingsContent {
                                     name,
                                     max_tokens,
                                     tool_override,
+                                    supports_caching,
                                 } => Some(provider::anthropic::AvailableModel {
                                     name,
                                     max_tokens,
                                     tool_override,
+                                    supports_caching,
                                 }),
                                 _ => None,
                             })

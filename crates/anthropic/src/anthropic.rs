@@ -32,6 +32,8 @@ pub enum Model {
         max_tokens: usize,
         /// Override this model with a different Anthropic model for tool calls.
         tool_override: Option<String>,
+        /// Indicates whether this custom model supports caching.
+        supports_caching: Option<bool>,
     },
 }
 
@@ -70,6 +72,17 @@ impl Model {
         }
     }
 
+    pub fn supports_caching(&self) -> bool {
+        match self {
+            Self::Claude3_5Sonnet | Self::Claude3Haiku => true,
+            Self::Custom {
+                supports_caching: Some(supports_caching),
+                ..
+            } => *supports_caching,
+            _ => false,
+        }
+    }
+
     pub fn max_token_count(&self) -> usize {
         match self {
             Self::Claude3_5Sonnet
@@ -104,7 +117,10 @@ pub async fn complete(
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header("Anthropic-Beta", "tools-2024-04-04")
+        .header(
+            "Anthropic-Beta",
+            "tools-2024-04-04,prompt-caching-2024-07-31",
+        )
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
 
@@ -161,7 +177,10 @@ pub async fn stream_completion(
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header("Anthropic-Beta", "tools-2024-04-04")
+        .header(
+            "Anthropic-Beta",
+            "tools-2024-04-04,prompt-caching-2024-07-31",
+        )
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
     if let Some(low_speed_timeout) = low_speed_timeout {
@@ -226,7 +245,7 @@ pub fn extract_text_from_events(
         match response {
             Ok(response) => match response {
                 Event::ContentBlockStart { content_block, .. } => match content_block {
-                    Content::Text { text } => Some(Ok(text)),
+                    Content::Text { text, .. } => Some(Ok(text)),
                     _ => None,
                 },
                 Event::ContentBlockDelta { delta, .. } => match delta {
@@ -285,13 +304,25 @@ pub async fn extract_tool_args_from_events(
     }))
 }
 
+#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheControlType {
+    Ephemeral,
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
+pub struct CacheControl {
+    #[serde(rename = "type")]
+    pub cache_type: CacheControlType,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
     pub content: Vec<Content>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     User,
@@ -302,19 +333,31 @@ pub enum Role {
 #[serde(tag = "type")]
 pub enum Content {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
     #[serde(rename = "image")]
-    Image { source: ImageSource },
+    Image {
+        source: ImageSource,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,
         name: String,
         input: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
     #[serde(rename = "tool_result")]
     ToolResult {
         tool_use_id: String,
         content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
 }
 

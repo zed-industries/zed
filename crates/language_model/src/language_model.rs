@@ -78,6 +78,10 @@ pub trait LanguageModel: Send + Sync {
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
 
+    fn supports_caching(&self) -> bool {
+        false
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &provider::fake::FakeLanguageModel {
         unimplemented!()

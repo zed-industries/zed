@@ -38,6 +38,7 @@ pub struct AvailableModel {
     pub name: String,
     pub max_tokens: usize,
     pub tool_override: Option<String>,
+    pub supports_caching: Option<bool>,
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -171,6 +172,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     name: model.name.clone(),
                     max_tokens: model.max_tokens,
                     tool_override: model.tool_override.clone(),
+                    supports_caching: model.supports_caching,
                 },
             );
         }
@@ -349,6 +351,10 @@ impl LanguageModel for AnthropicModel {
                 .boxed())
         }
         .boxed()
+    }
+
+    fn supports_caching(&self) -> bool {
+        return self.model.supports_caching();
     }
 
     fn use_any_tool(

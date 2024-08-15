@@ -56,6 +56,7 @@ pub struct AvailableModel {
     name: String,
     max_tokens: usize,
     tool_override: Option<String>,
+    supports_caching: Option<bool>,
 }
 
 pub struct CloudLanguageModelProvider {
@@ -202,6 +203,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                             name: model.name.clone(),
                             max_tokens: model.max_tokens,
                             tool_override: model.tool_override.clone(),
+                            supports_caching: model.supports_caching,
                         })
                     }
                     AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {

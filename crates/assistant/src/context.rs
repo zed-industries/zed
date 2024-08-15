@@ -104,6 +104,7 @@ impl ContextOperation {
                             message.status.context("invalid status")?,
                         ),
                         timestamp: id.0,
+                        should_cache: false,
                     },
                     version: language::proto::deserialize_version(&insert.version),
                 })
@@ -118,6 +119,7 @@ impl ContextOperation {
                     timestamp: language::proto::deserialize_timestamp(
                         update.timestamp.context("invalid timestamp")?,
                     ),
+                    should_cache: false,
                 },
                 version: language::proto::deserialize_version(&update.version),
             }),
@@ -310,6 +312,7 @@ pub struct MessageMetadata {
     pub role: Role,
     status: MessageStatus,
     timestamp: clock::Lamport,
+    should_cache: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -335,6 +338,7 @@ pub struct Message {
     pub anchor: language::Anchor,
     pub role: Role,
     pub status: MessageStatus,
+    pub cache: bool,
 }
 
 impl Message {
@@ -370,6 +374,7 @@ impl Message {
         LanguageModelRequestMessage {
             role: self.role,
             content,
+            cache: self.cache,
         }
     }
 }
@@ -433,6 +438,7 @@ pub struct Context {
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
     pending_save: Task<Result<()>>,
+    pending_cache_warming_task: Task<Option<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
@@ -510,6 +516,7 @@ impl Context {
             pending_completions: Default::default(),
             token_count: None,
             pending_token_count: Task::ready(None),
+            pending_cache_warming_task: Task::ready(None),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
@@ -536,6 +543,7 @@ impl Context {
                 role: Role::User,
                 status: MessageStatus::Done,
                 timestamp: first_message_id.0,
+                should_cache: false,
             },
         );
         this.message_anchors.push(message);
@@ -924,8 +932,98 @@ impl Context {
                 let token_count = cx.update(|cx| model.count_tokens(request, cx))?.await?;
                 this.update(&mut cx, |this, cx| {
                     this.token_count = Some(token_count);
+
+                    if model.supports_caching() && token_count > 2_048 {
+                        this.start_cache_warming(cx)
+                    }
                     cx.notify()
                 })
+            }
+            .log_err()
+        });
+    }
+
+    pub fn mark_longest_messages_for_cache(&mut self, cx: &mut ModelContext<Self>) -> bool {
+        let messages: Vec<Message> = self
+            .messages(cx)
+            .filter(|message| message.offset_range.len() >= 5_000)
+            .collect();
+
+        if messages.is_empty() {
+            return false;
+        }
+
+        let mut sorted_messages = messages.clone();
+        sorted_messages.sort_by(|a, b| b.offset_range.len().cmp(&a.offset_range.len()));
+        sorted_messages.truncate(4);
+
+        let longest_message_ids: HashSet<MessageId> = sorted_messages
+            .into_iter()
+            .map(|message| message.id)
+            .collect();
+
+        let mut cache_changed = false;
+
+        let cache_deltas: HashSet<MessageId> = self
+            .messages_metadata
+            .iter()
+            .filter_map(|(id, metadata)| {
+                let should_cache = longest_message_ids.contains(id);
+                if metadata.should_cache != should_cache {
+                    cache_changed = true;
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for id in cache_deltas {
+            self.update_metadata(id, cx, |metadata| {
+                metadata.should_cache = longest_message_ids.contains(&id)
+            });
+        }
+        cache_changed
+    }
+
+    fn start_cache_warming(&mut self, cx: &mut ModelContext<Self>) {
+        let model = LanguageModelRegistry::read_global(cx)
+            .active_model()
+            .unwrap();
+
+        if !self.mark_longest_messages_for_cache(cx) {
+            return;
+        }
+
+        let request = {
+            let mut req = self.to_completion_request(cx);
+            req.messages.push(LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![
+                    "Summarize the context into a short title without punctuation.".into(),
+                ],
+                cache: false,
+            });
+            req
+        };
+
+        self.pending_cache_warming_task = cx.spawn(|_, cx| {
+            async move {
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
+
+                match model.stream_completion(request, &cx).await {
+                    Ok(mut stream) => {
+                        stream.next().await;
+                        log::info!("Cache warming completed successfully");
+                    }
+                    Err(e) => {
+                        log::warn!("Cache warming failed: {}", e);
+                    }
+                };
+
+                anyhow::Ok(())
             }
             .log_err()
         });
@@ -1329,15 +1427,19 @@ impl Context {
         self.count_remaining_tokens(cx);
     }
 
-    pub fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<MessageAnchor> {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
-        let last_message_id = self.message_anchors.iter().rev().find_map(|message| {
+    fn get_last_valid_message_id(&self, cx: &ModelContext<Self>) -> Option<MessageId> {
+        self.message_anchors.iter().rev().find_map(|message| {
             message
                 .start
                 .is_valid(self.buffer.read(cx))
                 .then_some(message.id)
-        })?;
+        })
+    }
+
+    pub fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<MessageAnchor> {
+        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
+        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let last_message_id = self.get_last_valid_message_id(cx)?;
 
         if !provider.is_authenticated(cx) {
             log::info!("completion provider has no credentials");
@@ -1557,6 +1659,7 @@ impl Context {
                 role,
                 status,
                 timestamp: anchor.id.0,
+                should_cache: false,
             };
             self.insert_message(anchor.clone(), metadata.clone(), cx);
             self.push_op(
@@ -1673,6 +1776,7 @@ impl Context {
                 role,
                 status: MessageStatus::Done,
                 timestamp: suffix.id.0,
+                should_cache: false,
             };
             self.insert_message(suffix.clone(), suffix_metadata.clone(), cx);
             self.push_op(
@@ -1722,6 +1826,7 @@ impl Context {
                         role,
                         status: MessageStatus::Done,
                         timestamp: selection.id.0,
+                        should_cache: false,
                     };
                     self.insert_message(selection.clone(), selection_metadata.clone(), cx);
                     self.push_op(
@@ -1788,6 +1893,7 @@ impl Context {
                     content: vec![
                         "Summarize the context into a short title without punctuation.".into(),
                     ],
+                    cache: false,
                 }));
             let request = LanguageModelRequest {
                 messages: messages.collect(),
@@ -1946,6 +2052,7 @@ impl Context {
                     anchor: message_anchor.start,
                     role: metadata.role,
                     status: metadata.status.clone(),
+                    cache: metadata.should_cache,
                     image_offsets,
                 });
             }
@@ -2192,6 +2299,7 @@ impl SavedContext {
                         role: message.metadata.role,
                         status: message.metadata.status,
                         timestamp: message.metadata.timestamp,
+                        should_cache: false,
                     },
                     version: version.clone(),
                 });
@@ -2208,6 +2316,7 @@ impl SavedContext {
                     role: metadata.role,
                     status: metadata.status,
                     timestamp,
+                    should_cache: false,
                 },
                 version: version.clone(),
             });
@@ -2302,6 +2411,7 @@ impl SavedContextV0_3_0 {
                             role: metadata.role,
                             status: metadata.status.clone(),
                             timestamp,
+                            should_cache: false,
                         },
                         image_offsets: Vec::new(),
                     })
