@@ -1387,8 +1387,10 @@ struct WorkflowStep {
 impl WorkflowStep {
     fn status(&self, cx: &AppContext) -> WorkflowStepStatus {
         match self.resolved_step.as_ref() {
-            Some(Ok(_)) => {
-                if let Some(assist) = self.assist.as_ref() {
+            Some(Ok(step)) => {
+                if step.suggestions.is_empty() {
+                    WorkflowStepStatus::Empty
+                } else if let Some(assist) = self.assist.as_ref() {
                     let assistant = InlineAssistant::global(cx);
                     if assist
                         .assist_ids
@@ -1424,6 +1426,7 @@ impl WorkflowStep {
 enum WorkflowStepStatus {
     Resolving,
     Error(Arc<anyhow::Error>),
+    Empty,
     Idle,
     Pending,
     Done,
@@ -1433,6 +1436,45 @@ enum WorkflowStepStatus {
 impl WorkflowStepStatus {
     pub(crate) fn is_confirmed(&self) -> bool {
         matches!(self, Self::Confirmed)
+    }
+
+    fn render_workflow_step_error(
+        id: EntityId,
+        editor: WeakView<ContextEditor>,
+        step_range: Range<language::Anchor>,
+        error: String,
+    ) -> AnyElement {
+        h_flex()
+            .gap_2()
+            .child(
+                div()
+                    .id("step-resolution-failure")
+                    .child(
+                        Label::new("Step Resolution Failed")
+                            .size(LabelSize::Small)
+                            .color(Color::Error),
+                    )
+                    .tooltip(move |cx| Tooltip::text(error.clone(), cx)),
+            )
+            .child(
+                Button::new(("transform", id), "Retry")
+                    .icon(IconName::Update)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .label_size(LabelSize::Small)
+                    .on_click({
+                        let editor = editor.clone();
+                        let step_range = step_range.clone();
+                        move |_, cx| {
+                            editor
+                                .update(cx, |this, cx| {
+                                    this.resolve_workflow_step(step_range.clone(), cx)
+                                })
+                                .ok();
+                        }
+                    }),
+            )
+            .into_any()
     }
 
     pub(crate) fn into_element(
@@ -1469,40 +1511,18 @@ impl WorkflowStepStatus {
                     |label, delta| label.alpha(delta),
                 )
                 .into_any_element(),
-            WorkflowStepStatus::Error(error) => {
-                let error = error.clone();
-                h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id("step-resolution-failure")
-                            .child(
-                                Label::new("Step Resolution Failed")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Error),
-                            )
-                            .tooltip(move |cx| Tooltip::text(error.to_string(), cx)),
-                    )
-                    .child(
-                        Button::new(("transform", id), "Retry")
-                            .icon(IconName::Update)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::Small)
-                            .label_size(LabelSize::Small)
-                            .on_click({
-                                let editor = editor.clone();
-                                let step_range = step_range.clone();
-                                move |_, cx| {
-                                    editor
-                                        .update(cx, |this, cx| {
-                                            this.resolve_workflow_step(step_range.clone(), cx)
-                                        })
-                                        .ok();
-                                }
-                            }),
-                    )
-                    .into_any()
-            }
+            WorkflowStepStatus::Error(error) => Self::render_workflow_step_error(
+                id,
+                editor.clone(),
+                step_range.clone(),
+                error.to_string(),
+            ),
+            WorkflowStepStatus::Empty => Self::render_workflow_step_error(
+                id,
+                editor.clone(),
+                step_range.clone(),
+                "Model was unable to locate the code to edit".to_string(),
+            ),
             WorkflowStepStatus::Idle => Button::new(("transform", id), "Transform")
                 .icon(IconName::SparkleAlt)
                 .icon_position(IconPosition::Start)
@@ -1871,7 +1891,7 @@ impl ContextEditor {
                 self.confirm_workflow_step(range, cx);
                 true
             }
-            WorkflowStepStatus::Error(_) => {
+            WorkflowStepStatus::Error(_) | WorkflowStepStatus::Empty => {
                 self.resolve_workflow_step(range, cx);
                 true
             }
@@ -3545,7 +3565,7 @@ impl ContextEditor {
         let button_text = match self.active_workflow_step() {
             Some(step) => match step.status(cx) {
                 WorkflowStepStatus::Resolving => "Resolving Step...",
-                WorkflowStepStatus::Error(_) => "Retry Step Resolution",
+                WorkflowStepStatus::Empty | WorkflowStepStatus::Error(_) => "Retry Step Resolution",
                 WorkflowStepStatus::Idle => "Transform",
                 WorkflowStepStatus::Pending => "Transforming...",
                 WorkflowStepStatus::Done => "Accept Transformation",
