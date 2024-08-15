@@ -17,7 +17,7 @@ use crate::{
     PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, ResolvedWorkflowStep,
     SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector, WorkflowStepView,
 };
-use crate::{ContextStoreEvent, ShowConfiguration};
+use crate::{ContextStoreEvent, ModelPickerDelegate, ShowConfiguration};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use client::{proto, Client, Status};
@@ -145,7 +145,7 @@ pub struct AssistantPanel {
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
-    model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
+    model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
     configuration_subscription: Option<Subscription>,
@@ -4044,12 +4044,13 @@ pub struct ContextEditorToolbarItem {
     workspace: WeakView<Workspace>,
     active_context_editor: Option<WeakView<ContextEditor>>,
     model_summary_editor: View<Editor>,
+    model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
 }
 
 impl ContextEditorToolbarItem {
     pub fn new(
         workspace: &Workspace,
-        _model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
+        model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
         model_summary_editor: View<Editor>,
     ) -> Self {
         Self {
@@ -4057,6 +4058,7 @@ impl ContextEditorToolbarItem {
             workspace: workspace.weak_handle(),
             active_context_editor: None,
             model_summary_editor,
+            model_selector_menu_handle,
         }
     }
 
@@ -4190,49 +4192,52 @@ impl Render for ContextEditorToolbarItem {
 
         let right_side = h_flex()
             .gap_2()
-            .child(ModelSelector::new(
-                self.fs.clone(),
-                ButtonLike::new("active-model")
-                    .style(ButtonStyle::Subtle)
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_0p5()
-                            .child(
-                                div()
-                                    .overflow_x_hidden()
-                                    .flex_grow()
-                                    .whitespace_nowrap()
-                                    .child(match (active_provider, active_model) {
-                                        (Some(provider), Some(model)) => h_flex()
-                                            .gap_1()
-                                            .child(
-                                                Icon::new(provider.icon())
-                                                    .color(Color::Muted)
-                                                    .size(IconSize::XSmall),
-                                            )
-                                            .child(
-                                                Label::new(model.name().0)
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted),
-                                            )
-                                            .into_any_element(),
-                                        _ => Label::new("No model selected")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .into_any_element(),
-                                    }),
-                            )
-                            .child(
-                                Icon::new(IconName::ChevronDown)
-                                    .color(Color::Muted)
-                                    .size(IconSize::XSmall),
-                            ),
-                    )
-                    .tooltip(move |cx| {
-                        Tooltip::for_action("Change Model", &ToggleModelSelector, cx)
-                    }),
-            ))
+            .child(
+                ModelSelector::new(
+                    self.fs.clone(),
+                    ButtonLike::new("active-model")
+                        .style(ButtonStyle::Subtle)
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .overflow_x_hidden()
+                                        .flex_grow()
+                                        .whitespace_nowrap()
+                                        .child(match (active_provider, active_model) {
+                                            (Some(provider), Some(model)) => h_flex()
+                                                .gap_1()
+                                                .child(
+                                                    Icon::new(provider.icon())
+                                                        .color(Color::Muted)
+                                                        .size(IconSize::XSmall),
+                                                )
+                                                .child(
+                                                    Label::new(model.name().0)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                                .into_any_element(),
+                                            _ => Label::new("No model selected")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted)
+                                                .into_any_element(),
+                                        }),
+                                )
+                                .child(
+                                    Icon::new(IconName::ChevronDown)
+                                        .color(Color::Muted)
+                                        .size(IconSize::XSmall),
+                                ),
+                        )
+                        .tooltip(move |cx| {
+                            Tooltip::for_action("Change Model", &ToggleModelSelector, cx)
+                        }),
+                )
+                .with_handle(self.model_selector_menu_handle.clone()),
+            )
             .children(self.render_remaining_tokens(cx))
             .child(self.render_inject_context_menu(cx));
 
