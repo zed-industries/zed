@@ -6,7 +6,6 @@ use language::BufferSnapshot;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{ops::Range, sync::Arc, time::Duration};
-use text::{OffsetRangeExt as _, ToPoint};
 use util::ResultExt;
 
 #[derive(Serialize)]
@@ -18,7 +17,6 @@ pub struct ContentPromptContext {
     pub user_prompt: String,
     pub rewrite_section: String,
     pub rewrite_section_with_selections: String,
-    pub rewrite_section_surrounding_with_selections: String,
     pub has_insertion: bool,
     pub has_replacement: bool,
 }
@@ -173,7 +171,6 @@ impl PromptBuilder {
         };
 
         const MAX_CTX: usize = 50000;
-        const MINI_CTX: usize = 100;
         let mut is_truncated = false;
 
         let before_range = 0..transform_range.start;
@@ -196,11 +193,11 @@ impl PromptBuilder {
         for chunk in buffer.text_for_range(truncated_before) {
             document_content.push_str(chunk);
         }
-        document_content.push_str("<rewrite_this>");
+        document_content.push_str("<rewrite_this>\n");
         for chunk in buffer.text_for_range(transform_range.clone()) {
             document_content.push_str(chunk);
         }
-        document_content.push_str("</rewrite_this>");
+        document_content.push_str("\n</rewrite_this>");
 
         for chunk in buffer.text_for_range(truncated_after) {
             document_content.push_str(chunk);
@@ -272,7 +269,6 @@ impl PromptBuilder {
             user_prompt,
             rewrite_section,
             rewrite_section_with_selections,
-            rewrite_section_surrounding_with_selections,
             has_insertion,
             has_replacement,
         };
