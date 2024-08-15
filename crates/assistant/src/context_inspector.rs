@@ -215,7 +215,8 @@ fn pretty_print_workflow_suggestion(
     writeln!(
         out,
         "    Tool output: {}",
-        serde_json::to_string_pretty(&suggestion.tool_output).expect("TODO kb")
+        serde_json::to_string_pretty(&suggestion.tool_output)
+            .expect("Should not fail on valid struct serialization")
     )
     .ok();
     if let Some(description) = description {
