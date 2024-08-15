@@ -1010,5 +1010,16 @@
   //     ]
   //   }
   // ]
-  "ssh_connections": null
+  "ssh_connections": null,
+  // Configures the Context Server Protocol binaries
+  //
+  // Examples:
+  // {
+  //   "id": "server-1",
+  //   "executable": "/path",
+  //   "args": ['arg1", "args2"]
+  // }
+  "experimental.context_servers": {
+    "servers": []
+  }
 }

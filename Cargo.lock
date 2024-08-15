@@ -358,6 +358,7 @@ dependencies = [
  "clock",
  "collections",
  "command_palette_hooks",
+ "context_servers",
  "ctor",
  "db",
  "editor",
@@ -2666,6 +2667,27 @@ dependencies = [
  "getrandom 0.2.15",
  "once_cell",
  "tiny-keccak",
+]
+
+[[package]]
+name = "context_servers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.30",
+ "gpui",
+ "log",
+ "parking_lot",
+ "postage",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "url",
+ "util",
+ "workspace",
 ]
 
 [[package]]
