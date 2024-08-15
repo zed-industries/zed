@@ -6,7 +6,7 @@
 //! of messages.
 
 use anyhow::Result;
-use std::collections::HashMap;
+use collections::HashMap;
 
 use crate::client::Client;
 use crate::types;

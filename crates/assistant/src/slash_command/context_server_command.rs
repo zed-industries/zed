@@ -2,13 +2,13 @@ use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
+use collections::HashMap;
 use context_servers::{
     manager::{ContextServer, ContextServerManager},
     protocol::PromptInfo,
 };
 use gpui::{Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
-use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use ui::{IconName, SharedString};
@@ -106,20 +106,16 @@ fn prompt_arguments(
             "Prompt has more than one argument, which is not supported"
         )),
         Some(args) if args.len() == 1 => match argument {
-            Some(value) => {
-                let mut map = HashMap::new();
-                map.insert(args[0].name.clone(), value);
-                Ok(map)
-            }
+            Some(value) => Ok(HashMap::from_iter([(args[0].name.clone(), value)])),
             None => Err(anyhow!("Prompt expects argument but none given")),
         },
-        Some(_) | None => Ok(HashMap::new()),
+        Some(_) | None => Ok(HashMap::default()),
     }
 }
 
-// MCP servers can return prompts with multiple arguments. Since we only
-// support one argument, we ignore all others. This is the necessary predicate
-// for this.
+/// MCP servers can return prompts with multiple arguments. Since we only
+/// support one argument, we ignore all others. This is the necessary predicate
+/// for this.
 pub fn acceptable_prompt(prompt: &PromptInfo) -> bool {
     match &prompt.arguments {
         None => true,

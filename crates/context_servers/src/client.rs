@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, FutureExt};
 use gpui::{AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
@@ -11,7 +12,6 @@ use smol::{
     process::{self, Child},
 };
 use std::{
-    collections::HashMap,
     fmt,
     path::PathBuf,
     sync::{

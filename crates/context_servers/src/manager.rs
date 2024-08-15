@@ -14,15 +14,14 @@
 //! The module also includes initialization logic to set up the context server system
 //! and react to changes in settings.
 
+use collections::{HashMap, HashSet};
 use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task};
 use log;
 use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
-
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsStore};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::{
@@ -128,8 +127,8 @@ impl EventEmitter<Event> for ContextServerManager {}
 impl ContextServerManager {
     pub fn new() -> Self {
         Self {
-            servers: HashMap::new(),
-            pending_servers: HashSet::new(),
+            servers: HashMap::default(),
+            pending_servers: HashSet::default(),
         }
     }
     pub fn global(cx: &AppContext) -> Model<Self> {
@@ -247,23 +246,23 @@ pub fn init(cx: &mut AppContext) {
                 .map(|server| (server.id.clone(), server.config.clone()))
                 .collect();
 
-            let new_servers: HashMap<String, ServerConfig> = settings
+            let new_servers = settings
                 .servers
                 .iter()
                 .map(|config| (config.id.clone(), config.clone()))
-                .collect();
+                .collect::<HashMap<_, _>>();
 
-            let servers_to_add: Vec<ServerConfig> = new_servers
+            let servers_to_add = new_servers
                 .values()
                 .filter(|config| !current_servers.contains_key(&config.id))
                 .cloned()
-                .collect();
+                .collect::<Vec<_>>();
 
-            let servers_to_remove: Vec<String> = current_servers
+            let servers_to_remove = current_servers
                 .keys()
                 .filter(|id| !new_servers.contains_key(*id))
                 .cloned()
-                .collect();
+                .collect::<Vec<_>>();
 
             log::trace!("servers_to_add={:?}", servers_to_add);
             for config in servers_to_add {
