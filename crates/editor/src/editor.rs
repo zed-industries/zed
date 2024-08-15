@@ -4379,11 +4379,11 @@ impl Editor {
             this.refresh_inline_completion(true, cx);
         });
 
-        if let Some(confirm) = completion.confirm.as_ref() {
-            (confirm)(intent, cx);
-        }
-
-        if completion.show_new_completions_on_confirm {
+        let show_new_completions_on_confirm = completion
+            .confirm
+            .as_ref()
+            .map_or(false, |confirm| confirm(intent, cx));
+        if show_new_completions_on_confirm {
             self.show_completions(&ShowCompletions { trigger: None }, cx);
         }
 
@@ -12147,7 +12147,6 @@ fn snippet_completions(
                     ..Default::default()
                 },
                 confirm: None,
-                show_new_completions_on_confirm: false,
             })
         })
         .collect()

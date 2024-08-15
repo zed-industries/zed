@@ -89,9 +89,6 @@ impl SlashCommandCompletionProvider {
             )
             .await;
 
-            // TODO kb this always works, but:
-            // * command name + enter leaves the completion list open
-            // * argument + enter applies the completion without adding a new text first
             cx.update(|cx| {
                 matches
                     .into_iter()
@@ -130,6 +127,9 @@ impl SlashCommandCompletionProvider {
                                                         );
                                                     })
                                                     .ok();
+                                                false
+                                            } else {
+                                                requires_argument || accepts_arguments
                                             }
                                         },
                                     ) as Arc<_>
@@ -141,7 +141,6 @@ impl SlashCommandCompletionProvider {
                             label: command.label(cx),
                             server_id: LanguageServerId(0),
                             lsp_completion: Default::default(),
-                            show_new_completions_on_confirm: requires_argument || accepts_arguments,
                             confirm,
                         })
                     })
@@ -210,6 +209,9 @@ impl SlashCommandCompletionProvider {
                                                         );
                                                     })
                                                     .ok();
+                                                false
+                                            } else {
+                                                !new_argument.run_command
                                             }
                                         }
                                     }) as Arc<_>
@@ -231,7 +233,6 @@ impl SlashCommandCompletionProvider {
                             documentation: None,
                             server_id: LanguageServerId(0),
                             lsp_completion: Default::default(),
-                            show_new_completions_on_confirm: !new_argument.run_command,
                             confirm,
                         }
                     })
