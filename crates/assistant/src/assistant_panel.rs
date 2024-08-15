@@ -2729,11 +2729,11 @@ impl ContextEditor {
             .update(cx, |panel, _| panel.pane())
             .ok()??;
         let context = self.context.read(cx);
-        let langauge_registry = context.language_registry();
+        let language_registry = context.language_registry();
         let step = context.workflow_step_for_range(step_range)?;
         let resolution = step.resolution.clone();
         let view = cx.new_view(|cx| {
-            WorkflowStepView::new(self.context.clone(), resolution, langauge_registry, cx)
+            WorkflowStepView::new(self.context.clone(), resolution, language_registry, cx)
         });
         cx.deref_mut().defer(move |cx| {
             pane.update(cx, |pane, cx| {
