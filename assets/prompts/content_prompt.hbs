@@ -13,7 +13,7 @@ Note: Context around the relevant section has been truncated for brevity.
 {{/if}}
 
 Editing instructions:
-1. Modify the section below based on this prompt:
+1. Modify the code tagged above with `<rewrite_this>...</rewrite_this>` based on this prompt:
 <prompt>
 {{{user_prompt}}}
 </prompt>
@@ -26,17 +26,21 @@ Editing instructions:
    - Update content between <edit_here></edit_here> tags
    {{/if}}
 
-3. Section to modify:
-<rewrite_this>
-{{{rewrite_section_with_selections}}}
-</rewrite_this>
+3. Reminder: immediately surrounding code from the above `document`. Use this to silently recall the context, do not include surrounding code in your output!
+<surrounding-context>
+{{{rewrite_section_surrounding_with_selections}}}
+</surrounding-context>
 
-4. Important guidelines:
+4. Section to modify:
+<rewrite_this>{{{rewrite_section_with_selections}}}</rewrite_this>
+
+5. Important guidelines:
    - Make only the changes needed to address the prompt
-   - Only output {{content_type}} that goes between the {{#if has_insertion}}<insert_here>...</insert_here>{{/if}}{{#if has_replacement}}<edit_here>...</edit_here>{{/if}} tags
    - Match the original indentation
-   - Provide the full section, even if parts remain unchanged
-   - Do NOT include any <rewrite_this> or {{#if has_insertion}}<insert_here>{{/if}}{{#if has_replacement}}<edit_here>{{/if}} tags in your response
+   - Do NOT include any `<rewrite_this>` or {{#if has_insertion}}`<insert_here>`{{/if}}{{#if has_replacement}}`<edit_here>`{{/if}} tags in your response
+   - Provide the full `<rewrite_this>` section, even if parts remain unchanged
+   - Output _only_ the code within `<rewrite_this>...</rewrite_this>` with the requested changes
+   - Only change {{content_type}} that goes between the `{{#if has_insertion}}<insert_here>...</insert_here>{{/if}}{{#if has_replacement}}<edit_here>...</edit_here>{{/if}}` tags
 
 Example of expected output format:
 ```
