@@ -1,9 +1,9 @@
 use crate::components::KernelListItem;
-use crate::KernelStatus;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
 };
+use crate::{stdio, KernelStatus};
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -114,8 +114,7 @@ impl EditorBlock {
     ) -> RenderBlock {
         let render = move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
-            let text_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
-            let text_font_size = ThemeSettings::get_global(cx).buffer_font_size;
+            let text_style = stdio::text_style(cx);
 
             let gutter = cx.gutter_dimensions;
             let close_button_size = IconSize::XSmall;
@@ -124,13 +123,14 @@ impl EditorBlock {
             let on_close = on_close.clone();
 
             let rem_size = cx.rem_size();
-            let line_height = cx.text_style().line_height_in_pixels(rem_size);
 
             let (close_button_width, close_button_padding) =
                 close_button_size.square_components(cx);
 
+            let text_line_height = text_style.line_height_in_pixels(rem_size);
+
             div()
-                .min_h(line_height)
+                .min_h(text_line_height)
                 .flex()
                 .flex_row()
                 .items_start()
@@ -139,11 +139,11 @@ impl EditorBlock {
                 .border_y_1()
                 .border_color(cx.theme().colors().border)
                 .child(
-                    v_flex().min_h(cx.line_height()).justify_center().child(
+                    v_flex().min_h(text_line_height).justify_center().child(
                         h_flex()
                             .w(gutter.full_width())
                             .justify_end()
-                            .pt(line_height / 2.)
+                            .pt(text_line_height / 2.)
                             .child(
                                 h_flex()
                                     .pr(gutter.width / 2. - close_button_width
@@ -172,10 +172,8 @@ impl EditorBlock {
                     div()
                         .flex_1()
                         .size_full()
-                        .py(line_height / 2.)
+                        .py(text_line_height / 2.)
                         .mr(gutter.width)
-                        .text_size(text_font_size)
-                        .font_family(text_font)
                         .child(execution_view),
                 )
                 .into_any_element()

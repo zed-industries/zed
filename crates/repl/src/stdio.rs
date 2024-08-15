@@ -1,9 +1,11 @@
 use crate::outputs::ExecutionView;
 use alacritty_terminal::{term::Config, vte::ansi::Processor};
-use gpui::{canvas, size, AnyElement, TextStyle};
+use gpui::{canvas, size, AnyElement, FontStyle, TextStyle, WhiteSpace};
+use settings::Settings as _;
 use std::mem;
 use terminal::ZedListener;
 use terminal_view::terminal_element::TerminalElement;
+use theme::ThemeSettings;
 use ui::{prelude::*, IntoElement, ViewContext};
 
 /// Implements the most basic of terminal output for use by Jupyter outputs
@@ -23,8 +25,32 @@ const DEFAULT_NUM_LINES: usize = 32;
 const DEFAULT_NUM_COLUMNS: usize = 128;
 
 pub fn text_style(cx: &mut WindowContext) -> TextStyle {
-    let mut text_style = cx.text_style();
-    text_style.font_size = theme::get_buffer_font_size(cx).into();
+    let settings = ThemeSettings::get_global(cx).clone();
+
+    let font_family = settings.buffer_font.family;
+    let font_features = settings.buffer_font.features;
+    let font_weight = settings.buffer_font.weight;
+    let font_fallbacks = settings.buffer_font.fallbacks;
+
+    let theme = cx.theme();
+
+    let text_style = TextStyle {
+        font_family,
+        font_features,
+        font_weight,
+        font_fallbacks,
+        font_size: theme::get_buffer_font_size(cx).into(),
+        font_style: FontStyle::Normal,
+        // todo
+        line_height: cx.line_height().into(),
+        background_color: Some(theme.colors().terminal_background),
+        white_space: WhiteSpace::Normal,
+        // These are going to be overridden per-cell
+        underline: None,
+        strikethrough: None,
+        color: theme.colors().terminal_foreground,
+    };
+
     text_style
 }
 
