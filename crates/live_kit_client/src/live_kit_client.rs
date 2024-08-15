@@ -1,3 +1,5 @@
+#![allow(clippy::arc_with_non_send_sync)]
+
 use std::sync::Arc;
 
 #[cfg(all(target_os = "macos", not(any(test, feature = "test-support"))))]
