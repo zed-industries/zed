@@ -351,10 +351,13 @@ impl Asset for ImageAsset {
                     let mut body = Vec::new();
                     response.body_mut().read_to_end(&mut body).await?;
                     if !response.status().is_success() {
+                        let mut body = String::from_utf8_lossy(&body).into_owned();
+                        let first_line = body.lines().next().unwrap_or("").trim_end();
+                        body.truncate(first_line.len());
                         return Err(ImageCacheError::BadStatus {
                             uri,
                             status: response.status(),
-                            body: String::from_utf8_lossy(&body).into_owned(),
+                            body,
                         });
                     }
                     body

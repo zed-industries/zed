@@ -1,6 +1,6 @@
 use crate::{
-    prompts::PromptBuilder, slash_command::SlashCommandLine, AssistantPanel, InitialInsertion,
-    InlineAssistId, InlineAssistant, MessageId, MessageStatus,
+    prompts::PromptBuilder, slash_command::SlashCommandLine, AssistantPanel, InlineAssistId,
+    InlineAssistant, MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -3342,7 +3342,7 @@ mod tests {
 
         model
             .as_fake()
-            .respond_to_last_tool_use(Ok(serde_json::to_value(tool::WorkflowStepResolution {
+            .respond_to_last_tool_use(tool::WorkflowStepResolution {
                 step_title: "Title".into(),
                 suggestions: vec![tool::WorkflowSuggestion {
                     path: "/root/hello.rs".into(),
@@ -3352,8 +3352,7 @@ mod tests {
                         description: "Extract a greeting function".into(),
                     },
                 }],
-            })
-            .unwrap()));
+            });
 
         // Wait for tool use to be processed.
         cx.run_until_parked();
@@ -4083,45 +4082,5 @@ mod tool {
             /// An fully-qualified reference to the symbol to be deleted, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
             symbol: String,
         },
-    }
-
-    impl WorkflowSuggestionKind {
-        pub fn symbol(&self) -> Option<&str> {
-            match self {
-                Self::Update { symbol, .. } => Some(symbol),
-                Self::InsertSiblingBefore { symbol, .. } => Some(symbol),
-                Self::InsertSiblingAfter { symbol, .. } => Some(symbol),
-                Self::PrependChild { symbol, .. } => symbol.as_deref(),
-                Self::AppendChild { symbol, .. } => symbol.as_deref(),
-                Self::Delete { symbol } => Some(symbol),
-                Self::Create { .. } => None,
-            }
-        }
-
-        pub fn description(&self) -> Option<&str> {
-            match self {
-                Self::Update { description, .. } => Some(description),
-                Self::Create { description } => Some(description),
-                Self::InsertSiblingBefore { description, .. } => Some(description),
-                Self::InsertSiblingAfter { description, .. } => Some(description),
-                Self::PrependChild { description, .. } => Some(description),
-                Self::AppendChild { description, .. } => Some(description),
-                Self::Delete { .. } => None,
-            }
-        }
-
-        pub fn initial_insertion(&self) -> Option<InitialInsertion> {
-            match self {
-                WorkflowSuggestionKind::InsertSiblingBefore { .. } => {
-                    Some(InitialInsertion::NewlineAfter)
-                }
-                WorkflowSuggestionKind::InsertSiblingAfter { .. } => {
-                    Some(InitialInsertion::NewlineBefore)
-                }
-                WorkflowSuggestionKind::PrependChild { .. } => Some(InitialInsertion::NewlineAfter),
-                WorkflowSuggestionKind::AppendChild { .. } => Some(InitialInsertion::NewlineBefore),
-                _ => None,
-            }
-        }
     }
 }
