@@ -166,7 +166,6 @@ impl Transport {
             .with_context(|| "reading after a loop")?;
 
         let msg = std::str::from_utf8(&content).context("invalid utf8 from server")?;
-
         Ok(serde_json::from_str::<Payload>(msg)?)
     }
 

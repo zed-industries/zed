@@ -26,6 +26,7 @@ use clock::ReplicaId;
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use dap::{
     client::{Breakpoint, DebugAdapterClient, DebugAdapterClientId, SerializedBreakpoint},
+    debugger_settings::DebuggerSettings,
     transport::Payload,
 };
 use debounced_delay::DebouncedDelay;
@@ -1415,8 +1416,13 @@ impl Project {
         &self,
         cx: &ModelContext<Self>,
     ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
-        let breakpoint_read_guard = self.open_breakpoints.read();
         let mut result: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+
+        if !DebuggerSettings::get_global(cx).save_breakpoints {
+            return result;
+        }
+
+        let breakpoint_read_guard = self.open_breakpoints.read();
 
         for buffer_id in breakpoint_read_guard.keys() {
             if let Some((worktree_path, mut serialized_breakpoint)) =

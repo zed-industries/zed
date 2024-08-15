@@ -997,5 +997,10 @@
   //     ]
   //   }
   // ]
-  "ssh_connections": null
+  "ssh_connections": null,
+
+  "debugger": {
+    // Save breakpoints across different Zed sessions
+    "save_breakpoints": true
+  }
 }
