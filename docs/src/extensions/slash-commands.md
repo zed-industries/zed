@@ -18,19 +18,16 @@ For example, here is an extension that provides two slash commands: `/echo` and 
 [slash_commands.echo]
 description = "echoes the provided input"
 requires_argument = true
-tooltip_text = ""
 
 [slash_commands.pick-one]
 description = "pick one of three options"
 requires_argument = true
-tooltip_text = ""
 ```
 
 Each slash command may define the following properties:
 
 - `description`: A description of the slash command that will be shown when completing available commands.
 - `requires_argument`: Indicates whether a slash command requires at least one argument to run.
-- `tooltip_text`: Currently unused.
 
 ## Implementing slash command behavior
 
