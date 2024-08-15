@@ -2,6 +2,12 @@
 
 Extensions may provide slash commands for use in the Assistant.
 
+## Example extension
+
+To see a working example of an extension that provides slash commands, check out the [`slash-commands-example` extension](https://github.com/zed-industries/zed/tree/main/extensions/slash-commands-example).
+
+This extension can be [installed as a dev extension](./developing-extensions.html#developing-an-extension-locally) if you want to try it out for yourself.
+
 ## Defining slash commands
 
 A given extension may provide one or more slash commands. Each slash command must be registered in the `extension.toml`.
