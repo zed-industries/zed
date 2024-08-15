@@ -44,6 +44,7 @@ impl ContextInspector {
             self.activate_for_step(range.clone(), cx);
         }
     }
+
     fn crease_content(
         context: &Model<Context>,
         range: StepRange,
@@ -52,8 +53,8 @@ impl ContextInspector {
         use std::fmt::Write;
         let step = context.read(cx).workflow_step_for_range(range)?;
         let mut output = String::from("\n\n");
-        match &step.status {
-            crate::WorkflowStepStatus::Resolved(ResolvedWorkflowStep { title, suggestions }) => {
+        match &step.resolution.read(cx).result {
+            Some(Ok(ResolvedWorkflowStep { title, suggestions })) => {
                 writeln!(output, "Resolution:").ok()?;
                 writeln!(output, "  {title:?}").ok()?;
                 if suggestions.is_empty() {
@@ -75,17 +76,18 @@ impl ContextInspector {
                     }
                 }
             }
-            crate::WorkflowStepStatus::Pending(_) => {
-                writeln!(output, "Resolution: Pending").ok()?;
-            }
-            crate::WorkflowStepStatus::Error(error) => {
+            Some(Err(error)) => {
                 writeln!(output, "Resolution: Error").ok()?;
                 writeln!(output, "{error:?}").ok()?;
+            }
+            None => {
+                writeln!(output, "Resolution: Pending").ok()?;
             }
         }
 
         Some(output.into())
     }
+
     pub(crate) fn activate_for_step(&mut self, range: StepRange, cx: &mut WindowContext<'_>) {
         let text = Self::crease_content(&self.context, range.clone(), cx)
             .unwrap_or_else(|| Arc::from("Error fetching debug info"));

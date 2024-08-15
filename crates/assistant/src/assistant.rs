@@ -13,6 +13,7 @@ mod slash_command;
 pub mod slash_command_settings;
 mod streaming_diff;
 mod terminal_inline_assistant;
+mod workflow;
 
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
@@ -43,6 +44,7 @@ use slash_command::{
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
 use util::ResultExt;
+pub use workflow::*;
 
 use crate::slash_command_settings::SlashCommandSettings;
 

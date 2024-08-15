@@ -99,6 +99,16 @@ impl dyn LanguageModel {
             Ok(serde_json::from_str(&response)?)
         }
     }
+
+    pub fn use_tool_stream<T: LanguageModelTool>(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        let schema = schemars::schema_for!(T);
+        let schema_json = serde_json::to_value(&schema).unwrap();
+        self.use_any_tool(request, T::name(), T::description(), schema_json, cx)
+    }
 }
 
 pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
