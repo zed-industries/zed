@@ -20,11 +20,46 @@
 ;; https://github.com/the-mikedavis/tree-sitter-erlang/tree/main/test/highlight
 ;;
 
-
-;; First match wins in this file
+;; Last match wins in this file.
+;; As of https://github.com/tree-sitter/tree-sitter/blob/master/CHANGELOG.md#breaking-1
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Primitive types
+(string) @string
+(char) @constant
+(integer) @number
+(var) @variable
+(atom) @string.special.symbol
 
+;;; Comments
+((var) @comment.discard
+ (#match? @comment.discard "^_"))
+
+(dotdotdot) @comment.discard
+(comment) @comment
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Functions
+(fa fun: (atom) @function)
+(type_name name: (atom) @function)
+(call expr: (atom) @function)
+(function_clause name: (atom) @function)
+(internal_fun fun: (atom) @function)
+
+;; This is a fudge, we should check that the operator is '/'
+;; But our grammar does not (currently) provide it
+(binary_op_expr lhs: (atom) @function rhs: (integer))
+
+;; Others
+(remote_module module: (atom) @module)
+(remote fun: (atom) @function)
+(macro_call_expr name: (var) @constant)
+(macro_call_expr name: (var) @keyword.directive args: (_) )
+(macro_call_expr name: (atom) @keyword.directive)
+(record_field_name name: (atom) @property)
+(record_name name: (atom) @type)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Attributes
 
 ;; module attribute
@@ -73,6 +108,9 @@
 ;; callback
 (callback fun: (atom) @function)
 
+;; wild attribute
+(wild_attribute name: (attr_name name: (atom) @keyword))
+
 ;; fun decl
 
 ;; include/include_lib
@@ -84,33 +122,12 @@
 ;; define
 (pp_define
     lhs: (macro_lhs
-      name: (_) @keyword.directive
-      args: (var_args args: (var))))
+      name: (var) @constant))
 (pp_define
     lhs: (macro_lhs
-      name: (var) @constant))
+      name: (_) @keyword.directive
+      args: (var_args args: (var))))
 
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Functions
-(fa fun: (atom) @function)
-(type_name name: (atom) @function)
-(call expr: (atom) @function)
-(function_clause name: (atom) @function)
-(internal_fun fun: (atom) @function)
-
-;; This is a fudge, we should check that the operator is '/'
-;; But our grammar does not (currently) provide it
-(binary_op_expr lhs: (atom) @function rhs: (integer))
-
-;; Others
-(remote_module module: (atom) @module)
-(remote fun: (atom) @function)
-(macro_call_expr name: (var) @keyword.directive args: (_) )
-(macro_call_expr name: (var) @constant)
-(macro_call_expr name: (atom) @keyword.directive)
-(record_field_name name: (atom) @property)
-(record_name name: (atom) @type)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Reserved words
@@ -212,20 +229,3 @@
  "=:="
  "=/="
  ] @operator
-
-;;; Comments
-((var) @comment.discard
- (#match? @comment.discard "^_"))
-
-(dotdotdot) @comment.discard
-(comment) @comment
-
-;; Primitive types
-(string) @string
-(char) @constant
-(integer) @number
-(var) @variable
-(atom) @string.special.symbol
-
-;; wild attribute (Should take precedence over atoms, otherwise they are highlighted as atoms)
-(wild_attribute name: (attr_name name: (_) @keyword))

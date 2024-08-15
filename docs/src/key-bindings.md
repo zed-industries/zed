@@ -230,7 +230,7 @@ TBD: Add Column with Linux shortcuts
 | Copy                             | Editor     | `⌘ + C`                         |
 | Cut                              | Editor     | `⌘ + X`                         |
 | Cut to end of line               | Editor     | `Control + K`                   |
-| Delete                           | Editor     | `Control + D`                   |
+| Select Next                      | Editor     | `Control + D`                   |
 | Delete                           | Editor     | `Delete`                        |
 | Delete line                      | Editor     | `⌘ + Shift + K`                 |
 | Delete to beginning of line      | Editor     | `⌘ + Backspace`                 |

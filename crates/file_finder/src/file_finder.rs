@@ -318,6 +318,7 @@ fn matching_history_item_paths<'a>(
         .chain(currently_opened)
         .filter_map(|found_path| {
             let candidate = PathMatchCandidate {
+                is_dir: false, // You can't open directories as project items
                 path: &found_path.project.path,
                 // Only match history items names, otherwise their paths may match too many queries, producing false positives.
                 // E.g. `foo` would match both `something/foo/bar.rs` and `something/foo/foo.rs` and if the former is a history item,
@@ -588,6 +589,7 @@ impl FileFinderDelegate {
                     positions: Vec::new(),
                     worktree_id: worktree_id.to_usize(),
                     path,
+                    is_dir: false, // File finder doesn't support directories
                     path_prefix: "".into(),
                     distance_to_relative_ancestor: usize::MAX,
                 };
@@ -688,6 +690,7 @@ impl FileFinderDelegate {
                                     worktree_id: worktree.read(cx).id().to_usize(),
                                     path: Arc::from(relative_path),
                                     path_prefix: "".into(),
+                                    is_dir: false, // File finder doesn't support directories
                                     distance_to_relative_ancestor: usize::MAX,
                                 }));
                             }
@@ -1001,6 +1004,7 @@ mod tests {
                 path: Arc::from(Path::new("b0.5")),
                 path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
+                is_dir: false,
             }),
             ProjectPanelOrdMatch(PathMatch {
                 score: 1.0,
@@ -1009,6 +1013,7 @@ mod tests {
                 path: Arc::from(Path::new("c1.0")),
                 path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
+                is_dir: false,
             }),
             ProjectPanelOrdMatch(PathMatch {
                 score: 1.0,
@@ -1017,6 +1022,7 @@ mod tests {
                 path: Arc::from(Path::new("a1.0")),
                 path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
+                is_dir: false,
             }),
             ProjectPanelOrdMatch(PathMatch {
                 score: 0.5,
@@ -1025,6 +1031,7 @@ mod tests {
                 path: Arc::from(Path::new("a0.5")),
                 path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
+                is_dir: false,
             }),
             ProjectPanelOrdMatch(PathMatch {
                 score: 1.0,
@@ -1033,6 +1040,7 @@ mod tests {
                 path: Arc::from(Path::new("b1.0")),
                 path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
+                is_dir: false,
             }),
         ];
         file_finder_sorted_output.sort_by(|a, b| b.cmp(a));
@@ -1047,6 +1055,7 @@ mod tests {
                     path: Arc::from(Path::new("a1.0")),
                     path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
+                    is_dir: false,
                 }),
                 ProjectPanelOrdMatch(PathMatch {
                     score: 1.0,
@@ -1055,6 +1064,7 @@ mod tests {
                     path: Arc::from(Path::new("b1.0")),
                     path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
+                    is_dir: false,
                 }),
                 ProjectPanelOrdMatch(PathMatch {
                     score: 1.0,
@@ -1063,6 +1073,7 @@ mod tests {
                     path: Arc::from(Path::new("c1.0")),
                     path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
+                    is_dir: false,
                 }),
                 ProjectPanelOrdMatch(PathMatch {
                     score: 0.5,
@@ -1071,6 +1082,7 @@ mod tests {
                     path: Arc::from(Path::new("a0.5")),
                     path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
+                    is_dir: false,
                 }),
                 ProjectPanelOrdMatch(PathMatch {
                     score: 0.5,
@@ -1079,6 +1091,7 @@ mod tests {
                     path: Arc::from(Path::new("b0.5")),
                     path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
+                    is_dir: false,
                 }),
             ]
         );

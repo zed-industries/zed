@@ -1560,6 +1560,22 @@ impl CodeLabel {
             self.runs.push((start_ix..end_ix, highlight));
         }
     }
+
+    pub fn text(&self) -> &str {
+        self.text.as_str()
+    }
+}
+
+impl From<String> for CodeLabel {
+    fn from(value: String) -> Self {
+        Self::plain(value, None)
+    }
+}
+
+impl From<&str> for CodeLabel {
+    fn from(value: &str) -> Self {
+        Self::plain(value.to_string(), None)
+    }
 }
 
 impl Ord for LanguageMatcher {

@@ -220,6 +220,7 @@ impl Render for QuickActionBar {
                                 menu = menu.toggleable_entry(
                                     "Inlay Hints",
                                     inlay_hints_enabled,
+                                    IconPosition::Start,
                                     Some(editor::actions::ToggleInlayHints.boxed_clone()),
                                     {
                                         let editor = editor.clone();
@@ -238,6 +239,7 @@ impl Render for QuickActionBar {
                             menu = menu.toggleable_entry(
                                 "Inline Git Blame",
                                 git_blame_inline_enabled,
+                                IconPosition::Start,
                                 Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
                                 {
                                     let editor = editor.clone();
@@ -255,6 +257,7 @@ impl Render for QuickActionBar {
                             menu = menu.toggleable_entry(
                                 "Selection Menu",
                                 selection_menu_enabled,
+                                IconPosition::Start,
                                 Some(editor::actions::ToggleSelectionMenu.boxed_clone()),
                                 {
                                     let editor = editor.clone();
@@ -272,6 +275,7 @@ impl Render for QuickActionBar {
                             menu = menu.toggleable_entry(
                                 "Auto Signature Help",
                                 auto_signature_help_enabled,
+                                IconPosition::Start,
                                 Some(editor::actions::ToggleAutoSignatureHelp.boxed_clone()),
                                 {
                                     let editor = editor.clone();

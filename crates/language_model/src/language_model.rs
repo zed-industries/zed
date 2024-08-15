@@ -8,8 +8,10 @@ pub mod settings;
 
 use anyhow::Result;
 use client::{Client, UserStore};
-use futures::{future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, AppContext, AsyncAppContext, Model, SharedString, Task, WindowContext};
+use futures::{future::BoxFuture, stream::BoxStream, TryStreamExt as _};
+use gpui::{
+    AnyElement, AnyView, AppContext, AsyncAppContext, Model, SharedString, Task, WindowContext,
+};
 pub use model::*;
 use project::Fs;
 use proto::Plan;
@@ -74,7 +76,7 @@ pub trait LanguageModel: Send + Sync {
         description: String,
         schema: serde_json::Value,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<serde_json::Value>>;
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &provider::fake::FakeLanguageModel {
@@ -90,11 +92,22 @@ impl dyn LanguageModel {
     ) -> impl 'static + Future<Output = Result<T>> {
         let schema = schemars::schema_for!(T);
         let schema_json = serde_json::to_value(&schema).unwrap();
-        let request = self.use_any_tool(request, T::name(), T::description(), schema_json, cx);
+        let stream = self.use_any_tool(request, T::name(), T::description(), schema_json, cx);
         async move {
-            let response = request.await?;
-            Ok(serde_json::from_value(response)?)
+            let stream = stream.await?;
+            let response = stream.try_collect::<String>().await?;
+            Ok(serde_json::from_str(&response)?)
         }
+    }
+
+    pub fn use_tool_stream<T: LanguageModelTool>(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        let schema = schemars::schema_for!(T);
+        let schema_json = serde_json::to_value(&schema).unwrap();
+        self.use_any_tool(request, T::name(), T::description(), schema_json, cx)
     }
 }
 
@@ -114,6 +127,12 @@ pub trait LanguageModelProvider: 'static {
     fn is_authenticated(&self, cx: &AppContext) -> bool;
     fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>>;
     fn configuration_view(&self, cx: &mut WindowContext) -> AnyView;
+    fn must_accept_terms(&self, _cx: &AppContext) -> bool {
+        false
+    }
+    fn render_accept_terms(&self, _cx: &mut WindowContext) -> Option<AnyElement> {
+        None
+    }
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>>;
 }
 

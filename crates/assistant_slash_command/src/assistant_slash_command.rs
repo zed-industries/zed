@@ -18,11 +18,13 @@ pub fn init(cx: &mut AppContext) {
 #[derive(Debug)]
 pub struct ArgumentCompletion {
     /// The label to display for this completion.
-    pub label: String,
+    pub label: CodeLabel,
     /// The new text that should be inserted into the command when this completion is accepted.
     pub new_text: String,
     /// Whether the command should be run when accepting this completion.
     pub run_command: bool,
+    /// Whether to replace the all arguments, or whether to treat this as an independent argument.
+    pub replace_previous_arguments: bool,
 }
 
 pub trait SlashCommand: 'static + Send + Sync {
@@ -34,15 +36,15 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn menu_text(&self) -> String;
     fn complete_argument(
         self: Arc<Self>,
-        query: String,
+        arguments: &[String],
         cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>>;
     fn requires_argument(&self) -> bool;
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         // TODO: We're just using the `LspAdapterDelegate` here because that is
         // what the extension API is already expecting.

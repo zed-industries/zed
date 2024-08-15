@@ -735,12 +735,17 @@ fn write_to_clipboard_inner(
     unsafe {
         OpenClipboard(None)?;
         EmptyClipboard()?;
-        let encode_wide = item.text.encode_utf16().chain(Some(0)).collect_vec();
+        let encode_wide = item
+            .text()
+            .unwrap_or_default()
+            .encode_utf16()
+            .chain(Some(0))
+            .collect_vec();
         set_data_to_clipboard(&encode_wide, CF_UNICODETEXT.0 as u32)?;
 
-        if let Some(ref metadata) = item.metadata {
+        if let Some((metadata, text)) = item.metadata().zip(item.text()) {
             let hash_result = {
-                let hash = ClipboardItem::text_hash(&item.text);
+                let hash = ClipboardString::text_hash(&text);
                 hash.to_ne_bytes()
             };
             let encode_wide = std::slice::from_raw_parts(hash_result.as_ptr().cast::<u16>(), 4);
@@ -778,20 +783,17 @@ fn read_from_clipboard_inner(hash_format: u32, metadata_format: u32) -> Result<C
             let text = PCWSTR(handle.0 as *const u16);
             String::from_utf16_lossy(text.as_wide())
         };
-        let mut item = ClipboardItem {
-            text,
-            metadata: None,
-        };
         let Some(hash) = read_hash_from_clipboard(hash_format) else {
-            return Ok(item);
+            return Ok(ClipboardItem::new_string(text));
         };
         let Some(metadata) = read_metadata_from_clipboard(metadata_format) else {
-            return Ok(item);
+            return Ok(ClipboardItem::new_string(text));
         };
-        if hash == ClipboardItem::text_hash(&item.text) {
-            item.metadata = Some(metadata);
+        if hash == ClipboardString::text_hash(&text) {
+            Ok(ClipboardItem::new_string_with_metadata(text, metadata))
+        } else {
+            Ok(ClipboardItem::new_string(text))
         }
-        Ok(item)
     }
 }
 
@@ -826,15 +828,15 @@ mod tests {
     #[test]
     fn test_clipboard() {
         let platform = WindowsPlatform::new();
-        let item = ClipboardItem::new("你好".to_string());
+        let item = ClipboardItem::new_string("你好".to_string());
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
-        let item = ClipboardItem::new("12345".to_string());
+        let item = ClipboardItem::new_string("12345".to_string());
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
-        let item = ClipboardItem::new("abcdef".to_string()).with_metadata(vec![3, 4]);
+        let item = ClipboardItem::new_string_with_json_metadata("abcdef".to_string(), vec![3, 4]);
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
     }

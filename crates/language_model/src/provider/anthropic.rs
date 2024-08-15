@@ -3,10 +3,11 @@ use crate::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
+use anthropic::AnthropicError;
 use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryStreamExt as _};
 use gpui::{
     AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
     View, WhiteSpace,
@@ -220,55 +221,55 @@ pub fn count_anthropic_tokens(
 ) -> BoxFuture<'static, Result<usize>> {
     cx.background_executor()
         .spawn(async move {
-            let messages = request
-                .messages
-                .into_iter()
-                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(message.content),
-                    name: None,
-                    function_call: None,
-                })
-                .collect::<Vec<_>>();
+            let messages = request.messages;
+            let mut tokens_from_images = 0;
+            let mut string_messages = Vec::with_capacity(messages.len());
+
+            for message in messages {
+                use crate::MessageContent;
+
+                let mut string_contents = String::new();
+
+                for content in message.content {
+                    match content {
+                        MessageContent::Text(string) => {
+                            string_contents.push_str(&string);
+                        }
+                        MessageContent::Image(image) => {
+                            tokens_from_images += image.estimate_tokens();
+                        }
+                    }
+                }
+
+                if !string_contents.is_empty() {
+                    string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
+                        role: match message.role {
+                            Role::User => "user".into(),
+                            Role::Assistant => "assistant".into(),
+                            Role::System => "system".into(),
+                        },
+                        content: Some(string_contents),
+                        name: None,
+                        function_call: None,
+                    });
+                }
+            }
 
             // Tiktoken doesn't yet support these models, so we manually use the
             // same tokenizer as GPT-4.
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+            tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
+                .map(|tokens| tokens + tokens_from_images)
         })
         .boxed()
 }
 
 impl AnthropicModel {
-    fn request_completion(
-        &self,
-        request: anthropic::Request,
-        cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<anthropic::Response>> {
-        let http_client = self.http_client.clone();
-
-        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
-            (state.api_key.clone(), settings.api_url.clone())
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            anthropic::complete(http_client.as_ref(), &api_url, &api_key, request).await
-        }
-        .boxed()
-    }
-
     fn stream_completion(
         &self,
         request: anthropic::Request,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<anthropic::Event>>>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<anthropic::Event, AnthropicError>>>>
+    {
         let http_client = self.http_client.clone();
 
         let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
@@ -291,7 +292,7 @@ impl AnthropicModel {
                 request,
                 low_speed_timeout,
             );
-            request.await
+            request.await.context("failed to stream completion")
         }
         .boxed()
     }
@@ -338,10 +339,16 @@ impl LanguageModel for AnthropicModel {
         let request = request.into_anthropic(self.model.id().into());
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.await?;
+            let response = request.await.map_err(|err| anyhow!(err))?;
             Ok(anthropic::extract_text_from_events(response))
         });
-        async move { Ok(future.await?.boxed()) }.boxed()
+        async move {
+            Ok(future
+                .await?
+                .map(|result| result.map_err(|err| anyhow!(err)))
+                .boxed())
+        }
+        .boxed()
     }
 
     fn use_any_tool(
@@ -351,7 +358,7 @@ impl LanguageModel for AnthropicModel {
         tool_description: String,
         input_schema: serde_json::Value,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let mut request = request.into_anthropic(self.model.tool_model_id().into());
         request.tool_choice = Some(anthropic::ToolChoice::Tool {
             name: tool_name.clone(),
@@ -362,25 +369,16 @@ impl LanguageModel for AnthropicModel {
             input_schema,
         }];
 
-        let response = self.request_completion(request, cx);
+        let response = self.stream_completion(request, cx);
         self.request_limiter
             .run(async move {
                 let response = response.await?;
-                response
-                    .content
-                    .into_iter()
-                    .find_map(|content| {
-                        if let anthropic::Content::ToolUse { name, input, .. } = content {
-                            if name == tool_name {
-                                Some(input)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
-                    .context("tool not used")
+                Ok(anthropic::extract_tool_args_from_events(
+                    tool_name,
+                    Box::pin(response.map_err(|e| anyhow!(e))),
+                )
+                .await?
+                .boxed())
             })
             .boxed()
     }

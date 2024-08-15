@@ -1259,6 +1259,7 @@ List of `integer` column numbers
     "alternate_scroll": "off",
     "blinking": "terminal_controlled",
     "copy_on_select": false,
+    "dock": "bottom",
     "env": {},
     "font_family": null,
     "font_features": null,
@@ -1273,6 +1274,16 @@ List of `integer` column numbers
   }
 }
 ```
+
+### Terminal: Dock
+
+- Description: Control the position of the dock
+- Setting: `dock`
+- Default: `bottom`
+
+**Options**
+
+`"bottom"`, `"left"` or `"right"`
 
 ### Terminal: Alternate Scroll
 

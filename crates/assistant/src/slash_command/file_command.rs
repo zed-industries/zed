@@ -1,9 +1,9 @@
 use super::{diagnostics_command::write_single_file_diagnostics, SlashCommand, SlashCommandOutput};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
-use language::{BufferSnapshot, LineEnding, LspAdapterDelegate};
+use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Project};
 use std::{
     fmt::Write,
@@ -29,11 +29,30 @@ impl FileSlashCommand {
             let workspace = workspace.read(cx);
             let project = workspace.project().read(cx);
             let entries = workspace.recent_navigation_history(Some(10), cx);
+
+            let entries = entries
+                .into_iter()
+                .map(|entries| (entries.0, false))
+                .chain(project.worktrees(cx).flat_map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    let id = worktree.id();
+                    worktree.child_entries(Path::new("")).map(move |entry| {
+                        (
+                            project::ProjectPath {
+                                worktree_id: id,
+                                path: entry.path.clone(),
+                            },
+                            entry.kind.is_dir(),
+                        )
+                    })
+                }))
+                .collect::<Vec<_>>();
+
             let path_prefix: Arc<str> = Arc::default();
             Task::ready(
                 entries
                     .into_iter()
-                    .filter_map(|(entry, _)| {
+                    .filter_map(|(entry, is_dir)| {
                         let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
                         let mut full_path = PathBuf::from(worktree.read(cx).root_name());
                         full_path.push(&entry.path);
@@ -44,6 +63,7 @@ impl FileSlashCommand {
                             path: full_path.into(),
                             path_prefix: path_prefix.clone(),
                             distance_to_relative_ancestor: 0,
+                            is_dir,
                         })
                     })
                     .collect(),
@@ -54,6 +74,7 @@ impl FileSlashCommand {
                 .into_iter()
                 .map(|worktree| {
                     let worktree = worktree.read(cx);
+
                     PathMatchCandidateSet {
                         snapshot: worktree.snapshot(),
                         include_ignored: worktree
@@ -101,32 +122,51 @@ impl SlashCommand for FileSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        query: String,
+        arguments: &[String],
         cancellation_flag: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let paths = self.search_paths(query, cancellation_flag, &workspace, cx);
+        let paths = self.search_paths(
+            arguments.last().cloned().unwrap_or_default(),
+            cancellation_flag,
+            &workspace,
+            cx,
+        );
+        let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
         cx.background_executor().spawn(async move {
             Ok(paths
                 .await
                 .into_iter()
-                .map(|path_match| {
+                .filter_map(|path_match| {
                     let text = format!(
                         "{}{}",
                         path_match.path_prefix,
                         path_match.path.to_string_lossy()
                     );
 
-                    ArgumentCompletion {
-                        label: text.clone(),
+                    let mut label = CodeLabel::default();
+                    let file_name = path_match.path.file_name()?.to_string_lossy();
+                    let label_text = if path_match.is_dir {
+                        format!("{}/ ", file_name)
+                    } else {
+                        format!("{} ", file_name)
+                    };
+
+                    label.push_str(label_text.as_str(), None);
+                    label.push_str(&text, comment_id);
+                    label.filter_range = 0..file_name.len();
+
+                    Some(ArgumentCompletion {
+                        label,
                         new_text: text,
                         run_command: true,
-                    }
+                        replace_previous_arguments: false,
+                    })
                 })
                 .collect())
         })
@@ -134,7 +174,7 @@ impl SlashCommand for FileSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -143,11 +183,11 @@ impl SlashCommand for FileSlashCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let Some(argument) = argument else {
+        if arguments.is_empty() {
             return Task::ready(Err(anyhow!("missing path")));
         };
 
-        let task = collect_files(workspace.read(cx).project().clone(), argument, cx);
+        let task = collect_files(workspace.read(cx).project().clone(), arguments, cx);
 
         cx.foreground_executor().spawn(async move {
             let (text, ranges) = task.await?;
@@ -178,10 +218,17 @@ enum EntryType {
 
 fn collect_files(
     project: Model<Project>,
-    glob_input: &str,
+    glob_inputs: &[String],
     cx: &mut AppContext,
 ) -> Task<Result<(String, Vec<(Range<usize>, PathBuf, EntryType)>)>> {
-    let Ok(matcher) = PathMatcher::new(&[glob_input.to_owned()]) else {
+    let Ok(matchers) = glob_inputs
+        .into_iter()
+        .map(|glob_input| {
+            PathMatcher::new(&[glob_input.to_owned()])
+                .with_context(|| format!("invalid path {glob_input}"))
+        })
+        .collect::<anyhow::Result<Vec<PathMatcher>>>()
+    else {
         return Task::ready(Err(anyhow!("invalid path")));
     };
 
@@ -203,7 +250,10 @@ fn collect_files(
                 let mut path_including_worktree_name = PathBuf::new();
                 path_including_worktree_name.push(snapshot.root_name());
                 path_including_worktree_name.push(&entry.path);
-                if !matcher.is_match(&path_including_worktree_name) {
+                if !matchers
+                    .iter()
+                    .any(|matcher| matcher.is_match(&path_including_worktree_name))
+                {
                     continue;
                 }
 

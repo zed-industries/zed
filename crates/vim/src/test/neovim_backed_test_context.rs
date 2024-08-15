@@ -247,7 +247,12 @@ impl NeovimBackedTestContext {
             register: '"',
             state: self.shared_state().await,
             neovim: self.neovim.read_register('"').await,
-            editor: self.read_from_clipboard().unwrap().text().clone(),
+            editor: self
+                .read_from_clipboard()
+                .unwrap()
+                .text()
+                .unwrap()
+                .to_owned(),
         }
     }
 
