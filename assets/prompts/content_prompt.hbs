@@ -31,21 +31,23 @@ Editing instructions:
 {{{rewrite_section_surrounding_with_selections}}}
 </surrounding-context>
 
-4. Section to modify:
-<rewrite_this>{{{rewrite_section_with_selections}}}</rewrite_this>
-
-5. Important guidelines:
+4. Important guidelines:
    - Make only the changes needed to address the prompt
    - Match the original indentation
    - Do NOT include any `<rewrite_this>` or {{#if has_insertion}}`<insert_here>`{{/if}}{{#if has_replacement}}`<edit_here>`{{/if}} tags in your response
-   - Provide the full `<rewrite_this>` section, even if parts remain unchanged
-   - Output _only_ the code within `<rewrite_this>...</rewrite_this>` with the requested changes
    - Only change {{content_type}} that goes between the `{{#if has_insertion}}<insert_here>...</insert_here>{{/if}}{{#if has_replacement}}<edit_here>...</edit_here>{{/if}}` tags
+   - Provide the entire `<rewrite_this>` section, even if parts remain unchanged
+   - Do NOT output any of the code outside of the `<rewrite_this>` section
+
+Remember, this is the user's prompt:
+<prompt>
+{{{user_prompt}}}
+</prompt>
 
 Example of expected output format:
 ```
 \{{rewritten_{{content_type}}}}
 ```
-Where \{{rewritten_{{content_type}}}} is replaced with your modified section.
+Where \{{rewritten_{{content_type}}}} is replaced with your modified `<rewrite_this>' section.
 
-Now, provide your modified section using the format shown above. Start immediately with the ``` delimiter, no commentary.
+Now, provide your modified `<rewrite_this>' section using the format shown above. Start immediately with the ``` delimiter, no commentary.

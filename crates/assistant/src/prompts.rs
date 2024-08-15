@@ -207,13 +207,15 @@ impl PromptBuilder {
         }
 
         let mut rewrite_section = String::new();
-        for chunk in buffer.text_for_range(transform_range.clone()) {
+        for chunk in buffer.text_for_range(dbg!(transform_range.clone())) {
             rewrite_section.push_str(chunk);
         }
+        dbg!(&rewrite_section);
 
         let rewrite_section_with_selections = {
             let mut section_with_selections = String::new();
             let mut last_end = 0;
+            section_with_selections.push_str("<rewrite_this>");
             for selected_range in &selected_ranges {
                 if selected_range.start > last_end {
                     section_with_selections.push_str(
@@ -235,6 +237,7 @@ impl PromptBuilder {
             if last_end < rewrite_section.len() {
                 section_with_selections.push_str(&rewrite_section[last_end..]);
             }
+            section_with_selections.push_str("</rewrite_this>");
             section_with_selections
         };
 
@@ -257,11 +260,6 @@ impl PromptBuilder {
             }
             surrounding
         };
-        eprintln!("RS {rewrite_section}");
-        eprintln!("================");
-        eprintln!("RSS {rewrite_section_with_selections}");
-        eprintln!("================");
-        eprintln!("RSSS {rewrite_section_surrounding_with_selections}");
 
         let has_insertion = selected_ranges.iter().any(|range| range.start == range.end);
         let has_replacement = selected_ranges.iter().any(|range| range.start != range.end);
