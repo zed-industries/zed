@@ -71,7 +71,7 @@ pub use language_registry::{
     PendingLanguageServer, QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::LanguageServerId;
-pub use outline::{render_item, Outline, OutlineItem};
+pub use outline::*;
 pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
 pub use text::{AnchorRangeExt, LineEnding};
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};

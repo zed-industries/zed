@@ -9,7 +9,7 @@ use gpui::{
     AppContext, Model, ModelContext, Task, UpdateGlobal as _, View, WeakModel, WeakView,
     WindowContext,
 };
-use language::{Anchor, Buffer, BufferSnapshot};
+use language::{Anchor, Buffer, BufferSnapshot, SymbolPath};
 use language_model::{LanguageModelRegistry, LanguageModelRequestMessage, Role};
 use project::Project;
 use rope::Point;
@@ -33,7 +33,7 @@ pub struct WorkflowStepResolution {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedWorkflowStep {
     pub title: String,
-    pub suggestions: HashMap<Model<Buffer>, Vec<WorkflowSuggestionGroup>>,
+    pub suggestion_groups: HashMap<Model<Buffer>, Vec<WorkflowSuggestionGroup>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -45,6 +45,7 @@ pub struct WorkflowSuggestionGroup {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkflowSuggestion {
     Update {
+        symbol_path: SymbolPath,
         range: Range<language::Anchor>,
         description: String,
     },
@@ -52,22 +53,27 @@ pub enum WorkflowSuggestion {
         description: String,
     },
     InsertSiblingBefore {
+        symbol_path: SymbolPath,
         position: language::Anchor,
         description: String,
     },
     InsertSiblingAfter {
+        symbol_path: SymbolPath,
         position: language::Anchor,
         description: String,
     },
     PrependChild {
+        symbol_path: Option<SymbolPath>,
         position: language::Anchor,
         description: String,
     },
     AppendChild {
+        symbol_path: Option<SymbolPath>,
         position: language::Anchor,
         description: String,
     },
     Delete {
+        symbol_path: SymbolPath,
         range: Range<language::Anchor>,
     },
 }
@@ -141,6 +147,11 @@ impl WorkflowStepResolution {
                 let resolution = this.update(&mut cx, |this, _| {
                     serde_json::from_str::<tool::WorkflowStepResolution>(&this.output)
                 })??;
+
+                this.update(&mut cx, |this, cx| {
+                    this.output = serde_json::to_string_pretty(&resolution).unwrap();
+                    cx.notify();
+                })?;
 
                 // Translate the parsed suggestions to our internal types, which anchor the suggestions to locations in the code.
                 let suggestion_tasks: Vec<_> = resolution
@@ -224,7 +235,10 @@ impl WorkflowStepResolution {
             let result = result.await;
             this.update(&mut cx, |this, cx| {
                 this.result = Some(match result {
-                    Ok((title, suggestions)) => Ok(ResolvedWorkflowStep { title, suggestions }),
+                    Ok((title, suggestion_groups)) => Ok(ResolvedWorkflowStep {
+                        title,
+                        suggestion_groups,
+                    }),
                     Err(error) => Err(Arc::new(error)),
                 });
                 this.context
@@ -255,7 +269,7 @@ impl WorkflowSuggestion {
             | WorkflowSuggestion::InsertSiblingAfter { position, .. }
             | WorkflowSuggestion::PrependChild { position, .. }
             | WorkflowSuggestion::AppendChild { position, .. } => *position..*position,
-            WorkflowSuggestion::Delete { range } => range.clone(),
+            WorkflowSuggestion::Delete { range, .. } => range.clone(),
         }
     }
 
@@ -280,6 +294,30 @@ impl WorkflowSuggestion {
             | WorkflowSuggestion::PrependChild { description, .. }
             | WorkflowSuggestion::AppendChild { description, .. } => Some(description),
             WorkflowSuggestion::Delete { .. } => None,
+        }
+    }
+
+    fn symbol_path(&self) -> Option<&SymbolPath> {
+        match self {
+            WorkflowSuggestion::Update { symbol_path, .. } => Some(symbol_path),
+            WorkflowSuggestion::InsertSiblingBefore { symbol_path, .. } => Some(symbol_path),
+            WorkflowSuggestion::InsertSiblingAfter { symbol_path, .. } => Some(symbol_path),
+            WorkflowSuggestion::PrependChild { symbol_path, .. } => symbol_path.as_ref(),
+            WorkflowSuggestion::AppendChild { symbol_path, .. } => symbol_path.as_ref(),
+            WorkflowSuggestion::Delete { symbol_path, .. } => Some(symbol_path),
+            WorkflowSuggestion::CreateFile { .. } => None,
+        }
+    }
+
+    fn kind(&self) -> &str {
+        match self {
+            WorkflowSuggestion::Update { .. } => "Update",
+            WorkflowSuggestion::CreateFile { .. } => "CreateFile",
+            WorkflowSuggestion::InsertSiblingBefore { .. } => "InsertSiblingBefore",
+            WorkflowSuggestion::InsertSiblingAfter { .. } => "InsertSiblingAfter",
+            WorkflowSuggestion::PrependChild { .. } => "PrependChild",
+            WorkflowSuggestion::AppendChild { .. } => "AppendChild",
+            WorkflowSuggestion::Delete { .. } => "Delete",
         }
     }
 
@@ -318,7 +356,9 @@ impl WorkflowSuggestion {
         let snapshot = buffer.read(cx).snapshot(cx);
 
         match self {
-            WorkflowSuggestion::Update { range, description } => {
+            WorkflowSuggestion::Update {
+                range, description, ..
+            } => {
                 initial_prompt = description.clone();
                 suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
                     ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
@@ -330,6 +370,7 @@ impl WorkflowSuggestion {
             WorkflowSuggestion::InsertSiblingBefore {
                 position,
                 description,
+                ..
             } => {
                 let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
                 initial_prompt = description.clone();
@@ -346,6 +387,7 @@ impl WorkflowSuggestion {
             WorkflowSuggestion::InsertSiblingAfter {
                 position,
                 description,
+                ..
             } => {
                 let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
                 initial_prompt = description.clone();
@@ -362,6 +404,7 @@ impl WorkflowSuggestion {
             WorkflowSuggestion::PrependChild {
                 position,
                 description,
+                ..
             } => {
                 let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
                 initial_prompt = description.clone();
@@ -378,6 +421,7 @@ impl WorkflowSuggestion {
             WorkflowSuggestion::AppendChild {
                 position,
                 description,
+                ..
             } => {
                 let position = snapshot.anchor_in_excerpt(excerpt_id, *position)?;
                 initial_prompt = description.clone();
@@ -391,7 +435,7 @@ impl WorkflowSuggestion {
                     line_start..line_start
                 });
             }
-            WorkflowSuggestion::Delete { range } => {
+            WorkflowSuggestion::Delete { range, .. } => {
                 initial_prompt = "Delete".to_string();
                 suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
                     ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
@@ -513,10 +557,10 @@ pub mod tool {
                     symbol,
                     description,
                 } => {
-                    let symbol = outline
+                    let (symbol_path, symbol) = outline
                         .find_most_similar(&symbol)
-                        .with_context(|| format!("symbol not found: {:?}", symbol))?
-                        .to_point(&snapshot);
+                        .with_context(|| format!("symbol not found: {:?}", symbol))?;
+                    let symbol = symbol.to_point(&snapshot);
                     let start = symbol
                         .annotation_range
                         .map_or(symbol.range.start, |range| range.start);
@@ -526,7 +570,11 @@ pub mod tool {
                         snapshot.line_len(symbol.range.end.row),
                     );
                     let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
-                    suggestion = super::WorkflowSuggestion::Update { range, description };
+                    suggestion = super::WorkflowSuggestion::Update {
+                        range,
+                        description,
+                        symbol_path,
+                    };
                 }
                 WorkflowSuggestionKind::Create { description } => {
                     suggestion = super::WorkflowSuggestion::CreateFile { description };
@@ -535,10 +583,10 @@ pub mod tool {
                     symbol,
                     description,
                 } => {
-                    let symbol = outline
+                    let (symbol_path, symbol) = outline
                         .find_most_similar(&symbol)
-                        .with_context(|| format!("symbol not found: {:?}", symbol))?
-                        .to_point(&snapshot);
+                        .with_context(|| format!("symbol not found: {:?}", symbol))?;
+                    let symbol = symbol.to_point(&snapshot);
                     let position = snapshot.anchor_before(
                         symbol
                             .annotation_range
@@ -549,20 +597,22 @@ pub mod tool {
                     suggestion = super::WorkflowSuggestion::InsertSiblingBefore {
                         position,
                         description,
+                        symbol_path,
                     };
                 }
                 WorkflowSuggestionKind::InsertSiblingAfter {
                     symbol,
                     description,
                 } => {
-                    let symbol = outline
+                    let (symbol_path, symbol) = outline
                         .find_most_similar(&symbol)
-                        .with_context(|| format!("symbol not found: {:?}", symbol))?
-                        .to_point(&snapshot);
+                        .with_context(|| format!("symbol not found: {:?}", symbol))?;
+                    let symbol = symbol.to_point(&snapshot);
                     let position = snapshot.anchor_after(symbol.range.end);
                     suggestion = super::WorkflowSuggestion::InsertSiblingAfter {
                         position,
                         description,
+                        symbol_path,
                     };
                 }
                 WorkflowSuggestionKind::PrependChild {
@@ -570,10 +620,10 @@ pub mod tool {
                     description,
                 } => {
                     if let Some(symbol) = symbol {
-                        let symbol = outline
+                        let (symbol_path, symbol) = outline
                             .find_most_similar(&symbol)
-                            .with_context(|| format!("symbol not found: {:?}", symbol))?
-                            .to_point(&snapshot);
+                            .with_context(|| format!("symbol not found: {:?}", symbol))?;
+                        let symbol = symbol.to_point(&snapshot);
 
                         let position = snapshot.anchor_after(
                             symbol
@@ -583,11 +633,13 @@ pub mod tool {
                         suggestion = super::WorkflowSuggestion::PrependChild {
                             position,
                             description,
+                            symbol_path: Some(symbol_path),
                         };
                     } else {
                         suggestion = super::WorkflowSuggestion::PrependChild {
                             position: language::Anchor::MIN,
                             description,
+                            symbol_path: None,
                         };
                     }
                 }
@@ -596,10 +648,10 @@ pub mod tool {
                     description,
                 } => {
                     if let Some(symbol) = symbol {
-                        let symbol = outline
+                        let (symbol_path, symbol) = outline
                             .find_most_similar(&symbol)
-                            .with_context(|| format!("symbol not found: {:?}", symbol))?
-                            .to_point(&snapshot);
+                            .with_context(|| format!("symbol not found: {:?}", symbol))?;
+                        let symbol = symbol.to_point(&snapshot);
 
                         let position = snapshot.anchor_before(
                             symbol
@@ -609,19 +661,21 @@ pub mod tool {
                         suggestion = super::WorkflowSuggestion::AppendChild {
                             position,
                             description,
+                            symbol_path: Some(symbol_path),
                         };
                     } else {
                         suggestion = super::WorkflowSuggestion::PrependChild {
                             position: language::Anchor::MAX,
                             description,
+                            symbol_path: None,
                         };
                     }
                 }
                 WorkflowSuggestionKind::Delete { symbol } => {
-                    let symbol = outline
+                    let (symbol_path, symbol) = outline
                         .find_most_similar(&symbol)
-                        .with_context(|| format!("symbol not found: {:?}", symbol))?
-                        .to_point(&snapshot);
+                        .with_context(|| format!("symbol not found: {:?}", symbol))?;
+                    let symbol = symbol.to_point(&snapshot);
                     let start = symbol
                         .annotation_range
                         .map_or(symbol.range.start, |range| range.start);
@@ -631,7 +685,7 @@ pub mod tool {
                         snapshot.line_len(symbol.range.end.row),
                     );
                     let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
-                    suggestion = super::WorkflowSuggestion::Delete { range };
+                    suggestion = super::WorkflowSuggestion::Delete { range, symbol_path };
                 }
             }
 

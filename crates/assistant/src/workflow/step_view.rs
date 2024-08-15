@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use super::WorkflowStepResolution;
 use crate::{Assist, Context};
 use editor::{
@@ -7,15 +5,16 @@ use editor::{
     Editor, EditorEvent, ExcerptRange, MultiBuffer,
 };
 use gpui::{
-    div, AppContext, Context as _, EventEmitter, FocusableView, IntoElement, Model,
-    ParentElement as _, Render, SharedString, Styled as _, View, ViewContext, VisualContext as _,
-    WeakModel, WindowContext,
+    div, AnyElement, AppContext, Context as _, Empty, EventEmitter, FocusableView, IntoElement,
+    Model, ParentElement as _, Render, SharedString, Styled as _, View, ViewContext,
+    VisualContext as _, WeakModel, WindowContext,
 };
 use language::{language_settings::SoftWrap, Anchor, Buffer, LanguageRegistry};
+use std::{ops::DerefMut, sync::Arc};
 use theme::ActiveTheme as _;
 use ui::{
-    h_flex, ButtonCommon as _, ButtonLike, ButtonStyle, Color, InteractiveElement as _, Label,
-    LabelCommon as _,
+    h_flex, v_flex, ButtonCommon as _, ButtonLike, ButtonStyle, Color, InteractiveElement as _,
+    Label, LabelCommon as _,
 };
 use workspace::{
     item::{self, Item},
@@ -64,7 +63,9 @@ impl WorkflowStepView {
         let output_start_anchor = buffer_snapshot
             .anchor_in_excerpt(output_excerpt, Anchor::MIN)
             .unwrap();
+        let output_end_anchor = multi_buffer::Anchor::max();
 
+        let handle = cx.view().downgrade();
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::for_multibuffer(buffer.clone(), None, false, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
@@ -93,6 +94,27 @@ impl WorkflowStepView {
                         disposition: BlockDisposition::Above,
                         priority: 0,
                     },
+                    BlockProperties {
+                        position: output_end_anchor,
+                        height: 1,
+                        style: BlockStyle::Fixed,
+                        render: Box::new(move |cx| {
+                            if let Some(result) = handle.upgrade().and_then(|this| {
+                                this.update(cx.deref_mut(), |this, cx| this.render_result(cx))
+                            }) {
+                                v_flex()
+                                    .child(section_header("Output", cx))
+                                    .child(
+                                        div().pl(cx.gutter_dimensions.full_width()).child(result),
+                                    )
+                                    .into_any_element()
+                            } else {
+                                Empty.into_any_element()
+                            }
+                        }),
+                        disposition: BlockDisposition::Below,
+                        priority: 0,
+                    },
                 ],
                 None,
                 cx,
@@ -119,6 +141,47 @@ impl WorkflowStepView {
             tool_output_buffer,
             step: step.downgrade(),
             editor,
+        }
+    }
+
+    fn render_result(&mut self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        let step = self.step.upgrade()?;
+        let result = step.read(cx).result.as_ref()?;
+        match result {
+            Ok(result) => {
+                Some(
+                    v_flex()
+                        .child(result.title.clone())
+                        .children(result.suggestion_groups.iter().filter_map(
+                            |(buffer, suggestion_groups)| {
+                                let path = buffer.read(cx).file().map(|f| f.path());
+                                v_flex()
+                                    .mb_2()
+                                    .border_b_1()
+                                    .children(path.map(|path| format!("path: {}", path.display())))
+                                    .children(suggestion_groups.iter().map(|group| {
+                                        v_flex().pl_2().children(group.suggestions.iter().map(
+                                            |suggestion| {
+                                                v_flex()
+                                                    .children(
+                                                        suggestion.description().map(|desc| {
+                                                            format!("description: {desc}")
+                                                        }),
+                                                    )
+                                                    .child(format!("kind: {}", suggestion.kind()))
+                                                    .children(suggestion.symbol_path().map(
+                                                        |path| format!("symbol path: {}", path.0),
+                                                    ))
+                                            },
+                                        ))
+                                    }))
+                                    .into()
+                            },
+                        ))
+                        .into_any_element(),
+                )
+            }
+            Err(error) => Some(format!("{:?}", error).into_any_element()),
         }
     }
 

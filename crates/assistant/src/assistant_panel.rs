@@ -1388,7 +1388,7 @@ impl WorkflowStep {
     fn status(&self, cx: &AppContext) -> WorkflowStepStatus {
         match self.resolved_step.as_ref() {
             Some(Ok(step)) => {
-                if step.suggestions.is_empty() {
+                if step.suggestion_groups.is_empty() {
                     WorkflowStepStatus::Empty
                 } else if let Some(assist) = self.assist.as_ref() {
                     let assistant = InlineAssistant::global(cx);
@@ -2030,7 +2030,10 @@ impl ContextEditor {
                     .collect::<String>()
             ));
             match &step.resolution.read(cx).result {
-                Some(Ok(ResolvedWorkflowStep { title, suggestions })) => {
+                Some(Ok(ResolvedWorkflowStep {
+                    title,
+                    suggestion_groups: suggestions,
+                })) => {
                     output.push_str("Resolution:\n");
                     output.push_str(&format!("  {:?}\n", title));
                     output.push_str(&format!("  {:?}\n", suggestions));
@@ -2861,18 +2864,24 @@ impl ContextEditor {
         cx: &mut ViewContext<Self>,
     ) -> Option<WorkflowAssist> {
         let assistant_panel = assistant_panel.upgrade()?;
-        if resolved_step.suggestions.is_empty() {
+        if resolved_step.suggestion_groups.is_empty() {
             return None;
         }
 
         let editor;
         let mut editor_was_open = false;
         let mut suggestion_groups = Vec::new();
-        if resolved_step.suggestions.len() == 1
-            && resolved_step.suggestions.values().next().unwrap().len() == 1
+        if resolved_step.suggestion_groups.len() == 1
+            && resolved_step
+                .suggestion_groups
+                .values()
+                .next()
+                .unwrap()
+                .len()
+                == 1
         {
             // If there's only one buffer and one suggestion group, open it directly
-            let (buffer, groups) = resolved_step.suggestions.iter().next().unwrap();
+            let (buffer, groups) = resolved_step.suggestion_groups.iter().next().unwrap();
             let group = groups.into_iter().next().unwrap();
             editor = workspace
                 .update(cx, |workspace, cx| {
@@ -2925,7 +2934,7 @@ impl ContextEditor {
                 let replica_id = project.read(cx).replica_id();
                 let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite)
                     .with_title(resolved_step.title.clone());
-                for (buffer, groups) in &resolved_step.suggestions {
+                for (buffer, groups) in &resolved_step.suggestion_groups {
                     let excerpt_ids = multibuffer.push_excerpts(
                         buffer.clone(),
                         groups.iter().map(|suggestion_group| ExcerptRange {

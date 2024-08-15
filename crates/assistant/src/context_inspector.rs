@@ -54,7 +54,10 @@ impl ContextInspector {
         let step = context.read(cx).workflow_step_for_range(range)?;
         let mut output = String::from("\n\n");
         match &step.resolution.read(cx).result {
-            Some(Ok(ResolvedWorkflowStep { title, suggestions })) => {
+            Some(Ok(ResolvedWorkflowStep {
+                title,
+                suggestion_groups: suggestions,
+            })) => {
                 writeln!(output, "Resolution:").ok()?;
                 writeln!(output, "  {title:?}").ok()?;
                 if suggestions.is_empty() {
@@ -189,26 +192,32 @@ fn pretty_print_workflow_suggestion(
 ) {
     use std::fmt::Write;
     let (range, description, position) = match suggestion {
-        WorkflowSuggestion::Update { range, description } => (Some(range), Some(description), None),
-        WorkflowSuggestion::CreateFile { description } => (None, Some(description), None),
+        WorkflowSuggestion::Update {
+            range, description, ..
+        } => (Some(range), Some(description), None),
+        WorkflowSuggestion::CreateFile { description, .. } => (None, Some(description), None),
         WorkflowSuggestion::AppendChild {
             position,
             description,
+            ..
         }
         | WorkflowSuggestion::InsertSiblingBefore {
             position,
             description,
+            ..
         }
         | WorkflowSuggestion::InsertSiblingAfter {
             position,
             description,
+            ..
         }
         | WorkflowSuggestion::PrependChild {
             position,
             description,
+            ..
         } => (None, Some(description), Some(position)),
 
-        WorkflowSuggestion::Delete { range } => (Some(range), None, None),
+        WorkflowSuggestion::Delete { range, .. } => (Some(range), None, None),
     };
     if let Some(description) = description {
         writeln!(out, "    Description: {description}").ok();
