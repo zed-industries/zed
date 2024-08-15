@@ -250,7 +250,7 @@ pub struct ErrorView {
 }
 
 impl ErrorView {
-    fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
+    fn render(&self, cx: &mut ViewContext<ExecutionView>) -> Option<AnyElement> {
         let theme = cx.theme();
 
         let padding = cx.line_height() / 2.;
@@ -358,7 +358,7 @@ pub enum OutputContent {
 }
 
 impl OutputContent {
-    fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
+    fn render(&self, cx: &mut ViewContext<ExecutionView>) -> Option<AnyElement> {
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either

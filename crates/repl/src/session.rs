@@ -172,7 +172,7 @@ impl EditorBlock {
                     div()
                         .flex_1()
                         .size_full()
-                        .my_2()
+                        .py(line_height / 2.)
                         .mr(gutter.width)
                         .text_size(text_font_size)
                         .font_family(text_font)
