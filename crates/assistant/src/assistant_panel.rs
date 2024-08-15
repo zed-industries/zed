@@ -1,6 +1,5 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
-    context_inspector::ContextInspector,
     humanize_token_count,
     prompt_library::open_prompt_library,
     prompts::PromptBuilder,
@@ -12,10 +11,10 @@ use crate::{
     },
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
-    DebugWorkflowSteps, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
-    InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
-    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, ResolvedWorkflowStep,
-    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector, WorkflowStepView,
+    DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId, InlineAssistant,
+    InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus,
+    QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus,
+    ToggleModelSelector, WorkflowStepResolution, WorkflowStepView,
 };
 use crate::{ContextStoreEvent, ModelPickerDelegate, ShowConfiguration};
 use anyhow::{anyhow, Result};
@@ -57,7 +56,7 @@ use settings::{update_settings_file, Settings};
 use smol::stream::StreamExt;
 use std::{
     borrow::Cow,
-    cmp::{self, Ordering},
+    cmp,
     fmt::Write,
     ops::{DerefMut, Range},
     path::PathBuf,
@@ -65,7 +64,6 @@ use std::{
     time::Duration,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
-use text::OffsetRangeExt;
 use ui::TintColor;
 use ui::{
     prelude::*,
@@ -77,7 +75,6 @@ use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::{self, FollowableItem, Item, ItemHandle},
-    notifications::NotifyTaskExt,
     pane::{self, SaveIntent},
     searchable::{SearchEvent, SearchableItem},
     Pane, Save, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -404,56 +401,13 @@ impl AssistantPanel {
                                 } else {
                                     "Zoom In"
                                 };
-                                let weak_pane = cx.view().downgrade();
                                 let menu = ContextMenu::build(cx, |menu, cx| {
-                                    let menu = menu
-                                        .context(pane.focus_handle(cx))
+                                    menu.context(pane.focus_handle(cx))
                                         .action("New Context", Box::new(NewFile))
                                         .action("History", Box::new(DeployHistory))
                                         .action("Prompt Library", Box::new(DeployPromptLibrary))
                                         .action("Configure", Box::new(ShowConfiguration))
-                                        .action(zoom_label, Box::new(ToggleZoom));
-
-                                    if let Some(editor) = pane
-                                        .active_item()
-                                        .and_then(|e| e.downcast::<ContextEditor>())
-                                    {
-                                        let is_enabled = editor.read(cx).debug_inspector.is_some();
-                                        menu.separator().toggleable_entry(
-                                            "Debug Workflows",
-                                            is_enabled,
-                                            IconPosition::End,
-                                            None,
-                                            move |cx| {
-                                                weak_pane
-                                                    .update(cx, |this, cx| {
-                                                        if let Some(context_editor) =
-                                                            this.active_item().and_then(|item| {
-                                                                item.downcast::<ContextEditor>()
-                                                            })
-                                                        {
-                                                            context_editor.update(cx, |this, cx| {
-                                                                if let Some(mut state) =
-                                                                    this.debug_inspector.take()
-                                                                {
-                                                                    state.deactivate(cx);
-                                                                } else {
-                                                                    this.debug_inspector = Some(
-                                                                        ContextInspector::new(
-                                                                            this.editor.clone(),
-                                                                            this.context.clone(),
-                                                                        ),
-                                                                    );
-                                                                }
-                                                            })
-                                                        }
-                                                    })
-                                                    .ok();
-                                            },
-                                        )
-                                    } else {
-                                        menu
-                                    }
+                                        .action(zoom_label, Box::new(ToggleZoom))
                                 });
                                 cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
                                     pane.new_item_menu = None;
@@ -1380,7 +1334,7 @@ struct WorkflowStep {
     range: Range<language::Anchor>,
     header_block_id: CustomBlockId,
     footer_block_id: CustomBlockId,
-    resolved_step: Option<Result<ResolvedWorkflowStep, Arc<anyhow::Error>>>,
+    resolved_step: Option<Result<WorkflowStepResolution, Arc<anyhow::Error>>>,
     assist: Option<WorkflowAssist>,
 }
 
@@ -1744,7 +1698,6 @@ pub struct ContextEditor {
     active_workflow_step: Option<ActiveWorkflowStep>,
     assistant_panel: WeakView<AssistantPanel>,
     error_message: Option<SharedString>,
-    debug_inspector: Option<ContextInspector>,
     show_accept_terms: bool,
 }
 
@@ -1806,7 +1759,6 @@ impl ContextEditor {
             active_workflow_step: None,
             assistant_panel,
             error_message: None,
-            debug_inspector: None,
             show_accept_terms: false,
         };
         this.update_message_headers(cx);
@@ -2014,51 +1966,6 @@ impl ContextEditor {
             }
         }
         cx.propagate();
-    }
-
-    fn debug_workflow_steps(&mut self, _: &DebugWorkflowSteps, cx: &mut ViewContext<Self>) {
-        let mut output = String::new();
-        for (i, step) in self.context.read(cx).workflow_steps().iter().enumerate() {
-            output.push_str(&format!("Step {}:\n", i + 1));
-            output.push_str(&format!(
-                "Content: {}\n",
-                self.context
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .text_for_range(step.tagged_range.clone())
-                    .collect::<String>()
-            ));
-            match &step.resolution.read(cx).result {
-                Some(Ok(ResolvedWorkflowStep {
-                    title,
-                    suggestion_groups: suggestions,
-                })) => {
-                    output.push_str("Resolution:\n");
-                    output.push_str(&format!("  {:?}\n", title));
-                    output.push_str(&format!("  {:?}\n", suggestions));
-                }
-                None => {
-                    output.push_str("Resolution: Pending\n");
-                }
-                Some(Err(error)) => {
-                    writeln!(output, "Resolution: Error\n{:?}", error).unwrap();
-                }
-            }
-            output.push('\n');
-        }
-
-        let editor = self
-            .workspace
-            .update(cx, |workspace, cx| Editor::new_in_workspace(workspace, cx));
-
-        if let Ok(editor) = editor {
-            cx.spawn(|_, mut cx| async move {
-                let editor = editor.await?;
-                editor.update(&mut cx, |editor, cx| editor.set_text(output, cx))
-            })
-            .detach_and_notify_err(cx);
-        }
     }
 
     fn cycle_message_role(&mut self, _: &CycleMessageRole, cx: &mut ViewContext<Self>) {
@@ -2482,9 +2389,6 @@ impl ContextEditor {
                 blocks_to_remove.insert(step.header_block_id);
                 blocks_to_remove.insert(step.footer_block_id);
             }
-            if let Some(debug) = self.debug_inspector.as_mut() {
-                debug.deactivate_for(step_range, cx);
-            }
         }
         self.editor.update(cx, |editor, cx| {
             editor.remove_blocks(blocks_to_remove, None, cx)
@@ -2508,12 +2412,9 @@ impl ContextEditor {
             return;
         };
 
-        let resolved_step = step.resolution.read(cx).result.clone();
+        let resolved_step = step.read(cx).resolution.clone();
         if let Some(existing_step) = self.workflow_steps.get_mut(&step_range) {
             existing_step.resolved_step = resolved_step;
-            if let Some(debug) = self.debug_inspector.as_mut() {
-                debug.refresh(&step_range, cx);
-            }
         } else {
             let start = buffer_snapshot
                 .anchor_in_excerpt(excerpt_id, step_range.start)
@@ -2553,51 +2454,80 @@ impl ContextEditor {
                                     } else {
                                         theme.info_border
                                     };
-                                    let step_index = weak_self.update(&mut **cx, |this, cx| {
-                                       let snapshot = this.editor.read(cx).buffer().read(cx).as_singleton()?.read(cx).text_snapshot();
-                                       let start_offset = step_range.start.to_offset(&snapshot);
-                                       let parent_message = this.context.read(cx).messages_for_offsets([start_offset], cx);
-                                       debug_assert_eq!(parent_message.len(), 1);
-                                       let parent_message = parent_message.first()?;
+                                    let step_index = weak_self
+                                        .update(&mut **cx, |this, cx| {
+                                            let snapshot = this
+                                                .editor
+                                                .read(cx)
+                                                .buffer()
+                                                .read(cx)
+                                                .as_singleton()?
+                                                .read(cx)
+                                                .text_snapshot();
+                                            let start_offset =
+                                                step_range.start.to_offset(&snapshot);
+                                            let parent_message = this
+                                                .context
+                                                .read(cx)
+                                                .messages_for_offsets([start_offset], cx);
+                                            debug_assert_eq!(parent_message.len(), 1);
+                                            let parent_message = parent_message.first()?;
 
-                                       let index_of_current_step = this.workflow_steps.keys().filter(|workflow_step_range| workflow_step_range.start.cmp(&parent_message.anchor, &snapshot).is_ge() && workflow_step_range.end.cmp(&step_range.end, &snapshot).is_le()).count();
-                                       Some(index_of_current_step)
-                                    }).ok().flatten();
-
-                                    let debug_header = weak_self
-                                        .update(&mut **cx, |this, _| {
-                                            if let Some(inspector) = this.debug_inspector.as_mut() {
-                                                Some(inspector.is_active(&step_range))
-                                            } else {
-                                                None
-                                            }
+                                            let index_of_current_step = this
+                                                .workflow_steps
+                                                .keys()
+                                                .filter(|workflow_step_range| {
+                                                    workflow_step_range
+                                                        .start
+                                                        .cmp(&parent_message.anchor, &snapshot)
+                                                        .is_ge()
+                                                        && workflow_step_range
+                                                            .end
+                                                            .cmp(&step_range.end, &snapshot)
+                                                            .is_le()
+                                                })
+                                                .count();
+                                            Some(index_of_current_step)
                                         })
-                                        .unwrap_or_default();
+                                        .ok()
+                                        .flatten();
+
                                     let step_label = if let Some(index) = step_index {
                                         Label::new(format!("Step {index}")).size(LabelSize::Small)
                                     } else {
                                         Label::new("Step").size(LabelSize::Small)
                                     };
 
-                                    let step_label = if current_status.as_ref().is_some_and(|status| status.is_confirmed()) {
-                                        h_flex().items_center().gap_2().child(step_label.strikethrough(true).color(Color::Muted)).child(Icon::new(IconName::Check).size(IconSize::Small).color(Color::Created))
+                                    let step_label = if current_status
+                                        .as_ref()
+                                        .is_some_and(|status| status.is_confirmed())
+                                    {
+                                        h_flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                step_label.strikethrough(true).color(Color::Muted),
+                                            )
+                                            .child(
+                                                Icon::new(IconName::Check)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Created),
+                                            )
                                     } else {
                                         div().child(step_label)
                                     };
 
-                                    let step_label = step_label.id("step")
+                                    let step_label = step_label
+                                        .id("step")
                                         .cursor(CursorStyle::PointingHand)
                                         .on_click({
                                             let this = weak_self.clone();
                                             let step_range = step_range.clone();
                                             move |_, cx| {
-                                                this
-                                                    .update(cx, |this, cx| {
-                                                        this.open_workflow_step(
-                                                            step_range.clone(), cx,
-                                                        );
-                                                    })
-                                                    .ok();
+                                                this.update(cx, |this, cx| {
+                                                    this.open_workflow_step(step_range.clone(), cx);
+                                                })
+                                                .ok();
                                             }
                                         });
 
@@ -2614,42 +2544,12 @@ impl ContextEditor {
                                                 .items_center()
                                                 .justify_between()
                                                 .gap_2()
-                                                .child(h_flex().justify_start().gap_2().child(step_label).children(
-                                                    debug_header.map(|is_active| {
-
-                                                        Button::new("debug-workflows-toggle", "Debug")
-                                                            .icon_color(Color::Hidden)
-                                                            .color(Color::Hidden)
-                                                            .selected_icon_color(Color::Default)
-                                                            .selected_label_color(Color::Default)
-                                                            .icon(IconName::Microscope)
-                                                            .icon_position(IconPosition::Start)
-                                                            .icon_size(IconSize::Small)
-                                                            .label_size(LabelSize::Small)
-                                                            .selected(is_active)
-                                                            .on_click({
-                                                                let weak_self = weak_self.clone();
-                                                                let step_range = step_range.clone();
-                                                                move |_, cx| {
-                                                                    weak_self
-                                                                        .update(cx, |this, cx| {
-                                                                            if let Some(inspector) =
-                                                                                this.debug_inspector
-                                                                                    .as_mut()
-                                                                            {
-                                                                                if is_active {
-
-                                                                                    inspector.deactivate_for(&step_range, cx);
-                                                                                } else {
-                                                                                    inspector.activate_for_step(step_range.clone(), cx);
-                                                                                }
-                                                                            }
-                                                                        })
-                                                                        .ok();
-                                                                }
-                                                            })
-                                                    })
-                                                ))
+                                                .child(
+                                                    h_flex()
+                                                        .justify_start()
+                                                        .gap_2()
+                                                        .child(step_label),
+                                                )
                                                 .children(current_status.as_ref().map(|status| {
                                                     h_flex().w_full().justify_end().child(
                                                         status.into_element(
@@ -2731,9 +2631,8 @@ impl ContextEditor {
         let context = self.context.read(cx);
         let language_registry = context.language_registry();
         let step = context.workflow_step_for_range(step_range)?;
-        let resolution = step.resolution.clone();
         let view = cx.new_view(|cx| {
-            WorkflowStepView::new(self.context.clone(), resolution, language_registry, cx)
+            WorkflowStepView::new(self.context.clone(), step, language_registry, cx)
         });
         cx.deref_mut().defer(move |cx| {
             pane.update(cx, |pane, cx| {
@@ -2857,7 +2756,7 @@ impl ContextEditor {
     }
 
     fn open_assists_for_step(
-        resolved_step: &ResolvedWorkflowStep,
+        resolved_step: &WorkflowStepResolution,
         project: &Model<Project>,
         assistant_panel: &WeakView<AssistantPanel>,
         workspace: &WeakView<Workspace>,
@@ -2961,7 +2860,7 @@ impl ContextEditor {
         let mut assist_ids = Vec::new();
         for (excerpt_id, suggestion_group) in suggestion_groups {
             for suggestion in &suggestion_group.suggestions {
-                assist_ids.extend(suggestion.kind.show(
+                assist_ids.extend(suggestion.show(
                     &editor,
                     excerpt_id,
                     workspace,
@@ -3675,28 +3574,11 @@ impl ContextEditor {
     fn active_workflow_step_for_cursor(&self, cx: &AppContext) -> Option<ActiveWorkflowStep> {
         let newest_cursor = self.editor.read(cx).selections.newest::<usize>(cx).head();
         let context = self.context.read(cx);
-        let buffer = context.buffer().read(cx);
-
-        let workflow_steps = context.workflow_steps();
-        workflow_steps
-            .binary_search_by(|step| {
-                let step_range = step.tagged_range.to_offset(&buffer);
-                if newest_cursor < step_range.start {
-                    Ordering::Greater
-                } else if newest_cursor > step_range.end {
-                    Ordering::Less
-                } else {
-                    Ordering::Equal
-                }
-            })
-            .ok()
-            .and_then(|index| {
-                let range = workflow_steps[index].tagged_range.clone();
-                Some(ActiveWorkflowStep {
-                    resolved: self.workflow_steps.get(&range)?.resolved_step.is_some(),
-                    range,
-                })
-            })
+        let (range, step) = context.workflow_step_containing(newest_cursor, cx)?;
+        Some(ActiveWorkflowStep {
+            resolved: step.read(cx).resolution.is_some(),
+            range,
+        })
     }
 }
 
@@ -3724,7 +3606,6 @@ impl Render for ContextEditor {
             .capture_action(cx.listener(ContextEditor::confirm_command))
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
-            .on_action(cx.listener(ContextEditor::debug_workflow_steps))
             .size_full()
             .children(self.render_notice(cx))
             .child(

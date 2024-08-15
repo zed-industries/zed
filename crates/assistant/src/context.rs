@@ -1,6 +1,6 @@
 use crate::{
-    prompts::PromptBuilder, slash_command::SlashCommandLine, workflow::WorkflowStepResolution,
-    MessageId, MessageStatus,
+    prompts::PromptBuilder, slash_command::SlashCommandLine, workflow::WorkflowStep, MessageId,
+    MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -382,12 +382,6 @@ pub struct ImageAnchor {
     pub image: Shared<Task<Option<LanguageModelImage>>>,
 }
 
-impl PartialEq for ImageAnchor {
-    fn eq(&self, other: &Self) -> bool {
-        self.image_id == other.image_id
-    }
-}
-
 struct PendingCompletion {
     id: usize,
     assistant_message_id: MessageId,
@@ -397,18 +391,9 @@ struct PendingCompletion {
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct SlashCommandId(clock::Lamport);
 
-pub struct WorkflowStep {
-    pub tagged_range: Range<language::Anchor>,
-    pub resolution: Model<WorkflowStepResolution>,
-    pub _task: Option<Task<()>>,
-}
-
-impl Debug for WorkflowStep {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WorkflowStep")
-            .field("tagged_range", &self.tagged_range)
-            .finish_non_exhaustive()
-    }
+struct WorkflowStepEntry {
+    range: Range<language::Anchor>,
+    step: Model<WorkflowStep>,
 }
 
 pub struct Context {
@@ -437,7 +422,7 @@ pub struct Context {
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    workflow_steps: Vec<WorkflowStep>,
+    workflow_steps: Vec<WorkflowStepEntry>,
     edits_since_last_workflow_step_prune: language::Subscription,
     project: Option<Model<Project>>,
     prompt_builder: Arc<PromptBuilder>,
@@ -858,14 +843,40 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub fn workflow_steps(&self) -> &[WorkflowStep] {
-        &self.workflow_steps
+    pub fn workflow_step_containing(
+        &self,
+        offset: usize,
+        cx: &AppContext,
+    ) -> Option<(Range<language::Anchor>, Model<WorkflowStep>)> {
+        let buffer = self.buffer.read(cx);
+        let index = self
+            .workflow_steps
+            .binary_search_by(|step| {
+                let step_range = step.range.to_offset(&buffer);
+                if offset < step_range.start {
+                    Ordering::Greater
+                } else if offset > step_range.end {
+                    Ordering::Less
+                } else {
+                    Ordering::Equal
+                }
+            })
+            .ok()?;
+        let step = &self.workflow_steps[index];
+        Some((step.range.clone(), step.step.clone()))
     }
 
-    pub fn workflow_step_for_range(&self, range: Range<language::Anchor>) -> Option<&WorkflowStep> {
-        self.workflow_steps
-            .iter()
-            .find(|step| step.tagged_range == range)
+    pub fn workflow_step_for_range(
+        &self,
+        range: Range<language::Anchor>,
+    ) -> Option<Model<WorkflowStep>> {
+        Some(
+            self.workflow_steps
+                .iter()
+                .find(|step| step.range == range)?
+                .step
+                .clone(),
+        )
     }
 
     pub fn pending_slash_commands(&self) -> &[PendingSlashCommand] {
@@ -1028,7 +1039,7 @@ impl Context {
             removed.extend(
                 self.workflow_steps
                     .drain(intersecting_range)
-                    .map(|step| step.tagged_range),
+                    .map(|step| step.range),
             );
         }
 
@@ -1047,7 +1058,7 @@ impl Context {
         let buffer = self.buffer.read(cx);
         let start_ix = match self.workflow_steps.binary_search_by(|probe| {
             probe
-                .tagged_range
+                .range
                 .end
                 .to_offset(buffer)
                 .cmp(&range.start)
@@ -1061,7 +1072,7 @@ impl Context {
         };
         let end_ix = match self.workflow_steps.binary_search_by(|probe| {
             probe
-                .tagged_range
+                .range
                 .start
                 .to_offset(buffer)
                 .cmp(&range.end)
@@ -1114,20 +1125,16 @@ impl Context {
                     // Check if a step with the same range already exists
                     let existing_step_index = self
                         .workflow_steps
-                        .binary_search_by(|probe| probe.tagged_range.cmp(&tagged_range, &buffer));
+                        .binary_search_by(|probe| probe.range.cmp(&tagged_range, &buffer));
 
                     if let Err(ix) = existing_step_index {
                         new_edit_steps.push((
                             ix,
-                            WorkflowStep {
-                                resolution: cx.new_model(|_| {
-                                    WorkflowStepResolution::new(
-                                        tagged_range.clone(),
-                                        weak_self.clone(),
-                                    )
+                            WorkflowStepEntry {
+                                step: cx.new_model(|_| {
+                                    WorkflowStep::new(tagged_range.clone(), weak_self.clone())
                                 }),
-                                tagged_range,
-                                _task: None,
+                                range: tagged_range,
                             },
                         ));
                     }
@@ -1141,7 +1148,7 @@ impl Context {
 
         let mut updated = Vec::new();
         for (index, step) in new_edit_steps.into_iter().rev() {
-            let step_range = step.tagged_range.clone();
+            let step_range = step.range.clone();
             updated.push(step_range.clone());
             self.workflow_steps.insert(index, step);
             self.resolve_workflow_step(step_range, cx);
@@ -1161,7 +1168,7 @@ impl Context {
     ) {
         let Ok(step_index) = self
             .workflow_steps
-            .binary_search_by(|step| step.tagged_range.cmp(&tagged_range, self.buffer.read(cx)))
+            .binary_search_by(|step| step.range.cmp(&tagged_range, self.buffer.read(cx)))
         else {
             return;
         };
@@ -1169,7 +1176,7 @@ impl Context {
         cx.emit(ContextEvent::WorkflowStepUpdated(tagged_range.clone()));
         cx.notify();
 
-        let resolution = self.workflow_steps[step_index].resolution.clone();
+        let resolution = self.workflow_steps[step_index].step.clone();
         cx.defer(move |cx| {
             resolution.update(cx, |resolution, cx| resolution.resolve(cx));
         });
@@ -3032,12 +3039,12 @@ mod tests {
                 .iter()
                 .map(|step| {
                     let buffer = context.buffer.read(cx);
-                    let status = match &step.resolution.read(cx).result {
+                    let status = match &step.step.read(cx).resolution {
                         None => WorkflowStepTestStatus::Pending,
                         Some(Ok(_)) => WorkflowStepTestStatus::Resolved,
                         Some(Err(_)) => WorkflowStepTestStatus::Error,
                     };
-                    (step.tagged_range.to_point(buffer), status)
+                    (step.range.to_point(buffer), status)
                 })
                 .collect()
         }
