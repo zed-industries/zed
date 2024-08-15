@@ -1,8 +1,7 @@
 use super::{diagnostics_command::write_single_file_diagnostics, SlashCommand, SlashCommandOutput};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
 use fuzzy::PathMatch;
-use globset::{Glob, GlobSetBuilder};
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Project};
@@ -191,16 +190,17 @@ impl SlashCommand for FileSlashCommand {
         let task = collect_files(workspace.read(cx).project().clone(), arguments, cx);
 
         cx.foreground_executor().spawn(async move {
-            let (text, ranges) = task.await?;
+            let output = task.await?;
             Ok(SlashCommandOutput {
-                text,
-                sections: ranges
+                text: output.completion_text,
+                sections: output
+                    .files
                     .into_iter()
-                    .map(|(range, path, entry_type)| {
+                    .map(|file| {
                         build_entry_output_section(
-                            range,
-                            Some(&path),
-                            entry_type == EntryType::Directory,
+                            file.range_in_text,
+                            Some(&file.path),
+                            file.entry_type == EntryType::Directory,
                             None,
                         )
                     })
@@ -211,31 +211,49 @@ impl SlashCommand for FileSlashCommand {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum EntryType {
     File,
     Directory,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+struct FileCommandOutput {
+    completion_text: String,
+    files: Vec<OutputFile>,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+struct OutputFile {
+    range_in_text: Range<usize>,
+    path: PathBuf,
+    entry_type: EntryType,
 }
 
 fn collect_files(
     project: Model<Project>,
     glob_inputs: &[String],
     cx: &mut AppContext,
-) -> Task<Result<(String, Vec<(Range<usize>, PathBuf, EntryType)>)>> {
-    let glob_inputs = glob_inputs.to_vec();
+) -> Task<Result<FileCommandOutput>> {
+    let Ok(matchers) = glob_inputs
+        .into_iter()
+        .map(|glob_input| {
+            custom_path_matcher::PathMatcher::new(&[glob_input.to_owned()])
+                .with_context(|| format!("invalid path {glob_input}"))
+        })
+        .collect::<anyhow::Result<Vec<custom_path_matcher::PathMatcher>>>()
+    else {
+        return Task::ready(Err(anyhow!("invalid path")));
+    };
+
     let project_handle = project.downgrade();
     let snapshots = project
         .read(cx)
         .worktrees(cx)
         .map(|worktree| worktree.read(cx).snapshot())
         .collect::<Vec<_>>();
-    cx.spawn(|mut cx| async move {
-        let mut globset = GlobSetBuilder::new();
-        for input in glob_inputs {
-            globset.add(Glob::new(&input)?);
-        }
-        let globset = globset.build()?;
 
+    cx.spawn(|mut cx| async move {
         let mut text = String::new();
         let mut ranges = Vec::new();
         for snapshot in snapshots {
@@ -249,7 +267,10 @@ fn collect_files(
                 path_including_worktree_name.push(snapshot.root_name());
                 path_including_worktree_name.push(&entry.path);
 
-                if !globset.is_match(&path_including_worktree_name) {
+                if !matchers
+                    .iter()
+                    .any(|matcher| matcher.is_match(&path_including_worktree_name))
+                {
                     continue;
                 }
 
@@ -258,11 +279,11 @@ fn collect_files(
                         break;
                     }
                     let (_, entry_name, start) = directory_stack.pop().unwrap();
-                    ranges.push((
-                        start..text.len().saturating_sub(1),
-                        PathBuf::from(entry_name),
-                        EntryType::Directory,
-                    ));
+                    ranges.push(OutputFile {
+                        range_in_text: start..text.len().saturating_sub(1),
+                        path: PathBuf::from(entry_name),
+                        entry_type: EntryType::Directory,
+                    });
                 }
 
                 let filename = entry
@@ -335,11 +356,11 @@ fn collect_files(
                         ) {
                             text.pop();
                         }
-                        ranges.push((
-                            prev_len..text.len(),
-                            path_including_worktree_name,
-                            EntryType::File,
-                        ));
+                        ranges.push(OutputFile {
+                            range_in_text: prev_len..text.len(),
+                            path: path_including_worktree_name,
+                            entry_type: EntryType::File,
+                        });
                         text.push('\n');
                     }
                 }
@@ -349,10 +370,17 @@ fn collect_files(
                 let mut root_path = PathBuf::new();
                 root_path.push(snapshot.root_name());
                 root_path.push(&dir);
-                ranges.push((start..text.len(), root_path, EntryType::Directory));
+                ranges.push(OutputFile {
+                    range_in_text: start..text.len(),
+                    path: root_path,
+                    entry_type: EntryType::Directory,
+                });
             }
         }
-        Ok((text, ranges))
+        Ok(FileCommandOutput {
+            completion_text: text,
+            files: ranges,
+        })
     })
 }
 
@@ -418,5 +446,168 @@ pub fn build_entry_output_section(
         range,
         icon,
         label: label.into(),
+    }
+}
+
+/// This contains a small fork of the util::paths::PathMatcher, that is stricter about the prefix
+/// check. Only subpaths pass the prefix check, rather than any prefix.
+mod custom_path_matcher {
+    use std::{fmt::Debug as _, path::Path};
+
+    use globset::{Glob, GlobSet, GlobSetBuilder};
+
+    #[derive(Clone, Debug, Default)]
+    pub struct PathMatcher {
+        sources: Vec<String>,
+        sources_with_trailing_slash: Vec<String>,
+        glob: GlobSet,
+    }
+
+    impl std::fmt::Display for PathMatcher {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.sources.fmt(f)
+        }
+    }
+
+    impl PartialEq for PathMatcher {
+        fn eq(&self, other: &Self) -> bool {
+            self.sources.eq(&other.sources)
+        }
+    }
+
+    impl Eq for PathMatcher {}
+
+    impl PathMatcher {
+        pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
+            let globs = globs
+                .into_iter()
+                .map(|glob| Glob::new(&glob))
+                .collect::<Result<Vec<_>, _>>()?;
+            let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
+            let sources_with_trailing_slash = globs
+                .iter()
+                .map(|glob| glob.glob().to_string() + std::path::MAIN_SEPARATOR_STR)
+                .collect();
+            let mut glob_builder = GlobSetBuilder::new();
+            for single_glob in globs {
+                glob_builder.add(single_glob);
+            }
+            let glob = glob_builder.build()?;
+            Ok(PathMatcher {
+                glob,
+                sources,
+                sources_with_trailing_slash,
+            })
+        }
+
+        pub fn sources(&self) -> &[String] {
+            &self.sources
+        }
+
+        pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
+            let other_path = other.as_ref();
+            self.sources
+                .iter()
+                .zip(self.sources_with_trailing_slash.iter())
+                .any(|(source, with_slash)| {
+                    let as_bytes = other_path.as_os_str().as_encoded_bytes();
+                    let with_slash = if source.ends_with("/") {
+                        source.as_bytes()
+                    } else {
+                        with_slash.as_bytes()
+                    };
+
+                    as_bytes.starts_with(with_slash) || as_bytes.ends_with(source.as_bytes())
+                })
+                || self.glob.is_match(other_path)
+                || self.check_with_end_separator(other_path)
+        }
+
+        fn check_with_end_separator(&self, path: &Path) -> bool {
+            let path_str = path.to_string_lossy();
+            let separator = std::path::MAIN_SEPARATOR_STR;
+            if path_str.ends_with(separator) {
+                return false;
+            } else {
+                self.glob.is_match(path_str.to_string() + separator)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::Project;
+    use serde_json::json;
+    use settings::SettingsStore;
+
+    use crate::slash_command::file_command::collect_files;
+
+    pub fn init_test(cx: &mut gpui::TestAppContext) {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::try_init().ok();
+        }
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            // release_channel::init(SemanticVersion::default(), cx);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_file_exact_matching(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dir": {
+                    "subdir": {
+                       "file_0": "0"
+                    },
+                    "file_1": "1",
+                    "file_2": "2",
+                    "file_3": "3",
+                },
+                "dir.rs": "4"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let result_1 = cx
+            .update(|cx| collect_files(project.clone(), &["root/dir".to_string()], cx))
+            .await
+            .unwrap();
+
+        assert!(result_1.completion_text.starts_with("root/dir"));
+        // 4 files + 2 directories
+        assert_eq!(6, result_1.files.len());
+
+        let result_2 = cx
+            .update(|cx| collect_files(project.clone(), &["root/dir/".to_string()], cx))
+            .await
+            .unwrap();
+
+        assert_eq!(result_1, result_2);
+
+        let result = cx
+            .update(|cx| collect_files(project.clone(), &["root/dir*".to_string()], cx))
+            .await
+            .unwrap();
+
+        assert!(result.completion_text.starts_with("root/dir"));
+        // 5 files + 2 directories
+        assert_eq!(7, result.files.len());
+
+        // Ensure that the project lasts until after the last await
+        drop(project);
     }
 }
