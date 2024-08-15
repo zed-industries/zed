@@ -2348,10 +2348,27 @@ impl Codegen {
         let language_name = language_name.as_deref();
         let start = buffer.point_to_buffer_offset(self.transform_range.start);
         let end = buffer.point_to_buffer_offset(self.transform_range.end);
+
         let (transform_buffer, transform_range) = if let Some((start, end)) = start.zip(end) {
             let (start_buffer, start_buffer_offset) = start;
-            let (end_buffer, end_buffer_offset) = end;
+            let (end_buffer, mut end_buffer_offset) = end;
             if start_buffer.remote_id() == end_buffer.remote_id() {
+                let range = start_buffer_offset..(start_buffer.len() - end_buffer_offset);
+
+                // Expand the closing tag range to extend to the first non-whitespace char.
+                'outer: for chunk in start_buffer.chunks(range, false) {
+                    for &byte in chunk.text.as_bytes() {
+                        match byte {
+                            b'\n' | b'\t' | b' ' => {
+                                end_buffer_offset += 1;
+                            }
+                            _ => {
+                                break 'outer;
+                            }
+                        }
+                    }
+                }
+
                 (start_buffer.clone(), start_buffer_offset..end_buffer_offset)
             } else {
                 return Err(anyhow::anyhow!("invalid transformation range"));
@@ -2384,6 +2401,31 @@ impl Codegen {
                 selected_ranges,
             )
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
+
+        const TAG_NAME: &str = "<rewrite_this>";
+        let rewrite_open_index = prompt.find(TAG_NAME).unwrap();
+        let rewrite_open_index = prompt[rewrite_open_index + 10..].find(TAG_NAME).unwrap();
+
+        eprintln!("-------=====REWRITE_THIS=====-------");
+        eprintln!(
+            "{}",
+            &prompt[rewrite_open_index..(rewrite_open_index + 200)]
+        );
+        eprintln!("-------=====END=====-------");
+
+        eprintln!("-------=====PROMPTSUFFIX=====-------");
+        eprintln!(
+            "{}",
+            prompt
+                .chars()
+                .rev()
+                .take(2000)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>()
+        );
+        eprintln!("-------=====END=====-------");
 
         let mut messages = Vec::new();
         if let Some(context_request) = assistant_panel_context {
