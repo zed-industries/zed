@@ -2258,7 +2258,8 @@ impl Codegen {
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<TokenCounts>> {
         if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-            let request = self.build_request(user_prompt, assistant_panel_context.clone(), cx);
+            let request =
+                self.build_request(user_prompt, assistant_panel_context.clone(), false, cx);
             match request {
                 Ok(request) => {
                     let total_count = model.count_tokens(request.clone(), cx);
@@ -2304,7 +2305,7 @@ impl Codegen {
             if user_prompt.trim().to_lowercase() == "delete" {
                 async { Ok(stream::empty().boxed()) }.boxed_local()
             } else {
-                let request = self.build_request(user_prompt, assistant_panel_context, cx)?;
+                let request = self.build_request(user_prompt, assistant_panel_context, true, cx)?;
 
                 let chunks =
                     cx.spawn(|_, cx| async move { model.stream_completion(request, &cx).await });
@@ -2318,6 +2319,7 @@ impl Codegen {
         &self,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
+        log_prompt: bool,
         cx: &AppContext,
     ) -> Result<LanguageModelRequest> {
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -2384,6 +2386,13 @@ impl Codegen {
                 selected_ranges,
             )
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
+
+        if log_prompt {
+            println!(
+                "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n{}\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+                prompt
+            );
+        }
 
         let mut messages = Vec::new();
         if let Some(context_request) = assistant_panel_context {

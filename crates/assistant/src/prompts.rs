@@ -6,6 +6,7 @@ use language::BufferSnapshot;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{ops::Range, sync::Arc, time::Duration};
+use text::OffsetRangeExt as _;
 use util::ResultExt;
 
 #[derive(Serialize)]
@@ -17,6 +18,7 @@ pub struct ContentPromptContext {
     pub user_prompt: String,
     pub rewrite_section: String,
     pub rewrite_section_with_selections: String,
+    pub rewrite_section_surrounding_with_selections: String,
     pub has_insertion: bool,
     pub has_replacement: bool,
 }
@@ -204,15 +206,14 @@ impl PromptBuilder {
         }
 
         let mut rewrite_section = String::new();
-        for chunk in buffer.text_for_range(dbg!(transform_range.clone())) {
+        for chunk in buffer.text_for_range(transform_range.clone()) {
             rewrite_section.push_str(chunk);
         }
-        dbg!(&rewrite_section);
 
         let rewrite_section_with_selections = {
             let mut section_with_selections = String::new();
             let mut last_end = 0;
-            section_with_selections.push_str("<rewrite_this>");
+            section_with_selections.push_str("<rewrite_this>\n");
             for selected_range in &selected_ranges {
                 if selected_range.start > last_end {
                     section_with_selections.push_str(
@@ -234,7 +235,7 @@ impl PromptBuilder {
             if last_end < rewrite_section.len() {
                 section_with_selections.push_str(&rewrite_section[last_end..]);
             }
-            section_with_selections.push_str("</rewrite_this>");
+            section_with_selections.push_str("\n</rewrite_this>");
             section_with_selections
         };
 
@@ -269,6 +270,7 @@ impl PromptBuilder {
             user_prompt,
             rewrite_section,
             rewrite_section_with_selections,
+            rewrite_section_surrounding_with_selections,
             has_insertion,
             has_replacement,
         };
