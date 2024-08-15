@@ -11,7 +11,7 @@ pub mod types;
 actions!(context_servers, [Restart,]);
 
 pub fn init(cx: &mut AppContext) {
-    log::info!("initialising context server client");
+    log::info!("initializing context server client");
     manager::init(cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
