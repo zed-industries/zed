@@ -1,9 +1,9 @@
 use crate::components::KernelListItem;
-use crate::KernelStatus;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
 };
+use crate::{stdio, KernelStatus};
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -26,9 +26,8 @@ use runtimelib::{
     ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage, JupyterMessageContent,
     ShutdownRequest,
 };
-use settings::Settings as _;
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ActiveTheme;
 use ui::{prelude::*, IconButtonShape, Tooltip};
 
 pub struct Session {
@@ -114,68 +113,68 @@ impl EditorBlock {
     ) -> RenderBlock {
         let render = move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
-            let text_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
-            let text_font_size = ThemeSettings::get_global(cx).buffer_font_size;
+            let text_style = stdio::text_style(cx);
 
             let gutter = cx.gutter_dimensions;
-            let close_button_size = IconSize::XSmall;
 
             let block_id = cx.block_id;
             let on_close = on_close.clone();
 
             let rem_size = cx.rem_size();
-            let line_height = cx.text_style().line_height_in_pixels(rem_size);
 
-            let (close_button_width, close_button_padding) =
-                close_button_size.square_components(cx);
+            let text_line_height = text_style.line_height_in_pixels(rem_size);
+
+            let close_button = h_flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .absolute()
+                .top(text_line_height / 2.)
+                .right(
+                    // 2px is a magic number to nudge the button just a bit closer to
+                    // the line number start
+                    gutter.full_width() / 2.0 - text_line_height / 2.0 - px(2.),
+                )
+                .w(text_line_height)
+                .h(text_line_height)
+                .child(
+                    IconButton::new(
+                        ("close_output_area", EntityId::from(cx.block_id)),
+                        IconName::Close,
+                    )
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .size(ButtonSize::Compact)
+                    .shape(IconButtonShape::Square)
+                    .tooltip(|cx| Tooltip::text("Close output area", cx))
+                    .on_click(move |_, cx| {
+                        if let BlockId::Custom(block_id) = block_id {
+                            (on_close)(block_id, cx)
+                        }
+                    }),
+                );
 
             div()
-                .min_h(line_height)
                 .flex()
-                .flex_row()
                 .items_start()
+                .min_h(text_line_height)
                 .w_full()
-                .bg(cx.theme().colors().background)
                 .border_y_1()
                 .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
-                    v_flex().min_h(cx.line_height()).justify_center().child(
-                        h_flex()
-                            .w(gutter.full_width())
-                            .justify_end()
-                            .pt(line_height / 2.)
-                            .child(
-                                h_flex()
-                                    .pr(gutter.width / 2. - close_button_width
-                                        + close_button_padding / 2.)
-                                    .child(
-                                        IconButton::new(
-                                            ("close_output_area", EntityId::from(cx.block_id)),
-                                            IconName::Close,
-                                        )
-                                        .shape(IconButtonShape::Square)
-                                        .icon_size(close_button_size)
-                                        .icon_color(Color::Muted)
-                                        .tooltip(|cx| Tooltip::text("Close output area", cx))
-                                        .on_click(
-                                            move |_, cx| {
-                                                if let BlockId::Custom(block_id) = block_id {
-                                                    (on_close)(block_id, cx)
-                                                }
-                                            },
-                                        ),
-                                    ),
-                            ),
-                    ),
+                    div()
+                        .relative()
+                        .w(gutter.full_width())
+                        .h(text_line_height * 2)
+                        .child(close_button),
                 )
                 .child(
                     div()
                         .flex_1()
                         .size_full()
-                        .my_2()
+                        .py(text_line_height / 2.)
                         .mr(gutter.width)
-                        .text_size(text_font_size)
-                        .font_family(text_font)
                         .child(execution_view),
                 )
                 .into_any_element()
