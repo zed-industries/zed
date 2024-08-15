@@ -1,9 +1,14 @@
+mod step_view;
+
 use crate::{AssistantPanel, Context, InlineAssistId, InlineAssistant};
 use anyhow::{anyhow, Error, Result};
 use collections::HashMap;
 use editor::Editor;
 use futures::future;
-use gpui::{Model, ModelContext, Task, UpdateGlobal as _, View, WeakView, WindowContext};
+use gpui::{
+    AppContext, Model, ModelContext, Task, UpdateGlobal as _, View, WeakModel, WeakView,
+    WindowContext,
+};
 use language::{Anchor, Buffer, BufferSnapshot};
 use language_model::{LanguageModelRegistry, LanguageModelRequestMessage, Role};
 use project::Project;
@@ -15,9 +20,13 @@ use text::{AnchorRangeExt as _, OffsetRangeExt as _};
 use util::ResultExt as _;
 use workspace::Workspace;
 
+pub use step_view::WorkflowStepView;
+
 pub struct WorkflowStepResolution {
     tagged_range: Range<Anchor>,
     output: String,
+    context: WeakModel<Context>,
+    resolve_task: Option<Task<()>>,
     pub result: Option<Result<ResolvedWorkflowStep, Arc<Error>>>,
 }
 
@@ -64,30 +73,40 @@ pub enum WorkflowSuggestion {
 }
 
 impl WorkflowStepResolution {
-    pub fn new(range: Range<Anchor>) -> Self {
+    pub fn new(range: Range<Anchor>, context: WeakModel<Context>) -> Self {
         Self {
             tagged_range: range,
             output: String::new(),
+            context,
             result: None,
+            resolve_task: None,
         }
     }
 
-    pub fn resolve(
-        &mut self,
-        context: &Context,
-        cx: &mut ModelContext<WorkflowStepResolution>,
-    ) -> Option<Task<()>> {
+    pub fn step_text(&self, context: &Context, cx: &AppContext) -> String {
+        context
+            .buffer()
+            .clone()
+            .read(cx)
+            .text_for_range(self.tagged_range.clone())
+            .collect::<String>()
+    }
+
+    pub fn resolve(&mut self, cx: &mut ModelContext<WorkflowStepResolution>) -> Option<()> {
+        let range = self.tagged_range.clone();
+        let context = self.context.upgrade()?;
+        let context = context.read(cx);
         let project = context.project()?;
-        let context_buffer = context.buffer().clone();
         let prompt_builder = context.prompt_builder();
         let mut request = context.to_completion_request(cx);
         let model = LanguageModelRegistry::read_global(cx).active_model();
-        let step_text = context_buffer
+        let step_text = context
+            .buffer()
             .read(cx)
-            .text_for_range(self.tagged_range.clone())
+            .text_for_range(range.clone())
             .collect::<String>();
 
-        Some(cx.spawn(|this, mut cx| async move {
+        self.resolve_task = Some(cx.spawn(|this, mut cx| async move {
             let result = async {
                 let Some(model) = model else {
                     return Err(anyhow!("no model selected"));
@@ -96,6 +115,7 @@ impl WorkflowStepResolution {
                 this.update(&mut cx, |this, cx| {
                     this.output.clear();
                     this.result = None;
+                    this.result_updated(cx);
                     cx.notify();
                 })?;
 
@@ -207,10 +227,22 @@ impl WorkflowStepResolution {
                     Ok((title, suggestions)) => Ok(ResolvedWorkflowStep { title, suggestions }),
                     Err(error) => Err(Arc::new(error)),
                 });
+                this.context
+                    .update(cx, |context, cx| context.workflow_step_updated(range, cx))
+                    .ok();
                 cx.notify();
             })
             .ok();
-        }))
+        }));
+        None
+    }
+
+    fn result_updated(&mut self, cx: &mut ModelContext<Self>) {
+        self.context
+            .update(cx, |context, cx| {
+                context.workflow_step_updated(self.tagged_range.clone(), cx)
+            })
+            .ok();
     }
 }
 

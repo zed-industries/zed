@@ -838,6 +838,10 @@ impl Context {
         &self.buffer
     }
 
+    pub fn language_registry(&self) -> Arc<LanguageRegistry> {
+        self.language_registry.clone()
+    }
+
     pub fn project(&self) -> Option<Model<Project>> {
         self.project.clone()
     }
@@ -1073,6 +1077,7 @@ impl Context {
     }
 
     fn parse_workflow_steps_in_range(&mut self, range: Range<usize>, cx: &mut ModelContext<Self>) {
+        let weak_self = cx.weak_model();
         let mut new_edit_steps = Vec::new();
         let mut edits = Vec::new();
 
@@ -1116,7 +1121,10 @@ impl Context {
                             ix,
                             WorkflowStep {
                                 resolution: cx.new_model(|_| {
-                                    WorkflowStepResolution::new(tagged_range.clone())
+                                    WorkflowStepResolution::new(
+                                        tagged_range.clone(),
+                                        weak_self.clone(),
+                                    )
                                 }),
                                 tagged_range,
                                 _task: None,
@@ -1161,19 +1169,19 @@ impl Context {
         cx.emit(ContextEvent::WorkflowStepUpdated(tagged_range.clone()));
         cx.notify();
 
-        let task = self.workflow_steps[step_index]
-            .resolution
-            .update(cx, |resolution, cx| resolution.resolve(self, cx));
-        self.workflow_steps[step_index]._task = task.map(|task| {
-            cx.spawn(|this, mut cx| async move {
-                task.await;
-                this.update(&mut cx, |_, cx| {
-                    cx.emit(ContextEvent::WorkflowStepUpdated(tagged_range));
-                    cx.notify();
-                })
-                .ok();
-            })
+        let resolution = self.workflow_steps[step_index].resolution.clone();
+        cx.defer(move |cx| {
+            resolution.update(cx, |resolution, cx| resolution.resolve(cx));
         });
+    }
+
+    pub fn workflow_step_updated(
+        &mut self,
+        range: Range<language::Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        cx.emit(ContextEvent::WorkflowStepUpdated(range));
+        cx.notify();
     }
 
     pub fn pending_command_for_position(

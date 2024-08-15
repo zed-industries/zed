@@ -15,7 +15,7 @@ use crate::{
     DebugWorkflowSteps, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
     InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
     PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, ResolvedWorkflowStep,
-    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector, WorkflowStepView,
 };
 use crate::{ContextStoreEvent, ShowConfiguration};
 use anyhow::{anyhow, Result};
@@ -36,10 +36,10 @@ use fs::Fs;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
     AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    Context as _, DismissEvent, Empty, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render,
-    RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task,
-    Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
+    Context as _, CursorStyle, DismissEvent, Empty, Entity, EntityId, EventEmitter, FocusHandle,
+    FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
+    ReadGlobal, Render, RenderImage, SharedString, Size, StatefulInteractiveElement, Styled,
+    Subscription, Task, Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -59,7 +59,7 @@ use std::{
     borrow::Cow,
     cmp::{self, Ordering},
     fmt::Write,
-    ops::Range,
+    ops::{DerefMut, Range},
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -2571,16 +2571,33 @@ impl ContextEditor {
                                         })
                                         .unwrap_or_default();
                                     let step_label = if let Some(index) = step_index {
-
                                         Label::new(format!("Step {index}")).size(LabelSize::Small)
-                                        } else {
-                                            Label::new("Step").size(LabelSize::Small)
-                                        };
+                                    } else {
+                                        Label::new("Step").size(LabelSize::Small)
+                                    };
+
                                     let step_label = if current_status.as_ref().is_some_and(|status| status.is_confirmed()) {
                                         h_flex().items_center().gap_2().child(step_label.strikethrough(true).color(Color::Muted)).child(Icon::new(IconName::Check).size(IconSize::Small).color(Color::Created))
                                     } else {
                                         div().child(step_label)
                                     };
+
+                                    let step_label = step_label.id("step")
+                                        .cursor(CursorStyle::PointingHand)
+                                        .on_click({
+                                            let this = weak_self.clone();
+                                            let step_range = step_range.clone();
+                                            move |_, cx| {
+                                                this
+                                                    .update(cx, |this, cx| {
+                                                        this.open_workflow_step(
+                                                            step_range.clone(), cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
+                                        });
+
                                     div()
                                         .w_full()
                                         .px(cx.gutter_dimensions.full_width())
@@ -2697,6 +2714,30 @@ impl ContextEditor {
         }
 
         self.update_active_workflow_step(cx);
+    }
+
+    fn open_workflow_step(
+        &mut self,
+        step_range: Range<language::Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<()> {
+        let pane = self
+            .assistant_panel
+            .update(cx, |panel, _| panel.pane())
+            .ok()??;
+        let context = self.context.read(cx);
+        let langauge_registry = context.language_registry();
+        let step = context.workflow_step_for_range(step_range)?;
+        let resolution = step.resolution.clone();
+        let view = cx.new_view(|cx| {
+            WorkflowStepView::new(self.context.clone(), resolution, langauge_registry, cx)
+        });
+        cx.deref_mut().defer(move |cx| {
+            pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(view), true, true, None, cx);
+            });
+        });
+        None
     }
 
     fn update_active_workflow_step(&mut self, cx: &mut ViewContext<Self>) {
