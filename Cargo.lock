@@ -9943,6 +9943,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "slash_commands_example"
+version = "0.1.0"
+dependencies = [
+ "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "slice-group-by"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
