@@ -285,7 +285,7 @@ fn register_context_server_handlers(cx: &mut AppContext) {
                                     return;
                                 };
 
-                                if let Ok(prompts) = protocol.list_prompts().await {
+                                if let Some(prompts) = protocol.list_prompts().await.log_err() {
                                     for prompt in prompts
                                         .into_iter()
                                         .filter(context_server_command::acceptable_prompt)
