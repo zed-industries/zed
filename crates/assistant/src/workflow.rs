@@ -1,4 +1,6 @@
-use crate::{AssistantPanel, Context, InlineAssistId, InlineAssistant};
+use crate::{
+    prompts::StepResolutionContext, AssistantPanel, Context, InlineAssistId, InlineAssistant,
+};
 use anyhow::{anyhow, Error, Result};
 use collections::HashMap;
 use editor::Editor;
@@ -10,7 +12,7 @@ use project::Project;
 use rope::Point;
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
-use std::{cmp, ops::Range, sync::Arc};
+use std::{cmp, fmt::Write, ops::Range, sync::Arc};
 use text::{AnchorRangeExt as _, OffsetRangeExt as _};
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -116,6 +118,15 @@ impl WorkflowStepResolution {
             .text_for_range(self.tagged_range.clone())
             .collect::<String>();
 
+        let mut workflow_context = String::new();
+        for message in context.messages(cx) {
+            write!(&mut workflow_context, "<message role={}>", message.role).unwrap();
+            for chunk in context_buffer.read(cx).text_for_range(message.offset_range) {
+                write!(&mut workflow_context, "{chunk}").unwrap();
+            }
+            write!(&mut workflow_context, "</message>").unwrap();
+        }
+
         Some(cx.spawn(|this, mut cx| async move {
             let result = async {
                 let Some(model) = model else {
@@ -128,7 +139,12 @@ impl WorkflowStepResolution {
                     cx.notify();
                 })?;
 
-                let mut prompt = prompt_builder.generate_step_resolution_prompt()?;
+                let resolution_context = StepResolutionContext {
+                    workflow_context,
+                    step_to_resolve: step_text.clone(),
+                };
+                let mut prompt =
+                    prompt_builder.generate_step_resolution_prompt(&resolution_context)?;
                 prompt.push_str(&step_text);
                 request.messages.push(LanguageModelRequestMessage {
                     role: Role::User,
