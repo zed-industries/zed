@@ -91,7 +91,7 @@ impl SlashCommandCompletionProvider {
 
             // TODO kb this always works, but:
             // * command name + enter leaves the completion list open
-            // * argument + enter replaces too much text and leaves the completion list open
+            // * argument + enter applies the completion without adding a new text first
             cx.update(|cx| {
                 matches
                     .into_iter()
@@ -100,7 +100,7 @@ impl SlashCommandCompletionProvider {
                         let mut new_text = mat.string.clone();
                         let requires_argument = command.requires_argument();
                         let accepts_arguments = command.accepts_arguments();
-                        if requires_argument {
+                        if requires_argument || accepts_arguments {
                             new_text.push(' ');
                         }
 
@@ -141,7 +141,7 @@ impl SlashCommandCompletionProvider {
                             label: command.label(cx),
                             server_id: LanguageServerId(0),
                             lsp_completion: Default::default(),
-                            show_new_completions_on_confirm: requires_argument,
+                            show_new_completions_on_confirm: requires_argument || accepts_arguments,
                             confirm,
                         })
                     })
