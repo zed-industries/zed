@@ -1884,9 +1884,8 @@ impl ContextEditor {
         range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.context.update(cx, |context, cx| {
-            context.resolve_workflow_step(range, self.project.clone(), cx)
-        });
+        self.context
+            .update(cx, |context, cx| context.resolve_workflow_step(range, cx));
     }
 
     fn stop_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
@@ -2010,19 +2009,16 @@ impl ContextEditor {
                     .text_for_range(step.tagged_range.clone())
                     .collect::<String>()
             ));
-            match &step.status {
-                crate::WorkflowStepStatus::Resolved(ResolvedWorkflowStep {
-                    title,
-                    suggestions,
-                }) => {
+            match &step.resolution.read(cx).result {
+                Some(Ok(ResolvedWorkflowStep { title, suggestions })) => {
                     output.push_str("Resolution:\n");
                     output.push_str(&format!("  {:?}\n", title));
                     output.push_str(&format!("  {:?}\n", suggestions));
                 }
-                crate::WorkflowStepStatus::Pending(_) => {
+                None => {
                     output.push_str("Resolution: Pending\n");
                 }
-                crate::WorkflowStepStatus::Error(error) => {
+                Some(Err(error)) => {
                     writeln!(output, "Resolution: Error\n{:?}", error).unwrap();
                 }
             }
@@ -2485,7 +2481,7 @@ impl ContextEditor {
             return;
         };
 
-        let resolved_step = step.status.into_resolved();
+        let resolved_step = step.resolution.read(cx).result.clone();
         if let Some(existing_step) = self.workflow_steps.get_mut(&step_range) {
             existing_step.resolved_step = resolved_step;
             if let Some(debug) = self.debug_inspector.as_mut() {
