@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use url::Url;
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RequestType {

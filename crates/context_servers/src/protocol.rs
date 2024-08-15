@@ -1,8 +1,10 @@
-/// This crate implements parts of the Model Context Protocol.
-/// It handles the lifecycle messages, and provides a general interface to
-/// interacting with an MCP server. It uses the generic JSON-RPC client to
-/// read/write messages and the types from types.rs for serialization/deserialization
-/// of messages
+//! This module implements parts of the Model Context Protocol.
+//!
+//! It handles the lifecycle messages, and provides a general interface to
+//! interacting with an MCP server. It uses the generic JSON-RPC client to
+//! read/write messages and the types from types.rs for serialization/deserialization
+//! of messages.
+
 use anyhow::Result;
 use std::collections::HashMap;
 
