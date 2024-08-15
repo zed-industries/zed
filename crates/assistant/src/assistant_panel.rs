@@ -15,7 +15,7 @@ use crate::{
     DebugWorkflowSteps, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
     InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
     PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, ResolvedWorkflowStep,
-    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector, WorkflowStepView,
 };
 use crate::{ContextStoreEvent, ShowConfiguration};
 use anyhow::{anyhow, Result};
@@ -36,10 +36,10 @@ use fs::Fs;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
     AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    Context as _, DismissEvent, Empty, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render,
-    RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task,
-    Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
+    Context as _, CursorStyle, DismissEvent, Empty, Entity, EntityId, EventEmitter, FocusHandle,
+    FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
+    ReadGlobal, Render, RenderImage, SharedString, Size, StatefulInteractiveElement, Styled,
+    Subscription, Task, Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -59,7 +59,7 @@ use std::{
     borrow::Cow,
     cmp::{self, Ordering},
     fmt::Write,
-    ops::Range,
+    ops::{DerefMut, Range},
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -1388,7 +1388,7 @@ impl WorkflowStep {
     fn status(&self, cx: &AppContext) -> WorkflowStepStatus {
         match self.resolved_step.as_ref() {
             Some(Ok(step)) => {
-                if step.suggestions.is_empty() {
+                if step.suggestion_groups.is_empty() {
                     WorkflowStepStatus::Empty
                 } else if let Some(assist) = self.assist.as_ref() {
                     let assistant = InlineAssistant::global(cx);
@@ -2030,7 +2030,10 @@ impl ContextEditor {
                     .collect::<String>()
             ));
             match &step.resolution.read(cx).result {
-                Some(Ok(ResolvedWorkflowStep { title, suggestions })) => {
+                Some(Ok(ResolvedWorkflowStep {
+                    title,
+                    suggestion_groups: suggestions,
+                })) => {
                     output.push_str("Resolution:\n");
                     output.push_str(&format!("  {:?}\n", title));
                     output.push_str(&format!("  {:?}\n", suggestions));
@@ -2571,16 +2574,33 @@ impl ContextEditor {
                                         })
                                         .unwrap_or_default();
                                     let step_label = if let Some(index) = step_index {
-
                                         Label::new(format!("Step {index}")).size(LabelSize::Small)
-                                        } else {
-                                            Label::new("Step").size(LabelSize::Small)
-                                        };
+                                    } else {
+                                        Label::new("Step").size(LabelSize::Small)
+                                    };
+
                                     let step_label = if current_status.as_ref().is_some_and(|status| status.is_confirmed()) {
                                         h_flex().items_center().gap_2().child(step_label.strikethrough(true).color(Color::Muted)).child(Icon::new(IconName::Check).size(IconSize::Small).color(Color::Created))
                                     } else {
                                         div().child(step_label)
                                     };
+
+                                    let step_label = step_label.id("step")
+                                        .cursor(CursorStyle::PointingHand)
+                                        .on_click({
+                                            let this = weak_self.clone();
+                                            let step_range = step_range.clone();
+                                            move |_, cx| {
+                                                this
+                                                    .update(cx, |this, cx| {
+                                                        this.open_workflow_step(
+                                                            step_range.clone(), cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
+                                        });
+
                                     div()
                                         .w_full()
                                         .px(cx.gutter_dimensions.full_width())
@@ -2697,6 +2717,30 @@ impl ContextEditor {
         }
 
         self.update_active_workflow_step(cx);
+    }
+
+    fn open_workflow_step(
+        &mut self,
+        step_range: Range<language::Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<()> {
+        let pane = self
+            .assistant_panel
+            .update(cx, |panel, _| panel.pane())
+            .ok()??;
+        let context = self.context.read(cx);
+        let language_registry = context.language_registry();
+        let step = context.workflow_step_for_range(step_range)?;
+        let resolution = step.resolution.clone();
+        let view = cx.new_view(|cx| {
+            WorkflowStepView::new(self.context.clone(), resolution, language_registry, cx)
+        });
+        cx.deref_mut().defer(move |cx| {
+            pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(view), true, true, None, cx);
+            });
+        });
+        None
     }
 
     fn update_active_workflow_step(&mut self, cx: &mut ViewContext<Self>) {
@@ -2820,18 +2864,24 @@ impl ContextEditor {
         cx: &mut ViewContext<Self>,
     ) -> Option<WorkflowAssist> {
         let assistant_panel = assistant_panel.upgrade()?;
-        if resolved_step.suggestions.is_empty() {
+        if resolved_step.suggestion_groups.is_empty() {
             return None;
         }
 
         let editor;
         let mut editor_was_open = false;
         let mut suggestion_groups = Vec::new();
-        if resolved_step.suggestions.len() == 1
-            && resolved_step.suggestions.values().next().unwrap().len() == 1
+        if resolved_step.suggestion_groups.len() == 1
+            && resolved_step
+                .suggestion_groups
+                .values()
+                .next()
+                .unwrap()
+                .len()
+                == 1
         {
             // If there's only one buffer and one suggestion group, open it directly
-            let (buffer, groups) = resolved_step.suggestions.iter().next().unwrap();
+            let (buffer, groups) = resolved_step.suggestion_groups.iter().next().unwrap();
             let group = groups.into_iter().next().unwrap();
             editor = workspace
                 .update(cx, |workspace, cx| {
@@ -2884,7 +2934,7 @@ impl ContextEditor {
                 let replica_id = project.read(cx).replica_id();
                 let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite)
                     .with_title(resolved_step.title.clone());
-                for (buffer, groups) in &resolved_step.suggestions {
+                for (buffer, groups) in &resolved_step.suggestion_groups {
                     let excerpt_ids = multibuffer.push_excerpts(
                         buffer.clone(),
                         groups.iter().map(|suggestion_group| ExcerptRange {
