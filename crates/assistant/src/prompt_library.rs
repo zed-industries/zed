@@ -11,8 +11,8 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    actions, point, size, transparent_black, AppContext, BackgroundExecutor, Bounds, EventEmitter,
-    Global, HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
+    actions, point, size, transparent_black, Action, AppContext, BackgroundExecutor, Bounds,
+    EventEmitter, Global, HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
     TitlebarOptions, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{
@@ -38,7 +38,7 @@ use std::{
 use text::LineEnding;
 use theme::ThemeSettings;
 use ui::{
-    div, prelude::*, IconButtonShape, ListItem, ListItemSpacing, ParentElement, Render,
+    div, prelude::*, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render,
     SharedString, Styled, Tooltip, ViewContext, VisualContext,
 };
 use util::{ResultExt, TryFutureExt};
@@ -153,6 +153,14 @@ impl PickerDelegate for PromptPickerDelegate {
 
     fn match_count(&self) -> usize {
         self.matches.len()
+    }
+
+    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+        if self.store.prompt_count() == 0 {
+            "No prompts.".into()
+        } else {
+            "No prompts found matching your search.".into()
+        }
     }
 
     fn selected_index(&self) -> usize {
@@ -1094,7 +1102,55 @@ impl Render for PromptLibrary {
             .font(ui_font)
             .text_color(theme.colors().text)
             .child(self.render_prompt_list(cx))
-            .child(self.render_active_prompt(cx))
+            .map(|el| {
+                if self.store.prompt_count() == 0 {
+                    el.child(
+                        v_flex()
+                            .w_2_3()
+                            .h_full()
+                            .items_center()
+                            .justify_center()
+                            .gap_4()
+                            .bg(cx.theme().colors().editor_background)
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Icon::new(IconName::Book)
+                                            .size(IconSize::Medium)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("No prompts yet")
+                                            .size(LabelSize::Large)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .child(h_flex())
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(Label::new("Create your first prompt:"))
+                                            .child(
+                                                Button::new("create-prompt", "New Prompt")
+                                                    .full_width()
+                                                    .key_binding(KeyBinding::for_action(
+                                                        &NewPrompt, cx,
+                                                    ))
+                                                    .on_click(|_, cx| {
+                                                        cx.dispatch_action(NewPrompt.boxed_clone())
+                                                    }),
+                                            ),
+                                    )
+                                    .child(h_flex()),
+                            ),
+                    )
+                } else {
+                    el.child(self.render_active_prompt(cx))
+                }
+            })
     }
 }
 
@@ -1340,6 +1396,11 @@ impl PromptStore {
             txn.commit()?;
             Ok(())
         })
+    }
+
+    /// Returns the number of prompts in the store.
+    fn prompt_count(&self) -> usize {
+        self.metadata_cache.read().metadata.len()
     }
 
     fn metadata(&self, id: PromptId) -> Option<PromptMetadata> {
