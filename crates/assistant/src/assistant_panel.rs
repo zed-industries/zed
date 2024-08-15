@@ -3337,11 +3337,10 @@ impl Render for ConfigurationView {
             .map(|provider| self.render_provider_view(&provider, cx))
             .collect::<Vec<_>>();
 
-        v_flex()
+        let mut element = v_flex()
             .id("assistant-configuration-view")
             .track_focus(&self.focus_handle)
-            .w_full()
-            .min_h_full()
+            .size_full()
             .p(Spacing::XXLarge.rems(cx))
             .overflow_y_scroll()
             .gap_6()
@@ -3359,8 +3358,23 @@ impl Render for ConfigurationView {
                         )
                         .color(Color::Muted),
                     )
-                    .child(v_flex().mt_2().gap_4().children(provider_views)),
+                    .child(v_flex().flex_1().mt_2().gap_4().children(provider_views)),
             )
+            .into_any();
+
+        // We use a canvas here to get scrolling to work in the ConfigurationView. It's a workaround
+        // because we couldn't the element to take up the size of the parent.
+        gpui::canvas(
+            move |bounds, cx| {
+                element.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
+                element
+            },
+            |_, mut element, cx| {
+                element.paint(cx);
+            },
+        )
+        .flex_1()
+        .w_full()
     }
 }
 
