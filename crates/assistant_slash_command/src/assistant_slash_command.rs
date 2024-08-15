@@ -42,6 +42,9 @@ pub trait SlashCommand: 'static + Send + Sync {
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>>;
     fn requires_argument(&self) -> bool;
+    fn accepts_arguments(&self) -> bool {
+        self.requires_argument()
+    }
     fn run(
         self: Arc<Self>,
         arguments: &[String],

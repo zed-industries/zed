@@ -39,6 +39,10 @@ impl SlashCommand for TabSlashCommand {
         false
     }
 
+    fn accepts_arguments(&self) -> bool {
+        true
+    }
+
     fn complete_argument(
         self: Arc<Self>,
         arguments: &[String],
@@ -94,15 +98,16 @@ impl SlashCommand for TabSlashCommand {
                 })
             });
 
-            let active_item_completion = active_item_path.as_deref().map(|active_item_path| {
-                let path_string = active_item_path.to_string_lossy().to_string();
-                ArgumentCompletion {
+            let active_item_completion = active_item_path
+                .as_deref()
+                .map(|active_item_path| active_item_path.to_string_lossy().to_string())
+                .filter(|path_string| !argument_set.contains(path_string))
+                .map(|path_string| ArgumentCompletion {
                     label: path_string.clone().into(),
                     new_text: path_string,
                     replace_previous_arguments: false,
                     run_command,
-                }
-            });
+                });
 
             Ok(active_item_completion
                 .into_iter()

@@ -40,6 +40,10 @@ impl SlashCommand for TerminalSlashCommand {
         false
     }
 
+    fn accepts_arguments(&self) -> bool {
+        true
+    }
+
     fn complete_argument(
         self: Arc<Self>,
         _arguments: &[String],
