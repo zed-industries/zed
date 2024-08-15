@@ -943,9 +943,20 @@ impl Context {
         });
     }
 
-    pub fn mark_longest_messages_for_cache(&mut self, cx: &mut ModelContext<Self>) -> bool {
+    pub fn mark_longest_messages_for_cache(
+        &mut self,
+        speculative: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
         let messages: Vec<Message> = self
-            .messages(cx)
+            .messages_from_anchors(
+                self.message_anchors.iter().take(if speculative {
+                    self.message_anchors.len().saturating_sub(1)
+                } else {
+                    self.message_anchors.len()
+                }),
+                cx,
+            )
             .filter(|message| message.offset_range.len() >= 5_000)
             .collect();
 
@@ -955,7 +966,7 @@ impl Context {
 
         let mut sorted_messages = messages.clone();
         sorted_messages.sort_by(|a, b| b.offset_range.len().cmp(&a.offset_range.len()));
-        sorted_messages.truncate(4);
+        sorted_messages.truncate(3);
 
         let longest_message_ids: HashSet<MessageId> = sorted_messages
             .into_iter()
@@ -991,17 +1002,18 @@ impl Context {
             .active_model()
             .unwrap();
 
-        if !self.mark_longest_messages_for_cache(cx) {
+        if !self.mark_longest_messages_for_cache(true, cx) {
             return;
         }
 
         let request = {
             let mut req = self.to_completion_request(cx);
+            // Skip the last message because it's likely to change and
+            // therefore would be a waste to cache.
+            req.messages.pop();
             req.messages.push(LanguageModelRequestMessage {
                 role: Role::User,
-                content: vec![
-                    "Summarize the context into a short title without punctuation.".into(),
-                ],
+                content: vec!["Respond only with OK, nothing else.".into()],
                 cache: false,
             });
             req
@@ -1445,6 +1457,8 @@ impl Context {
             log::info!("completion provider has no credentials");
             return None;
         }
+        // Compute which messages to cache, including the last one.
+        self.mark_longest_messages_for_cache(false, cx);
 
         let request = self.to_completion_request(cx);
         let assistant_message = self
@@ -1993,12 +2007,20 @@ impl Context {
         result
     }
 
-    pub fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
+    fn messages_from_anchors<'a>(
+        &'a self,
+        message_anchors: impl Iterator<Item = &'a MessageAnchor> + 'a,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = Message> {
         let buffer = self.buffer.read(cx);
-        let messages = self.message_anchors.iter().enumerate();
+        let messages = message_anchors.enumerate();
         let images = self.image_anchors.iter();
 
         Self::messages_from_iters(buffer, &self.messages_metadata, messages, images)
+    }
+
+    pub fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
+        self.messages_from_anchors(self.message_anchors.iter(), cx)
     }
 
     pub fn messages_from_iters<'a>(
