@@ -26,7 +26,7 @@ fn authorize_access_to_model(
     }
 
     match (provider, model) {
-        (LanguageModelProvider::Anthropic, model) if model.starts_with("claude-3.5-sonnet") => {
+        (LanguageModelProvider::Anthropic, model) if model.starts_with("claude-3-5-sonnet") => {
             Ok(())
         }
         _ => Err(Error::http(
@@ -240,14 +240,14 @@ mod tests {
             (
                 Plan::ZedPro,
                 LanguageModelProvider::Anthropic,
-                "claude-3.5-sonnet",
+                "claude-3-5-sonnet",
                 true,
             ),
             // Free plan should have access to claude-3.5-sonnet
             (
                 Plan::Free,
                 LanguageModelProvider::Anthropic,
-                "claude-3.5-sonnet",
+                "claude-3-5-sonnet",
                 true,
             ),
             // Pro plan should NOT have access to other Anthropic models
@@ -303,7 +303,7 @@ mod tests {
 
         // Staff should have access to all models
         let test_cases = vec![
-            (LanguageModelProvider::Anthropic, "claude-3.5-sonnet"),
+            (LanguageModelProvider::Anthropic, "claude-3-5-sonnet"),
             (LanguageModelProvider::Anthropic, "claude-2"),
             (LanguageModelProvider::Anthropic, "claude-123-agi"),
             (LanguageModelProvider::OpenAi, "gpt-4"),
