@@ -1,4 +1,4 @@
-//! This file implements a context server management system for the Zed editor.
+//! This module implements a context server management system for Zed.
 //!
 //! It provides functionality to:
 //! - Define and load context server settings
@@ -11,7 +11,7 @@
 //! - `ContextServerManager`: Manages multiple context servers
 //! - `GlobalContextServerManager`: Provides global access to the ContextServerManager
 //!
-//! The file also includes initialization logic to set up the context server system
+//! The module also includes initialization logic to set up the context server system
 //! and react to changes in settings.
 
 use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task};
@@ -58,7 +58,7 @@ impl Settings for ContextServerSettings {
 pub struct ContextServer {
     pub id: String,
     pub config: ServerConfig,
-    pub client: RwLock<Option<crate::protocol::InitializedContextServerProtocol>>,
+    pub client: RwLock<Option<Arc<crate::protocol::InitializedContextServerProtocol>>>,
 }
 
 impl ContextServer {
@@ -95,7 +95,7 @@ impl ContextServer {
             initialized_protocol.initialize,
         );
 
-        *self.client.write() = Some(initialized_protocol);
+        *self.client.write() = Some(Arc::new(initialized_protocol));
         Ok(())
     }
 

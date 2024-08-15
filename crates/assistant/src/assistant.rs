@@ -282,27 +282,29 @@ fn register_context_server_handlers(cx: &mut AppContext) {
                         let cs_registry = context_server_command::ContextServerRegistry::global(cx);
                         if let Some(server) = manager.get_server(server_id) {
                             cx.spawn(|_, _| async move {
-                                if let Some(protocol) = server.client.read().as_ref() {
-                                    if let Ok(prompts) = protocol.list_prompts().await {
-                                        for prompt in prompts
-                                            .into_iter()
-                                            .filter(context_server_command::acceptable_prompt)
-                                        {
-                                            log::info!(
-                                                "registering context server command: {:?}",
-                                                prompt.name
-                                            );
-                                            cs_registry.register_command(
-                                                server.id.clone(),
-                                                prompt.name.clone(),
-                                            );
-                                            slash_command_registry.register_command(
+                                let Some(protocol) = server.client.read().clone() else {
+                                    return;
+                                };
+
+                                if let Ok(prompts) = protocol.list_prompts().await {
+                                    for prompt in prompts
+                                        .into_iter()
+                                        .filter(context_server_command::acceptable_prompt)
+                                    {
+                                        log::info!(
+                                            "registering context server command: {:?}",
+                                            prompt.name
+                                        );
+                                        cs_registry.register_command(
+                                            server.id.clone(),
+                                            prompt.name.clone(),
+                                        );
+                                        slash_command_registry.register_command(
                                             context_server_command::ContextServerSlashCommand::new(
                                                 &server, prompt,
                                             ),
                                             true,
                                         );
-                                        }
                                     }
                                 }
                             })

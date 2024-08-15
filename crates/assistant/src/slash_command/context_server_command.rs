@@ -112,25 +112,25 @@ impl SlashCommand for ContextServerSlashCommand {
         let manager = ContextServerManager::global(cx);
         let manager = manager.read(cx);
         if let Some(server) = manager.get_server(&server_id) {
-            return cx.foreground_executor().spawn(async move {
-                if let Some(protocol) = server.client.read().as_ref() {
-                    let result = protocol
-                        .run_prompt(&prompt_name, prompt_arguments(&self.prompt, argument)?)
-                        .await?;
+            cx.foreground_executor().spawn(async move {
+                let Some(protocol) = server.client.read().clone() else {
+                    return Err(anyhow!("Context server not initialized"));
+                };
 
-                    Ok(SlashCommandOutput {
-                        sections: vec![SlashCommandOutputSection {
-                            range: 0..result.len(),
-                            icon: IconName::ZedAssistant,
-                            label: SharedString::from(format!("Result from {}", prompt_name)),
-                        }],
-                        text: result,
-                        run_commands_in_text: false,
-                    })
-                } else {
-                    Err(anyhow!("Context server not initialized"))
-                }
-            });
+                let result = protocol
+                    .run_prompt(&prompt_name, prompt_arguments(&self.prompt, argument)?)
+                    .await?;
+
+                Ok(SlashCommandOutput {
+                    sections: vec![SlashCommandOutputSection {
+                        range: 0..result.len(),
+                        icon: IconName::ZedAssistant,
+                        label: SharedString::from(format!("Result from {}", prompt_name)),
+                    }],
+                    text: result,
+                    run_commands_in_text: false,
+                })
+            })
         } else {
             Task::ready(Err(anyhow!("Context server not found")))
         }
