@@ -1,4 +1,4 @@
-use super::WorkflowStepResolution;
+use super::WorkflowStep;
 use crate::{Assist, Context};
 use editor::{
     display_map::{BlockDisposition, BlockProperties, BlockStyle},
@@ -23,7 +23,7 @@ use workspace::{
 };
 
 pub struct WorkflowStepView {
-    step: WeakModel<WorkflowStepResolution>,
+    step: WeakModel<WorkflowStep>,
     tool_output_buffer: Model<Buffer>,
     editor: View<Editor>,
 }
@@ -31,17 +31,18 @@ pub struct WorkflowStepView {
 impl WorkflowStepView {
     pub fn new(
         context: Model<Context>,
-        step: Model<WorkflowStepResolution>,
+        step: Model<WorkflowStep>,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let tool_output_buffer = cx.new_model(|cx| Buffer::local(step.read(cx).output.clone(), cx));
+        let tool_output_buffer =
+            cx.new_model(|cx| Buffer::local(step.read(cx).tool_output.clone(), cx));
         let buffer = cx.new_model(|cx| {
             let mut buffer = MultiBuffer::without_headers(0, language::Capability::ReadWrite);
             buffer.push_excerpts(
                 context.read(cx).buffer().clone(),
                 [ExcerptRange {
-                    context: step.read(cx).tagged_range.clone(),
+                    context: step.read(cx).context_buffer_range.clone(),
                     primary: None,
                 }],
                 cx,
@@ -146,55 +147,54 @@ impl WorkflowStepView {
 
     fn render_result(&mut self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         let step = self.step.upgrade()?;
-        let result = step.read(cx).result.as_ref()?;
+        let result = step.read(cx).resolution.as_ref()?;
         match result {
-            Ok(result) => Some(
-                v_flex()
-                    .child(result.title.clone())
-                    .children(result.suggestion_groups.iter().filter_map(
-                        |(buffer, suggestion_groups)| {
-                            let path = buffer.read(cx).file().map(|f| f.path());
-                            v_flex()
-                                .mb_2()
-                                .border_b_1()
-                                .children(path.map(|path| format!("path: {}", path.display())))
-                                .children(suggestion_groups.iter().map(|group| {
-                                    v_flex().pl_2().children(group.suggestions.iter().map(
-                                        |suggestion| {
-                                            v_flex()
-                                                .children(
-                                                    suggestion
-                                                        .kind
-                                                        .description()
-                                                        .map(|desc| format!("description: {desc}")),
-                                                )
-                                                .child(format!("kind: {}", suggestion.kind.kind()))
-                                                .children(
-                                                    suggestion.kind.symbol_path().map(|path| {
-                                                        format!("symbol path: {}", path.0)
-                                                    }),
-                                                )
-                                        },
-                                    ))
-                                }))
-                                .into()
-                        },
-                    ))
-                    .into_any_element(),
-            ),
+            Ok(result) => {
+                Some(
+                    v_flex()
+                        .child(result.title.clone())
+                        .children(result.suggestion_groups.iter().filter_map(
+                            |(buffer, suggestion_groups)| {
+                                let path = buffer.read(cx).file().map(|f| f.path());
+                                v_flex()
+                                    .mb_2()
+                                    .border_b_1()
+                                    .children(path.map(|path| format!("path: {}", path.display())))
+                                    .children(suggestion_groups.iter().map(|group| {
+                                        v_flex().pl_2().children(group.suggestions.iter().map(
+                                            |suggestion| {
+                                                v_flex()
+                                                    .children(
+                                                        suggestion.description().map(|desc| {
+                                                            format!("description: {desc}")
+                                                        }),
+                                                    )
+                                                    .child(format!("kind: {}", suggestion.kind()))
+                                                    .children(suggestion.symbol_path().map(
+                                                        |path| format!("symbol path: {}", path.0),
+                                                    ))
+                                            },
+                                        ))
+                                    }))
+                                    .into()
+                            },
+                        ))
+                        .into_any_element(),
+                )
+            }
             Err(error) => Some(format!("{:?}", error).into_any_element()),
         }
     }
 
-    fn step_updated(&mut self, step: Model<WorkflowStepResolution>, cx: &mut ViewContext<Self>) {
+    fn step_updated(&mut self, step: Model<WorkflowStep>, cx: &mut ViewContext<Self>) {
         self.tool_output_buffer.update(cx, |buffer, cx| {
-            let text = step.read(cx).output.clone();
+            let text = step.read(cx).tool_output.clone();
             buffer.set_text(text, cx);
         });
         cx.notify();
     }
 
-    fn step_released(&mut self, _: &mut WorkflowStepResolution, cx: &mut ViewContext<Self>) {
+    fn step_released(&mut self, _: &mut WorkflowStep, cx: &mut ViewContext<Self>) {
         cx.emit(EditorEvent::Closed);
     }
 

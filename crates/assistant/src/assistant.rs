@@ -3,7 +3,6 @@
 pub mod assistant_panel;
 pub mod assistant_settings;
 mod context;
-pub(crate) mod context_inspector;
 pub mod context_store;
 mod inline_assistant;
 mod model_selector;
@@ -65,7 +64,6 @@ actions!(
         DeployPromptLibrary,
         ConfirmCommand,
         ToggleModelSelector,
-        DebugWorkflowSteps
     ]
 );
 
