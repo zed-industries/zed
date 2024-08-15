@@ -151,6 +151,7 @@ async fn main() -> Result<()> {
                             method = ?request.method(),
                             matched_path,
                             user_id = tracing::field::Empty,
+                            login = tracing::field::Empty,
                             authn.jti = tracing::field::Empty
                         )
                     })

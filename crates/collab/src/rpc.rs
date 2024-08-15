@@ -4941,6 +4941,7 @@ async fn get_llm_api_token(
     }
     let token = LlmTokenClaims::create(
         user.id,
+        user.github_login.clone(),
         session.is_staff(),
         session.current_plan(db).await?,
         &session.app_state.config,
