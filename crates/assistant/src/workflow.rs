@@ -698,9 +698,13 @@ pub mod tool {
             symbol: &str,
         ) -> Result<(SymbolPath, OutlineItem<Point>)> {
             if symbol == IMPORTS_SYMBOL {
+                let target_row = find_first_non_comment_line(snapshot);
                 Ok((
                     SymbolPath(IMPORTS_SYMBOL.to_string()),
-                    OutlineItem::default(),
+                    OutlineItem {
+                        range: Point::new(target_row, 0)..Point::new(target_row + 1, 0),
+                        ..Default::default()
+                    },
                 ))
             } else {
                 let (symbol_path, symbol) = outline
@@ -709,6 +713,38 @@ pub mod tool {
                 Ok((symbol_path, symbol.to_point(snapshot)))
             }
         }
+    }
+
+    fn find_first_non_comment_line(snapshot: &BufferSnapshot) -> u32 {
+        let Some(language) = snapshot.language() else {
+            return 0;
+        };
+
+        let scope = language.default_scope();
+        let comment_prefixes = scope.line_comment_prefixes();
+
+        let mut chunks = snapshot.as_rope().chunks();
+        let mut target_row = 0;
+        loop {
+            let starts_with_comment = chunks
+                .peek()
+                .map(|chunk| {
+                    comment_prefixes
+                        .iter()
+                        .any(|s| chunk.starts_with(s.as_ref().trim_end()))
+                })
+                .unwrap_or(false);
+
+            if !starts_with_comment {
+                break;
+            }
+
+            target_row += 1;
+            if !chunks.next_line() {
+                break;
+            }
+        }
+        target_row
     }
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
