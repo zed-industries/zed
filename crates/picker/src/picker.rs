@@ -118,6 +118,10 @@ pub trait PickerDelegate: Sized + 'static {
 
     fn render_editor(&self, editor: &View<Editor>, _cx: &mut ViewContext<Picker<Self>>) -> Div {
         v_flex()
+            .when(
+                self.editor_position() == PickerEditorPosition::End,
+                |this| this.child(Divider::horizontal()),
+            )
             .child(
                 h_flex()
                     .overflow_hidden()
@@ -126,7 +130,10 @@ pub trait PickerDelegate: Sized + 'static {
                     .px_3()
                     .child(editor.clone()),
             )
-            .child(Divider::horizontal())
+            .when(
+                self.editor_position() == PickerEditorPosition::Start,
+                |this| this.child(Divider::horizontal()),
+            )
     }
 
     fn render_match(
