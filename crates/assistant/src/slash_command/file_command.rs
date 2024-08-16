@@ -370,15 +370,23 @@ fn collect_files(
                 }
             }
 
-            while let Some((dir, _, start)) = directory_stack.pop() {
-                let mut root_path = PathBuf::new();
-                root_path.push(snapshot.root_name());
-                root_path.push(&dir);
-                ranges.push(OutputFile {
-                    range_in_text: start..text.len(),
-                    path: root_path,
-                    entry_type: EntryType::Directory,
-                });
+            while let Some((dir, entry, start)) = directory_stack.pop() {
+                if directory_stack.is_empty() {
+                    let mut root_path = PathBuf::new();
+                    root_path.push(snapshot.root_name());
+                    root_path.push(&dir);
+                    ranges.push(OutputFile {
+                        range_in_text: start..text.len(),
+                        path: root_path,
+                        entry_type: EntryType::Directory,
+                    });
+                } else {
+                    ranges.push(OutputFile {
+                        range_in_text: start..text.len(),
+                        path: PathBuf::from(entry.as_str()),
+                        entry_type: EntryType::Directory,
+                    });
+                }
             }
         }
         Ok(FileCommandOutput {
@@ -610,6 +618,140 @@ mod test {
         assert!(result.completion_text.starts_with("root/dir"));
         // 5 files + 2 directories
         assert_eq!(7, result.files.len());
+
+        // Ensure that the project lasts until after the last await
+        drop(project);
+    }
+
+    #[gpui::test]
+    async fn test_file_sub_directory_rendering(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            "/zed",
+            json!({
+                "assets": {
+                    "dir1": {
+                        ".gitkeep": ""
+                    },
+                    "dir2": {
+                        ".gitkeep": ""
+                    },
+                    "themes": {
+                        "ayu": {
+                            "LICENSE": "1",
+                        },
+                        "andromeda": {
+                            "LICENSE": "2",
+                        },
+                        "summercamp": {
+                            "LICENSE": "3",
+                        },
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/zed".as_ref()], cx).await;
+
+        let result = cx
+            .update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx))
+            .await
+            .unwrap();
+
+        // Sanity check
+        assert!(result.completion_text.starts_with("zed/assets/themes\n"));
+        assert_eq!(7, result.files.len());
+
+        // Ensure that full file paths are included in the real output
+        assert!(result
+            .completion_text
+            .contains("zed/assets/themes/andromeda/LICENSE"));
+        assert!(result
+            .completion_text
+            .contains("zed/assets/themes/ayu/LICENSE"));
+        assert!(result
+            .completion_text
+            .contains("zed/assets/themes/summercamp/LICENSE"));
+
+        assert_eq!("summercamp", result.files[5].path.to_string_lossy());
+
+        // Ensure that things are in descending order, with properly relativized paths
+        assert_eq!(
+            "zed/assets/themes/andromeda/LICENSE",
+            result.files[0].path.to_string_lossy()
+        );
+        assert_eq!("andromeda", result.files[1].path.to_string_lossy());
+        assert_eq!(
+            "zed/assets/themes/ayu/LICENSE",
+            result.files[2].path.to_string_lossy()
+        );
+        assert_eq!("ayu", result.files[3].path.to_string_lossy());
+        assert_eq!(
+            "zed/assets/themes/summercamp/LICENSE",
+            result.files[4].path.to_string_lossy()
+        );
+
+        // Ensure that the project lasts until after the last await
+        drop(project);
+    }
+
+    #[gpui::test]
+    async fn test_file_deep_sub_directory_rendering(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            "/zed",
+            json!({
+                "assets": {
+                    "themes": {
+                        "LICENSE": "1",
+                        "summercamp": {
+                            "LICENSE": "1",
+                            "subdir": {
+                                "LICENSE": "1",
+                                "subsubdir": {
+                                    "LICENSE": "3",
+                                }
+                            }
+                        },
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/zed".as_ref()], cx).await;
+
+        let result = cx
+            .update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx))
+            .await
+            .unwrap();
+
+        assert!(result.completion_text.starts_with("zed/assets/themes\n"));
+        assert_eq!(
+            "zed/assets/themes/LICENSE",
+            result.files[0].path.to_string_lossy()
+        );
+        assert_eq!(
+            "zed/assets/themes/summercamp/LICENSE",
+            result.files[1].path.to_string_lossy()
+        );
+        assert_eq!(
+            "zed/assets/themes/summercamp/subdir/LICENSE",
+            result.files[2].path.to_string_lossy()
+        );
+        assert_eq!(
+            "zed/assets/themes/summercamp/subdir/subsubdir/LICENSE",
+            result.files[3].path.to_string_lossy()
+        );
+        assert_eq!("subsubdir", result.files[4].path.to_string_lossy());
+        assert_eq!("subdir", result.files[5].path.to_string_lossy());
+        assert_eq!("summercamp", result.files[6].path.to_string_lossy());
+        assert_eq!("zed/assets/themes", result.files[7].path.to_string_lossy());
 
         // Ensure that the project lasts until after the last await
         drop(project);
