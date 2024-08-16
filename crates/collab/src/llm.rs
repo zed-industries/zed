@@ -540,32 +540,43 @@ impl<S> Drop for TokenCountingStream<S> {
                 .await
                 .log_err();
 
-            if let Some((clickhouse_client, usage)) = state.clickhouse_client.as_ref().zip(usage) {
-                report_llm_usage(
-                    clickhouse_client,
-                    LlmUsageEventRow {
-                        time: Utc::now().timestamp_millis(),
-                        user_id: claims.user_id as i32,
-                        is_staff: claims.is_staff,
-                        plan: match claims.plan {
-                            Plan::Free => "free".to_string(),
-                            Plan::ZedPro => "zed_pro".to_string(),
+            if let Some(usage) = usage {
+                tracing::info!(
+                    target: "user usage",
+                    user_id = claims.user_id,
+                    login = claims.github_user_login,
+                    authn.jti = claims.jti,
+                    requests_this_minute = usage.requests_this_minute,
+                    tokens_this_minute = usage.tokens_this_minute,
+                );
+
+                if let Some(clickhouse_client) = state.clickhouse_client.as_ref() {
+                    report_llm_usage(
+                        clickhouse_client,
+                        LlmUsageEventRow {
+                            time: Utc::now().timestamp_millis(),
+                            user_id: claims.user_id as i32,
+                            is_staff: claims.is_staff,
+                            plan: match claims.plan {
+                                Plan::Free => "free".to_string(),
+                                Plan::ZedPro => "zed_pro".to_string(),
+                            },
+                            model,
+                            provider: provider.to_string(),
+                            input_token_count: input_token_count as u64,
+                            output_token_count: output_token_count as u64,
+                            requests_this_minute: usage.requests_this_minute as u64,
+                            tokens_this_minute: usage.tokens_this_minute as u64,
+                            tokens_this_day: usage.tokens_this_day as u64,
+                            input_tokens_this_month: usage.input_tokens_this_month as u64,
+                            output_tokens_this_month: usage.output_tokens_this_month as u64,
+                            spending_this_month: usage.spending_this_month as u64,
+                            lifetime_spending: usage.lifetime_spending as u64,
                         },
-                        model,
-                        provider: provider.to_string(),
-                        input_token_count: input_token_count as u64,
-                        output_token_count: output_token_count as u64,
-                        requests_this_minute: usage.requests_this_minute as u64,
-                        tokens_this_minute: usage.tokens_this_minute as u64,
-                        tokens_this_day: usage.tokens_this_day as u64,
-                        input_tokens_this_month: usage.input_tokens_this_month as u64,
-                        output_tokens_this_month: usage.output_tokens_this_month as u64,
-                        spending_this_month: usage.spending_this_month as u64,
-                        lifetime_spending: usage.lifetime_spending as u64,
-                    },
-                )
-                .await
-                .log_err();
+                    )
+                    .await
+                    .log_err();
+                }
             }
         })
     }
