@@ -1,5 +1,6 @@
 pub mod api;
 pub mod auth;
+pub mod clickhouse;
 pub mod db;
 pub mod env;
 pub mod executor;
@@ -267,7 +268,7 @@ pub struct AppState {
     pub stripe_client: Option<Arc<stripe::Client>>,
     pub rate_limiter: Arc<RateLimiter>,
     pub executor: Executor,
-    pub clickhouse_client: Option<clickhouse::Client>,
+    pub clickhouse_client: Option<::clickhouse::Client>,
     pub config: Config,
 }
 
@@ -358,8 +359,8 @@ async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::
     Ok(aws_sdk_s3::Client::new(&s3_config))
 }
 
-fn build_clickhouse_client(config: &Config) -> anyhow::Result<clickhouse::Client> {
-    Ok(clickhouse::Client::default()
+fn build_clickhouse_client(config: &Config) -> anyhow::Result<::clickhouse::Client> {
+    Ok(::clickhouse::Client::default()
         .with_url(
             config
                 .clickhouse_url
