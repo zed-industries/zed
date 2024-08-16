@@ -200,14 +200,18 @@ async fn perform_completion(
             let mut request: anthropic::Request =
                 serde_json::from_str(&params.provider_request.get())?;
 
-            // Parse the model, throw away the version that was included, and then set a specific
-            // version that we control on the server.
+            // Override the model on the request with the latest version of the model that is
+            // known to the server.
+            //
             // Right now, we use the version that's defined in `model.id()`, but we will likely
             // want to change this code once a new version of an Anthropic model is released,
             // so that users can use the new version, without having to update Zed.
-            request.model = match anthropic::Model::from_id(&request.model) {
-                Ok(model) => model.id().to_string(),
-                Err(_) => request.model,
+            request.model = match model.as_str() {
+                "claude-3-5-sonnet" => anthropic::Model::Claude3_5Sonnet.id().to_string(),
+                "claude-3-opus" => anthropic::Model::Claude3Opus.id().to_string(),
+                "claude-3-haiku" => anthropic::Model::Claude3Haiku.id().to_string(),
+                "claude-3-sonnet" => anthropic::Model::Claude3Sonnet.id().to_string(),
+                _ => request.model,
             };
 
             let chunks = anthropic::stream_completion(
