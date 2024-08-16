@@ -45,6 +45,7 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
+use text::OffsetRangeExt as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
@@ -2354,6 +2355,15 @@ impl Codegen {
             return Err(anyhow::anyhow!("invalid transformation range"));
         };
 
+        let mut transform_context_range = transform_range.to_point(&transform_buffer);
+        transform_context_range.start.row = transform_context_range.start.row.saturating_sub(3);
+        transform_context_range.start.column = 0;
+        transform_context_range.end =
+            (transform_context_range.end + Point::new(3, 0)).min(transform_buffer.max_point());
+        transform_context_range.end.column =
+            transform_buffer.line_len(transform_context_range.end.row);
+        let transform_context_range = transform_context_range.to_offset(&transform_buffer);
+
         let selected_ranges = self
             .selected_ranges
             .iter()
@@ -2376,6 +2386,7 @@ impl Codegen {
                 transform_buffer,
                 transform_range,
                 selected_ranges,
+                transform_context_range,
             )
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
 
