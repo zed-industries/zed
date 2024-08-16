@@ -142,7 +142,7 @@ pub async fn complete(
         .header("Anthropic-Version", "2023-06-01")
         .header(
             "Anthropic-Beta",
-            "tools-2024-04-04,prompt-caching-2024-07-31",
+            "tools-2024-04-04,prompt-caching-2024-07-31,max-tokens-3-5-sonnet-2024-07-15",
         )
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
@@ -202,7 +202,7 @@ pub async fn stream_completion(
         .header("Anthropic-Version", "2023-06-01")
         .header(
             "Anthropic-Beta",
-            "tools-2024-04-04,prompt-caching-2024-07-31",
+            "tools-2024-04-04,prompt-caching-2024-07-31,max-tokens-3-5-sonnet-2024-07-15",
         )
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
