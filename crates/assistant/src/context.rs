@@ -22,7 +22,7 @@ use gpui::{
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelImage, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, Role,
+    LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
 use open_ai::Model as OpenAiModel;
 use paths::{context_images_dir, contexts_dir};
@@ -348,18 +348,15 @@ pub struct Message {
 }
 
 impl Message {
-    fn to_request_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
+    fn to_request_message(&self, buffer: &Buffer) -> Option<LanguageModelRequestMessage> {
         let mut content = Vec::new();
 
         let mut range_start = self.offset_range.start;
         for (image_offset, message_image) in self.image_offsets.iter() {
             if *image_offset != range_start {
-                content.push(
-                    buffer
-                        .text_for_range(range_start..*image_offset)
-                        .collect::<String>()
-                        .into(),
-                )
+                if let Some(text) = Self::collect_text_content(buffer, range_start..*image_offset) {
+                    content.push(text);
+                }
             }
 
             if let Some(image) = message_image.image.clone().now_or_never().flatten() {
@@ -369,18 +366,30 @@ impl Message {
             range_start = *image_offset;
         }
         if range_start != self.offset_range.end {
-            content.push(
-                buffer
-                    .text_for_range(range_start..self.offset_range.end)
-                    .collect::<String>()
-                    .into(),
-            )
+            if let Some(text) =
+                Self::collect_text_content(buffer, range_start..self.offset_range.end)
+            {
+                content.push(text);
+            }
         }
 
-        LanguageModelRequestMessage {
+        if content.is_empty() {
+            return None;
+        }
+
+        Some(LanguageModelRequestMessage {
             role: self.role,
             content,
             cache: self.cache,
+        })
+    }
+
+    fn collect_text_content(buffer: &Buffer, range: Range<usize>) -> Option<MessageContent> {
+        let text: String = buffer.text_for_range(range.clone()).collect();
+        if text.trim().is_empty() {
+            None
+        } else {
+            Some(MessageContent::Text(text))
         }
     }
 }
@@ -1619,7 +1628,7 @@ impl Context {
         let request_messages = self
             .messages(cx)
             .filter(|message| message.status == MessageStatus::Done)
-            .map(|message| message.to_request_message(&buffer))
+            .filter_map(|message| message.to_request_message(&buffer))
             .collect();
 
         LanguageModelRequest {
@@ -1945,7 +1954,7 @@ impl Context {
 
             let messages = self
                 .messages(cx)
-                .map(|message| message.to_request_message(self.buffer.read(cx)))
+                .filter_map(|message| message.to_request_message(self.buffer.read(cx)))
                 .chain(Some(LanguageModelRequestMessage {
                     role: Role::User,
                     content: vec![
