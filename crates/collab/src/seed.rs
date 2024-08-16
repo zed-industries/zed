@@ -51,7 +51,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
         let flag = db
             .create_user_flag(flag_name, false)
             .await
-            .expect(&format!("failed to create flag: {flag_name}"));
+            .unwrap_or_else(|_| panic!("failed to create flag: '{flag_name}'"));
         flags.push(flag);
     }
 
@@ -161,9 +161,9 @@ async fn fetch_github<T: DeserializeOwned>(client: &reqwest::Client, url: &str) 
         .header("user-agent", "zed")
         .send()
         .await
-        .unwrap_or_else(|_| panic!("failed to fetch '{}'", url));
+        .unwrap_or_else(|_| panic!("failed to fetch '{url}'"));
     response
         .json()
         .await
-        .unwrap_or_else(|_| panic!("failed to deserialize github user from '{}'", url))
+        .unwrap_or_else(|_| panic!("failed to deserialize github user from '{url}'"))
 }
