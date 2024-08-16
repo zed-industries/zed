@@ -20,7 +20,7 @@ pub use registry::*;
 pub use request::*;
 pub use role::*;
 use schemars::JsonSchema;
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{future::Future, sync::Arc};
 use ui::IconName;
 
@@ -41,6 +41,14 @@ pub enum LanguageModelAvailability {
     Public,
     /// The language model is available to users on the indicated plan.
     RequiresPlan(Plan),
+}
+
+/// Configuration for caching language model messages.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LanguageModelCacheConfiguration {
+    pub max_cache_anchors: usize,
+    pub should_speculate: bool,
+    pub min_total_token: usize,
 }
 
 pub trait LanguageModel: Send + Sync {
@@ -77,6 +85,10 @@ pub trait LanguageModel: Send + Sync {
         schema: serde_json::Value,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
+
+    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
+        None
+    }
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &provider::fake::FakeLanguageModel {

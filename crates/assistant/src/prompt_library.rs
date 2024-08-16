@@ -784,6 +784,7 @@ impl PromptLibrary {
                                     messages: vec![LanguageModelRequestMessage {
                                         role: Role::System,
                                         content: vec![body.to_string().into()],
+                                        cache: false,
                                     }],
                                     stop: Vec::new(),
                                     temperature: 1.,

@@ -136,6 +136,7 @@ impl WorkflowStep {
                 request.messages.push(LanguageModelRequestMessage {
                     role: Role::User,
                     content: vec![prompt.into()],
+                    cache: false,
                 });
 
                 // Invoke the model to get its edit suggestions for this workflow step.
