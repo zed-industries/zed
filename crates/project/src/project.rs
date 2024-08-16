@@ -2575,7 +2575,7 @@ impl Project {
                 })?;
 
             let settings = buffer.update(&mut cx, |buffer, cx| {
-                language_settings(buffer.language(), buffer.file(), cx).clone()
+                language_settings(buffer.language(), buffer.file(), cx).into_owned()
             })?;
 
             let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
