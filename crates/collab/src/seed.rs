@@ -82,7 +82,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
             db.add_user_flag(user.user_id, *flag)
                 .await
                 .context(format!(
-                    "Unable to enable flag {} for user {}",
+                    "Unable to enable flag '{}' for user '{}'",
                     flag, user.user_id
                 ))?;
         }
@@ -139,7 +139,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
 
                 for flag in &flags {
                     db.add_user_flag(user.id, *flag).await.context(format!(
-                        "Unable to enable flag {} for user {}",
+                        "Unable to enable flag '{}' for user '{}'",
                         flag, user.id
                     ))?;
                 }
