@@ -35,6 +35,7 @@ use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
     any::Any,
+    borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::BTreeMap,
@@ -2654,7 +2655,11 @@ impl BufferSnapshot {
     }
 
     /// Returns the settings for the language at the given location.
-    pub fn settings_at<D: ToOffset>(&self, position: D, cx: &AppContext) -> LanguageSettings {
+    pub fn settings_at<'a, D: ToOffset>(
+        &self,
+        position: D,
+        cx: &'a AppContext,
+    ) -> Cow<'a, LanguageSettings> {
         language_settings(self.language_at(position), self.file.as_ref(), cx)
     }
 

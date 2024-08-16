@@ -4,7 +4,9 @@ use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
-use ec4rs::property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs};
+use ec4rs::property::{
+    FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs,
+};
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
@@ -18,7 +20,7 @@ use serde::{
 };
 use serde_json::Value;
 use settings::{add_references_to_properties, Settings, SettingsLocation, SettingsSources};
-use std::{num::NonZeroU32, path::Path, sync::Arc};
+use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
 /// Initializes the language settings.
@@ -27,29 +29,41 @@ pub fn init(cx: &mut AppContext) {
 }
 
 /// Returns the settings for the specified language from the provided file.
-pub fn language_settings(
+pub fn language_settings<'a>(
     language: Option<&Arc<Language>>,
     file: Option<&Arc<dyn File>>,
-    cx: &AppContext,
-) -> LanguageSettings {
+    cx: &'a AppContext,
+) -> Cow<'a, LanguageSettings> {
     let language_name = language.map(|l| l.name());
-    let mut settings = all_language_settings(file, cx)
-        .language(language_name.as_ref())
-        .clone();
-    let path = file
-        .and_then(|f| f.as_local())
-        .map(|f| f.abs_path(cx))
-        .unwrap_or_else(|| std::path::PathBuf::new());
-    let mut cfg = ec4rs::properties_of(path).unwrap();
-    cfg.use_fallbacks();
-    fn merge<T>(target: &mut T, value: Option<T>) {
-        if let Some(value) = value {
-            *target = value;
-        }
+    let settings = all_language_settings(file, cx).language(language_name.as_ref());
+    if let Some(content) = editorconfig_settings(file, cx) {
+        let mut settings = settings.clone();
+        merge_with_editorconfig(&mut settings, &content);
+        Cow::Owned(settings)
+    } else {
+        Cow::Borrowed(settings)
     }
-    merge(
-        &mut settings.tab_size,
-        cfg.get::<IndentSize>()
+}
+
+fn editorconfig_settings(
+    file: Option<&Arc<dyn File>>,
+    cx: &AppContext,
+) -> Option<EditorConfigContent> {
+    let path = file.and_then(|f| f.as_local()).map(|f| f.abs_path(cx));
+
+    if path.is_none() {
+        return None;
+    }
+
+    let mut cfg = ec4rs::properties_of(path.unwrap()).unwrap_or_default();
+    cfg.use_fallbacks();
+    let max_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
+        MaxLineLen::Value(u) => Some(u as u32),
+        MaxLineLen::Off => None,
+    });
+    Some(EditorConfigContent {
+        tab_size: cfg
+            .get::<IndentSize>()
             .map(|v| match v {
                 IndentSize::Value(u) => NonZeroU32::new(u as u32),
                 IndentSize::UseTabWidth => cfg
@@ -62,30 +76,29 @@ pub fn language_settings(
             })
             .ok()
             .flatten(),
-    );
-    merge(
-        &mut settings.hard_tabs,
-        cfg.get::<IndentStyle>()
+        hard_tabs: cfg
+            .get::<IndentStyle>()
             .map(|v| v.eq(&IndentStyle::Tabs))
             .ok(),
-    );
-    merge(
-        &mut settings.remove_trailing_whitespace_on_save,
-        cfg.get::<TrimTrailingWs>()
-            .map(|v| match v {
-                TrimTrailingWs::Value(b) => b,
-            })
-            .ok(),
-    );
-    merge(
-        &mut settings.ensure_final_newline_on_save,
-        cfg.get::<FinalNewline>()
+        ensure_final_newline_on_save: cfg
+            .get::<FinalNewline>()
             .map(|v| match v {
                 FinalNewline::Value(b) => b,
             })
             .ok(),
-    );
-    settings
+        remove_trailing_whitespace_on_save: cfg
+            .get::<TrimTrailingWs>()
+            .map(|v| match v {
+                TrimTrailingWs::Value(b) => b,
+            })
+            .ok(),
+        preferred_line_length: max_line_length,
+        soft_wrap: if max_line_length.is_some() {
+            Some(SoftWrap::PreferredLineLength)
+        } else {
+            None
+        },
+    })
 }
 
 /// Returns the settings for all languages from the provided file.
@@ -262,6 +275,17 @@ pub struct AllLanguageSettingsContent {
     /// with languages.
     #[serde(default)]
     pub file_types: HashMap<Arc<str>, Vec<String>>,
+}
+
+/// The settings available in `.editorconfig` files and compatible with Zed.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EditorConfigContent {
+    hard_tabs: Option<bool>,
+    tab_size: Option<NonZeroU32>,
+    ensure_final_newline_on_save: Option<bool>,
+    remove_trailing_whitespace_on_save: Option<bool>,
+    preferred_line_length: Option<u32>,
+    soft_wrap: Option<SoftWrap>,
 }
 
 /// The settings for a particular language.
@@ -1142,6 +1166,28 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.inlay_hints, src.inlay_hints);
 }
 
+fn merge_with_editorconfig(settings: &mut LanguageSettings, content: &EditorConfigContent) {
+    fn merge<T>(target: &mut T, value: Option<T>) {
+        if let Some(value) = value {
+            *target = value;
+        }
+    }
+    merge(&mut settings.tab_size, content.tab_size);
+    merge(&mut settings.hard_tabs, content.hard_tabs);
+    merge(
+        &mut settings.remove_trailing_whitespace_on_save,
+        content.remove_trailing_whitespace_on_save,
+    );
+    merge(
+        &mut settings.ensure_final_newline_on_save,
+        content.ensure_final_newline_on_save,
+    );
+    merge(
+        &mut settings.preferred_line_length,
+        content.preferred_line_length,
+    );
+    merge(&mut settings.soft_wrap, content.soft_wrap);
+}
 /// Allows to enable/disable formatting with Prettier
 /// and configure default Prettier, used when no project-level Prettier installation is found.
 /// Prettier formatting is disabled by default.
