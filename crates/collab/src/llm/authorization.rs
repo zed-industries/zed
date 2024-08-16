@@ -26,9 +26,7 @@ fn authorize_access_to_model(
     }
 
     match (provider, model) {
-        (LanguageModelProvider::Anthropic, model) if model.starts_with("claude-3-5-sonnet") => {
-            Ok(())
-        }
+        (LanguageModelProvider::Anthropic, "claude-3-5-sonnet") => Ok(()),
         _ => Err(Error::http(
             StatusCode::FORBIDDEN,
             format!("access to model {model:?} is not included in your plan"),
