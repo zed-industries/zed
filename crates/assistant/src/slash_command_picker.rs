@@ -183,11 +183,14 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             picker
         });
 
-        div().max_h_8().child(
-            PopoverMenu::new("model-switcher")
-                .menu(move |_cx| Some(picker_view.clone()))
-                .trigger(self.trigger)
-                .attach(gpui::AnchorCorner::TopLeft),
-        )
+        PopoverMenu::new("model-switcher")
+            .menu(move |_cx| Some(picker_view.clone()))
+            .trigger(self.trigger)
+            .attach(gpui::AnchorCorner::TopLeft)
+            .anchor(gpui::AnchorCorner::BottomLeft)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-16.0),
+            })
     }
 }
