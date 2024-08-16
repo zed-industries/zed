@@ -2407,7 +2407,7 @@ impl ContextEditor {
         let Some(step) = self
             .context
             .read(cx)
-            .workflow_step_for_range(step_range.clone())
+            .workflow_step_for_range(step_range.clone(), cx)
         else {
             return;
         };
@@ -2630,7 +2630,7 @@ impl ContextEditor {
             .ok()??;
         let context = self.context.read(cx);
         let language_registry = context.language_registry();
-        let step = context.workflow_step_for_range(step_range)?;
+        let step = context.workflow_step_for_range(step_range, cx)?;
         let view = cx.new_view(|cx| {
             WorkflowStepView::new(self.context.clone(), step, language_registry, cx)
         });
