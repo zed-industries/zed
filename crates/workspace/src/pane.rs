@@ -151,6 +151,8 @@ actions!(
         SplitUp,
         SplitRight,
         SplitDown,
+        SplitHorizontal,
+        SplitVertical,
         TogglePreviewTab,
     ]
 );
@@ -2207,6 +2209,12 @@ impl Render for Pane {
             }))
             .on_action(cx.listener(|pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx)))
             .on_action(cx.listener(|pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)))
+            .on_action(
+                cx.listener(|pane, _: &SplitHorizontal, cx| pane.split(SplitDirection::Down, cx)),
+            )
+            .on_action(
+                cx.listener(|pane, _: &SplitVertical, cx| pane.split(SplitDirection::Right, cx)),
+            )
             .on_action(
                 cx.listener(|pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx)),
             )
