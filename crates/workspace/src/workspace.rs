@@ -115,6 +115,8 @@ lazy_static! {
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
 
+actions!(assistant, [ShowConfiguration]);
+
 actions!(
     workspace,
     [
