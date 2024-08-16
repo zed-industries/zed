@@ -100,7 +100,7 @@ pub fn open_prompt_library(
                     WindowOptions {
                         titlebar: Some(TitlebarOptions {
                             title: Some("Prompt Library".into()),
-                            appears_transparent: true,
+                            appears_transparent: !cfg!(windows),
                             traffic_light_position: Some(point(px(9.0), px(9.0))),
                         }),
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
