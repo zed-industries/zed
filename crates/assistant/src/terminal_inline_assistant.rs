@@ -473,7 +473,7 @@ impl Render for PromptEditor {
                         .on_click(
                             cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)),
                         ),
-                    IconButton::new("start", IconName::SparkleAlt)
+                    IconButton::new("start", IconName::Sparkle)
                         .icon_color(Color::Muted)
                         .shape(IconButtonShape::Square)
                         .tooltip(|cx| Tooltip::for_action("Generate", &menu::Confirm, cx))
