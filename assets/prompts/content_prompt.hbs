@@ -386,7 +386,7 @@ Edit text that you see surrounded with <edit_here>...</edit_here> tags. It's CRI
 {{/if}}
 Make no changes to the rewritten content outside these tags.
 
-<snippet language="Rust" annotated="true">
+<snippet language="{{ language_name }}" annotated="true">
 {{{ rewrite_section_prefix }}}
 <rewrite_this>
 {{{ rewrite_section_with_edits }}}
@@ -422,5 +422,5 @@ Do not include <insert_here> or <edit_here> annotations in your output. Here is 
 Immediately start with the following format with no remarks:
 
 ```
-{{REWRITTEN_CODE}}
+\{{REWRITTEN_CODE}}
 ```
