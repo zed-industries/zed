@@ -1,5 +1,6 @@
 use assistant_slash_command::SlashCommandRegistry;
 use gpui::DismissEvent;
+use gpui::WeakView;
 use picker::PickerEditorPosition;
 
 use std::sync::Arc;
@@ -10,10 +11,13 @@ use gpui::Task;
 use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
+use crate::assistant_panel::ContextEditor;
+
 #[derive(IntoElement)]
 pub struct SlashCommandSelector<T: PopoverTrigger> {
     handle: Option<PopoverMenuHandle<Picker<SlashCommandDelegate>>>,
     registry: Arc<SlashCommandRegistry>,
+    active_context_editor: WeakView<ContextEditor>,
     trigger: T,
     info_text: Option<SharedString>,
 }
@@ -27,14 +31,20 @@ struct SlashCommandInfo {
 pub struct SlashCommandDelegate {
     all_commands: Vec<SlashCommandInfo>,
     filtered_commands: Vec<SlashCommandInfo>,
+    active_context_editor: WeakView<ContextEditor>,
     selected_index: usize,
 }
 
 impl<T: PopoverTrigger> SlashCommandSelector<T> {
-    pub fn new(registry: Arc<SlashCommandRegistry>, trigger: T) -> Self {
+    pub fn new(
+        registry: Arc<SlashCommandRegistry>,
+        active_context_editor: WeakView<ContextEditor>,
+        trigger: T,
+    ) -> Self {
         SlashCommandSelector {
             handle: None,
             registry,
+            active_context_editor,
             trigger,
             info_text: None,
         }
@@ -103,21 +113,12 @@ impl PickerDelegate for SlashCommandDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(model_info) = self.filtered_commands.get(self.selected_index) {
-            // let model = model_info.model.clone();
-
-            // // Update the selection status
-            // let selected_model_id = model_info.model.id();
-            // let selected_provider_id = model_info.model.provider_id();
-            // for model in &mut self.all_commands {
-            //     model.is_selected = model.model.id() == selected_model_id
-            //         && model.model.provider_id() == selected_provider_id;
-            // }
-            // for model in &mut self.filtered_commands {
-            //     model.is_selected = model.model.id() == selected_model_id
-            //         && model.model.provider_id() == selected_provider_id;
-            // }
-
+        if let Some(command) = self.filtered_commands.get(self.selected_index) {
+            self.active_context_editor
+                .update(cx, |context_editor, cx| {
+                    context_editor.insert_command(&command.name, cx)
+                })
+                .ok();
             cx.emit(DismissEvent);
         }
     }
@@ -132,7 +133,7 @@ impl PickerDelegate for SlashCommandDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        _: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let command_info = self.filtered_commands.get(ix)?;
 
@@ -144,7 +145,10 @@ impl PickerDelegate for SlashCommandDelegate {
                 .child(
                     h_flex().w_full().min_w(px(220.)).child(
                         v_flex()
-                            .child(Label::new(command_info.name.clone()).size(LabelSize::Small))
+                            .child(
+                                Label::new(format!("/{}", command_info.name))
+                                    .size(LabelSize::Small),
+                            )
                             .child(
                                 Label::new(command_info.description.clone())
                                     .size(LabelSize::Small)
@@ -166,7 +170,7 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
                 let command = self.registry.command(&command_name)?;
                 let menu_text = SharedString::from(Arc::from(command.menu_text()));
                 Some(SlashCommandInfo {
-                    name: format!("/{command_name}").into(),
+                    name: command_name.into(),
                     description: menu_text,
                 })
             })
@@ -174,6 +178,7 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
 
         let delegate = SlashCommandDelegate {
             all_commands: all_models.clone(),
+            active_context_editor: self.active_context_editor.clone(),
             filtered_commands: all_models,
             selected_index: 0,
         };

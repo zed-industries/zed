@@ -2061,7 +2061,7 @@ impl ContextEditor {
             .collect()
     }
 
-    fn insert_command(&mut self, name: &str, cx: &mut ViewContext<Self>) {
+    pub fn insert_command(&mut self, name: &str, cx: &mut ViewContext<Self>) {
         if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
             self.editor.update(cx, |editor, cx| {
                 editor.transact(cx, |editor, cx| {
@@ -3577,12 +3577,7 @@ impl Render for ContextEditor {
                         .child(
                             h_flex()
                                 .gap_2()
-                                .child(render_inject_context_menu(
-                                    self.workspace.clone(),
-                                    cx.view().downgrade(),
-                                    self.slash_menu_handle.clone(),
-                                    cx,
-                                ))
+                                .child(render_inject_context_menu(cx.view().downgrade(), cx))
                                 .child(
                                     IconButton::new("quote-button", IconName::Quote)
                                         .icon_size(IconSize::Small)
@@ -3912,16 +3907,14 @@ fn active_editor_focus_handle(
 }
 
 fn render_inject_context_menu(
-    workspace: WeakView<Workspace>,
     active_context_editor: WeakView<ContextEditor>,
-    slash_menu_handle: PopoverMenuHandle<ContextMenu>,
     cx: &mut WindowContext<'_>,
 ) -> impl IntoElement {
     let commands = SlashCommandRegistry::global(cx);
-    let active_editor_focus_handle = active_editor_focus_handle(&workspace, cx);
 
     slash_command_picker::SlashCommandSelector::new(
         commands.clone(),
+        active_context_editor,
         IconButton::new("trigger", IconName::SlashSquare)
             .icon_size(IconSize::Small)
             .tooltip(|cx| {
