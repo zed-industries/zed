@@ -92,16 +92,18 @@ Open the `History` using the menu in the top right of the assistant panel and ch
 
 Slash commands enhance the assistant's capabilities. Begin by typing a `/` at the beginning of the line to see a list of available commands:
 
-- default: Inserts the default prompt into the context
-- diagnostics: Injects errors reported by the project's language server into the context
-- fetch: Pulls the content of a webpage and inserts it into the context
-- file: Pulls a single file or a directory of files into the context
-- now: Inserts the current date and time into the context
-- prompt: Adds a custom-configured prompt to the context (see Prompt Library)
-- search: Performs semantic search for content in your project based on natural language
-- symbols: Pulls the current tab's active symbols into the context
-- tab: Pulls in the content of the active tab or all open tabs into the context
-- terminal: Pulls in a select number of lines of output from the terminal
+- `/default`: Inserts the default prompt into the context
+- `/diagnostics`: Injects errors reported by the project's language server into the context
+- `/fetch`: Inserts the content of a webpage and inserts it into the context
+- `/file`: Inserts a single file or a directory of files into the context
+- `/now`: Inserts the current date and time into the context
+- `/prompt`: Adds a custom-configured prompt to the context (see Prompt Library)
+- `/search`: Performs semantic search for content in your project based on natural language
+- `/symbols`: Inserts the current tab's active symbols into the context
+- `/tab`: Inserts in the content of the active tab or all open tabs into the context
+- `/terminal`: Inserts in a select number of lines of output from the terminal
+
+Additionally, you can use `assistant: quote selection` (`cmd + >`) to insert the active editor buffer selection as a quoted code block in the assistant panel.
 
 ## Inline assistant
 
