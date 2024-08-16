@@ -1,4 +1,4 @@
-# Language Model Integration
+# Assistant
 
 ## Assistant Panel
 
