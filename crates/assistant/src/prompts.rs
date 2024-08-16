@@ -16,7 +16,9 @@ pub struct ContentPromptContext {
     pub document_content: String,
     pub user_prompt: String,
     pub rewrite_section: String,
-    pub rewrite_section_with_selections: String,
+    pub rewrite_section_prefix: String,
+    pub rewrite_section_suffix: String,
+    pub rewrite_section_with_edits: String,
     pub has_insertion: bool,
     pub has_replacement: bool,
 }
@@ -29,6 +31,15 @@ pub struct TerminalAssistantPromptContext {
     pub working_directory: Option<String>,
     pub latest_output: Vec<String>,
     pub user_prompt: String,
+}
+
+/// Context required to generate a workflow step resolution prompt.
+#[derive(Debug, Serialize)]
+pub struct StepResolutionContext {
+    /// The full context, including <step>...</step> tags
+    pub workflow_context: String,
+    /// The text of the specific step from the context to resolve
+    pub step_to_resolve: String,
 }
 
 pub struct PromptBuilder {
@@ -164,6 +175,7 @@ impl PromptBuilder {
         buffer: BufferSnapshot,
         transform_range: Range<usize>,
         selected_ranges: Vec<Range<usize>>,
+        transform_context_range: Range<usize>,
     ) -> Result<String, RenderError> {
         let content_type = match language_name {
             None | Some("Markdown" | "Plain Text") => "text",
@@ -193,6 +205,7 @@ impl PromptBuilder {
         for chunk in buffer.text_for_range(truncated_before) {
             document_content.push_str(chunk);
         }
+
         document_content.push_str("<rewrite_this>\n");
         for chunk in buffer.text_for_range(transform_range.clone()) {
             document_content.push_str(chunk);
@@ -208,7 +221,17 @@ impl PromptBuilder {
             rewrite_section.push_str(chunk);
         }
 
-        let rewrite_section_with_selections = {
+        let mut rewrite_section_prefix = String::new();
+        for chunk in buffer.text_for_range(transform_context_range.start..transform_range.start) {
+            rewrite_section_prefix.push_str(chunk);
+        }
+
+        let mut rewrite_section_suffix = String::new();
+        for chunk in buffer.text_for_range(transform_range.end..transform_context_range.end) {
+            rewrite_section_suffix.push_str(chunk);
+        }
+
+        let rewrite_section_with_edits = {
             let mut section_with_selections = String::new();
             let mut last_end = 0;
             for selected_range in &selected_ranges {
@@ -245,7 +268,9 @@ impl PromptBuilder {
             document_content,
             user_prompt,
             rewrite_section,
-            rewrite_section_with_selections,
+            rewrite_section_prefix,
+            rewrite_section_suffix,
+            rewrite_section_with_edits,
             has_insertion,
             has_replacement,
         };
@@ -278,7 +303,10 @@ impl PromptBuilder {
         self.handlebars.lock().render("edit_workflow", &())
     }
 
-    pub fn generate_step_resolution_prompt(&self) -> Result<String, RenderError> {
-        self.handlebars.lock().render("step_resolution", &())
+    pub fn generate_step_resolution_prompt(
+        &self,
+        context: &StepResolutionContext,
+    ) -> Result<String, RenderError> {
+        self.handlebars.lock().render("step_resolution", context)
     }
 }

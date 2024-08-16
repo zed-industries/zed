@@ -193,6 +193,7 @@ impl From<&str> for MessageContent {
 pub struct LanguageModelRequestMessage {
     pub role: Role,
     pub content: Vec<MessageContent>,
+    pub cache: bool,
 }
 
 impl LanguageModelRequestMessage {
@@ -213,7 +214,7 @@ impl LanguageModelRequestMessage {
                 .content
                 .get(0)
                 .map(|content| match content {
-                    MessageContent::Text(s) => s.is_empty(),
+                    MessageContent::Text(s) => s.trim().is_empty(),
                     MessageContent::Image(_) => true,
                 })
                 .unwrap_or(false)
@@ -285,8 +286,8 @@ impl LanguageModelRequest {
         }
     }
 
-    pub fn into_anthropic(self, model: String) -> anthropic::Request {
-        let mut new_messages: Vec<LanguageModelRequestMessage> = Vec::new();
+    pub fn into_anthropic(self, model: String, max_output_tokens: u32) -> anthropic::Request {
+        let mut new_messages: Vec<anthropic::Message> = Vec::new();
         let mut system_message = String::new();
 
         for message in self.messages {
@@ -296,18 +297,49 @@ impl LanguageModelRequest {
 
             match message.role {
                 Role::User | Role::Assistant => {
+                    let cache_control = if message.cache {
+                        Some(anthropic::CacheControl {
+                            cache_type: anthropic::CacheControlType::Ephemeral,
+                        })
+                    } else {
+                        None
+                    };
+                    let anthropic_message_content: Vec<anthropic::Content> = message
+                        .content
+                        .into_iter()
+                        .filter_map(|content| match content {
+                            MessageContent::Text(t) if !t.is_empty() => {
+                                Some(anthropic::Content::Text {
+                                    text: t,
+                                    cache_control,
+                                })
+                            }
+                            MessageContent::Image(i) => Some(anthropic::Content::Image {
+                                source: anthropic::ImageSource {
+                                    source_type: "base64".to_string(),
+                                    media_type: "image/png".to_string(),
+                                    data: i.source.to_string(),
+                                },
+                                cache_control,
+                            }),
+                            _ => None,
+                        })
+                        .collect();
+                    let anthropic_role = match message.role {
+                        Role::User => anthropic::Role::User,
+                        Role::Assistant => anthropic::Role::Assistant,
+                        Role::System => unreachable!("System role should never occur here"),
+                    };
                     if let Some(last_message) = new_messages.last_mut() {
-                        if last_message.role == message.role {
-                            // TODO: is this append done properly?
-                            last_message.content.push(MessageContent::Text(format!(
-                                "\n\n{}",
-                                message.string_contents()
-                            )));
+                        if last_message.role == anthropic_role {
+                            last_message.content.extend(anthropic_message_content);
                             continue;
                         }
                     }
-
-                    new_messages.push(message);
+                    new_messages.push(anthropic::Message {
+                        role: anthropic_role,
+                        content: anthropic_message_content,
+                    });
                 }
                 Role::System => {
                     if !system_message.is_empty() {
@@ -320,37 +352,8 @@ impl LanguageModelRequest {
 
         anthropic::Request {
             model,
-            messages: new_messages
-                .into_iter()
-                .filter_map(|message| {
-                    Some(anthropic::Message {
-                        role: match message.role {
-                            Role::User => anthropic::Role::User,
-                            Role::Assistant => anthropic::Role::Assistant,
-                            Role::System => return None,
-                        },
-                        content: message
-                            .content
-                            .into_iter()
-                            // TODO: filter out the empty messages in the message construction step
-                            .filter_map(|content| match content {
-                                MessageContent::Text(t) if !t.is_empty() => {
-                                    Some(anthropic::Content::Text { text: t })
-                                }
-                                MessageContent::Image(i) => Some(anthropic::Content::Image {
-                                    source: anthropic::ImageSource {
-                                        source_type: "base64".to_string(),
-                                        media_type: "image/png".to_string(),
-                                        data: i.source.to_string(),
-                                    },
-                                }),
-                                _ => None,
-                            })
-                            .collect(),
-                    })
-                })
-                .collect(),
-            max_tokens: 4092,
+            messages: new_messages,
+            max_tokens: max_output_tokens,
             system: Some(system_message),
             tools: Vec::new(),
             tool_choice: None,

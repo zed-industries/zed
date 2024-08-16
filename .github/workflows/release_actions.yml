@@ -16,7 +16,7 @@ jobs:
           fi
           echo "::set-output name=URL::$URL"
       - name: Get content
-        uses: 2428392/gh-truncate-string-action@67b1b814955634208b103cff064be3cb1c7a19be # v1.3.0
+        uses: 2428392/gh-truncate-string-action@e6b5885fb83c81ca9a700a91b079baec2133be3e # v1.4.0
         id: get-content
         with:
           stringToTruncate: |

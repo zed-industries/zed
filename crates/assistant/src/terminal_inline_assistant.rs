@@ -277,6 +277,7 @@ impl TerminalInlineAssistant {
         messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![prompt.into()],
+            cache: false,
         });
 
         Ok(LanguageModelRequest {

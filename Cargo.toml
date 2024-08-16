@@ -19,6 +19,7 @@ members = [
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
+    "crates/context_servers",
     "crates/copilot",
     "crates/db",
     "crates/dev_server_projects",
@@ -148,6 +149,7 @@ members = [
     "extensions/purescript",
     "extensions/ruff",
     "extensions/ruby",
+    "extensions/slash-commands-example",
     "extensions/snippets",
     "extensions/svelte",
     "extensions/terraform",
@@ -189,6 +191,7 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
+context_servers = { path = "crates/context_servers" }
 copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
 dev_server_projects = { path = "crates/dev_server_projects" }
@@ -461,7 +464,7 @@ which = "6.0.0"
 wit-component = "0.201"
 
 [workspace.dependencies.async-stripe]
-version = "0.37"
+version = "0.38"
 default-features = false
 features = [
     "runtime-tokio-hyper-rustls",

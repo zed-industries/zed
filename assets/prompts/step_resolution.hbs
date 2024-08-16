@@ -1,22 +1,27 @@
-Your task is to map a step from the conversation above to suggestions on symbols inside the provided source files.
+<overview>
+Your task is to map a step from a workflow to locations in source code where code needs to be changed to fulfill that step.
+Given a workflow containing background context plus a series of <step> tags, you will resolve *one* of these step tags to resolve to one or more locations in the code.
+With each location, you will produce a brief, one-line description of the changes to be made.
 
-Guidelines:
+<guidelines>
 - There's no need to describe *what* to do, just *where* to do it.
+- Only reference locations that actually exist (unless you're creating a file).
 - If creating a file, assume any subsequent updates are included at the time of creation.
-- Don't create and then update a file.
-- We'll create it in one shot.
+- Don't create and then update a file. Always create new files in shot.
 - Prefer updating symbols lower in the syntax tree if possible.
 - Never include suggestions on a parent symbol and one of its children in the same suggestions block.
 - Never nest an operation with another operation or include CDATA or other content. All suggestions are leaf nodes.
-- Include a description attribute for each operation with a brief, one-line description of the change to perform.
 - Descriptions are required for all suggestions except delete.
 - When generating multiple suggestions, ensure the descriptions are specific to each individual operation.
 - Avoid referring to the location in the description. Focus on the change to be made, not the location where it's made. That's implicit with the symbol you provide.
 - Don't generate multiple suggestions at the same location. Instead, combine them together in a single operation with a succinct combined description.
+</guidelines>
+</overview>
 
-Example 1:
-
-User:
+<examples>
+<example>
+<workflow_context>
+<message role="user">
 ```rs src/rectangle.rs
 struct Rectangle {
     width: f64,
@@ -30,12 +35,21 @@ impl Rectangle {
 }
 ```
 
+We need to add methods to calculate the area and perimeter of the rectangle. Can you help with that?
+</message>
+<message role="assistant">
+Sure, I can help with that!
+
 <step>Add new methods 'calculate_area' and 'calculate_perimeter' to the Rectangle struct</step>
 <step>Implement the 'Display' trait for the Rectangle struct</step>
+</message>
+</workflow_context>
 
-What are the suggestions for the step: <step>Add a new method 'calculate_area' to the Rectangle struct</step>
+<step_to_resolve>
+Add new methods 'calculate_area' and 'calculate_perimeter' to the Rectangle struct
+</step_to_resolve>
 
-A (wrong):
+<incorrect_output reason="NEVER append multiple children at the same location.">
 {
   "title": "Add Rectangle methods",
   "suggestions": [
@@ -53,10 +67,9 @@ A (wrong):
     }
   ]
 }
+</incorrect_output>
 
-This demonstrates what NOT to do. NEVER append multiple children at the same location.
-
-A (corrected):
+<correct_output>
 {
   "title": "Add Rectangle methods",
   "suggestions": [
@@ -68,11 +81,13 @@ A (corrected):
     }
   ]
 }
+</correct_output>
 
-User:
-What are the suggestions for the step: <step>Implement the 'Display' trait for the Rectangle struct</step>
+<step_to_resolve>
+Implement the 'Display' trait for the Rectangle struct
+</step_to_resolve>
 
-A:
+<output>
 {
   "title": "Implement Display for Rectangle",
   "suggestions": [
@@ -84,10 +99,11 @@ A:
     }
   ]
 }
+</output>
 
-Example 2:
-
-User:
+<example>
+<workflow_context>
+<message role="user">
 ```rs src/user.rs
 struct User {
     pub name: String,
@@ -105,13 +121,19 @@ impl User {
     }
 }
 ```
-
+</message>
+<message role="assistant">
+Certainly!
 <step>Update the 'print_info' method to use formatted output</step>
 <step>Remove the 'email' field from the User struct</step>
+</message>
+</workflow_context>
 
-What are the suggestions for the step: <step>Update the 'print_info' method to use formatted output</step>
+<step_to_resolve>
+Update the 'print_info' method to use formatted output
+</step_to_resolve>
 
-A:
+<output>
 {
   "title": "Use formatted output",
   "suggestions": [
@@ -123,11 +145,13 @@ A:
     }
   ]
 }
+</output>
 
-User:
-What are the suggestions for the step: <step>Remove the 'email' field from the User struct</step>
+<step_to_resolve>
+Remove the 'email' field from the User struct
+</step_to_resolve>
 
-A:
+<output>
 {
   "title": "Remove email field",
   "suggestions": [
@@ -138,10 +162,12 @@ A:
       }
     ]
 }
+</output>
+</example>
 
-Example 3:
-
-User:
+<example>
+<workflow_context>
+<message role="user">
 ```rs src/vehicle.rs
 struct Vehicle {
     make: String,
@@ -159,13 +185,18 @@ impl Vehicle {
     }
 }
 ```
-
+</message>
+<message role="assistant">
 <step>Add a 'use std::fmt;' statement at the beginning of the file</step>
 <step>Add a new method 'start_engine' in the Vehicle impl block</step>
+</message>
+</workflow_context>
 
-What are the suggestions for the step: <step>Add a 'use std::fmt;' statement at the beginning of the file</step>
+<step_to_resolve>
+Add a 'use std::fmt;' statement at the beginning of the file
+</step_to_resolve>
 
-A:
+<output>
 {
   "title": "Add use std::fmt statement",
   "suggestions": [
@@ -176,11 +207,13 @@ A:
     }
   ]
 }
+</output>
 
-User:
-What are the suggestions for the step: <step>Add a new method 'start_engine' in the Vehicle impl block</step>
+<step_to_resolve>
+Add a new method 'start_engine' in the Vehicle impl block
+</step_to_resolve>
 
-A:
+<output>
 {
   "title": "Add start_engine method",
   "suggestions": [
@@ -192,10 +225,12 @@ A:
     }
   ]
 }
+</output>
+</example>
 
-Example 4:
-
-User:
+<example>
+<workflow_context>
+<message role="user">
 ```rs src/employee.rs
 struct Employee {
     name: String,
@@ -219,12 +254,18 @@ impl Employee {
     }
 }
 ```
-
+</message>
+<message role="assistant">
 <step>Make salary an f32</step>
+<step>Remove the 'department' field and update the 'print_details' method</step>
+</message>
+</workflow_context>
 
-What are the suggestions for the step: <step>Make salary an f32</step>
+<step_to_resolve>
+Make salary an f32
+</step_to_resolve>
 
-A (wrong):
+<incorrect_output reason="NEVER include suggestions on a parent symbol and one of its children in the same suggestions block.">
 {
   "title": "Change salary to f32",
   "suggestions": [
@@ -242,10 +283,9 @@ A (wrong):
     }
   ]
 }
+</incorrect_output>
 
-This example demonstrates what not to do. `struct Employee salary` is a child of `struct Employee`.
-
-A (corrected):
+<correct_output>
 {
   "title": "Change salary to f32",
   "suggestions": [
@@ -257,11 +297,13 @@ A (corrected):
     }
   ]
 }
+</correct_output>
 
-User:
-What are the correct suggestions for the step: <step>Remove the 'department' field and update the 'print_details' method</step>
+<step_to_resolve>
+Remove the 'department' field and update the 'print_details' method
+</step_to_resolve>
 
-A:
+<output>
 {
   "title": "Remove department",
   "suggestions": [
@@ -278,10 +320,12 @@ A:
     }
   ]
 }
+</output>
+</example>
 
-Example 5:
-
-User:
+<example>
+<workflow_context>
+<message role="user">
 ```rs src/game.rs
 struct Player {
     name: String,
@@ -305,10 +349,17 @@ impl Game {
     }
 }
 ```
-
+</message>
+<message role="assistant">
 <step>Add a 'level' field to Player and update the 'new' method</step>
+</message>
+</workflow_context>
 
-A:
+<step_to_resolve>
+Add a 'level' field to Player and update the 'new' method
+</step_to_resolve>
+
+<output>
 {
   "title": "Add level field to Player",
   "suggestions": [
@@ -326,10 +377,12 @@ A:
     }
   ]
 }
+</output>
+</example>
 
-Example 6:
-
-User:
+<example>
+<workflow_context>
+<message role="user">
 ```rs src/config.rs
 use std::collections::HashMap;
 
@@ -343,10 +396,17 @@ impl Config {
     }
 }
 ```
-
+</message>
+<message role="assistant">
 <step>Add a 'load_from_file' method to Config and import necessary modules</step>
+</message>
+</workflow_context>
 
-A:
+<step_to_resolve>
+Add a 'load_from_file' method to Config and import necessary modules
+</step_to_resolve>
+
+<output>
 {
   "title": "Add load_from_file method",
   "suggestions": [
@@ -363,10 +423,12 @@ A:
     }
   ]
 }
+</output>
+</example>
 
-Example 7:
-
-User:
+<example>
+<workflow_context>
+<message role="user">
 ```rs src/database.rs
 pub(crate) struct Database {
     connection: Connection,
@@ -383,10 +445,17 @@ impl Database {
     }
 }
 ```
-
+</message>
+<message role="assistant">
 <step>Add error handling to the 'query' method and create a custom error type</step>
+</message>
+</workflow_context>
 
-A:
+<step_to_resolve>
+Add error handling to the 'query' method and create a custom error type
+</step_to_resolve>
+
+<output>
 {
   "title": "Add error handling to query",
   "suggestions": [
@@ -409,5 +478,16 @@ A:
     }
   ]
 }
+</output>
+</example>
+</examples>
 
 Now generate the suggestions for the following step:
+
+<workflow_context>
+{{{workflow_context}}}
+</workflow_context>
+
+<step_to_resolve>
+{{{step_to_resolve}}}
+</step_to_resolve>

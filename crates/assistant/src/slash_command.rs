@@ -1,5 +1,6 @@
 use crate::assistant_panel::ContextEditor;
 use anyhow::Result;
+use assistant_slash_command::AfterCompletion;
 pub use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandRegistry};
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
@@ -18,6 +19,7 @@ use std::{
 use ui::ActiveTheme;
 use workspace::Workspace;
 
+pub mod context_server_command;
 pub mod default_command;
 pub mod diagnostics_command;
 pub mod docs_command;
@@ -96,20 +98,25 @@ impl SlashCommandCompletionProvider {
                         let command = commands.command(&mat.string)?;
                         let mut new_text = mat.string.clone();
                         let requires_argument = command.requires_argument();
-                        if requires_argument {
+                        let accepts_arguments = command.accepts_arguments();
+                        if requires_argument || accepts_arguments {
                             new_text.push(' ');
                         }
 
-                        let confirm = editor.clone().zip(workspace.clone()).and_then(
-                            |(editor, workspace)| {
-                                (!requires_argument).then(|| {
+                        let confirm =
+                            editor
+                                .clone()
+                                .zip(workspace.clone())
+                                .map(|(editor, workspace)| {
                                     let command_name = mat.string.clone();
                                     let command_range = command_range.clone();
                                     let editor = editor.clone();
                                     let workspace = workspace.clone();
                                     Arc::new(
                                         move |intent: CompletionIntent, cx: &mut WindowContext| {
-                                            if intent.is_complete() {
+                                            if !requires_argument
+                                                && (!accepts_arguments || intent.is_complete())
+                                            {
                                                 editor
                                                     .update(cx, |editor, cx| {
                                                         editor.run_command(
@@ -122,12 +129,13 @@ impl SlashCommandCompletionProvider {
                                                         );
                                                     })
                                                     .ok();
+                                                false
+                                            } else {
+                                                requires_argument || accepts_arguments
                                             }
                                         },
                                     ) as Arc<_>
-                                })
-                            },
-                        );
+                                });
                         Some(project::Completion {
                             old_range: name_range.clone(),
                             documentation: Some(Documentation::SingleLine(command.description())),
@@ -135,7 +143,6 @@ impl SlashCommandCompletionProvider {
                             label: command.label(cx),
                             server_id: LanguageServerId(0),
                             lsp_completion: Default::default(),
-                            show_new_completions_on_confirm: requires_argument,
                             confirm,
                         })
                     })
@@ -174,7 +181,7 @@ impl SlashCommandCompletionProvider {
                     .await?
                     .into_iter()
                     .map(|new_argument| {
-                        let confirm = if new_argument.run_command {
+                        let confirm =
                             editor
                                 .clone()
                                 .zip(workspace.clone())
@@ -191,7 +198,9 @@ impl SlashCommandCompletionProvider {
                                         let command_range = command_range.clone();
                                         let command_name = command_name.clone();
                                         move |intent: CompletionIntent, cx: &mut WindowContext| {
-                                            if intent.is_complete() {
+                                            if new_argument.after_completion.run()
+                                                || intent.is_complete()
+                                            {
                                                 editor
                                                     .update(cx, |editor, cx| {
                                                         editor.run_command(
@@ -204,16 +213,16 @@ impl SlashCommandCompletionProvider {
                                                         );
                                                     })
                                                     .ok();
+                                                false
+                                            } else {
+                                                !new_argument.after_completion.run()
                                             }
                                         }
                                     }) as Arc<_>
-                                })
-                        } else {
-                            None
-                        };
+                                });
 
                         let mut new_text = new_argument.new_text.clone();
-                        if !new_argument.run_command {
+                        if new_argument.after_completion == AfterCompletion::Continue {
                             new_text.push(' ');
                         }
 
@@ -228,7 +237,6 @@ impl SlashCommandCompletionProvider {
                             documentation: None,
                             server_id: LanguageServerId(0),
                             lsp_completion: Default::default(),
-                            show_new_completions_on_confirm: !new_argument.run_command,
                             confirm,
                         }
                     })

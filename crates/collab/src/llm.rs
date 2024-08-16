@@ -138,7 +138,10 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
                 ));
             }
 
-            tracing::Span::current().record("authn.jti", &claims.jti);
+            tracing::Span::current()
+                .record("user_id", claims.user_id)
+                .record("login", claims.github_user_login.clone())
+                .record("authn.jti", &claims.jti);
 
             req.extensions_mut().insert(claims);
             Ok::<_, Error>(next.run(req).await.into_response())

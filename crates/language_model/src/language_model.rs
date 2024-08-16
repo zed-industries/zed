@@ -8,7 +8,7 @@ pub mod settings;
 
 use anyhow::Result;
 use client::{Client, UserStore};
-use futures::{future::BoxFuture, stream::BoxStream};
+use futures::{future::BoxFuture, stream::BoxStream, TryStreamExt as _};
 use gpui::{
     AnyElement, AnyView, AppContext, AsyncAppContext, Model, SharedString, Task, WindowContext,
 };
@@ -20,7 +20,7 @@ pub use registry::*;
 pub use request::*;
 pub use role::*;
 use schemars::JsonSchema;
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{future::Future, sync::Arc};
 use ui::IconName;
 
@@ -43,6 +43,14 @@ pub enum LanguageModelAvailability {
     RequiresPlan(Plan),
 }
 
+/// Configuration for caching language model messages.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LanguageModelCacheConfiguration {
+    pub max_cache_anchors: usize,
+    pub should_speculate: bool,
+    pub min_total_token: usize,
+}
+
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
@@ -56,6 +64,9 @@ pub trait LanguageModel: Send + Sync {
     }
 
     fn max_token_count(&self) -> usize;
+    fn max_output_tokens(&self) -> Option<u32> {
+        None
+    }
 
     fn count_tokens(
         &self,
@@ -76,7 +87,11 @@ pub trait LanguageModel: Send + Sync {
         description: String,
         schema: serde_json::Value,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<serde_json::Value>>;
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
+
+    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
+        None
+    }
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &provider::fake::FakeLanguageModel {
@@ -92,11 +107,22 @@ impl dyn LanguageModel {
     ) -> impl 'static + Future<Output = Result<T>> {
         let schema = schemars::schema_for!(T);
         let schema_json = serde_json::to_value(&schema).unwrap();
-        let request = self.use_any_tool(request, T::name(), T::description(), schema_json, cx);
+        let stream = self.use_any_tool(request, T::name(), T::description(), schema_json, cx);
         async move {
-            let response = request.await?;
-            Ok(serde_json::from_value(response)?)
+            let stream = stream.await?;
+            let response = stream.try_collect::<String>().await?;
+            Ok(serde_json::from_str(&response)?)
         }
+    }
+
+    pub fn use_tool_stream<T: LanguageModelTool>(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        let schema = schemars::schema_for!(T);
+        let schema_json = serde_json::to_value(&schema).unwrap();
+        self.use_any_tool(request, T::name(), T::description(), schema_json, cx)
     }
 }
 

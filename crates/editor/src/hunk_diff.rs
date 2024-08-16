@@ -777,19 +777,18 @@ fn editor_with_deleted_text(
         });
 
         let mut editor = Editor::for_multibuffer(multi_buffer, None, true, cx);
-        editor.soft_wrap_mode_override = Some(language::language_settings::SoftWrap::None);
-        editor.show_wrap_guides = Some(false);
-        editor.show_gutter = false;
+        editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+        editor.set_show_wrap_guides(false, cx);
+        editor.set_show_gutter(false, cx);
         editor.scroll_manager.set_forbid_vertical_scroll(true);
         editor.set_read_only(true);
-
-        let editor_snapshot = editor.snapshot(cx);
-        let start = editor_snapshot.buffer_snapshot.anchor_before(0);
-        let end = editor_snapshot
-            .buffer_snapshot
-            .anchor_after(editor.buffer.read(cx).len(cx));
-
-        editor.highlight_rows::<DiffRowHighlight>(start..=end, Some(deleted_color), false, cx);
+        editor.set_show_inline_completions(false);
+        editor.highlight_rows::<DiffRowHighlight>(
+            Anchor::min()..=Anchor::max(),
+            Some(deleted_color),
+            false,
+            cx,
+        );
 
         let subscription_editor = parent_editor.clone();
         editor._subscriptions.extend([

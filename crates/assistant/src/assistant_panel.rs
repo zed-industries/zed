@@ -1,6 +1,5 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
-    context_inspector::ContextInspector,
     humanize_token_count,
     prompt_library::open_prompt_library,
     prompts::PromptBuilder,
@@ -12,12 +11,12 @@ use crate::{
     },
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
-    DebugWorkflowSteps, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
-    InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
-    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, ResolvedWorkflowStep,
-    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId, InlineAssistant,
+    InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus,
+    QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus,
+    ToggleModelSelector, WorkflowStepResolution, WorkflowStepView,
 };
-use crate::{ContextStoreEvent, ShowConfiguration};
+use crate::{ContextStoreEvent, ModelPickerDelegate, ShowConfiguration};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use client::{proto, Client, Status};
@@ -36,10 +35,10 @@ use fs::Fs;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
     AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    Context as _, DismissEvent, Empty, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render,
-    RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task,
-    Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
+    Context as _, CursorStyle, DismissEvent, Empty, Entity, EntityId, EventEmitter, FocusHandle,
+    FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
+    ReadGlobal, Render, RenderImage, SharedString, Size, StatefulInteractiveElement, Styled,
+    Subscription, Task, Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -57,15 +56,14 @@ use settings::{update_settings_file, Settings};
 use smol::stream::StreamExt;
 use std::{
     borrow::Cow,
-    cmp::{self, Ordering},
+    cmp,
     fmt::Write,
-    ops::Range,
+    ops::{DerefMut, Range},
     path::PathBuf,
     sync::Arc,
     time::Duration,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
-use text::OffsetRangeExt;
 use ui::TintColor;
 use ui::{
     prelude::*,
@@ -77,7 +75,6 @@ use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::{self, FollowableItem, Item, ItemHandle},
-    notifications::NotifyTaskExt,
     pane::{self, SaveIntent},
     searchable::{SearchEvent, SearchableItem},
     Pane, Save, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -145,7 +142,7 @@ pub struct AssistantPanel {
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
-    model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
+    model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
     configuration_subscription: Option<Subscription>,
@@ -404,56 +401,13 @@ impl AssistantPanel {
                                 } else {
                                     "Zoom In"
                                 };
-                                let weak_pane = cx.view().downgrade();
                                 let menu = ContextMenu::build(cx, |menu, cx| {
-                                    let menu = menu
-                                        .context(pane.focus_handle(cx))
+                                    menu.context(pane.focus_handle(cx))
                                         .action("New Context", Box::new(NewFile))
                                         .action("History", Box::new(DeployHistory))
                                         .action("Prompt Library", Box::new(DeployPromptLibrary))
                                         .action("Configure", Box::new(ShowConfiguration))
-                                        .action(zoom_label, Box::new(ToggleZoom));
-
-                                    if let Some(editor) = pane
-                                        .active_item()
-                                        .and_then(|e| e.downcast::<ContextEditor>())
-                                    {
-                                        let is_enabled = editor.read(cx).debug_inspector.is_some();
-                                        menu.separator().toggleable_entry(
-                                            "Debug Workflows",
-                                            is_enabled,
-                                            IconPosition::End,
-                                            None,
-                                            move |cx| {
-                                                weak_pane
-                                                    .update(cx, |this, cx| {
-                                                        if let Some(context_editor) =
-                                                            this.active_item().and_then(|item| {
-                                                                item.downcast::<ContextEditor>()
-                                                            })
-                                                        {
-                                                            context_editor.update(cx, |this, cx| {
-                                                                if let Some(mut state) =
-                                                                    this.debug_inspector.take()
-                                                                {
-                                                                    state.deactivate(cx);
-                                                                } else {
-                                                                    this.debug_inspector = Some(
-                                                                        ContextInspector::new(
-                                                                            this.editor.clone(),
-                                                                            this.context.clone(),
-                                                                        ),
-                                                                    );
-                                                                }
-                                                            })
-                                                        }
-                                                    })
-                                                    .ok();
-                                            },
-                                        )
-                                    } else {
-                                        menu
-                                    }
+                                        .action(zoom_label, Box::new(ToggleZoom))
                                 });
                                 cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
                                     pane.new_item_menu = None;
@@ -1380,15 +1334,17 @@ struct WorkflowStep {
     range: Range<language::Anchor>,
     header_block_id: CustomBlockId,
     footer_block_id: CustomBlockId,
-    resolved_step: Option<Result<ResolvedWorkflowStep, Arc<anyhow::Error>>>,
+    resolved_step: Option<Result<WorkflowStepResolution, Arc<anyhow::Error>>>,
     assist: Option<WorkflowAssist>,
 }
 
 impl WorkflowStep {
     fn status(&self, cx: &AppContext) -> WorkflowStepStatus {
         match self.resolved_step.as_ref() {
-            Some(Ok(_)) => {
-                if let Some(assist) = self.assist.as_ref() {
+            Some(Ok(step)) => {
+                if step.suggestion_groups.is_empty() {
+                    WorkflowStepStatus::Empty
+                } else if let Some(assist) = self.assist.as_ref() {
                     let assistant = InlineAssistant::global(cx);
                     if assist
                         .assist_ids
@@ -1424,6 +1380,7 @@ impl WorkflowStep {
 enum WorkflowStepStatus {
     Resolving,
     Error(Arc<anyhow::Error>),
+    Empty,
     Idle,
     Pending,
     Done,
@@ -1433,6 +1390,45 @@ enum WorkflowStepStatus {
 impl WorkflowStepStatus {
     pub(crate) fn is_confirmed(&self) -> bool {
         matches!(self, Self::Confirmed)
+    }
+
+    fn render_workflow_step_error(
+        id: EntityId,
+        editor: WeakView<ContextEditor>,
+        step_range: Range<language::Anchor>,
+        error: String,
+    ) -> AnyElement {
+        h_flex()
+            .gap_2()
+            .child(
+                div()
+                    .id("step-resolution-failure")
+                    .child(
+                        Label::new("Step Resolution Failed")
+                            .size(LabelSize::Small)
+                            .color(Color::Error),
+                    )
+                    .tooltip(move |cx| Tooltip::text(error.clone(), cx)),
+            )
+            .child(
+                Button::new(("transform", id), "Retry")
+                    .icon(IconName::Update)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .label_size(LabelSize::Small)
+                    .on_click({
+                        let editor = editor.clone();
+                        let step_range = step_range.clone();
+                        move |_, cx| {
+                            editor
+                                .update(cx, |this, cx| {
+                                    this.resolve_workflow_step(step_range.clone(), cx)
+                                })
+                                .ok();
+                        }
+                    }),
+            )
+            .into_any()
     }
 
     pub(crate) fn into_element(
@@ -1469,44 +1465,20 @@ impl WorkflowStepStatus {
                     |label, delta| label.alpha(delta),
                 )
                 .into_any_element(),
-
-            WorkflowStepStatus::Error(error) => {
-                let error = error.clone();
-                h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id("step-resolution-failure")
-                            .child(
-                                Label::new("Step Resolution Failed")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Error),
-                            )
-                            .tooltip(move |cx| Tooltip::text(error.to_string(), cx)),
-                    )
-                    .child(
-                        Button::new(("transform", id), "Retry")
-                            .icon(IconName::Update)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::Small)
-                            .label_size(LabelSize::Small)
-                            .on_click({
-                                let editor = editor.clone();
-                                let step_range = step_range.clone();
-                                move |_, cx| {
-                                    editor
-                                        .update(cx, |this, cx| {
-                                            this.resolve_workflow_step(step_range.clone(), cx)
-                                        })
-                                        .ok();
-                                }
-                            }),
-                    )
-                    .into_any()
-            }
-
+            WorkflowStepStatus::Error(error) => Self::render_workflow_step_error(
+                id,
+                editor.clone(),
+                step_range.clone(),
+                error.to_string(),
+            ),
+            WorkflowStepStatus::Empty => Self::render_workflow_step_error(
+                id,
+                editor.clone(),
+                step_range.clone(),
+                "Model was unable to locate the code to edit".to_string(),
+            ),
             WorkflowStepStatus::Idle => Button::new(("transform", id), "Transform")
-                .icon(IconName::Sparkle)
+                .icon(IconName::SparkleAlt)
                 .icon_position(IconPosition::Start)
                 .icon_size(IconSize::Small)
                 .label_size(LabelSize::Small)
@@ -1559,7 +1531,8 @@ impl WorkflowStepStatus {
                 .child(
                     IconButton::new(("stop-transformation", id), IconName::Stop)
                         .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Tinted(TintColor::Negative))
+                        .icon_color(Color::Error)
+                        .style(ButtonStyle::Subtle)
                         .tooltip({
                             let step_range = step_range.clone();
                             let editor = editor.clone();
@@ -1725,7 +1698,6 @@ pub struct ContextEditor {
     active_workflow_step: Option<ActiveWorkflowStep>,
     assistant_panel: WeakView<AssistantPanel>,
     error_message: Option<SharedString>,
-    debug_inspector: Option<ContextInspector>,
     show_accept_terms: bool,
 }
 
@@ -1787,7 +1759,6 @@ impl ContextEditor {
             active_workflow_step: None,
             assistant_panel,
             error_message: None,
-            debug_inspector: None,
             show_accept_terms: false,
         };
         this.update_message_headers(cx);
@@ -1872,7 +1843,7 @@ impl ContextEditor {
                 self.confirm_workflow_step(range, cx);
                 true
             }
-            WorkflowStepStatus::Error(_) => {
+            WorkflowStepStatus::Error(_) | WorkflowStepStatus::Empty => {
                 self.resolve_workflow_step(range, cx);
                 true
             }
@@ -1885,9 +1856,8 @@ impl ContextEditor {
         range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.context.update(cx, |context, cx| {
-            context.resolve_workflow_step(range, self.project.clone(), cx)
-        });
+        self.context
+            .update(cx, |context, cx| context.resolve_workflow_step(range, cx));
     }
 
     fn stop_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
@@ -1998,51 +1968,6 @@ impl ContextEditor {
         cx.propagate();
     }
 
-    fn debug_workflow_steps(&mut self, _: &DebugWorkflowSteps, cx: &mut ViewContext<Self>) {
-        let mut output = String::new();
-        for (i, step) in self.context.read(cx).workflow_steps().iter().enumerate() {
-            output.push_str(&format!("Step {}:\n", i + 1));
-            output.push_str(&format!(
-                "Content: {}\n",
-                self.context
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .text_for_range(step.tagged_range.clone())
-                    .collect::<String>()
-            ));
-            match &step.status {
-                crate::WorkflowStepStatus::Resolved(ResolvedWorkflowStep {
-                    title,
-                    suggestions,
-                }) => {
-                    output.push_str("Resolution:\n");
-                    output.push_str(&format!("  {:?}\n", title));
-                    output.push_str(&format!("  {:?}\n", suggestions));
-                }
-                crate::WorkflowStepStatus::Pending(_) => {
-                    output.push_str("Resolution: Pending\n");
-                }
-                crate::WorkflowStepStatus::Error(error) => {
-                    writeln!(output, "Resolution: Error\n{:?}", error).unwrap();
-                }
-            }
-            output.push('\n');
-        }
-
-        let editor = self
-            .workspace
-            .update(cx, |workspace, cx| Editor::new_in_workspace(workspace, cx));
-
-        if let Ok(editor) = editor {
-            cx.spawn(|_, mut cx| async move {
-                let editor = editor.await?;
-                editor.update(&mut cx, |editor, cx| editor.set_text(output, cx))
-            })
-            .detach_and_notify_err(cx);
-        }
-    }
-
     fn cycle_message_role(&mut self, _: &CycleMessageRole, cx: &mut ViewContext<Self>) {
         let cursors = self.cursors(cx);
         self.context.update(cx, |context, cx| {
@@ -2086,7 +2011,7 @@ impl ContextEditor {
                     }
 
                     editor.insert(&format!("/{name}"), cx);
-                    if command.requires_argument() {
+                    if command.accepts_arguments() {
                         editor.insert(" ", cx);
                         editor.show_completions(&ShowCompletions::default(), cx);
                     }
@@ -2099,6 +2024,10 @@ impl ContextEditor {
     }
 
     pub fn confirm_command(&mut self, _: &ConfirmCommand, cx: &mut ViewContext<Self>) {
+        if self.editor.read(cx).has_active_completions_menu() {
+            return;
+        }
+
         let selections = self.editor.read(cx).selections.disjoint_anchors();
         let mut commands_by_range = HashMap::default();
         let workspace = self.workspace.clone();
@@ -2460,9 +2389,6 @@ impl ContextEditor {
                 blocks_to_remove.insert(step.header_block_id);
                 blocks_to_remove.insert(step.footer_block_id);
             }
-            if let Some(debug) = self.debug_inspector.as_mut() {
-                debug.deactivate_for(step_range, cx);
-            }
         }
         self.editor.update(cx, |editor, cx| {
             editor.remove_blocks(blocks_to_remove, None, cx)
@@ -2481,17 +2407,14 @@ impl ContextEditor {
         let Some(step) = self
             .context
             .read(cx)
-            .workflow_step_for_range(step_range.clone())
+            .workflow_step_for_range(step_range.clone(), cx)
         else {
             return;
         };
 
-        let resolved_step = step.status.into_resolved();
+        let resolved_step = step.read(cx).resolution.clone();
         if let Some(existing_step) = self.workflow_steps.get_mut(&step_range) {
             existing_step.resolved_step = resolved_step;
-            if let Some(debug) = self.debug_inspector.as_mut() {
-                debug.refresh(&step_range, cx);
-            }
         } else {
             let start = buffer_snapshot
                 .anchor_in_excerpt(excerpt_id, step_range.start)
@@ -2531,85 +2454,102 @@ impl ContextEditor {
                                     } else {
                                         theme.info_border
                                     };
-                                    let step_index = weak_self.update(&mut **cx, |this, cx| {
-                                       let snapshot = this.editor.read(cx).buffer().read(cx).as_singleton()?.read(cx).text_snapshot();
-                                       let start_offset = step_range.start.to_offset(&snapshot);
-                                       let parent_message = this.context.read(cx).messages_for_offsets([start_offset], cx);
-                                       debug_assert_eq!(parent_message.len(), 1);
-                                       let parent_message = parent_message.first()?;
+                                    let step_index = weak_self
+                                        .update(&mut **cx, |this, cx| {
+                                            let snapshot = this
+                                                .editor
+                                                .read(cx)
+                                                .buffer()
+                                                .read(cx)
+                                                .as_singleton()?
+                                                .read(cx)
+                                                .text_snapshot();
+                                            let start_offset =
+                                                step_range.start.to_offset(&snapshot);
+                                            let parent_message = this
+                                                .context
+                                                .read(cx)
+                                                .messages_for_offsets([start_offset], cx);
+                                            debug_assert_eq!(parent_message.len(), 1);
+                                            let parent_message = parent_message.first()?;
 
-                                       let index_of_current_step = this.workflow_steps.keys().filter(|workflow_step_range| workflow_step_range.start.cmp(&parent_message.anchor, &snapshot).is_ge() && workflow_step_range.end.cmp(&step_range.end, &snapshot).is_le()).count();
-                                       Some(index_of_current_step)
-                                    }).ok().flatten();
-
-                                    let debug_header = weak_self
-                                        .update(&mut **cx, |this, _| {
-                                            if let Some(inspector) = this.debug_inspector.as_mut() {
-                                                Some(inspector.is_active(&step_range))
-                                            } else {
-                                                None
-                                            }
+                                            let index_of_current_step = this
+                                                .workflow_steps
+                                                .keys()
+                                                .filter(|workflow_step_range| {
+                                                    workflow_step_range
+                                                        .start
+                                                        .cmp(&parent_message.anchor, &snapshot)
+                                                        .is_ge()
+                                                        && workflow_step_range
+                                                            .end
+                                                            .cmp(&step_range.end, &snapshot)
+                                                            .is_le()
+                                                })
+                                                .count();
+                                            Some(index_of_current_step)
                                         })
-                                        .unwrap_or_default();
-                                    let step_label = if let Some(index) = step_index {
+                                        .ok()
+                                        .flatten();
 
+                                    let step_label = if let Some(index) = step_index {
                                         Label::new(format!("Step {index}")).size(LabelSize::Small)
-                                        } else {
-                                            Label::new("Step").size(LabelSize::Small)
-                                        };
-                                    let step_label = if current_status.as_ref().is_some_and(|status| status.is_confirmed()) {
-                                        h_flex().items_center().gap_2().child(step_label.strikethrough(true).color(Color::Muted)).child(Icon::new(IconName::Check).size(IconSize::Small).color(Color::Created))
+                                    } else {
+                                        Label::new("Step").size(LabelSize::Small)
+                                    };
+
+                                    let step_label = if current_status
+                                        .as_ref()
+                                        .is_some_and(|status| status.is_confirmed())
+                                    {
+                                        h_flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                step_label.strikethrough(true).color(Color::Muted),
+                                            )
+                                            .child(
+                                                Icon::new(IconName::Check)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Created),
+                                            )
                                     } else {
                                         div().child(step_label)
                                     };
+
+                                    let step_label = step_label
+                                        .id("step")
+                                        .cursor(CursorStyle::PointingHand)
+                                        .on_click({
+                                            let this = weak_self.clone();
+                                            let step_range = step_range.clone();
+                                            move |_, cx| {
+                                                this.update(cx, |this, cx| {
+                                                    this.open_workflow_step(step_range.clone(), cx);
+                                                })
+                                                .ok();
+                                            }
+                                        });
+
                                     div()
                                         .w_full()
                                         .px(cx.gutter_dimensions.full_width())
                                         .child(
                                             h_flex()
                                                 .w_full()
+                                                .h_8()
                                                 .border_b_1()
                                                 .border_color(border_color)
-                                                .pb_1p5()
+                                                .pb_2()
+                                                .items_center()
                                                 .justify_between()
                                                 .gap_2()
-                                                .child(h_flex().justify_start().gap_2().child(step_label).children(
-                                                    debug_header.map(|is_active| {
-
-                                                        Button::new("debug-workflows-toggle", "Debug")
-                                                            .icon_color(Color::Hidden)
-                                                            .color(Color::Hidden)
-                                                            .selected_icon_color(Color::Default)
-                                                            .selected_label_color(Color::Default)
-                                                            .icon(IconName::Microscope)
-                                                            .icon_position(IconPosition::Start)
-                                                            .icon_size(IconSize::Small)
-                                                            .label_size(LabelSize::Small)
-                                                            .selected(is_active)
-                                                            .on_click({
-                                                                let weak_self = weak_self.clone();
-                                                                let step_range = step_range.clone();
-                                                                move |_, cx| {
-                                                                    weak_self
-                                                                        .update(cx, |this, cx| {
-                                                                            if let Some(inspector) =
-                                                                                this.debug_inspector
-                                                                                    .as_mut()
-                                                                            {
-                                                                                if is_active {
-
-                                                                                    inspector.deactivate_for(&step_range, cx);
-                                                                                } else {
-                                                                                    inspector.activate_for_step(step_range.clone(), cx);
-                                                                                }
-                                                                            }
-                                                                        })
-                                                                        .ok();
-                                                                }
-                                                            })
-                                                    })
-
-                                                ))
+                                                .child(
+                                                    h_flex()
+                                                        .justify_start()
+                                                        .gap_2()
+                                                        .child(step_label),
+                                                )
                                                 .children(current_status.as_ref().map(|status| {
                                                     h_flex().w_full().justify_end().child(
                                                         status.into_element(
@@ -2677,6 +2617,38 @@ impl ContextEditor {
         }
 
         self.update_active_workflow_step(cx);
+    }
+
+    fn open_workflow_step(
+        &mut self,
+        step_range: Range<language::Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<()> {
+        let pane = self
+            .assistant_panel
+            .update(cx, |panel, _| panel.pane())
+            .ok()??;
+        let context = self.context.read(cx);
+        let language_registry = context.language_registry();
+        let step = context.workflow_step_for_range(step_range, cx)?;
+        let context = self.context.clone();
+        cx.deref_mut().defer(move |cx| {
+            pane.update(cx, |pane, cx| {
+                let existing_item = pane
+                    .items_of_type::<WorkflowStepView>()
+                    .find(|item| *item.read(cx).step() == step.downgrade());
+                if let Some(item) = existing_item {
+                    if let Some(index) = pane.index_for_item(&item) {
+                        pane.activate_item(index, true, true, cx);
+                    }
+                } else {
+                    let view = cx
+                        .new_view(|cx| WorkflowStepView::new(context, step, language_registry, cx));
+                    pane.add_item(Box::new(view), true, true, None, cx);
+                }
+            });
+        });
+        None
     }
 
     fn update_active_workflow_step(&mut self, cx: &mut ViewContext<Self>) {
@@ -2793,25 +2765,31 @@ impl ContextEditor {
     }
 
     fn open_assists_for_step(
-        resolved_step: &ResolvedWorkflowStep,
+        resolved_step: &WorkflowStepResolution,
         project: &Model<Project>,
         assistant_panel: &WeakView<AssistantPanel>,
         workspace: &WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Option<WorkflowAssist> {
         let assistant_panel = assistant_panel.upgrade()?;
-        if resolved_step.suggestions.is_empty() {
+        if resolved_step.suggestion_groups.is_empty() {
             return None;
         }
 
         let editor;
         let mut editor_was_open = false;
         let mut suggestion_groups = Vec::new();
-        if resolved_step.suggestions.len() == 1
-            && resolved_step.suggestions.values().next().unwrap().len() == 1
+        if resolved_step.suggestion_groups.len() == 1
+            && resolved_step
+                .suggestion_groups
+                .values()
+                .next()
+                .unwrap()
+                .len()
+                == 1
         {
             // If there's only one buffer and one suggestion group, open it directly
-            let (buffer, groups) = resolved_step.suggestions.iter().next().unwrap();
+            let (buffer, groups) = resolved_step.suggestion_groups.iter().next().unwrap();
             let group = groups.into_iter().next().unwrap();
             editor = workspace
                 .update(cx, |workspace, cx| {
@@ -2864,7 +2842,7 @@ impl ContextEditor {
                 let replica_id = project.read(cx).replica_id();
                 let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite)
                     .with_title(resolved_step.title.clone());
-                for (buffer, groups) in &resolved_step.suggestions {
+                for (buffer, groups) in &resolved_step.suggestion_groups {
                     let excerpt_ids = multibuffer.push_excerpts(
                         buffer.clone(),
                         groups.iter().map(|suggestion_group| ExcerptRange {
@@ -3545,7 +3523,7 @@ impl ContextEditor {
         let button_text = match self.active_workflow_step() {
             Some(step) => match step.status(cx) {
                 WorkflowStepStatus::Resolving => "Resolving Step...",
-                WorkflowStepStatus::Error(_) => "Retry Step Resolution",
+                WorkflowStepStatus::Empty | WorkflowStepStatus::Error(_) => "Retry Step Resolution",
                 WorkflowStepStatus::Idle => "Transform",
                 WorkflowStepStatus::Pending => "Transforming...",
                 WorkflowStepStatus::Done => "Accept Transformation",
@@ -3605,28 +3583,11 @@ impl ContextEditor {
     fn active_workflow_step_for_cursor(&self, cx: &AppContext) -> Option<ActiveWorkflowStep> {
         let newest_cursor = self.editor.read(cx).selections.newest::<usize>(cx).head();
         let context = self.context.read(cx);
-        let buffer = context.buffer().read(cx);
-
-        let workflow_steps = context.workflow_steps();
-        workflow_steps
-            .binary_search_by(|step| {
-                let step_range = step.tagged_range.to_offset(&buffer);
-                if newest_cursor < step_range.start {
-                    Ordering::Greater
-                } else if newest_cursor > step_range.end {
-                    Ordering::Less
-                } else {
-                    Ordering::Equal
-                }
-            })
-            .ok()
-            .and_then(|index| {
-                let range = workflow_steps[index].tagged_range.clone();
-                Some(ActiveWorkflowStep {
-                    resolved: self.workflow_steps.get(&range)?.resolved_step.is_some(),
-                    range,
-                })
-            })
+        let (range, step) = context.workflow_step_containing(newest_cursor, cx)?;
+        Some(ActiveWorkflowStep {
+            resolved: step.read(cx).resolution.is_some(),
+            range,
+        })
     }
 }
 
@@ -3654,7 +3615,6 @@ impl Render for ContextEditor {
             .capture_action(cx.listener(ContextEditor::confirm_command))
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
-            .on_action(cx.listener(ContextEditor::debug_workflow_steps))
             .size_full()
             .children(self.render_notice(cx))
             .child(
@@ -3974,12 +3934,13 @@ pub struct ContextEditorToolbarItem {
     workspace: WeakView<Workspace>,
     active_context_editor: Option<WeakView<ContextEditor>>,
     model_summary_editor: View<Editor>,
+    model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
 }
 
 impl ContextEditorToolbarItem {
     pub fn new(
         workspace: &Workspace,
-        _model_selector_menu_handle: PopoverMenuHandle<ContextMenu>,
+        model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
         model_summary_editor: View<Editor>,
     ) -> Self {
         Self {
@@ -3987,6 +3948,7 @@ impl ContextEditorToolbarItem {
             workspace: workspace.weak_handle(),
             active_context_editor: None,
             model_summary_editor,
+            model_selector_menu_handle,
         }
     }
 
@@ -4120,49 +4082,52 @@ impl Render for ContextEditorToolbarItem {
 
         let right_side = h_flex()
             .gap_2()
-            .child(ModelSelector::new(
-                self.fs.clone(),
-                ButtonLike::new("active-model")
-                    .style(ButtonStyle::Subtle)
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_0p5()
-                            .child(
-                                div()
-                                    .overflow_x_hidden()
-                                    .flex_grow()
-                                    .whitespace_nowrap()
-                                    .child(match (active_provider, active_model) {
-                                        (Some(provider), Some(model)) => h_flex()
-                                            .gap_1()
-                                            .child(
-                                                Icon::new(provider.icon())
-                                                    .color(Color::Muted)
-                                                    .size(IconSize::XSmall),
-                                            )
-                                            .child(
-                                                Label::new(model.name().0)
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted),
-                                            )
-                                            .into_any_element(),
-                                        _ => Label::new("No model selected")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .into_any_element(),
-                                    }),
-                            )
-                            .child(
-                                Icon::new(IconName::ChevronDown)
-                                    .color(Color::Muted)
-                                    .size(IconSize::XSmall),
-                            ),
-                    )
-                    .tooltip(move |cx| {
-                        Tooltip::for_action("Change Model", &ToggleModelSelector, cx)
-                    }),
-            ))
+            .child(
+                ModelSelector::new(
+                    self.fs.clone(),
+                    ButtonLike::new("active-model")
+                        .style(ButtonStyle::Subtle)
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .overflow_x_hidden()
+                                        .flex_grow()
+                                        .whitespace_nowrap()
+                                        .child(match (active_provider, active_model) {
+                                            (Some(provider), Some(model)) => h_flex()
+                                                .gap_1()
+                                                .child(
+                                                    Icon::new(provider.icon())
+                                                        .color(Color::Muted)
+                                                        .size(IconSize::XSmall),
+                                                )
+                                                .child(
+                                                    Label::new(model.name().0)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                                .into_any_element(),
+                                            _ => Label::new("No model selected")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted)
+                                                .into_any_element(),
+                                        }),
+                                )
+                                .child(
+                                    Icon::new(IconName::ChevronDown)
+                                        .color(Color::Muted)
+                                        .size(IconSize::XSmall),
+                                ),
+                        )
+                        .tooltip(move |cx| {
+                            Tooltip::for_action("Change Model", &ToggleModelSelector, cx)
+                        }),
+                )
+                .with_handle(self.model_selector_menu_handle.clone()),
+            )
             .children(self.render_remaining_tokens(cx))
             .child(self.render_inject_context_menu(cx));
 
