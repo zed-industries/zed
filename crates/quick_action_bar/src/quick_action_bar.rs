@@ -141,7 +141,7 @@ impl Render for QuickActionBar {
 
         let assistant_button = QuickActionBarButton::new(
             "toggle inline assistant",
-            IconName::SparkleAlt,
+            IconName::ZedAssistant,
             false,
             Box::new(InlineAssist::default()),
             "Inline Assist",
