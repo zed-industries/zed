@@ -3506,7 +3506,8 @@ impl ContextEditor {
             };
             Some(
                 h_flex()
-                    .p_3()
+                    .px_3()
+                    .py_2()
                     .border_b_1()
                     .border_color(cx.theme().colors().border_variant)
                     .bg(cx.theme().colors().editor_background)
@@ -3655,8 +3656,8 @@ impl Render for ContextEditor {
                 this.child(
                     div()
                         .absolute()
-                        .right_4()
-                        .bottom_10()
+                        .right_3()
+                        .bottom_12()
                         .max_w_96()
                         .py_2()
                         .px_3()
@@ -3670,8 +3671,8 @@ impl Render for ContextEditor {
                 this.child(
                     div()
                         .absolute()
-                        .right_4()
-                        .bottom_10()
+                        .right_3()
+                        .bottom_12()
                         .max_w_96()
                         .py_2()
                         .px_3()
@@ -3682,12 +3683,12 @@ impl Render for ContextEditor {
                                 .gap_0p5()
                                 .child(
                                     h_flex()
-                                        .gap_1()
+                                        .gap_1p5()
                                         .items_center()
                                         .child(Icon::new(IconName::XCircle).color(Color::Error))
                                         .child(
                                             Label::new("Error interacting with language model")
-                                                .weight(FontWeight::SEMIBOLD),
+                                                .weight(FontWeight::MEDIUM),
                                         ),
                                 )
                                 .child(
