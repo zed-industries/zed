@@ -30,7 +30,9 @@ pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>
 fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
+        vim.store_visual_marks(cx);
         let count = vim.take_count(cx).unwrap_or(1);
+
         vim.update_active_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
@@ -359,7 +361,8 @@ mod test {
             Mode::Normal,
         );
         assert_eq!(
-            cx.read_from_clipboard().map(|item| item.text().clone()),
+            cx.read_from_clipboard()
+                .map(|item| item.text().unwrap().to_string()),
             Some("jumps".into())
         );
         cx.simulate_keystrokes("d d p");
@@ -371,10 +374,11 @@ mod test {
             Mode::Normal,
         );
         assert_eq!(
-            cx.read_from_clipboard().map(|item| item.text().clone()),
+            cx.read_from_clipboard()
+                .map(|item| item.text().unwrap().to_string()),
             Some("jumps".into())
         );
-        cx.write_to_clipboard(ClipboardItem::new("test-copy".to_string()));
+        cx.write_to_clipboard(ClipboardItem::new_string("test-copy".to_string()));
         cx.simulate_keystrokes("shift-p");
         cx.assert_state(
             indoc! {"

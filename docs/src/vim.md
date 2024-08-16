@@ -17,8 +17,10 @@ Vim mode has several "core Zed" key bindings, that will help you make the most o
 ```
 # Language server
 g d     Go to definition
-g D     Go to type definition
-g cmd-d Go to implementation
+g D     Go to declaration
+g y     Go to type definition
+g I     Go to implementation
+
 c d     Rename (change definition)
 g A     Go to All references to the current word
 
@@ -114,7 +116,7 @@ For vim-specific shortcuts, you may find the following template a good place to 
 ]
 ```
 
-If you would like to emulate vim's `map` (`nmap` etc.) commands you can bind to the [`workspace::SendKeystrokes`](/docs/key-bindings#remapping-keys) action in the correct context.
+If you would like to emulate vim's `map` (`nmap` etc.) commands you can bind to the [`workspace::SendKeystrokes`](./key-bindings.md#remapping-keys) action in the correct context.
 
 You can see the bindings that are enabled by default in vim mode [here](https://github.com/zed-industries/zed/blob/main/assets/keymaps/vim.json).
 
@@ -124,21 +126,21 @@ Zed's keyboard bindings are evaluated only when the `"context"` matches the loca
 
 Vim mode adds several contexts to the `Editor`:
 
-* `vim_mode` is similar to, but not identical to, the current mode. It starts as one of `normal`, `visual`, `insert` or `replace` (depending on your mode). If you are mid-way through typing a sequence, `vim_mode` will be either `waiting` if it's waiting for an arbitrary key (for example after typing `f` or `t`), or `operator` if it's waiting for another binding to trigger (for example after typing `c` or `d`).
-* `vim_operator` is set to `none` unless `vim_mode == operator` in which case it is set to the current operator's default keybinding (for example after typing `d`, `vim_operator == d`).
-* `"VimControl"` indicates that vim keybindings should work. It is currently an alias for `vim_mode == normal || vim_mode == visual || vim_mode == operator`, but the definition may change over time.
+- `vim_mode` is similar to, but not identical to, the current mode. It starts as one of `normal`, `visual`, `insert` or `replace` (depending on your mode). If you are mid-way through typing a sequence, `vim_mode` will be either `waiting` if it's waiting for an arbitrary key (for example after typing `f` or `t`), or `operator` if it's waiting for another binding to trigger (for example after typing `c` or `d`).
+- `vim_operator` is set to `none` unless `vim_mode == operator` in which case it is set to the current operator's default keybinding (for example after typing `d`, `vim_operator == d`).
+- `"VimControl"` indicates that vim keybindings should work. It is currently an alias for `vim_mode == normal || vim_mode == visual || vim_mode == operator`, but the definition may change over time.
 
 ### Restoring some sense of normality
 
 If you're using Vim mode on Linux or Windows, you may find that it has overridden keybindings
 that you can't live without. You can restore them to their defaults by copying these into your keymap:
 
-```
+```json
 {
   "context": "Editor && !menu",
   "bindings": {
     "ctrl-c": "editor::Copy",          // vim default: return to normal mode
-    "ctrl-x": "editor::Cut",           // vim default: increment
+    "ctrl-x": "editor::Cut",           // vim default: decrement
     "ctrl-v": "editor::Paste",         // vim default: visual block mode
     "ctrl-y": "editor::Undo",          // vim default: line up
     "ctrl-f": "buffer_search::Deploy", // vim default: page down
@@ -261,6 +263,11 @@ There are also a few Zed settings that you may also enjoy if you use vim mode:
   "gutter": {
     // disable line numbers completely:
     "line_numbers": false
+  },
+  "command_aliases": {
+    "W": "w",
+    "Wq": "wq",
+    "Q": "q"
   }
 }
 ```
@@ -283,31 +290,33 @@ If you want to navigate between the editor and docks (terminal, project panel, A
 Subword motion is not enabled by default. To enable it, add these bindings to your keymap.
 
 ```json
+[
   {
-    "context": "VimControl && !menu",
+    "context": "VimControl && !menu && vim_mode != operator",
     "bindings": {
       "w": "vim::NextSubwordStart",
       "b": "vim::PreviousSubwordStart",
       "e": "vim::NextSubwordEnd",
       "g e": "vim::PreviousSubwordEnd"
     }
-  },
+  }
+]
 ```
 
 Surrounding the selection in visual mode is also not enabled by default (`shift-s` normally behaves like `c`). To enable it, add the following to your keymap.
 
 ```json
-  {
-    "context": "vim_mode == visual",
-    "bindings": {
-      "shift-s": [
-        "vim::PushOperator",
-        {
-          "AddSurrounds": {}
-        }
-      ]
-    }
+{
+  "context": "vim_mode == visual",
+  "bindings": {
+    "shift-s": [
+      "vim::PushOperator",
+      {
+        "AddSurrounds": {}
+      }
+    ]
   }
+}
 ```
 
 ## Supported plugins

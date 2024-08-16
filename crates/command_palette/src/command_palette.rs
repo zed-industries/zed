@@ -17,9 +17,10 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 
 use postage::{sink::Sink, stream::Stream};
+use settings::Settings;
 use ui::{h_flex, prelude::*, v_flex, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
 use util::ResultExt;
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, Workspace, WorkspaceSettings};
 use zed_actions::OpenZedUrl;
 
 actions!(command_palette, [Toggle]);
@@ -57,20 +58,23 @@ fn trim_consecutive_whitespaces(input: &str) -> String {
 
 impl CommandPalette {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(|workspace, _: &Toggle, cx| {
-            let Some(previous_focus_handle) = cx.focused() else {
-                return;
-            };
-            let telemetry = workspace.client().telemetry().clone();
-            workspace.toggle_modal(cx, move |cx| {
-                CommandPalette::new(previous_focus_handle, telemetry, cx)
-            });
+        workspace.register_action(|workspace, _: &Toggle, cx| Self::toggle(workspace, "", cx));
+    }
+
+    pub fn toggle(workspace: &mut Workspace, query: &str, cx: &mut ViewContext<Workspace>) {
+        let Some(previous_focus_handle) = cx.focused() else {
+            return;
+        };
+        let telemetry = workspace.client().telemetry().clone();
+        workspace.toggle_modal(cx, move |cx| {
+            CommandPalette::new(previous_focus_handle, telemetry, query, cx)
         });
     }
 
     fn new(
         previous_focus_handle: FocusHandle,
         telemetry: Arc<Telemetry>,
+        query: &str,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let filter = CommandPaletteFilter::try_global(cx);
@@ -97,8 +101,17 @@ impl CommandPalette {
             previous_focus_handle,
         );
 
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
+        let picker = cx.new_view(|cx| {
+            let picker = Picker::uniform_list(delegate, cx);
+            picker.set_query(query, cx);
+            picker
+        });
         Self { picker }
+    }
+
+    pub fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
+        self.picker
+            .update(cx, |picker, cx| picker.set_query(query, cx))
     }
 }
 
@@ -248,9 +261,13 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn update_matches(
         &mut self,
-        query: String,
+        mut query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> gpui::Task<()> {
+        let settings = WorkspaceSettings::get_global(cx);
+        if let Some(alias) = settings.command_aliases.get(&query) {
+            query = alias.to_string();
+        }
         let (mut tx, mut rx) = postage::dispatch::channel(1);
         let task = cx.background_executor().spawn({
             let mut commands = self.all_commands.clone();
@@ -477,7 +494,7 @@ mod tests {
         });
 
         workspace.update(cx, |workspace, cx| {
-            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, cx);
             editor.update(cx, |editor, cx| editor.focus(cx))
         });
 

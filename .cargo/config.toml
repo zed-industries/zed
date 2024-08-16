@@ -18,3 +18,7 @@ rustflags = ["-C", "link-args=-Objc"]
 
 [target.x86_64-apple-darwin]
 rustflags = ["-C", "link-args=-Objc"]
+
+# This cfg will reduce the size of `windows::core::Error` from 16 bytes to 4 bytes
+[target.'cfg(target_os = "windows")']
+rustflags = ["--cfg", "windows_slim_errors"]

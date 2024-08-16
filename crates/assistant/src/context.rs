@@ -1,23 +1,38 @@
+#[cfg(test)]
+mod context_tests;
+
 use crate::{
-    slash_command::SlashCommandLine, CompletionProvider, LanguageModelRequest,
-    LanguageModelRequestMessage, MessageId, MessageStatus, Role,
+    prompts::PromptBuilder, slash_command::SlashCommandLine, workflow::WorkflowStep, MessageId,
+    MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandOutput, SlashCommandOutputSection, SlashCommandRegistry,
 };
-use client::{proto, telemetry::Telemetry};
+use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use fs::Fs;
-use futures::{future::Shared, FutureExt, StreamExt};
-use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription, Task};
+use fs::{Fs, RemoveOptions};
+use futures::{future::Shared, stream::FuturesUnordered, FutureExt, StreamExt};
+use gpui::{
+    AppContext, Context as _, EventEmitter, Image, Model, ModelContext, RenderImage, SharedString,
+    Subscription, Task,
+};
+
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
+use language_model::{
+    LanguageModel, LanguageModelCacheConfiguration, LanguageModelImage, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
+};
 use open_ai::Model as OpenAiModel;
-use paths::contexts_dir;
+use paths::{context_images_dir, contexts_dir};
+use project::Project;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use std::{
-    cmp::Ordering,
+    cmp::{max, Ordering},
+    collections::hash_map,
+    fmt::Debug,
     iter, mem,
     ops::Range,
     path::{Path, PathBuf},
@@ -25,8 +40,7 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::AssistantKind;
-use ui::SharedString;
-use util::{post_inc, TryFutureExt};
+use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -93,6 +107,8 @@ impl ContextOperation {
                             message.status.context("invalid status")?,
                         ),
                         timestamp: id.0,
+                        should_cache: false,
+                        is_cache_anchor: false,
                     },
                     version: language::proto::deserialize_version(&insert.version),
                 })
@@ -107,6 +123,8 @@ impl ContextOperation {
                     timestamp: language::proto::deserialize_timestamp(
                         update.timestamp.context("invalid timestamp")?,
                     ),
+                    should_cache: false,
+                    is_cache_anchor: false,
                 },
                 version: language::proto::deserialize_version(&update.version),
             }),
@@ -261,11 +279,13 @@ impl ContextOperation {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ContextEvent {
+    ShowAssistError(SharedString),
     MessagesEdited,
     SummaryChanged,
-    EditSuggestionsChanged,
+    WorkflowStepsRemoved(Vec<Range<language::Anchor>>),
+    WorkflowStepUpdated(Range<language::Anchor>),
     StreamedCompletion,
     PendingSlashCommandsUpdated {
         removed: Vec<Range<language::Anchor>>,
@@ -295,36 +315,106 @@ pub struct MessageAnchor {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MessageMetadata {
     pub role: Role,
-    status: MessageStatus,
+    pub status: MessageStatus,
     timestamp: clock::Lamport,
+    should_cache: bool,
+    is_cache_anchor: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
+pub struct MessageImage {
+    image_id: u64,
+    image: Shared<Task<Option<LanguageModelImage>>>,
+}
+
+impl PartialEq for MessageImage {
+    fn eq(&self, other: &Self) -> bool {
+        self.image_id == other.image_id
+    }
+}
+
+impl Eq for MessageImage {}
+
+#[derive(Clone, Debug)]
 pub struct Message {
+    pub image_offsets: SmallVec<[(usize, MessageImage); 1]>,
     pub offset_range: Range<usize>,
     pub index_range: Range<usize>,
     pub id: MessageId,
     pub anchor: language::Anchor,
     pub role: Role,
     pub status: MessageStatus,
+    pub cache: bool,
 }
 
 impl Message {
-    fn to_request_message(&self, buffer: &Buffer) -> LanguageModelRequestMessage {
-        LanguageModelRequestMessage {
+    fn to_request_message(&self, buffer: &Buffer) -> Option<LanguageModelRequestMessage> {
+        let mut content = Vec::new();
+
+        let mut range_start = self.offset_range.start;
+        for (image_offset, message_image) in self.image_offsets.iter() {
+            if *image_offset != range_start {
+                if let Some(text) = Self::collect_text_content(buffer, range_start..*image_offset) {
+                    content.push(text);
+                }
+            }
+
+            if let Some(image) = message_image.image.clone().now_or_never().flatten() {
+                content.push(language_model::MessageContent::Image(image));
+            }
+
+            range_start = *image_offset;
+        }
+        if range_start != self.offset_range.end {
+            if let Some(text) =
+                Self::collect_text_content(buffer, range_start..self.offset_range.end)
+            {
+                content.push(text);
+            }
+        }
+
+        if content.is_empty() {
+            return None;
+        }
+
+        Some(LanguageModelRequestMessage {
             role: self.role,
-            content: buffer.text_for_range(self.offset_range.clone()).collect(),
+            content,
+            cache: self.cache,
+        })
+    }
+
+    fn collect_text_content(buffer: &Buffer, range: Range<usize>) -> Option<MessageContent> {
+        let text: String = buffer.text_for_range(range.clone()).collect();
+        if text.trim().is_empty() {
+            None
+        } else {
+            Some(MessageContent::Text(text))
         }
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ImageAnchor {
+    pub anchor: language::Anchor,
+    pub image_id: u64,
+    pub render_image: Arc<RenderImage>,
+    pub image: Shared<Task<Option<LanguageModelImage>>>,
+}
+
 struct PendingCompletion {
     id: usize,
+    assistant_message_id: MessageId,
     _task: Task<()>,
 }
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct SlashCommandId(clock::Lamport);
+
+struct WorkflowStepEntry {
+    range: Range<language::Anchor>,
+    step: Model<WorkflowStep>,
+}
 
 pub struct Context {
     id: ContextId,
@@ -333,12 +423,13 @@ pub struct Context {
     pending_ops: Vec<ContextOperation>,
     operations: Vec<ContextOperation>,
     buffer: Model<Buffer>,
-    edit_suggestions: Vec<EditSuggestion>,
     pending_slash_commands: Vec<PendingSlashCommand>,
     edits_since_last_slash_command_parse: language::Subscription,
     finished_slash_commands: HashSet<SlashCommandId>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
+    images: HashMap<u64, (Arc<RenderImage>, Shared<Task<Option<LanguageModelImage>>>)>,
+    image_anchors: Vec<ImageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     summary: Option<ContextSummary>,
     pending_summary: Task<Option<()>>,
@@ -346,12 +437,16 @@ pub struct Context {
     pending_completions: Vec<PendingCompletion>,
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
-    pending_edit_suggestion_parse: Option<Task<()>>,
     pending_save: Task<Result<()>>,
+    pending_cache_warming_task: Task<Option<()>>,
     path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
+    workflow_steps: Vec<WorkflowStepEntry>,
+    edits_since_last_workflow_step_prune: language::Subscription,
+    project: Option<Model<Project>>,
+    prompt_builder: Arc<PromptBuilder>,
 }
 
 impl EventEmitter<ContextEvent> for Context {}
@@ -359,7 +454,9 @@ impl EventEmitter<ContextEvent> for Context {}
 impl Context {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
+        project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
+        prompt_builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::new(
@@ -367,16 +464,21 @@ impl Context {
             ReplicaId::default(),
             language::Capability::ReadWrite,
             language_registry,
+            prompt_builder,
+            project,
             telemetry,
             cx,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: ContextId,
         replica_id: ReplicaId,
         capability: language::Capability,
         language_registry: Arc<LanguageRegistry>,
+        prompt_builder: Arc<PromptBuilder>,
+        project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -392,6 +494,8 @@ impl Context {
         });
         let edits_since_last_slash_command_parse =
             buffer.update(cx, |buffer, _| buffer.subscribe());
+        let edits_since_last_workflow_step_prune =
+            buffer.update(cx, |buffer, _| buffer.subscribe());
         let mut this = Self {
             id,
             timestamp: clock::Lamport::new(replica_id),
@@ -399,8 +503,9 @@ impl Context {
             pending_ops: Vec::new(),
             operations: Vec::new(),
             message_anchors: Default::default(),
+            image_anchors: Default::default(),
+            images: Default::default(),
             messages_metadata: Default::default(),
-            edit_suggestions: Vec::new(),
             pending_slash_commands: Vec::new(),
             finished_slash_commands: HashSet::default(),
             slash_command_output_sections: Vec::new(),
@@ -411,13 +516,17 @@ impl Context {
             pending_completions: Default::default(),
             token_count: None,
             pending_token_count: Task::ready(None),
-            pending_edit_suggestion_parse: None,
+            pending_cache_warming_task: Task::ready(None),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
             path: None,
             buffer,
             telemetry,
+            project,
             language_registry,
+            workflow_steps: Vec::new(),
+            edits_since_last_workflow_step_prune,
+            prompt_builder,
         };
 
         let first_message_id = MessageId(clock::Lamport {
@@ -434,6 +543,8 @@ impl Context {
                 role: Role::User,
                 status: MessageStatus::Done,
                 timestamp: first_message_id.0,
+                should_cache: false,
+                is_cache_anchor: false,
             },
         );
         this.message_anchors.push(message);
@@ -443,7 +554,7 @@ impl Context {
         this
     }
 
-    fn serialize(&self, cx: &AppContext) -> SavedContext {
+    pub(crate) fn serialize(&self, cx: &AppContext) -> SavedContext {
         let buffer = self.buffer.read(cx);
         SavedContext {
             id: Some(self.id.clone()),
@@ -456,6 +567,11 @@ impl Context {
                     id: message.id,
                     start: message.offset_range.start,
                     metadata: self.messages_metadata[&message.id].clone(),
+                    image_offsets: message
+                        .image_offsets
+                        .iter()
+                        .map(|image_offset| (image_offset.0, image_offset.1.image_id))
+                        .collect(),
                 })
                 .collect(),
             summary: self
@@ -487,6 +603,8 @@ impl Context {
         saved_context: SavedContext,
         path: PathBuf,
         language_registry: Arc<LanguageRegistry>,
+        prompt_builder: Arc<PromptBuilder>,
+        project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -496,6 +614,8 @@ impl Context {
             ReplicaId::default(),
             language::Capability::ReadWrite,
             language_registry,
+            prompt_builder,
+            project,
             telemetry,
             cx,
         );
@@ -727,6 +847,18 @@ impl Context {
         &self.buffer
     }
 
+    pub fn language_registry(&self) -> Arc<LanguageRegistry> {
+        self.language_registry.clone()
+    }
+
+    pub fn project(&self) -> Option<Model<Project>> {
+        self.project.clone()
+    }
+
+    pub fn prompt_builder(&self) -> Arc<PromptBuilder> {
+        self.prompt_builder.clone()
+    }
+
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }
@@ -735,8 +867,46 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub fn edit_suggestions(&self) -> &[EditSuggestion] {
-        &self.edit_suggestions
+    pub fn workflow_step_containing(
+        &self,
+        offset: usize,
+        cx: &AppContext,
+    ) -> Option<(Range<language::Anchor>, Model<WorkflowStep>)> {
+        let buffer = self.buffer.read(cx);
+        let index = self
+            .workflow_steps
+            .binary_search_by(|step| {
+                let step_range = step.range.to_offset(&buffer);
+                if offset < step_range.start {
+                    Ordering::Greater
+                } else if offset > step_range.end {
+                    Ordering::Less
+                } else {
+                    Ordering::Equal
+                }
+            })
+            .ok()?;
+        let step = &self.workflow_steps[index];
+        Some((step.range.clone(), step.step.clone()))
+    }
+
+    pub fn workflow_step_for_range(
+        &self,
+        range: Range<language::Anchor>,
+        cx: &AppContext,
+    ) -> Option<Model<WorkflowStep>> {
+        let buffer = self.buffer.read(cx);
+        let index = self.workflow_step_index_for_range(&range, buffer).ok()?;
+        Some(self.workflow_steps[index].step.clone())
+    }
+
+    pub fn workflow_step_index_for_range(
+        &self,
+        tagged_range: &Range<text::Anchor>,
+        buffer: &text::BufferSnapshot,
+    ) -> Result<usize, usize> {
+        self.workflow_steps
+            .binary_search_by(|probe| probe.range.cmp(&tagged_range, buffer))
     }
 
     pub fn pending_slash_commands(&self) -> &[PendingSlashCommand] {
@@ -771,8 +941,10 @@ impl Context {
             )),
             language::Event::Edited => {
                 self.count_remaining_tokens(cx);
-                self.reparse_edit_suggestions(cx);
                 self.reparse_slash_commands(cx);
+                // Use `inclusive = true` to invalidate a step when an edit occurs
+                // at the start/end of a parsed step.
+                self.prune_invalid_workflow_steps(true, cx);
                 cx.emit(ContextEvent::MessagesEdited);
             }
             _ => {}
@@ -785,20 +957,135 @@ impl Context {
 
     pub(crate) fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
         let request = self.to_completion_request(cx);
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return;
+        };
         self.pending_token_count = cx.spawn(|this, mut cx| {
             async move {
                 cx.background_executor()
                     .timer(Duration::from_millis(200))
                     .await;
 
-                let token_count = cx
-                    .update(|cx| CompletionProvider::global(cx).count_tokens(request, cx))?
-                    .await?;
-
+                let token_count = cx.update(|cx| model.count_tokens(request, cx))?.await?;
                 this.update(&mut cx, |this, cx| {
                     this.token_count = Some(token_count);
+                    this.start_cache_warming(&model, cx);
                     cx.notify()
-                })?;
+                })
+            }
+            .log_err()
+        });
+    }
+
+    pub fn mark_longest_messages_for_cache(
+        &mut self,
+        cache_configuration: &Option<LanguageModelCacheConfiguration>,
+        speculative: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
+        let cache_configuration =
+            cache_configuration
+                .as_ref()
+                .unwrap_or(&LanguageModelCacheConfiguration {
+                    max_cache_anchors: 0,
+                    should_speculate: false,
+                    min_total_token: 0,
+                });
+
+        let messages: Vec<Message> = self
+            .messages_from_anchors(
+                self.message_anchors.iter().take(if speculative {
+                    self.message_anchors.len().saturating_sub(1)
+                } else {
+                    self.message_anchors.len()
+                }),
+                cx,
+            )
+            .filter(|message| message.offset_range.len() >= 5_000)
+            .collect();
+
+        let mut sorted_messages = messages.clone();
+        sorted_messages.sort_by(|a, b| b.offset_range.len().cmp(&a.offset_range.len()));
+        if cache_configuration.max_cache_anchors == 0 && cache_configuration.should_speculate {
+            // Some models support caching, but don't support anchors.  In that case we want to
+            // mark the largest message as needing to be cached, but we will not mark it as an
+            // anchor.
+            sorted_messages.truncate(1);
+        } else {
+            // Save 1 anchor for the inline assistant.
+            sorted_messages.truncate(max(cache_configuration.max_cache_anchors, 1) - 1);
+        }
+
+        let longest_message_ids: HashSet<MessageId> = sorted_messages
+            .into_iter()
+            .map(|message| message.id)
+            .collect();
+
+        let cache_deltas: HashSet<MessageId> = self
+            .messages_metadata
+            .iter()
+            .filter_map(|(id, metadata)| {
+                let should_cache = longest_message_ids.contains(id);
+                let should_be_anchor = should_cache && cache_configuration.max_cache_anchors > 0;
+                if metadata.should_cache != should_cache
+                    || metadata.is_cache_anchor != should_be_anchor
+                {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut newly_cached_item = false;
+        for id in cache_deltas {
+            newly_cached_item = newly_cached_item || longest_message_ids.contains(&id);
+            self.update_metadata(id, cx, |metadata| {
+                metadata.should_cache = longest_message_ids.contains(&id);
+                metadata.is_cache_anchor =
+                    metadata.should_cache && (cache_configuration.max_cache_anchors > 0);
+            });
+        }
+        newly_cached_item
+    }
+
+    fn start_cache_warming(&mut self, model: &Arc<dyn LanguageModel>, cx: &mut ModelContext<Self>) {
+        let cache_configuration = model.cache_configuration();
+        if !self.mark_longest_messages_for_cache(&cache_configuration, true, cx) {
+            return;
+        }
+        if let Some(cache_configuration) = cache_configuration {
+            if !cache_configuration.should_speculate {
+                return;
+            }
+        }
+
+        let request = {
+            let mut req = self.to_completion_request(cx);
+            // Skip the last message because it's likely to change and
+            // therefore would be a waste to cache.
+            req.messages.pop();
+            req.messages.push(LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Respond only with OK, nothing else.".into()],
+                cache: false,
+            });
+            req
+        };
+
+        let model = Arc::clone(model);
+        self.pending_cache_warming_task = cx.spawn(|_, cx| {
+            async move {
+                match model.stream_completion(request, &cx).await {
+                    Ok(mut stream) => {
+                        stream.next().await;
+                        log::info!("Cache warming completed successfully");
+                    }
+                    Err(e) => {
+                        log::warn!("Cache warming failed: {}", e);
+                    }
+                };
+
                 anyhow::Ok(())
             }
             .log_err()
@@ -844,21 +1131,31 @@ impl Context {
             while let Some(line) = lines.next() {
                 if let Some(command_line) = SlashCommandLine::parse(line) {
                     let name = &line[command_line.name.clone()];
-                    let argument = command_line.argument.as_ref().and_then(|argument| {
-                        (!argument.is_empty()).then_some(&line[argument.clone()])
-                    });
+                    let arguments = command_line
+                        .arguments
+                        .iter()
+                        .filter_map(|argument_range| {
+                            if argument_range.is_empty() {
+                                None
+                            } else {
+                                line.get(argument_range.clone())
+                            }
+                        })
+                        .map(ToOwned::to_owned)
+                        .collect::<SmallVec<_>>();
                     if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
-                        if !command.requires_argument() || argument.is_some() {
+                        if !command.requires_argument() || !arguments.is_empty() {
                             let start_ix = offset + command_line.name.start - 1;
                             let end_ix = offset
                                 + command_line
-                                    .argument
+                                    .arguments
+                                    .last()
                                     .map_or(command_line.name.end, |argument| argument.end);
                             let source_range =
                                 buffer.anchor_after(start_ix)..buffer.anchor_after(end_ix);
                             let pending_command = PendingSlashCommand {
                                 name: name.to_string(),
-                                argument: argument.map(ToString::to_string),
+                                arguments,
                                 source_range,
                                 status: PendingSlashCommandStatus::Idle,
                             };
@@ -880,62 +1177,162 @@ impl Context {
         }
     }
 
-    fn reparse_edit_suggestions(&mut self, cx: &mut ModelContext<Self>) {
-        self.pending_edit_suggestion_parse = Some(cx.spawn(|this, mut cx| async move {
-            cx.background_executor()
-                .timer(Duration::from_millis(200))
-                .await;
+    fn prune_invalid_workflow_steps(&mut self, inclusive: bool, cx: &mut ModelContext<Self>) {
+        let mut removed = Vec::new();
 
-            this.update(&mut cx, |this, cx| {
-                this.reparse_edit_suggestions_in_range(0..this.buffer.read(cx).len(), cx);
-            })
-            .ok();
-        }));
+        for edit_range in self.edits_since_last_workflow_step_prune.consume() {
+            let intersecting_range = self.find_intersecting_steps(edit_range.new, inclusive, cx);
+            removed.extend(
+                self.workflow_steps
+                    .drain(intersecting_range)
+                    .map(|step| step.range),
+            );
+        }
+
+        if !removed.is_empty() {
+            cx.emit(ContextEvent::WorkflowStepsRemoved(removed));
+            cx.notify();
+        }
     }
 
-    fn reparse_edit_suggestions_in_range(
-        &mut self,
+    fn find_intersecting_steps(
+        &self,
         range: Range<usize>,
+        inclusive: bool,
+        cx: &AppContext,
+    ) -> Range<usize> {
+        let buffer = self.buffer.read(cx);
+        let start_ix = match self.workflow_steps.binary_search_by(|probe| {
+            probe
+                .range
+                .end
+                .to_offset(buffer)
+                .cmp(&range.start)
+                .then(if inclusive {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                })
+        }) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let end_ix = match self.workflow_steps.binary_search_by(|probe| {
+            probe
+                .range
+                .start
+                .to_offset(buffer)
+                .cmp(&range.end)
+                .then(if inclusive {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                })
+        }) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        start_ix..end_ix
+    }
+
+    fn parse_workflow_steps_in_range(&mut self, range: Range<usize>, cx: &mut ModelContext<Self>) {
+        let weak_self = cx.weak_model();
+        let mut new_edit_steps = Vec::new();
+        let mut edits = Vec::new();
+
+        let buffer = self.buffer.read(cx).snapshot();
+        let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
+        let mut in_step = false;
+        let mut step_open_tag_start_ix = 0;
+        let mut line_start_offset = message_lines.offset();
+
+        while let Some(line) = message_lines.next() {
+            if let Some(step_start_index) = line.find("<step>") {
+                if !in_step {
+                    in_step = true;
+                    step_open_tag_start_ix = line_start_offset + step_start_index;
+                }
+            }
+
+            if let Some(step_end_index) = line.find("</step>") {
+                if in_step {
+                    let mut step_open_tag_end_ix = step_open_tag_start_ix + "<step>".len();
+                    if buffer.chars_at(step_open_tag_end_ix).next() == Some('\n') {
+                        step_open_tag_end_ix += 1;
+                    }
+                    let mut step_end_tag_start_ix = line_start_offset + step_end_index;
+                    let step_end_tag_end_ix = step_end_tag_start_ix + "</step>".len();
+                    if buffer.reversed_chars_at(step_end_tag_start_ix).next() == Some('\n') {
+                        step_end_tag_start_ix -= 1;
+                    }
+                    edits.push((step_open_tag_start_ix..step_open_tag_end_ix, ""));
+                    edits.push((step_end_tag_start_ix..step_end_tag_end_ix, ""));
+                    let tagged_range = buffer.anchor_after(step_open_tag_end_ix)
+                        ..buffer.anchor_before(step_end_tag_start_ix);
+
+                    // Check if a step with the same range already exists
+                    let existing_step_index =
+                        self.workflow_step_index_for_range(&tagged_range, &buffer);
+
+                    if let Err(ix) = existing_step_index {
+                        new_edit_steps.push((
+                            ix,
+                            WorkflowStepEntry {
+                                step: cx.new_model(|_| {
+                                    WorkflowStep::new(tagged_range.clone(), weak_self.clone())
+                                }),
+                                range: tagged_range,
+                            },
+                        ));
+                    }
+
+                    in_step = false;
+                }
+            }
+
+            line_start_offset = message_lines.offset();
+        }
+
+        let mut updated = Vec::new();
+        for (index, step) in new_edit_steps.into_iter().rev() {
+            let step_range = step.range.clone();
+            updated.push(step_range.clone());
+            self.workflow_steps.insert(index, step);
+            self.resolve_workflow_step(step_range, cx);
+        }
+
+        // Delete <step> tags, making sure we don't accidentally invalidate
+        // the step we just parsed.
+        self.buffer
+            .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        self.edits_since_last_workflow_step_prune.consume();
+    }
+
+    pub fn resolve_workflow_step(
+        &mut self,
+        tagged_range: Range<language::Anchor>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.buffer.update(cx, |buffer, _| {
-            let range_start = buffer.anchor_before(range.start);
-            let range_end = buffer.anchor_after(range.end);
-            let start_ix = self
-                .edit_suggestions
-                .binary_search_by(|probe| {
-                    probe
-                        .source_range
-                        .end
-                        .cmp(&range_start, buffer)
-                        .then(Ordering::Greater)
-                })
-                .unwrap_err();
-            let end_ix = self
-                .edit_suggestions
-                .binary_search_by(|probe| {
-                    probe
-                        .source_range
-                        .start
-                        .cmp(&range_end, buffer)
-                        .then(Ordering::Less)
-                })
-                .unwrap_err();
+        let Ok(step_index) = self
+            .workflow_steps
+            .binary_search_by(|step| step.range.cmp(&tagged_range, self.buffer.read(cx)))
+        else {
+            return;
+        };
 
-            let mut new_edit_suggestions = Vec::new();
-            let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
-            while let Some(suggestion) = parse_next_edit_suggestion(&mut message_lines) {
-                let start_anchor = buffer.anchor_after(suggestion.outer_range.start);
-                let end_anchor = buffer.anchor_before(suggestion.outer_range.end);
-                new_edit_suggestions.push(EditSuggestion {
-                    source_range: start_anchor..end_anchor,
-                    full_path: suggestion.path,
-                });
-            }
-            self.edit_suggestions
-                .splice(start_ix..end_ix, new_edit_suggestions);
+        cx.emit(ContextEvent::WorkflowStepUpdated(tagged_range.clone()));
+        cx.notify();
+
+        let resolution = self.workflow_steps[step_index].step.clone();
+        cx.defer(move |cx| {
+            resolution.update(cx, |resolution, cx| resolution.resolve(cx));
         });
-        cx.emit(ContextEvent::EditSuggestionsChanged);
+    }
+
+    pub fn workflow_step_updated(
+        &mut self,
+        range: Range<language::Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        cx.emit(ContextEvent::WorkflowStepUpdated(range));
         cx.notify();
     }
 
@@ -1092,177 +1489,166 @@ impl Context {
         self.count_remaining_tokens(cx);
     }
 
-    pub fn assist(
-        &mut self,
-        selected_messages: HashSet<MessageId>,
-        cx: &mut ModelContext<Self>,
-    ) -> Vec<MessageAnchor> {
-        let mut user_messages = Vec::new();
+    fn get_last_valid_message_id(&self, cx: &ModelContext<Self>) -> Option<MessageId> {
+        self.message_anchors.iter().rev().find_map(|message| {
+            message
+                .start
+                .is_valid(self.buffer.read(cx))
+                .then_some(message.id)
+        })
+    }
 
-        let last_message_id = if let Some(last_message_id) =
-            self.message_anchors.iter().rev().find_map(|message| {
-                message
-                    .start
-                    .is_valid(self.buffer.read(cx))
-                    .then_some(message.id)
-            }) {
-            last_message_id
-        } else {
-            return Default::default();
-        };
+    pub fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<MessageAnchor> {
+        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
+        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let last_message_id = self.get_last_valid_message_id(cx)?;
 
-        let mut should_assist = false;
-        for selected_message_id in selected_messages {
-            let selected_message_role =
-                if let Some(metadata) = self.messages_metadata.get(&selected_message_id) {
-                    metadata.role
-                } else {
-                    continue;
-                };
-
-            if selected_message_role == Role::Assistant {
-                if let Some(user_message) = self.insert_message_after(
-                    selected_message_id,
-                    Role::User,
-                    MessageStatus::Done,
-                    cx,
-                ) {
-                    user_messages.push(user_message);
-                }
-            } else {
-                should_assist = true;
-            }
+        if !provider.is_authenticated(cx) {
+            log::info!("completion provider has no credentials");
+            return None;
         }
+        // Compute which messages to cache, including the last one.
+        self.mark_longest_messages_for_cache(&model.cache_configuration(), false, cx);
 
-        if should_assist {
-            if !CompletionProvider::global(cx).is_authenticated() {
-                log::info!("completion provider has no credentials");
-                return Default::default();
-            }
+        let request = self.to_completion_request(cx);
+        let assistant_message = self
+            .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
+            .unwrap();
 
-            let request = self.to_completion_request(cx);
-            let stream = CompletionProvider::global(cx).complete(request, cx);
-            let assistant_message = self
-                .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
-                .unwrap();
+        // Queue up the user's next reply.
+        let user_message = self
+            .insert_message_after(assistant_message.id, Role::User, MessageStatus::Done, cx)
+            .unwrap();
 
-            // Queue up the user's next reply.
-            let user_message = self
-                .insert_message_after(assistant_message.id, Role::User, MessageStatus::Done, cx)
-                .unwrap();
-            user_messages.push(user_message);
+        let pending_completion_id = post_inc(&mut self.completion_count);
 
-            let task = cx.spawn({
-                |this, mut cx| async move {
-                    let assistant_message_id = assistant_message.id;
-                    let mut response_latency = None;
-                    let stream_completion = async {
-                        let request_start = Instant::now();
-                        let mut messages = stream.await.inner.await?;
+        let task = cx.spawn({
+            |this, mut cx| async move {
+                let stream = model.stream_completion(request, &cx);
+                let assistant_message_id = assistant_message.id;
+                let mut response_latency = None;
+                let stream_completion = async {
+                    let request_start = Instant::now();
+                    let mut chunks = stream.await?;
 
-                        while let Some(message) = messages.next().await {
-                            if response_latency.is_none() {
-                                response_latency = Some(request_start.elapsed());
-                            }
-                            let text = message?;
-
-                            this.update(&mut cx, |this, cx| {
-                                let message_ix = this
-                                    .message_anchors
-                                    .iter()
-                                    .position(|message| message.id == assistant_message_id)?;
-                                let message_range = this.buffer.update(cx, |buffer, cx| {
-                                    let message_start_offset =
-                                        this.message_anchors[message_ix].start.to_offset(buffer);
-                                    let message_old_end_offset = this.message_anchors
-                                        [message_ix + 1..]
-                                        .iter()
-                                        .find(|message| message.start.is_valid(buffer))
-                                        .map_or(buffer.len(), |message| {
-                                            message.start.to_offset(buffer).saturating_sub(1)
-                                        });
-                                    let message_new_end_offset =
-                                        message_old_end_offset + text.len();
-                                    buffer.edit(
-                                        [(message_old_end_offset..message_old_end_offset, text)],
-                                        None,
-                                        cx,
-                                    );
-                                    message_start_offset..message_new_end_offset
-                                });
-                                this.reparse_edit_suggestions_in_range(message_range, cx);
-                                cx.emit(ContextEvent::StreamedCompletion);
-
-                                Some(())
-                            })?;
-                            smol::future::yield_now().await;
+                    while let Some(chunk) = chunks.next().await {
+                        if response_latency.is_none() {
+                            response_latency = Some(request_start.elapsed());
                         }
+                        let chunk = chunk?;
 
                         this.update(&mut cx, |this, cx| {
-                            this.pending_completions
-                                .retain(|completion| completion.id != this.completion_count);
-                            this.summarize(cx);
+                            let message_ix = this
+                                .message_anchors
+                                .iter()
+                                .position(|message| message.id == assistant_message_id)?;
+                            let message_range = this.buffer.update(cx, |buffer, cx| {
+                                let message_start_offset =
+                                    this.message_anchors[message_ix].start.to_offset(buffer);
+                                let message_old_end_offset = this.message_anchors[message_ix + 1..]
+                                    .iter()
+                                    .find(|message| message.start.is_valid(buffer))
+                                    .map_or(buffer.len(), |message| {
+                                        message.start.to_offset(buffer).saturating_sub(1)
+                                    });
+                                let message_new_end_offset = message_old_end_offset + chunk.len();
+                                buffer.edit(
+                                    [(message_old_end_offset..message_old_end_offset, chunk)],
+                                    None,
+                                    cx,
+                                );
+                                message_start_offset..message_new_end_offset
+                            });
+
+                            // Use `inclusive = false` as edits might occur at the end of a parsed step.
+                            this.prune_invalid_workflow_steps(false, cx);
+                            this.parse_workflow_steps_in_range(message_range, cx);
+                            cx.emit(ContextEvent::StreamedCompletion);
+
+                            Some(())
                         })?;
-
-                        anyhow::Ok(())
-                    };
-
-                    let result = stream_completion.await;
-
+                        smol::future::yield_now().await;
+                    }
                     this.update(&mut cx, |this, cx| {
-                        let error_message = result
-                            .err()
-                            .map(|error| error.to_string().trim().to_string());
+                        this.pending_completions
+                            .retain(|completion| completion.id != pending_completion_id);
+                        this.summarize(false, cx);
+                    })?;
 
-                        this.update_metadata(assistant_message_id, cx, |metadata| {
-                            if let Some(error_message) = error_message.as_ref() {
-                                metadata.status =
-                                    MessageStatus::Error(SharedString::from(error_message.clone()));
-                            } else {
-                                metadata.status = MessageStatus::Done;
-                            }
-                        });
+                    anyhow::Ok(())
+                };
 
-                        if let Some(telemetry) = this.telemetry.as_ref() {
-                            let model = CompletionProvider::global(cx).model();
-                            telemetry.report_assistant_event(
-                                Some(this.id.0.clone()),
-                                AssistantKind::Panel,
-                                model.telemetry_id(),
-                                response_latency,
-                                error_message,
-                            );
+                let result = stream_completion.await;
+
+                this.update(&mut cx, |this, cx| {
+                    let error_message = result
+                        .err()
+                        .map(|error| error.to_string().trim().to_string());
+
+                    if let Some(error_message) = error_message.as_ref() {
+                        cx.emit(ContextEvent::ShowAssistError(SharedString::from(
+                            error_message.clone(),
+                        )));
+                    }
+
+                    this.update_metadata(assistant_message_id, cx, |metadata| {
+                        if let Some(error_message) = error_message.as_ref() {
+                            metadata.status =
+                                MessageStatus::Error(SharedString::from(error_message.clone()));
+                        } else {
+                            metadata.status = MessageStatus::Done;
                         }
-                    })
-                    .ok();
-                }
-            });
+                    });
 
-            self.pending_completions.push(PendingCompletion {
-                id: post_inc(&mut self.completion_count),
-                _task: task,
-            });
-        }
+                    if let Some(telemetry) = this.telemetry.as_ref() {
+                        telemetry.report_assistant_event(
+                            Some(this.id.0.clone()),
+                            AssistantKind::Panel,
+                            model.telemetry_id(),
+                            response_latency,
+                            error_message,
+                        );
+                    }
+                })
+                .ok();
+            }
+        });
 
-        user_messages
+        self.pending_completions.push(PendingCompletion {
+            id: pending_completion_id,
+            assistant_message_id: assistant_message.id,
+            _task: task,
+        });
+
+        Some(user_message)
     }
 
     pub fn to_completion_request(&self, cx: &AppContext) -> LanguageModelRequest {
-        let messages = self
+        let buffer = self.buffer.read(cx);
+        let request_messages = self
             .messages(cx)
-            .filter(|message| matches!(message.status, MessageStatus::Done))
-            .map(|message| message.to_request_message(self.buffer.read(cx)));
+            .filter(|message| message.status == MessageStatus::Done)
+            .filter_map(|message| message.to_request_message(&buffer))
+            .collect();
 
         LanguageModelRequest {
-            model: CompletionProvider::global(cx).model(),
-            messages: messages.collect(),
+            messages: request_messages,
             stop: vec![],
             temperature: 1.0,
         }
     }
 
-    pub fn cancel_last_assist(&mut self) -> bool {
-        self.pending_completions.pop().is_some()
+    pub fn cancel_last_assist(&mut self, cx: &mut ModelContext<Self>) -> bool {
+        if let Some(pending_completion) = self.pending_completions.pop() {
+            self.update_metadata(pending_completion.assistant_message_id, cx, |metadata| {
+                if metadata.status == MessageStatus::Pending {
+                    metadata.status = MessageStatus::Canceled;
+                }
+            });
+            true
+        } else {
+            false
+        }
     }
 
     pub fn cycle_message_roles(&mut self, ids: HashSet<MessageId>, cx: &mut ModelContext<Self>) {
@@ -1296,7 +1682,7 @@ impl Context {
         }
     }
 
-    fn insert_message_after(
+    pub fn insert_message_after(
         &mut self,
         message_id: MessageId,
         role: Role,
@@ -1337,6 +1723,8 @@ impl Context {
                 role,
                 status,
                 timestamp: anchor.id.0,
+                should_cache: false,
+                is_cache_anchor: false,
             };
             self.insert_message(anchor.clone(), metadata.clone(), cx);
             self.push_op(
@@ -1351,6 +1739,55 @@ impl Context {
         } else {
             None
         }
+    }
+
+    pub fn insert_image(&mut self, image: Image, cx: &mut ModelContext<Self>) -> Option<()> {
+        if let hash_map::Entry::Vacant(entry) = self.images.entry(image.id()) {
+            entry.insert((
+                image.to_image_data(cx).log_err()?,
+                LanguageModelImage::from_image(image, cx).shared(),
+            ));
+        }
+
+        Some(())
+    }
+
+    pub fn insert_image_anchor(
+        &mut self,
+        image_id: u64,
+        anchor: language::Anchor,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
+        cx.emit(ContextEvent::MessagesEdited);
+
+        let buffer = self.buffer.read(cx);
+        let insertion_ix = match self
+            .image_anchors
+            .binary_search_by(|existing_anchor| anchor.cmp(&existing_anchor.anchor, buffer))
+        {
+            Ok(ix) => ix,
+            Err(ix) => ix,
+        };
+
+        if let Some((render_image, image)) = self.images.get(&image_id) {
+            self.image_anchors.insert(
+                insertion_ix,
+                ImageAnchor {
+                    anchor,
+                    image_id,
+                    image: image.clone(),
+                    render_image: render_image.clone(),
+                },
+            );
+
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn images<'a>(&'a self, _cx: &'a AppContext) -> impl 'a + Iterator<Item = ImageAnchor> {
+        self.image_anchors.iter().cloned()
     }
 
     pub fn split_message(
@@ -1371,7 +1808,10 @@ impl Context {
             let mut edited_buffer = false;
 
             let mut suffix_start = None;
-            if range.start > message.offset_range.start && range.end < message.offset_range.end - 1
+
+            // TODO: why did this start panicking?
+            if range.start > message.offset_range.start
+                && range.end < message.offset_range.end.saturating_sub(1)
             {
                 if self.buffer.read(cx).chars_at(range.end).next() == Some('\n') {
                     suffix_start = Some(range.end + 1);
@@ -1401,6 +1841,8 @@ impl Context {
                 role,
                 status: MessageStatus::Done,
                 timestamp: suffix.id.0,
+                should_cache: false,
+                is_cache_anchor: false,
             };
             self.insert_message(suffix.clone(), suffix_metadata.clone(), cx);
             self.push_op(
@@ -1450,6 +1892,8 @@ impl Context {
                         role,
                         status: MessageStatus::Done,
                         timestamp: selection.id.0,
+                        should_cache: false,
+                        is_cache_anchor: false,
                     };
                     self.insert_message(selection.clone(), selection_metadata.clone(), cx);
                     self.push_op(
@@ -1495,38 +1939,52 @@ impl Context {
         self.message_anchors.insert(insertion_ix, new_anchor);
     }
 
-    fn summarize(&mut self, cx: &mut ModelContext<Self>) {
-        if self.message_anchors.len() >= 2 && self.summary.is_none() {
-            if !CompletionProvider::global(cx).is_authenticated() {
+    pub(super) fn summarize(&mut self, replace_old: bool, cx: &mut ModelContext<Self>) {
+        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+            return;
+        };
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return;
+        };
+
+        if replace_old || (self.message_anchors.len() >= 2 && self.summary.is_none()) {
+            if !provider.is_authenticated(cx) {
                 return;
             }
 
             let messages = self
                 .messages(cx)
-                .map(|message| message.to_request_message(self.buffer.read(cx)))
+                .filter_map(|message| message.to_request_message(self.buffer.read(cx)))
                 .chain(Some(LanguageModelRequestMessage {
                     role: Role::User,
-                    content: "Summarize the context into a short title without punctuation.".into(),
+                    content: vec![
+                        "Summarize the context into a short title without punctuation.".into(),
+                    ],
+                    cache: false,
                 }));
             let request = LanguageModelRequest {
-                model: CompletionProvider::global(cx).model(),
                 messages: messages.collect(),
                 stop: vec![],
                 temperature: 1.0,
             };
 
-            let stream = CompletionProvider::global(cx).complete(request, cx);
             self.pending_summary = cx.spawn(|this, mut cx| {
                 async move {
-                    let mut messages = stream.await.inner.await?;
+                    let stream = model.stream_completion(request, &cx);
+                    let mut messages = stream.await?;
 
+                    let mut replaced = !replace_old;
                     while let Some(message) = messages.next().await {
                         let text = message?;
                         let mut lines = text.lines();
                         this.update(&mut cx, |this, cx| {
                             let version = this.version.clone();
                             let timestamp = this.next_timestamp();
-                            let summary = this.summary.get_or_insert(Default::default());
+                            let summary = this.summary.get_or_insert(ContextSummary::default());
+                            if !replaced && replace_old {
+                                summary.text.clear();
+                                replaced = true;
+                            }
                             summary.text.extend(lines.next());
                             summary.timestamp = timestamp;
                             let operation = ContextOperation::UpdateSummary {
@@ -1602,27 +2060,65 @@ impl Context {
         result
     }
 
-    pub fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
+    fn messages_from_anchors<'a>(
+        &'a self,
+        message_anchors: impl Iterator<Item = &'a MessageAnchor> + 'a,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = Message> {
         let buffer = self.buffer.read(cx);
-        let mut message_anchors = self.message_anchors.iter().enumerate().peekable();
+        let messages = message_anchors.enumerate();
+        let images = self.image_anchors.iter();
+
+        Self::messages_from_iters(buffer, &self.messages_metadata, messages, images)
+    }
+
+    pub fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
+        self.messages_from_anchors(self.message_anchors.iter(), cx)
+    }
+
+    pub fn messages_from_iters<'a>(
+        buffer: &'a Buffer,
+        metadata: &'a HashMap<MessageId, MessageMetadata>,
+        messages: impl Iterator<Item = (usize, &'a MessageAnchor)> + 'a,
+        images: impl Iterator<Item = &'a ImageAnchor> + 'a,
+    ) -> impl 'a + Iterator<Item = Message> {
+        let mut messages = messages.peekable();
+        let mut images = images.peekable();
+
         iter::from_fn(move || {
-            if let Some((start_ix, message_anchor)) = message_anchors.next() {
-                let metadata = self.messages_metadata.get(&message_anchor.id)?;
+            if let Some((start_ix, message_anchor)) = messages.next() {
+                let metadata = metadata.get(&message_anchor.id)?;
+
                 let message_start = message_anchor.start.to_offset(buffer);
                 let mut message_end = None;
                 let mut end_ix = start_ix;
-                while let Some((_, next_message)) = message_anchors.peek() {
+                while let Some((_, next_message)) = messages.peek() {
                     if next_message.start.is_valid(buffer) {
                         message_end = Some(next_message.start);
                         break;
                     } else {
                         end_ix += 1;
-                        message_anchors.next();
+                        messages.next();
                     }
                 }
-                let message_end = message_end
-                    .unwrap_or(language::Anchor::MAX)
-                    .to_offset(buffer);
+                let message_end_anchor = message_end.unwrap_or(language::Anchor::MAX);
+                let message_end = message_end_anchor.to_offset(buffer);
+
+                let mut image_offsets = SmallVec::new();
+                while let Some(image_anchor) = images.peek() {
+                    if image_anchor.anchor.cmp(&message_end_anchor, buffer).is_lt() {
+                        image_offsets.push((
+                            image_anchor.anchor.to_offset(buffer),
+                            MessageImage {
+                                image_id: image_anchor.image_id,
+                                image: image_anchor.image.clone(),
+                            },
+                        ));
+                        images.next();
+                    } else {
+                        break;
+                    }
+                }
 
                 return Some(Message {
                     index_range: start_ix..end_ix,
@@ -1631,6 +2127,8 @@ impl Context {
                     anchor: message_anchor.start,
                     role: metadata.role,
                     status: metadata.status.clone(),
+                    cache: metadata.is_cache_anchor,
+                    image_offsets,
                 });
             }
             None
@@ -1668,35 +2166,94 @@ impl Context {
             })?;
 
             if let Some(summary) = summary {
+                this.read_with(&cx, |this, cx| this.serialize_images(fs.clone(), cx))?
+                    .await;
+
                 let context = this.read_with(&cx, |this, cx| this.serialize(cx))?;
-                let path = if let Some(old_path) = old_path {
-                    old_path
-                } else {
-                    let mut discriminant = 1;
-                    let mut new_path;
-                    loop {
-                        new_path = contexts_dir().join(&format!(
-                            "{} - {}.zed.json",
-                            summary.trim(),
-                            discriminant
-                        ));
-                        if fs.is_file(&new_path).await {
-                            discriminant += 1;
-                        } else {
-                            break;
-                        }
+                let mut discriminant = 1;
+                let mut new_path;
+                loop {
+                    new_path = contexts_dir().join(&format!(
+                        "{} - {}.zed.json",
+                        summary.trim(),
+                        discriminant
+                    ));
+                    if fs.is_file(&new_path).await {
+                        discriminant += 1;
+                    } else {
+                        break;
                     }
-                    new_path
-                };
+                }
 
                 fs.create_dir(contexts_dir().as_ref()).await?;
-                fs.atomic_write(path.clone(), serde_json::to_string(&context).unwrap())
+                fs.atomic_write(new_path.clone(), serde_json::to_string(&context).unwrap())
                     .await?;
-                this.update(&mut cx, |this, _| this.path = Some(path))?;
+                if let Some(old_path) = old_path {
+                    if new_path != old_path {
+                        fs.remove_file(
+                            &old_path,
+                            RemoveOptions {
+                                recursive: false,
+                                ignore_if_not_exists: true,
+                            },
+                        )
+                        .await?;
+                    }
+                }
+
+                this.update(&mut cx, |this, _| this.path = Some(new_path))?;
             }
 
             Ok(())
         });
+    }
+
+    pub fn serialize_images(&self, fs: Arc<dyn Fs>, cx: &AppContext) -> Task<()> {
+        let mut images_to_save = self
+            .images
+            .iter()
+            .map(|(id, (_, llm_image))| {
+                let fs = fs.clone();
+                let llm_image = llm_image.clone();
+                let id = *id;
+                async move {
+                    if let Some(llm_image) = llm_image.await {
+                        let path: PathBuf =
+                            context_images_dir().join(&format!("{}.png.base64", id));
+                        if fs
+                            .metadata(path.as_path())
+                            .await
+                            .log_err()
+                            .flatten()
+                            .is_none()
+                        {
+                            fs.atomic_write(path, llm_image.source.to_string())
+                                .await
+                                .log_err();
+                        }
+                    }
+                }
+            })
+            .collect::<FuturesUnordered<_>>();
+        cx.background_executor().spawn(async move {
+            if fs
+                .create_dir(context_images_dir().as_ref())
+                .await
+                .log_err()
+                .is_some()
+            {
+                while let Some(_) = images_to_save.next().await {}
+            }
+        })
+    }
+
+    pub(crate) fn custom_summary(&mut self, custom_summary: String, cx: &mut ModelContext<Self>) {
+        let timestamp = self.next_timestamp();
+        let summary = self.summary.get_or_insert(ContextSummary::default());
+        summary.timestamp = timestamp;
+        summary.done = true;
+        summary.text = custom_summary;
+        cx.emit(ContextEvent::SummaryChanged);
     }
 }
 
@@ -1723,108 +2280,15 @@ impl ContextVersion {
     }
 }
 
-#[derive(Debug)]
-enum EditParsingState {
-    None,
-    InOldText {
-        path: PathBuf,
-        start_offset: usize,
-        old_text_start_offset: usize,
-    },
-    InNewText {
-        path: PathBuf,
-        start_offset: usize,
-        old_text_range: Range<usize>,
-        new_text_start_offset: usize,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct EditSuggestion {
-    pub source_range: Range<language::Anchor>,
-    pub full_path: PathBuf,
-}
-
-pub struct ParsedEditSuggestion {
-    pub path: PathBuf,
-    pub outer_range: Range<usize>,
-    pub old_text_range: Range<usize>,
-    pub new_text_range: Range<usize>,
-}
-
-pub fn parse_next_edit_suggestion(lines: &mut rope::Lines) -> Option<ParsedEditSuggestion> {
-    let mut state = EditParsingState::None;
-    loop {
-        let offset = lines.offset();
-        let message_line = lines.next()?;
-        match state {
-            EditParsingState::None => {
-                if let Some(rest) = message_line.strip_prefix("```edit ") {
-                    let path = rest.trim();
-                    if !path.is_empty() {
-                        state = EditParsingState::InOldText {
-                            path: PathBuf::from(path),
-                            start_offset: offset,
-                            old_text_start_offset: lines.offset(),
-                        };
-                    }
-                }
-            }
-            EditParsingState::InOldText {
-                path,
-                start_offset,
-                old_text_start_offset,
-            } => {
-                if message_line == "---" {
-                    state = EditParsingState::InNewText {
-                        path,
-                        start_offset,
-                        old_text_range: old_text_start_offset..offset,
-                        new_text_start_offset: lines.offset(),
-                    };
-                } else {
-                    state = EditParsingState::InOldText {
-                        path,
-                        start_offset,
-                        old_text_start_offset,
-                    };
-                }
-            }
-            EditParsingState::InNewText {
-                path,
-                start_offset,
-                old_text_range,
-                new_text_start_offset,
-            } => {
-                if message_line == "```" {
-                    return Some(ParsedEditSuggestion {
-                        path,
-                        outer_range: start_offset..offset + "```".len(),
-                        old_text_range,
-                        new_text_range: new_text_start_offset..offset,
-                    });
-                } else {
-                    state = EditParsingState::InNewText {
-                        path,
-                        start_offset,
-                        old_text_range,
-                        new_text_start_offset,
-                    };
-                }
-            }
-        }
-    }
-}
-
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PendingSlashCommand {
     pub name: String,
-    pub argument: Option<String>,
+    pub arguments: SmallVec<[String; 3]>,
     pub status: PendingSlashCommandStatus,
     pub source_range: Range<language::Anchor>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum PendingSlashCommandStatus {
     Idle,
     Running { _task: Shared<Task<()>> },
@@ -1836,6 +2300,9 @@ pub struct SavedMessage {
     pub id: MessageId,
     pub start: usize,
     pub metadata: MessageMetadata,
+    #[serde(default)]
+    // This is defaulted for backwards compatibility with JSON files created before August 2024. We didn't always have this field.
+    pub image_offsets: Vec<(usize, u64)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1907,6 +2374,8 @@ impl SavedContext {
                         role: message.metadata.role,
                         status: message.metadata.status,
                         timestamp: message.metadata.timestamp,
+                        should_cache: false,
+                        is_cache_anchor: false,
                     },
                     version: version.clone(),
                 });
@@ -1923,6 +2392,8 @@ impl SavedContext {
                     role: metadata.role,
                     status: metadata.status,
                     timestamp,
+                    should_cache: false,
+                    is_cache_anchor: false,
                 },
                 version: version.clone(),
             });
@@ -2017,7 +2488,10 @@ impl SavedContextV0_3_0 {
                             role: metadata.role,
                             status: metadata.status.clone(),
                             timestamp,
+                            should_cache: false,
+                            is_cache_anchor: false,
                         },
+                        image_offsets: Vec::new(),
                     })
                 })
                 .collect(),
@@ -2091,919 +2565,4 @@ pub struct SavedContextMetadata {
     pub title: String,
     pub path: PathBuf,
     pub mtime: chrono::DateTime<chrono::Local>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        assistant_panel,
-        slash_command::{active_command, file_command},
-        FakeCompletionProvider, MessageId,
-    };
-    use assistant_slash_command::{ArgumentCompletion, SlashCommand};
-    use fs::FakeFs;
-    use gpui::{AppContext, TestAppContext, WeakView};
-    use language::LspAdapterDelegate;
-    use parking_lot::Mutex;
-    use project::Project;
-    use rand::prelude::*;
-    use rope::Rope;
-    use serde_json::json;
-    use settings::SettingsStore;
-    use std::{cell::RefCell, env, path::Path, rc::Rc, sync::atomic::AtomicBool};
-    use text::network::Network;
-    use ui::WindowContext;
-    use unindent::Unindent;
-    use util::{test::marked_text_ranges, RandomCharIter};
-    use workspace::Workspace;
-
-    #[gpui::test]
-    fn test_inserting_and_removing_messages(cx: &mut AppContext) {
-        let settings_store = SettingsStore::test(cx);
-        FakeCompletionProvider::setup_test(cx);
-        cx.set_global(settings_store);
-        assistant_panel::init(cx);
-        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-
-        let context = cx.new_model(|cx| Context::local(registry, None, cx));
-        let buffer = context.read(cx).buffer.clone();
-
-        let message_1 = context.read(cx).message_anchors[0].clone();
-        assert_eq!(
-            messages(&context, cx),
-            vec![(message_1.id, Role::User, 0..0)]
-        );
-
-        let message_2 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_1.id, Role::Assistant, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..1),
-                (message_2.id, Role::Assistant, 1..1)
-            ]
-        );
-
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "1"), (1..1, "2")], None, cx)
-        });
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..2),
-                (message_2.id, Role::Assistant, 2..3)
-            ]
-        );
-
-        let message_3 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..2),
-                (message_2.id, Role::Assistant, 2..4),
-                (message_3.id, Role::User, 4..4)
-            ]
-        );
-
-        let message_4 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..2),
-                (message_2.id, Role::Assistant, 2..4),
-                (message_4.id, Role::User, 4..5),
-                (message_3.id, Role::User, 5..5),
-            ]
-        );
-
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(4..4, "C"), (5..5, "D")], None, cx)
-        });
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..2),
-                (message_2.id, Role::Assistant, 2..4),
-                (message_4.id, Role::User, 4..6),
-                (message_3.id, Role::User, 6..7),
-            ]
-        );
-
-        // Deleting across message boundaries merges the messages.
-        buffer.update(cx, |buffer, cx| buffer.edit([(1..4, "")], None, cx));
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..3),
-                (message_3.id, Role::User, 3..4),
-            ]
-        );
-
-        // Undoing the deletion should also undo the merge.
-        buffer.update(cx, |buffer, cx| buffer.undo(cx));
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..2),
-                (message_2.id, Role::Assistant, 2..4),
-                (message_4.id, Role::User, 4..6),
-                (message_3.id, Role::User, 6..7),
-            ]
-        );
-
-        // Redoing the deletion should also redo the merge.
-        buffer.update(cx, |buffer, cx| buffer.redo(cx));
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..3),
-                (message_3.id, Role::User, 3..4),
-            ]
-        );
-
-        // Ensure we can still insert after a merged message.
-        let message_5 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_1.id, Role::System, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..3),
-                (message_5.id, Role::System, 3..4),
-                (message_3.id, Role::User, 4..5)
-            ]
-        );
-    }
-
-    #[gpui::test]
-    fn test_message_splitting(cx: &mut AppContext) {
-        let settings_store = SettingsStore::test(cx);
-        cx.set_global(settings_store);
-        FakeCompletionProvider::setup_test(cx);
-        assistant_panel::init(cx);
-        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-
-        let context = cx.new_model(|cx| Context::local(registry, None, cx));
-        let buffer = context.read(cx).buffer.clone();
-
-        let message_1 = context.read(cx).message_anchors[0].clone();
-        assert_eq!(
-            messages(&context, cx),
-            vec![(message_1.id, Role::User, 0..0)]
-        );
-
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "aaa\nbbb\nccc\nddd\n")], None, cx)
-        });
-
-        let (_, message_2) = context.update(cx, |context, cx| context.split_message(3..3, cx));
-        let message_2 = message_2.unwrap();
-
-        // We recycle newlines in the middle of a split message
-        assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc\nddd\n");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_2.id, Role::User, 4..16),
-            ]
-        );
-
-        let (_, message_3) = context.update(cx, |context, cx| context.split_message(3..3, cx));
-        let message_3 = message_3.unwrap();
-
-        // We don't recycle newlines at the end of a split message
-        assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\nccc\nddd\n");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_3.id, Role::User, 4..5),
-                (message_2.id, Role::User, 5..17),
-            ]
-        );
-
-        let (_, message_4) = context.update(cx, |context, cx| context.split_message(9..9, cx));
-        let message_4 = message_4.unwrap();
-        assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\nccc\nddd\n");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_3.id, Role::User, 4..5),
-                (message_2.id, Role::User, 5..9),
-                (message_4.id, Role::User, 9..17),
-            ]
-        );
-
-        let (_, message_5) = context.update(cx, |context, cx| context.split_message(9..9, cx));
-        let message_5 = message_5.unwrap();
-        assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\n\nccc\nddd\n");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_3.id, Role::User, 4..5),
-                (message_2.id, Role::User, 5..9),
-                (message_4.id, Role::User, 9..10),
-                (message_5.id, Role::User, 10..18),
-            ]
-        );
-
-        let (message_6, message_7) =
-            context.update(cx, |context, cx| context.split_message(14..16, cx));
-        let message_6 = message_6.unwrap();
-        let message_7 = message_7.unwrap();
-        assert_eq!(buffer.read(cx).text(), "aaa\n\nbbb\n\nccc\ndd\nd\n");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_3.id, Role::User, 4..5),
-                (message_2.id, Role::User, 5..9),
-                (message_4.id, Role::User, 9..10),
-                (message_5.id, Role::User, 10..14),
-                (message_6.id, Role::User, 14..17),
-                (message_7.id, Role::User, 17..19),
-            ]
-        );
-    }
-
-    #[gpui::test]
-    fn test_messages_for_offsets(cx: &mut AppContext) {
-        let settings_store = SettingsStore::test(cx);
-        FakeCompletionProvider::setup_test(cx);
-        cx.set_global(settings_store);
-        assistant_panel::init(cx);
-        let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let context = cx.new_model(|cx| Context::local(registry, None, cx));
-        let buffer = context.read(cx).buffer.clone();
-
-        let message_1 = context.read(cx).message_anchors[0].clone();
-        assert_eq!(
-            messages(&context, cx),
-            vec![(message_1.id, Role::User, 0..0)]
-        );
-
-        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "aaa")], None, cx));
-        let message_2 = context
-            .update(cx, |context, cx| {
-                context.insert_message_after(message_1.id, Role::User, MessageStatus::Done, cx)
-            })
-            .unwrap();
-        buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "bbb")], None, cx));
-
-        let message_3 = context
-            .update(cx, |context, cx| {
-                context.insert_message_after(message_2.id, Role::User, MessageStatus::Done, cx)
-            })
-            .unwrap();
-        buffer.update(cx, |buffer, cx| buffer.edit([(8..8, "ccc")], None, cx));
-
-        assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_2.id, Role::User, 4..8),
-                (message_3.id, Role::User, 8..11)
-            ]
-        );
-
-        assert_eq!(
-            message_ids_for_offsets(&context, &[0, 4, 9], cx),
-            [message_1.id, message_2.id, message_3.id]
-        );
-        assert_eq!(
-            message_ids_for_offsets(&context, &[0, 1, 11], cx),
-            [message_1.id, message_3.id]
-        );
-
-        let message_4 = context
-            .update(cx, |context, cx| {
-                context.insert_message_after(message_3.id, Role::User, MessageStatus::Done, cx)
-            })
-            .unwrap();
-        assert_eq!(buffer.read(cx).text(), "aaa\nbbb\nccc\n");
-        assert_eq!(
-            messages(&context, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_2.id, Role::User, 4..8),
-                (message_3.id, Role::User, 8..12),
-                (message_4.id, Role::User, 12..12)
-            ]
-        );
-        assert_eq!(
-            message_ids_for_offsets(&context, &[0, 4, 8, 12], cx),
-            [message_1.id, message_2.id, message_3.id, message_4.id]
-        );
-
-        fn message_ids_for_offsets(
-            context: &Model<Context>,
-            offsets: &[usize],
-            cx: &AppContext,
-        ) -> Vec<MessageId> {
-            context
-                .read(cx)
-                .messages_for_offsets(offsets.iter().copied(), cx)
-                .into_iter()
-                .map(|message| message.id)
-                .collect()
-        }
-    }
-
-    #[gpui::test]
-    async fn test_slash_commands(cx: &mut TestAppContext) {
-        let settings_store = cx.update(SettingsStore::test);
-        cx.set_global(settings_store);
-        cx.update(FakeCompletionProvider::setup_test);
-        cx.update(Project::init_settings);
-        cx.update(assistant_panel::init);
-        let fs = FakeFs::new(cx.background_executor.clone());
-
-        fs.insert_tree(
-            "/test",
-            json!({
-                "src": {
-                    "lib.rs": "fn one() -> usize { 1 }",
-                    "main.rs": "
-                        use crate::one;
-                        fn main() { one(); }
-                    ".unindent(),
-                }
-            }),
-        )
-        .await;
-
-        let slash_command_registry = cx.update(SlashCommandRegistry::default_global);
-        slash_command_registry.register_command(file_command::FileSlashCommand, false);
-        slash_command_registry.register_command(active_command::ActiveSlashCommand, false);
-
-        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
-
-        let output_ranges = Rc::new(RefCell::new(HashSet::default()));
-        context.update(cx, |_, cx| {
-            cx.subscribe(&context, {
-                let ranges = output_ranges.clone();
-                move |_, _, event, _| match event {
-                    ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
-                        for range in removed {
-                            ranges.borrow_mut().remove(range);
-                        }
-                        for command in updated {
-                            ranges.borrow_mut().insert(command.source_range.clone());
-                        }
-                    }
-                    _ => {}
-                }
-            })
-            .detach();
-        });
-
-        let buffer = context.read_with(cx, |context, _| context.buffer.clone());
-
-        // Insert a slash command
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "/file src/lib.rs")], None, cx);
-        });
-        assert_text_and_output_ranges(
-            &buffer,
-            &output_ranges.borrow(),
-            "
-            «/file src/lib.rs»
-            "
-            .unindent()
-            .trim_end(),
-            cx,
-        );
-
-        // Edit the argument of the slash command.
-        buffer.update(cx, |buffer, cx| {
-            let edit_offset = buffer.text().find("lib.rs").unwrap();
-            buffer.edit([(edit_offset..edit_offset + "lib".len(), "main")], None, cx);
-        });
-        assert_text_and_output_ranges(
-            &buffer,
-            &output_ranges.borrow(),
-            "
-            «/file src/main.rs»
-            "
-            .unindent()
-            .trim_end(),
-            cx,
-        );
-
-        // Edit the name of the slash command, using one that doesn't exist.
-        buffer.update(cx, |buffer, cx| {
-            let edit_offset = buffer.text().find("/file").unwrap();
-            buffer.edit(
-                [(edit_offset..edit_offset + "/file".len(), "/unknown")],
-                None,
-                cx,
-            );
-        });
-        assert_text_and_output_ranges(
-            &buffer,
-            &output_ranges.borrow(),
-            "
-            /unknown src/main.rs
-            "
-            .unindent()
-            .trim_end(),
-            cx,
-        );
-
-        #[track_caller]
-        fn assert_text_and_output_ranges(
-            buffer: &Model<Buffer>,
-            ranges: &HashSet<Range<language::Anchor>>,
-            expected_marked_text: &str,
-            cx: &mut TestAppContext,
-        ) {
-            let (expected_text, expected_ranges) = marked_text_ranges(expected_marked_text, false);
-            let (actual_text, actual_ranges) = buffer.update(cx, |buffer, _| {
-                let mut ranges = ranges
-                    .iter()
-                    .map(|range| range.to_offset(buffer))
-                    .collect::<Vec<_>>();
-                ranges.sort_by_key(|a| a.start);
-                (buffer.text(), ranges)
-            });
-
-            assert_eq!(actual_text, expected_text);
-            assert_eq!(actual_ranges, expected_ranges);
-        }
-    }
-
-    #[test]
-    fn test_parse_next_edit_suggestion() {
-        let text = "
-            some output:
-
-            ```edit src/foo.rs
-                let a = 1;
-                let b = 2;
-            ---
-                let w = 1;
-                let x = 2;
-                let y = 3;
-                let z = 4;
-            ```
-
-            some more output:
-
-            ```edit src/foo.rs
-                let c = 1;
-            ---
-            ```
-
-            and the conclusion.
-        "
-        .unindent();
-
-        let rope = Rope::from(text.as_str());
-        let mut lines = rope.chunks().lines();
-        let mut suggestions = vec![];
-        while let Some(suggestion) = parse_next_edit_suggestion(&mut lines) {
-            suggestions.push((
-                suggestion.path.clone(),
-                text[suggestion.old_text_range].to_string(),
-                text[suggestion.new_text_range].to_string(),
-            ));
-        }
-
-        assert_eq!(
-            suggestions,
-            vec![
-                (
-                    Path::new("src/foo.rs").into(),
-                    [
-                        "    let a = 1;", //
-                        "    let b = 2;",
-                        "",
-                    ]
-                    .join("\n"),
-                    [
-                        "    let w = 1;",
-                        "    let x = 2;",
-                        "    let y = 3;",
-                        "    let z = 4;",
-                        "",
-                    ]
-                    .join("\n"),
-                ),
-                (
-                    Path::new("src/foo.rs").into(),
-                    [
-                        "    let c = 1;", //
-                        "",
-                    ]
-                    .join("\n"),
-                    String::new(),
-                )
-            ]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_serialization(cx: &mut TestAppContext) {
-        let settings_store = cx.update(SettingsStore::test);
-        cx.set_global(settings_store);
-        cx.update(FakeCompletionProvider::setup_test);
-        cx.update(assistant_panel::init);
-        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let context = cx.new_model(|cx| Context::local(registry.clone(), None, cx));
-        let buffer = context.read_with(cx, |context, _| context.buffer.clone());
-        let message_0 = context.read_with(cx, |context, _| context.message_anchors[0].id);
-        let message_1 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_0, Role::Assistant, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        let message_2 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_1.id, Role::System, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "a"), (1..1, "b\nc")], None, cx);
-            buffer.finalize_last_transaction();
-        });
-        let _message_3 = context.update(cx, |context, cx| {
-            context
-                .insert_message_after(message_2.id, Role::System, MessageStatus::Done, cx)
-                .unwrap()
-        });
-        buffer.update(cx, |buffer, cx| buffer.undo(cx));
-        assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), "a\nb\nc\n");
-        assert_eq!(
-            cx.read(|cx| messages(&context, cx)),
-            [
-                (message_0, Role::User, 0..2),
-                (message_1.id, Role::Assistant, 2..6),
-                (message_2.id, Role::System, 6..6),
-            ]
-        );
-
-        let serialized_context = context.read_with(cx, |context, cx| context.serialize(cx));
-        let deserialized_context = cx.new_model(|cx| {
-            Context::deserialize(
-                serialized_context,
-                Default::default(),
-                registry.clone(),
-                None,
-                cx,
-            )
-        });
-        let deserialized_buffer =
-            deserialized_context.read_with(cx, |context, _| context.buffer.clone());
-        assert_eq!(
-            deserialized_buffer.read_with(cx, |buffer, _| buffer.text()),
-            "a\nb\nc\n"
-        );
-        assert_eq!(
-            cx.read(|cx| messages(&deserialized_context, cx)),
-            [
-                (message_0, Role::User, 0..2),
-                (message_1.id, Role::Assistant, 2..6),
-                (message_2.id, Role::System, 6..6),
-            ]
-        );
-    }
-
-    #[gpui::test(iterations = 100)]
-    async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: StdRng) {
-        let min_peers = env::var("MIN_PEERS")
-            .map(|i| i.parse().expect("invalid `MIN_PEERS` variable"))
-            .unwrap_or(2);
-        let max_peers = env::var("MAX_PEERS")
-            .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
-            .unwrap_or(5);
-        let operations = env::var("OPERATIONS")
-            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-            .unwrap_or(50);
-
-        let settings_store = cx.update(SettingsStore::test);
-        cx.set_global(settings_store);
-        cx.update(FakeCompletionProvider::setup_test);
-        cx.update(assistant_panel::init);
-        let slash_commands = cx.update(SlashCommandRegistry::default_global);
-        slash_commands.register_command(FakeSlashCommand("cmd-1".into()), false);
-        slash_commands.register_command(FakeSlashCommand("cmd-2".into()), false);
-        slash_commands.register_command(FakeSlashCommand("cmd-3".into()), false);
-
-        let registry = Arc::new(LanguageRegistry::test(cx.background_executor.clone()));
-        let network = Arc::new(Mutex::new(Network::new(rng.clone())));
-        let mut contexts = Vec::new();
-
-        let num_peers = rng.gen_range(min_peers..=max_peers);
-        let context_id = ContextId::new();
-        for i in 0..num_peers {
-            let context = cx.new_model(|cx| {
-                Context::new(
-                    context_id.clone(),
-                    i as ReplicaId,
-                    language::Capability::ReadWrite,
-                    registry.clone(),
-                    None,
-                    cx,
-                )
-            });
-
-            cx.update(|cx| {
-                cx.subscribe(&context, {
-                    let network = network.clone();
-                    move |_, event, _| {
-                        if let ContextEvent::Operation(op) = event {
-                            network
-                                .lock()
-                                .broadcast(i as ReplicaId, vec![op.to_proto()]);
-                        }
-                    }
-                })
-                .detach();
-            });
-
-            contexts.push(context);
-            network.lock().add_peer(i as ReplicaId);
-        }
-
-        let mut mutation_count = operations;
-
-        while mutation_count > 0
-            || !network.lock().is_idle()
-            || network.lock().contains_disconnected_peers()
-        {
-            let context_index = rng.gen_range(0..contexts.len());
-            let context = &contexts[context_index];
-
-            match rng.gen_range(0..100) {
-                0..=29 if mutation_count > 0 => {
-                    log::info!("Context {}: edit buffer", context_index);
-                    context.update(cx, |context, cx| {
-                        context
-                            .buffer
-                            .update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
-                    });
-                    mutation_count -= 1;
-                }
-                30..=44 if mutation_count > 0 => {
-                    context.update(cx, |context, cx| {
-                        let range = context.buffer.read(cx).random_byte_range(0, &mut rng);
-                        log::info!("Context {}: split message at {:?}", context_index, range);
-                        context.split_message(range, cx);
-                    });
-                    mutation_count -= 1;
-                }
-                45..=59 if mutation_count > 0 => {
-                    context.update(cx, |context, cx| {
-                        if let Some(message) = context.messages(cx).choose(&mut rng) {
-                            let role = *[Role::User, Role::Assistant, Role::System]
-                                .choose(&mut rng)
-                                .unwrap();
-                            log::info!(
-                                "Context {}: insert message after {:?} with {:?}",
-                                context_index,
-                                message.id,
-                                role
-                            );
-                            context.insert_message_after(message.id, role, MessageStatus::Done, cx);
-                        }
-                    });
-                    mutation_count -= 1;
-                }
-                60..=74 if mutation_count > 0 => {
-                    context.update(cx, |context, cx| {
-                        let command_text = "/".to_string()
-                            + slash_commands
-                                .command_names()
-                                .choose(&mut rng)
-                                .unwrap()
-                                .clone()
-                                .as_ref();
-
-                        let command_range = context.buffer.update(cx, |buffer, cx| {
-                            let offset = buffer.random_byte_range(0, &mut rng).start;
-                            buffer.edit(
-                                [(offset..offset, format!("\n{}\n", command_text))],
-                                None,
-                                cx,
-                            );
-                            offset + 1..offset + 1 + command_text.len()
-                        });
-
-                        let output_len = rng.gen_range(1..=10);
-                        let output_text = RandomCharIter::new(&mut rng)
-                            .filter(|c| *c != '\r')
-                            .take(output_len)
-                            .collect::<String>();
-
-                        let num_sections = rng.gen_range(0..=3);
-                        let mut sections = Vec::with_capacity(num_sections);
-                        for _ in 0..num_sections {
-                            let section_start = rng.gen_range(0..output_len);
-                            let section_end = rng.gen_range(section_start..=output_len);
-                            sections.push(SlashCommandOutputSection {
-                                range: section_start..section_end,
-                                icon: ui::IconName::Ai,
-                                label: "section".into(),
-                            });
-                        }
-
-                        log::info!(
-                            "Context {}: insert slash command output at {:?} with {:?}",
-                            context_index,
-                            command_range,
-                            sections
-                        );
-
-                        let command_range =
-                            context.buffer.read(cx).anchor_after(command_range.start)
-                                ..context.buffer.read(cx).anchor_after(command_range.end);
-                        context.insert_command_output(
-                            command_range,
-                            Task::ready(Ok(SlashCommandOutput {
-                                text: output_text,
-                                sections,
-                                run_commands_in_text: false,
-                            })),
-                            true,
-                            cx,
-                        );
-                    });
-                    cx.run_until_parked();
-                    mutation_count -= 1;
-                }
-                75..=84 if mutation_count > 0 => {
-                    context.update(cx, |context, cx| {
-                        if let Some(message) = context.messages(cx).choose(&mut rng) {
-                            let new_status = match rng.gen_range(0..3) {
-                                0 => MessageStatus::Done,
-                                1 => MessageStatus::Pending,
-                                _ => MessageStatus::Error(SharedString::from("Random error")),
-                            };
-                            log::info!(
-                                "Context {}: update message {:?} status to {:?}",
-                                context_index,
-                                message.id,
-                                new_status
-                            );
-                            context.update_metadata(message.id, cx, |metadata| {
-                                metadata.status = new_status;
-                            });
-                        }
-                    });
-                    mutation_count -= 1;
-                }
-                _ => {
-                    let replica_id = context_index as ReplicaId;
-                    if network.lock().is_disconnected(replica_id) {
-                        network.lock().reconnect_peer(replica_id, 0);
-
-                        let (ops_to_send, ops_to_receive) = cx.read(|cx| {
-                            let host_context = &contexts[0].read(cx);
-                            let guest_context = context.read(cx);
-                            (
-                                guest_context.serialize_ops(&host_context.version(cx), cx),
-                                host_context.serialize_ops(&guest_context.version(cx), cx),
-                            )
-                        });
-                        let ops_to_send = ops_to_send.await;
-                        let ops_to_receive = ops_to_receive
-                            .await
-                            .into_iter()
-                            .map(ContextOperation::from_proto)
-                            .collect::<Result<Vec<_>>>()
-                            .unwrap();
-                        log::info!(
-                            "Context {}: reconnecting. Sent {} operations, received {} operations",
-                            context_index,
-                            ops_to_send.len(),
-                            ops_to_receive.len()
-                        );
-
-                        network.lock().broadcast(replica_id, ops_to_send);
-                        context
-                            .update(cx, |context, cx| context.apply_ops(ops_to_receive, cx))
-                            .unwrap();
-                    } else if rng.gen_bool(0.1) && replica_id != 0 {
-                        log::info!("Context {}: disconnecting", context_index);
-                        network.lock().disconnect_peer(replica_id);
-                    } else if network.lock().has_unreceived(replica_id) {
-                        log::info!("Context {}: applying operations", context_index);
-                        let ops = network.lock().receive(replica_id);
-                        let ops = ops
-                            .into_iter()
-                            .map(ContextOperation::from_proto)
-                            .collect::<Result<Vec<_>>>()
-                            .unwrap();
-                        context
-                            .update(cx, |context, cx| context.apply_ops(ops, cx))
-                            .unwrap();
-                    }
-                }
-            }
-        }
-
-        cx.read(|cx| {
-            let first_context = contexts[0].read(cx);
-            for context in &contexts[1..] {
-                let context = context.read(cx);
-                assert!(context.pending_ops.is_empty());
-                assert_eq!(
-                    context.buffer.read(cx).text(),
-                    first_context.buffer.read(cx).text(),
-                    "Context {} text != Context 0 text",
-                    context.buffer.read(cx).replica_id()
-                );
-                assert_eq!(
-                    context.message_anchors,
-                    first_context.message_anchors,
-                    "Context {} messages != Context 0 messages",
-                    context.buffer.read(cx).replica_id()
-                );
-                assert_eq!(
-                    context.messages_metadata,
-                    first_context.messages_metadata,
-                    "Context {} message metadata != Context 0 message metadata",
-                    context.buffer.read(cx).replica_id()
-                );
-                assert_eq!(
-                    context.slash_command_output_sections,
-                    first_context.slash_command_output_sections,
-                    "Context {} slash command output sections != Context 0 slash command output sections",
-                    context.buffer.read(cx).replica_id()
-                );
-            }
-        });
-    }
-
-    fn messages(context: &Model<Context>, cx: &AppContext) -> Vec<(MessageId, Role, Range<usize>)> {
-        context
-            .read(cx)
-            .messages(cx)
-            .map(|message| (message.id, message.role, message.offset_range))
-            .collect()
-    }
-
-    #[derive(Clone)]
-    struct FakeSlashCommand(String);
-
-    impl SlashCommand for FakeSlashCommand {
-        fn name(&self) -> String {
-            self.0.clone()
-        }
-
-        fn description(&self) -> String {
-            format!("Fake slash command: {}", self.0)
-        }
-
-        fn menu_text(&self) -> String {
-            format!("Run fake command: {}", self.0)
-        }
-
-        fn complete_argument(
-            self: Arc<Self>,
-            _query: String,
-            _cancel: Arc<AtomicBool>,
-            _workspace: Option<WeakView<Workspace>>,
-            _cx: &mut AppContext,
-        ) -> Task<Result<Vec<ArgumentCompletion>>> {
-            Task::ready(Ok(vec![]))
-        }
-
-        fn requires_argument(&self) -> bool {
-            false
-        }
-
-        fn run(
-            self: Arc<Self>,
-            _argument: Option<&str>,
-            _workspace: WeakView<Workspace>,
-            _delegate: Arc<dyn LspAdapterDelegate>,
-            _cx: &mut WindowContext,
-        ) -> Task<Result<SlashCommandOutput>> {
-            Task::ready(Ok(SlashCommandOutput {
-                text: format!("Executed fake command: {}", self.0),
-                sections: vec![],
-                run_commands_in_text: false,
-            }))
-        }
-    }
 }

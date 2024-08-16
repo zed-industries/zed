@@ -1,7 +1,7 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    Size, TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult, GPUSpecs,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, Size, TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowParams,
 };
 use collections::HashMap;
@@ -31,7 +31,7 @@ pub(crate) struct TestWindowState {
 }
 
 #[derive(Clone)]
-pub(crate) struct TestWindow(pub(crate) Arc<Mutex<TestWindowState>>);
+pub(crate) struct TestWindow(pub(crate) Rc<Mutex<TestWindowState>>);
 
 impl HasWindowHandle for TestWindow {
     fn window_handle(
@@ -56,7 +56,7 @@ impl TestWindow {
         platform: Weak<TestPlatform>,
         display: Rc<dyn PlatformDisplay>,
     ) -> Self {
-        Self(Arc::new(Mutex::new(TestWindowState {
+        Self(Rc::new(Mutex::new(TestWindowState {
             bounds: params.bounds,
             display,
             platform,
@@ -272,6 +272,10 @@ impl PlatformWindow for TestWindow {
 
     fn start_window_move(&self) {
         unimplemented!()
+    }
+
+    fn gpu_specs(&self) -> Option<GPUSpecs> {
+        None
     }
 }
 

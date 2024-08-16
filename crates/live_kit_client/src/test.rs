@@ -6,7 +6,7 @@ pub mod webrtc;
 use self::{id::*, participant::*, publication::*, track::*};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{btree_map::Entry as BTreeEntry, hash_map::Entry, BTreeMap, HashMap, HashSet};
 use gpui::BackgroundExecutor;
 use live_kit_server::{proto, token};
 use livekit::options::TrackPublishOptions;
@@ -37,18 +37,18 @@ impl TestServer {
         executor: BackgroundExecutor,
     ) -> Result<Arc<TestServer>> {
         let mut servers = SERVERS.lock();
-        if servers.contains_key(&url) {
-            Err(anyhow!("a server with url {:?} already exists", url))
-        } else {
+        if let BTreeEntry::Vacant(e) = servers.entry(url.clone()) {
             let server = Arc::new(TestServer {
-                url: url.clone(),
+                url,
                 api_key,
                 secret_key,
                 rooms: Default::default(),
                 executor,
             });
-            servers.insert(url, server.clone());
+            e.insert(server.clone());
             Ok(server)
+        } else {
+            Err(anyhow!("a server with url {:?} already exists", url))
         }
     }
 
@@ -78,11 +78,11 @@ impl TestServer {
         self.executor.simulate_random_delay().await;
 
         let mut server_rooms = self.rooms.lock();
-        if server_rooms.contains_key(&room) {
-            Err(anyhow!("room {:?} already exists", room))
-        } else {
-            server_rooms.insert(room, Default::default());
+        if let Entry::Vacant(e) = server_rooms.entry(room.clone()) {
+            e.insert(Default::default());
             Ok(())
+        } else {
+            Err(anyhow!("room {:?} already exists", room))
         }
     }
 
@@ -100,18 +100,12 @@ impl TestServer {
         self.executor.simulate_random_delay().await;
 
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
-        let identity = claims.sub.unwrap().to_string().into();
+        let identity = ParticipantIdentity(claims.sub.unwrap().to_string().into());
         let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
         let room = (*server_rooms).entry(room_name.to_string()).or_default();
 
-        if room.client_rooms.contains_key(&identity) {
-            Err(anyhow!(
-                "{:?} attempted to join room {:?} twice",
-                identity,
-                room_name
-            ))
-        } else {
+        if let Entry::Vacant(e) = room.client_rooms.entry(identity.clone()) {
             for server_track in &room.video_tracks {
                 let track = RemoteTrack::Video(RemoteVideoTrack {
                     server_track: server_track.clone(),
@@ -158,8 +152,14 @@ impl TestServer {
                     })
                     .unwrap();
             }
-            room.client_rooms.insert(identity.clone(), client_room);
+            e.insert(client_room);
             Ok(identity)
+        } else {
+            Err(anyhow!(
+                "{:?} attempted to join room {:?} twice",
+                identity,
+                room_name
+            ))
         }
     }
 

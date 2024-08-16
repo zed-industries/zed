@@ -51,7 +51,9 @@ impl Render for RemoteVideoTrackView {
         #[cfg(target_os = "macos")]
         if let Some(frame) = &self.frame {
             use gpui::Styled as _;
-            return gpui::img(frame.0.clone()).size_full().into_any_element();
+            return gpui::surface(frame.0.clone())
+                .size_full()
+                .into_any_element();
         }
 
         Empty.into_any_element()

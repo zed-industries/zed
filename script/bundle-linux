@@ -43,12 +43,13 @@ script/generate-licenses
 
 # Build binary in release mode
 export RUSTFLAGS="-C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
-cargo build --release --target "${target_triple}" --package zed --package cli
+cargo build --release --target "${target_triple}" --package zed --package cli --package remote_server
 
 # Strip the binary of all debug symbols
 # Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
 strip --strip-debug "${target_dir}/${target_triple}/release/zed"
 strip --strip-debug "${target_dir}/${target_triple}/release/cli"
+strip --strip-debug "${target_dir}/${target_triple}/release/remote_server"
 
 suffix=""
 if [ "$channel" != "stable" ]; then
@@ -104,7 +105,8 @@ envsubst < "crates/zed/resources/zed.desktop.in" > "${zed_dir}/share/application
 cp "assets/licenses.md" "${zed_dir}/licenses.md"
 
 # Create archive out of everything that's in the temp directory
-target="linux-$(uname -m)"
+arch=$(uname -m)
+target="linux-${arch}"
 if  [[ "$channel" == "dev" ]]; then
   archive="zed-${commit}-${target}.tar.gz"
 else
@@ -115,3 +117,5 @@ rm -rf "${archive}"
 remove_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
 ls "${target_dir}/release" | grep -E ${remove_match} | xargs -d "\n" -I {} rm -f "${target_dir}/release/{}" || true
 tar -czvf "${target_dir}/release/$archive" -C ${temp_dir} "zed$suffix.app"
+
+gzip --stdout --best "${target_dir}/${target_triple}/release/remote_server" > "${target_dir}/zed-remote-server-linux-${arch}.gz"

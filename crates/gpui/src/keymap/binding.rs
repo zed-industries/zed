@@ -1,4 +1,4 @@
-use crate::{Action, KeyBindingContextPredicate, KeyMatch, Keystroke};
+use crate::{Action, KeyBindingContextPredicate, Keystroke};
 use anyhow::Result;
 use smallvec::SmallVec;
 
@@ -46,17 +46,18 @@ impl KeyBinding {
     }
 
     /// Check if the given keystrokes match this binding.
-    pub fn match_keystrokes(&self, pending_keystrokes: &[Keystroke]) -> KeyMatch {
-        if self.keystrokes.as_ref().starts_with(pending_keystrokes) {
-            // If the binding is completed, push it onto the matches list
-            if self.keystrokes.as_ref().len() == pending_keystrokes.len() {
-                KeyMatch::Matched
-            } else {
-                KeyMatch::Pending
-            }
-        } else {
-            KeyMatch::None
+    pub fn match_keystrokes(&self, typed: &[Keystroke]) -> Option<bool> {
+        if self.keystrokes.len() < typed.len() {
+            return None;
         }
+
+        for (target, typed) in self.keystrokes.iter().zip(typed.iter()) {
+            if !typed.should_match(target) {
+                return None;
+            }
+        }
+
+        return Some(self.keystrokes.len() > typed.len());
     }
 
     /// Get the keystrokes associated with this binding

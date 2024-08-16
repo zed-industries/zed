@@ -1192,7 +1192,7 @@ mod tests {
                 Err(anyhow!("cannot embed text containing a 'g' character"))
             } else {
                 Ok(Embedding::new(
-                    ('a'..'z')
+                    ('a'..='z')
                         .map(|char| text.chars().filter(|c| *c == char).count() as f32)
                         .collect(),
                 ))

@@ -3,7 +3,7 @@ use client::DevServerProjectId;
 use client::{user::UserStore, Client, ClientSettings};
 use extension::ExtensionStore;
 use fs::Fs;
-use futures::Future;
+use futures::{Future, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext, Task, WeakModel};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
@@ -11,6 +11,7 @@ use postage::stream::Stream;
 use project::Project;
 use rpc::{proto, ErrorCode, TypedEnvelope};
 use settings::{Settings, SettingsStore};
+use std::path::Path;
 use std::{collections::HashMap, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
@@ -96,6 +97,7 @@ impl DevServer {
                     cx.weak_model(),
                     Self::handle_validate_dev_server_project_request,
                 ),
+                client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory),
                 client.add_message_handler(cx.weak_model(), Self::handle_shutdown),
             ],
             _maintain_connection: maintain_connection,
@@ -127,32 +129,41 @@ impl DevServer {
         envelope: TypedEnvelope<proto::DevServerInstructions>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let (added_projects, removed_projects_ids) = this.read_with(&mut cx, |this, _| {
-            let removed_projects = this
-                .projects
-                .keys()
-                .filter(|dev_server_project_id| {
-                    !envelope
-                        .payload
-                        .projects
-                        .iter()
-                        .any(|p| p.id == dev_server_project_id.0)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
+        let (added_projects, retained_projects, removed_projects_ids) =
+            this.read_with(&mut cx, |this, _| {
+                let removed_projects = this
+                    .projects
+                    .keys()
+                    .filter(|dev_server_project_id| {
+                        !envelope
+                            .payload
+                            .projects
+                            .iter()
+                            .any(|p| p.id == dev_server_project_id.0)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
 
-            let added_projects = envelope
-                .payload
-                .projects
-                .into_iter()
-                .filter(|project| !this.projects.contains_key(&DevServerProjectId(project.id)))
-                .collect::<Vec<_>>();
+                let mut added_projects = vec![];
+                let mut retained_projects = vec![];
 
-            (added_projects, removed_projects)
-        })?;
+                for project in envelope.payload.projects.iter() {
+                    if this.projects.contains_key(&DevServerProjectId(project.id)) {
+                        retained_projects.push(project.clone());
+                    } else {
+                        added_projects.push(project.clone());
+                    }
+                }
+
+                (added_projects, retained_projects, removed_projects)
+            })?;
 
         for dev_server_project in added_projects {
             DevServer::share_project(this.clone(), &dev_server_project, &mut cx).await?;
+        }
+
+        for dev_server_project in retained_projects {
+            DevServer::update_project(this.clone(), &dev_server_project, &mut cx).await?;
         }
 
         this.update(&mut cx, |this, cx| {
@@ -179,6 +190,24 @@ impl DevServer {
         }
 
         Ok(proto::Ack {})
+    }
+
+    async fn handle_list_remote_directory(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::ListRemoteDirectory>,
+        cx: AsyncAppContext,
+    ) -> Result<proto::ListRemoteDirectoryResponse> {
+        let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
+        let fs = cx.read_model(&this, |this, _| this.app_state.fs.clone())?;
+
+        let mut entries = Vec::new();
+        let mut response = fs.read_dir(Path::new(&expanded)).await?;
+        while let Some(path) = response.next().await {
+            if let Some(file_name) = path?.file_name() {
+                entries.push(file_name.to_string_lossy().to_string());
+            }
+        }
+        Ok(proto::ListRemoteDirectoryResponse { entries })
     }
 
     async fn handle_shutdown(
@@ -221,17 +250,19 @@ impl DevServer {
             (this.client.clone(), project)
         })?;
 
-        let path = shellexpand::tilde(&dev_server_project.path).to_string();
+        for path in &dev_server_project.paths {
+            let path = shellexpand::tilde(path).to_string();
 
-        let (worktree, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree(&path, true, cx)
-            })?
-            .await?;
+            let (worktree, _) = project
+                .update(cx, |project, cx| {
+                    project.find_or_create_worktree(&path, true, cx)
+                })?
+                .await?;
 
-        worktree.update(cx, |worktree, cx| {
-            worktree.as_local_mut().unwrap().share_private_files(cx)
-        })?;
+            worktree.update(cx, |worktree, cx| {
+                worktree.as_local_mut().unwrap().share_private_files(cx)
+            })?;
+        }
 
         let worktrees =
             project.read_with(cx, |project, cx| project.worktree_metadata_protos(cx))?;
@@ -249,6 +280,56 @@ impl DevServer {
             this.projects
                 .insert(DevServerProjectId(dev_server_project.id), project);
         })?;
+        Ok(())
+    }
+
+    async fn update_project(
+        this: Model<Self>,
+        dev_server_project: &proto::DevServerProject,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
+        let tasks = this.update(cx, |this, cx| {
+            let Some(project) = this
+                .projects
+                .get(&DevServerProjectId(dev_server_project.id))
+            else {
+                return vec![];
+            };
+
+            let mut to_delete = vec![];
+            let mut tasks = vec![];
+
+            project.update(cx, |project, cx| {
+                for worktree in project.visible_worktrees(cx) {
+                    let mut delete = true;
+                    for config in dev_server_project.paths.iter() {
+                        if worktree.read(cx).abs_path().to_string_lossy()
+                            == shellexpand::tilde(config)
+                        {
+                            delete = false;
+                        }
+                    }
+                    if delete {
+                        to_delete.push(worktree.read(cx).id())
+                    }
+                }
+
+                for worktree_id in to_delete {
+                    project.remove_worktree(worktree_id, cx)
+                }
+
+                for config in dev_server_project.paths.iter() {
+                    tasks.push(project.find_or_create_worktree(
+                        &shellexpand::tilde(config).to_string(),
+                        true,
+                        cx,
+                    ));
+                }
+
+                tasks
+            })
+        })?;
+        futures::future::join_all(tasks).await;
         Ok(())
     }
 

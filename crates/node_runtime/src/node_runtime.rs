@@ -5,7 +5,7 @@ pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::AsyncReadExt;
-use http::HttpClient;
+use http_client::HttpClient;
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
@@ -22,7 +22,7 @@ use util::ResultExt;
 #[cfg(windows)]
 use smol::process::windows::CommandExt;
 
-const VERSION: &str = "v18.15.0";
+const VERSION: &str = "v22.5.1";
 
 #[cfg(not(windows))]
 const NODE_PATH: &str = "bin/node";
@@ -269,7 +269,16 @@ impl NodeRuntime for RealNodeRuntime {
             }
 
             if let Some(proxy) = self.http.proxy() {
-                command.args(["--proxy", proxy]);
+                // Map proxy settings from `http://localhost:10809` to `http://127.0.0.1:10809`
+                // NodeRuntime without environment information can not parse `localhost`
+                // correctly.
+                // TODO: map to `[::1]` if we are using ipv6
+                let proxy = proxy
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .replace("localhost", "127.0.0.1");
+
+                command.args(["--proxy", &proxy]);
             }
 
             #[cfg(windows)]
@@ -280,6 +289,13 @@ impl NodeRuntime for RealNodeRuntime {
                     .log_err()
                 {
                     command.env("SYSTEMROOT", val);
+                }
+                // Without ComSpec, the post-install will always fail.
+                if let Some(val) = std::env::var("ComSpec")
+                    .context("Missing environment variable: ComSpec!")
+                    .log_err()
+                {
+                    command.env("ComSpec", val);
                 }
                 command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
             }

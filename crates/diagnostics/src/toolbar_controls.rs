@@ -1,5 +1,5 @@
 use crate::ProjectDiagnosticsEditor;
-use gpui::{EventEmitter, ParentElement, Render, ViewContext, WeakView};
+use gpui::{EventEmitter, ParentElement, Render, View, ViewContext, WeakView};
 use ui::prelude::*;
 use ui::{IconButton, IconName, Tooltip};
 use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
@@ -14,9 +14,8 @@ impl Render for ToolbarControls {
         let mut has_stale_excerpts = false;
         let mut is_updating = false;
 
-        if let Some(editor) = self.editor.as_ref().and_then(|editor| editor.upgrade()) {
+        if let Some(editor) = self.editor() {
             let editor = editor.read(cx);
-
             include_warnings = editor.include_warnings;
             has_stale_excerpts = !editor.paths_to_update.is_empty();
             is_updating = editor.update_paths_tx.len() > 0
@@ -42,9 +41,7 @@ impl Render for ToolbarControls {
                         .disabled(is_updating)
                         .tooltip(move |cx| Tooltip::text("Update excerpts", cx))
                         .on_click(cx.listener(|this, _, cx| {
-                            if let Some(editor) =
-                                this.editor.as_ref().and_then(|editor| editor.upgrade())
-                            {
+                            if let Some(editor) = this.editor() {
                                 editor.update(cx, |editor, _| {
                                     editor.enqueue_update_stale_excerpts(None);
                                 });
@@ -56,9 +53,7 @@ impl Render for ToolbarControls {
                 IconButton::new("toggle-warnings", IconName::ExclamationTriangle)
                     .tooltip(move |cx| Tooltip::text(tooltip, cx))
                     .on_click(cx.listener(|this, _, cx| {
-                        if let Some(editor) =
-                            this.editor.as_ref().and_then(|editor| editor.upgrade())
-                        {
+                        if let Some(editor) = this.editor() {
                             editor.update(cx, |editor, cx| {
                                 editor.toggle_warnings(&Default::default(), cx);
                             });
@@ -92,5 +87,9 @@ impl ToolbarItemView for ToolbarControls {
 impl ToolbarControls {
     pub fn new() -> Self {
         ToolbarControls { editor: None }
+    }
+
+    fn editor(&self) -> Option<View<ProjectDiagnosticsEditor>> {
+        self.editor.as_ref()?.upgrade()
     }
 }

@@ -39,8 +39,8 @@ use pty_info::PtyProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
-use task::TaskId;
-use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
+use task::{HideStrategy, Shell, TaskId};
+use terminal_settings::{AlternateScroll, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
 
@@ -142,7 +142,7 @@ enum InternalEvent {
 
 ///A translation struct for Alacritty to communicate with us from their event loop
 #[derive(Clone)]
-pub struct ZedListener(UnboundedSender<AlacTermEvent>);
+pub struct ZedListener(pub UnboundedSender<AlacTermEvent>);
 
 impl EventListener for ZedListener {
     fn send_event(&self, event: AlacTermEvent) {
@@ -427,7 +427,10 @@ impl TerminalBuilder {
         let _io_thread = event_loop.spawn(); // DANGER
 
         let url_regex = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
-        let word_regex = RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~]+"#).unwrap();
+        // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
+        // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
+        let word_regex =
+            RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~]+(?:\((?:\d+|\d+,\d+)\))?"#).unwrap();
 
         let terminal = Terminal {
             task,
@@ -612,6 +615,7 @@ pub struct TaskState {
     pub command_label: String,
     pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
+    pub hide: HideStrategy,
 }
 
 /// A status of the current terminal tab's task.
@@ -652,13 +656,17 @@ impl Terminal {
                 cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ClipboardStore(_, data) => {
-                cx.write_to_clipboard(ClipboardItem::new(data.to_string()))
+                cx.write_to_clipboard(ClipboardItem::new_string(data.to_string()))
             }
-            AlacTermEvent::ClipboardLoad(_, format) => self.write_to_pty(format(
-                &cx.read_from_clipboard()
-                    .map(|ci| ci.text().to_string())
-                    .unwrap_or_else(|| "".to_string()),
-            )),
+            AlacTermEvent::ClipboardLoad(_, format) => {
+                self.write_to_pty(
+                    match &cx.read_from_clipboard().and_then(|item| item.text()) {
+                        // The terminal only supports pasting strings, not images.
+                        Some(text) => format(text),
+                        _ => format(""),
+                    },
+                )
+            }
             AlacTermEvent::PtyWrite(out) => self.write_to_pty(out.clone()),
             AlacTermEvent::TextAreaSizeRequest(format) => {
                 self.write_to_pty(format(self.last_content.size.into()))
@@ -763,7 +771,7 @@ impl Terminal {
 
                 #[cfg(target_os = "linux")]
                 if let Some(selection_text) = term.selection_to_string() {
-                    cx.write_to_primary(ClipboardItem::new(selection_text));
+                    cx.write_to_primary(ClipboardItem::new_string(selection_text));
                 }
 
                 if let Some((_, head)) = selection {
@@ -784,7 +792,7 @@ impl Terminal {
 
                     #[cfg(target_os = "linux")]
                     if let Some(selection_text) = term.selection_to_string() {
-                        cx.write_to_primary(ClipboardItem::new(selection_text));
+                        cx.write_to_primary(ClipboardItem::new_string(selection_text));
                     }
 
                     self.selection_head = Some(point);
@@ -794,7 +802,7 @@ impl Terminal {
 
             InternalEvent::Copy => {
                 if let Some(txt) = term.selection_to_string() {
-                    cx.write_to_clipboard(ClipboardItem::new(txt))
+                    cx.write_to_clipboard(ClipboardItem::new_string(txt))
                 }
             }
             InternalEvent::ScrollToAlacPoint(point) => {
@@ -1338,7 +1346,7 @@ impl Terminal {
                 #[cfg(target_os = "linux")]
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
-                        let text = item.text().to_string();
+                        let text = item.text().unwrap_or_default().to_string();
                         self.input(text);
                     }
                 }
@@ -1567,32 +1575,43 @@ impl Terminal {
             }
         };
 
-        let (task_line, command_line) = task_summary(task, error_code);
+        let (finished_successfully, task_line, command_line) = task_summary(task, error_code);
         // SAFETY: the invocation happens on non `TaskStatus::Running` tasks, once,
         // after either `AlacTermEvent::Exit` or `AlacTermEvent::ChildExit` events that are spawned
         // when Zed task finishes and no more output is made.
         // After the task summary is output once, no more text is appended to the terminal.
         unsafe { append_text_to_term(&mut self.term.lock(), &[&task_line, &command_line]) };
+        match task.hide {
+            HideStrategy::Never => {}
+            HideStrategy::Always => {
+                cx.emit(Event::CloseTerminal);
+            }
+            HideStrategy::OnSuccess => {
+                if finished_successfully {
+                    cx.emit(Event::CloseTerminal);
+                }
+            }
+        }
     }
 }
 
 const TASK_DELIMITER: &str = "⏵ ";
-fn task_summary(task: &TaskState, error_code: Option<i32>) -> (String, String) {
+fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, String) {
     let escaped_full_label = task.full_label.replace("\r\n", "\r").replace('\n', "\r");
-    let task_line = match error_code {
+    let (success, task_line) = match error_code {
         Some(0) => {
-            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully")
+            (true, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"))
         }
         Some(error_code) => {
-            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}")
+            (false, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"))
         }
         None => {
-            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished")
+            (false, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"))
         }
     };
     let escaped_command_label = task.command_label.replace("\r\n", "\r").replace('\n', "\r");
     let command_line = format!("{TASK_DELIMITER}Command: '{escaped_command_label}'");
-    (task_line, command_line)
+    (success, task_line, command_line)
 }
 
 /// Appends a stringified task summary to the terminal, after its output.

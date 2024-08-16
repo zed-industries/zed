@@ -99,7 +99,7 @@ pub enum Motion {
     WindowMiddle,
     WindowBottom,
 
-    // we don't have a good way to run a search syncronously, so
+    // we don't have a good way to run a search synchronously, so
     // we handle search motions by running the search async and then
     // calling back into motion with this
     ZedSearchResult {
@@ -436,7 +436,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
     let active_operator = Vim::read(cx).active_operator();
     let mut waiting_operator: Option<Operator> = None;
     match Vim::read(cx).state().mode {
-        Mode::Normal | Mode::Replace => {
+        Mode::Normal | Mode::Replace | Mode::Insert => {
             if active_operator == Some(Operator::AddSurrounds { target: None }) {
                 waiting_operator = Some(Operator::AddSurrounds {
                     target: Some(SurroundsType::Motion(motion)),
@@ -447,9 +447,6 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
         }
         Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
             visual_motion(motion.clone(), count, cx)
-        }
-        Mode::Insert => {
-            // Shouldn't execute a motion in insert mode. Ignoring
         }
     }
     Vim::update(cx, |vim, cx| {

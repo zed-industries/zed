@@ -500,8 +500,8 @@ impl<'a> MarkdownParser<'a> {
 
                     // We will use the start of the nested list as the end for the current item's range,
                     // because we don't care about the hierarchy of list items
-                    if !source_ranges.contains_key(&depth) {
-                        source_ranges.insert(depth, start_item_range.start..source_range.start);
+                    if let collections::hash_map::Entry::Vacant(e) = source_ranges.entry(depth) {
+                        e.insert(start_item_range.start..source_range.start);
                     }
 
                     order_stack.push(order);

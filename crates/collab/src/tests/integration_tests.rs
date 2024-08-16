@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use anyhow::{anyhow, Result};
-use assistant::ContextStore;
+use assistant::{ContextStore, PromptBuilder};
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
@@ -18,7 +18,9 @@ use gpui::{
     TestAppContext, TestScreenCaptureSource, UpdateGlobal,
 };
 use language::{
-    language_settings::{AllLanguageSettings, Formatter, PrettierSettings},
+    language_settings::{
+        AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
+    },
     tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
 };
@@ -1374,7 +1376,7 @@ async fn test_unshare_project(
         .await
         .unwrap();
 
-    let worktree_a = project_a.read_with(cx_a, |project, _| project.worktrees().next().unwrap());
+    let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     executor.run_until_parked();
 
@@ -1502,7 +1504,8 @@ async fn test_project_reconnect(
     let (project_a1, _) = client_a.build_local_project("/root-1/dir1", cx_a).await;
     let (project_a2, _) = client_a.build_local_project("/root-2", cx_a).await;
     let (project_a3, _) = client_a.build_local_project("/root-3", cx_a).await;
-    let worktree_a1 = project_a1.read_with(cx_a, |project, _| project.worktrees().next().unwrap());
+    let worktree_a1 =
+        project_a1.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let project1_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a1.clone(), cx))
         .await
@@ -1527,7 +1530,7 @@ async fn test_project_reconnect(
     });
     let (worktree_a2, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/root-1/dir2", true, cx)
+            p.find_or_create_worktree("/root-1/dir2", true, cx)
         })
         .await
         .unwrap();
@@ -1600,7 +1603,7 @@ async fn test_project_reconnect(
     });
     let (worktree_a3, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/root-1/dir3", true, cx)
+            p.find_or_create_worktree("/root-1/dir3", true, cx)
         })
         .await
         .unwrap();
@@ -1724,7 +1727,7 @@ async fn test_project_reconnect(
     // While client B is disconnected, add and remove worktrees from client A's project.
     let (worktree_a4, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/root-1/dir4", true, cx)
+            p.find_or_create_worktree("/root-1/dir4", true, cx)
         })
         .await
         .unwrap();
@@ -2305,7 +2308,7 @@ async fn test_propagate_saves_and_fs_changes(
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
 
-    let worktree_a = project_a.read_with(cx_a, |p, _| p.worktrees().next().unwrap());
+    let worktree_a = project_a.read_with(cx_a, |p, cx| p.worktrees(cx).next().unwrap());
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -2315,9 +2318,9 @@ async fn test_propagate_saves_and_fs_changes(
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     let project_c = client_c.build_dev_server_project(project_id, cx_c).await;
 
-    let worktree_b = project_b.read_with(cx_b, |p, _| p.worktrees().next().unwrap());
+    let worktree_b = project_b.read_with(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
-    let worktree_c = project_c.read_with(cx_c, |p, _| p.worktrees().next().unwrap());
+    let worktree_c = project_c.read_with(cx_c, |p, cx| p.worktrees(cx).next().unwrap());
 
     // Open and edit a buffer as both guests B and C.
     let buffer_b = project_b
@@ -3019,8 +3022,8 @@ async fn test_fs_operations(
         .unwrap();
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
-    let worktree_a = project_a.read_with(cx_a, |project, _| project.worktrees().next().unwrap());
-    let worktree_b = project_b.read_with(cx_b, |project, _| project.worktrees().next().unwrap());
+    let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_b = project_b.read_with(cx_b, |project, cx| project.worktrees(cx).next().unwrap());
 
     let entry = project_b
         .update(cx_b, |project, cx| {
@@ -3320,7 +3323,7 @@ async fn test_local_settings(
     // As client B, join that project and observe the local settings.
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
-    let worktree_b = project_b.read_with(cx_b, |project, _| project.worktrees().next().unwrap());
+    let worktree_b = project_b.read_with(cx_b, |project, cx| project.worktrees(cx).next().unwrap());
     executor.run_until_parked();
     cx_b.read(|cx| {
         let store = cx.global::<SettingsStore>();
@@ -3732,7 +3735,7 @@ async fn test_leaving_project(
     // Client B opens a buffer.
     let buffer_b1 = project_b1
         .update(cx_b, |project, cx| {
-            let worktree_id = project.worktrees().next().unwrap().read(cx).id();
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
             project.open_buffer((worktree_id, "a.txt"), cx)
         })
         .await
@@ -3770,7 +3773,7 @@ async fn test_leaving_project(
 
     let buffer_b2 = project_b2
         .update(cx_b, |project, cx| {
-            let worktree_id = project.worktrees().next().unwrap().read(cx).id();
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
             project.open_buffer((worktree_id, "a.txt"), cx)
         })
         .await
@@ -4408,10 +4411,13 @@ async fn test_formatting_buffer(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(Formatter::External {
-                    command: "awk".into(),
-                    arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
-                });
+                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
+                    vec![Formatter::External {
+                        command: "awk".into(),
+                        arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
+                    }]
+                    .into(),
+                )));
             });
         });
     });
@@ -4492,7 +4498,7 @@ async fn test_prettier_formatting_buffer(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(Formatter::Auto);
+                file.defaults.formatter = Some(SelectedFormatter::Auto);
                 file.defaults.prettier = Some(PrettierSettings {
                     allowed: true,
                     ..PrettierSettings::default()
@@ -4503,7 +4509,9 @@ async fn test_prettier_formatting_buffer(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(Formatter::LanguageServer);
+                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
+                    vec![Formatter::LanguageServer { name: None }].into(),
+                )));
                 file.defaults.prettier = Some(PrettierSettings {
                     allowed: true,
                     ..PrettierSettings::default()
@@ -4619,7 +4627,7 @@ async fn test_definition(
         .unwrap();
     cx_b.read(|cx| {
         assert_eq!(definitions_1.len(), 1);
-        assert_eq!(project_b.read(cx).worktrees().count(), 2);
+        assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
         let target_buffer = definitions_1[0].target.buffer.read(cx);
         assert_eq!(
             target_buffer.text(),
@@ -4648,7 +4656,7 @@ async fn test_definition(
         .unwrap();
     cx_b.read(|cx| {
         assert_eq!(definitions_2.len(), 1);
-        assert_eq!(project_b.read(cx).worktrees().count(), 2);
+        assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
         let target_buffer = definitions_2[0].target.buffer.read(cx);
         assert_eq!(
             target_buffer.text(),
@@ -4806,7 +4814,7 @@ async fn test_references(
         assert!(status.pending_work.is_empty());
 
         assert_eq!(references.len(), 3);
-        assert_eq!(project.worktrees().count(), 2);
+        assert_eq!(project.worktrees(cx).count(), 2);
 
         let two_buffer = references[0].buffer.read(cx);
         let three_buffer = references[2].buffer.read(cx);
@@ -4886,7 +4894,7 @@ async fn test_project_search(
     let (project_a, _) = client_a.build_local_project("/root/dir-1", cx_a).await;
     let (worktree_2, _) = project_a
         .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/root/dir-2", true, cx)
+            p.find_or_create_worktree("/root/dir-2", true, cx)
         })
         .await
         .unwrap();
@@ -5075,34 +5083,28 @@ async fn test_lsp_hover(
 
     client_a.language_registry().add(rust_lang());
     let language_server_names = ["rust-analyzer", "CrabLang-ls"];
-    let mut fake_language_servers = client_a
-        .language_registry()
-        .register_specific_fake_lsp_adapter(
-            "Rust",
-            true,
-            FakeLspAdapter {
-                name: "rust-analyzer",
-                capabilities: lsp::ServerCapabilities {
-                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-                    ..lsp::ServerCapabilities::default()
-                },
-                ..FakeLspAdapter::default()
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-analyzer",
+            capabilities: lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
             },
-        );
-    let _other_server = client_a
-        .language_registry()
-        .register_specific_fake_lsp_adapter(
-            "Rust",
-            false,
-            FakeLspAdapter {
-                name: "CrabLang-ls",
-                capabilities: lsp::ServerCapabilities {
-                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-                    ..lsp::ServerCapabilities::default()
-                },
-                ..FakeLspAdapter::default()
+            ..FakeLspAdapter::default()
+        },
+    );
+    let _other_server = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "CrabLang-ls",
+            capabilities: lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
             },
-        );
+            ..FakeLspAdapter::default()
+        },
+    );
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
     let project_id = active_call_a
@@ -6191,7 +6193,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     let project = workspace.update(cx, |workspace, _| workspace.project().clone());
 
     let worktree_id = project.update(cx, |project, cx| {
-        project.worktrees().next().unwrap().read(cx).id()
+        project.worktrees(cx).next().unwrap().read(cx).id()
     });
 
     let path_1 = ProjectPath {
@@ -6482,12 +6484,13 @@ async fn test_context_collaboration_with_reconnect(
         assert_eq!(project.collaborators().len(), 1);
     });
 
+    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context_store_a = cx_a
-        .update(|cx| ContextStore::new(project_a.clone(), cx))
+        .update(|cx| ContextStore::new(project_a.clone(), prompt_builder.clone(), cx))
         .await
         .unwrap();
     let context_store_b = cx_b
-        .update(|cx| ContextStore::new(project_b.clone(), cx))
+        .update(|cx| ContextStore::new(project_b.clone(), prompt_builder.clone(), cx))
         .await
         .unwrap();
 

@@ -14,17 +14,17 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, AnyElement, AppContext, EventEmitter, Flatten, FocusableView, FontStyle,
-    InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    actions, uniform_list, AppContext, EventEmitter, Flatten, FocusableView, InteractiveElement,
+    KeyContext, ParentElement, Render, Styled, Task, TextStyle, UniformListScrollHandle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use num_format::{Locale, ToFormattedString};
+use project::DirectoryLister;
 use release_channel::ReleaseChannel;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
 use vim::VimModeSetting;
-use workspace::item::TabContentParams;
 use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
@@ -48,19 +48,23 @@ pub fn init(cx: &mut AppContext) {
                     .find_map(|item| item.downcast::<ExtensionsPage>());
 
                 if let Some(existing) = existing {
-                    workspace.activate_item(&existing, cx);
+                    workspace.activate_item(&existing, true, true, cx);
                 } else {
                     let extensions_page = ExtensionsPage::new(workspace, cx);
-                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, cx)
+                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, true, cx)
                 }
             })
-            .register_action(move |_, _: &InstallDevExtension, cx| {
+            .register_action(move |workspace, _: &InstallDevExtension, cx| {
                 let store = ExtensionStore::global(cx);
-                let prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
-                    files: false,
-                    directories: true,
-                    multiple: false,
-                });
+                let prompt = workspace.prompt_for_open_path(
+                    gpui::PathPromptOptions {
+                        files: false,
+                        directories: true,
+                        multiple: false,
+                    },
+                    DirectoryLister::Local(workspace.app_state().fs.clone()),
+                    cx,
+                );
 
                 let workspace_handle = cx.view().downgrade();
                 cx.deref_mut()
@@ -130,11 +134,16 @@ impl ExtensionFilter {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum Feature {
     Git,
+    OpenIn,
     Vim,
+    LanguageBash,
     LanguageC,
     LanguageCpp,
+    LanguageGo,
     LanguagePython,
+    LanguageReact,
     LanguageRust,
+    LanguageTypescript,
 }
 
 fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
@@ -142,11 +151,31 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     KEYWORDS_BY_FEATURE.get_or_init(|| {
         BTreeMap::from_iter([
             (Feature::Git, vec!["git"]),
+            (
+                Feature::OpenIn,
+                vec![
+                    "github",
+                    "gitlab",
+                    "bitbucket",
+                    "codeberg",
+                    "sourcehut",
+                    "permalink",
+                    "link",
+                    "open in",
+                ],
+            ),
             (Feature::Vim, vec!["vim"]),
+            (Feature::LanguageBash, vec!["sh", "bash"]),
             (Feature::LanguageC, vec!["c", "clang"]),
             (Feature::LanguageCpp, vec!["c++", "cpp", "clang"]),
+            (Feature::LanguageGo, vec!["go", "golang"]),
             (Feature::LanguagePython, vec!["python", "py"]),
+            (Feature::LanguageReact, vec!["react"]),
             (Feature::LanguageRust, vec!["rust", "rs"]),
+            (
+                Feature::LanguageTypescript,
+                vec!["type", "typescript", "ts"],
+            ),
         ])
     })
 }
@@ -787,14 +816,11 @@ impl ExtensionsPage {
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
 
         EditorElement::new(
@@ -899,7 +925,7 @@ impl ExtensionsPage {
         if let Some(workspace) = self.workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
             let selection = *selection;
-            settings::update_settings_file::<T>(fs, cx, move |settings| {
+            settings::update_settings_file::<T>(fs, cx, move |settings, _| {
                 let value = match selection {
                     Selection::Unselected => false,
                     Selection::Selected => true,
@@ -946,6 +972,11 @@ impl ExtensionsPage {
                     "Zed comes with basic Git support. More Git features are coming in the future.",
                 )
                 .docs_url("https://zed.dev/docs/git"),
+                Feature::OpenIn => FeatureUpsell::new(
+                    telemetry,
+                    "Zed supports linking to a source line on GitHub and others.",
+                )
+                .docs_url("https://zed.dev/docs/git#git-integrations"),
                 Feature::Vim => FeatureUpsell::new(telemetry, "Vim support is built-in to Zed!")
                     .docs_url("https://zed.dev/docs/vim")
                     .child(CheckboxWithLabel::new(
@@ -966,6 +997,10 @@ impl ExtensionsPage {
                             );
                         }),
                     )),
+                Feature::LanguageBash => {
+                    FeatureUpsell::new(telemetry, "Shell support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/bash")
+                }
                 Feature::LanguageC => {
                     FeatureUpsell::new(telemetry, "C support is built-in to Zed!")
                         .docs_url("https://zed.dev/docs/languages/c")
@@ -974,13 +1009,25 @@ impl ExtensionsPage {
                     FeatureUpsell::new(telemetry, "C++ support is built-in to Zed!")
                         .docs_url("https://zed.dev/docs/languages/cpp")
                 }
+                Feature::LanguageGo => {
+                    FeatureUpsell::new(telemetry, "Go support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/go")
+                }
                 Feature::LanguagePython => {
                     FeatureUpsell::new(telemetry, "Python support is built-in to Zed!")
                         .docs_url("https://zed.dev/docs/languages/python")
                 }
+                Feature::LanguageReact => {
+                    FeatureUpsell::new(telemetry, "React support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/typescript")
+                }
                 Feature::LanguageRust => {
                     FeatureUpsell::new(telemetry, "Rust support is built-in to Zed!")
                         .docs_url("https://zed.dev/docs/languages/rust")
+                }
+                Feature::LanguageTypescript => {
+                    FeatureUpsell::new(telemetry, "Typescript support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/typescript")
                 }
             };
 
@@ -1103,14 +1150,8 @@ impl FocusableView for ExtensionsPage {
 impl Item for ExtensionsPage {
     type Event = ItemEvent;
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
-        Label::new("Extensions")
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some("Extensions".into())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

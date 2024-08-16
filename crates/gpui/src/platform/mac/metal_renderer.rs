@@ -1,8 +1,8 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
     point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
-    Hsla, MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
-    ScaledPixels, Scene, Shadow, Size, Surface, Underline,
+    Hsla, MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite,
+    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
 };
 use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
@@ -113,7 +113,7 @@ impl MetalRenderer {
         // Silicon, there is only ever one GPU, so this is equivalent to
         // `metal::Device::system_default()`.
         let mut devices = metal::Device::all();
-        devices.sort_by_key(|device| (!device.is_removable(), device.is_low_power()));
+        devices.sort_by_key(|device| (device.is_removable(), device.is_low_power()));
         let Some(device) = devices.pop() else {
             log::error!("unable to access a compatible graphics device");
             std::process::exit(1);
@@ -1020,7 +1020,7 @@ impl MetalRenderer {
 
     fn draw_surfaces(
         &mut self,
-        surfaces: &[Surface],
+        surfaces: &[PaintSurface],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,

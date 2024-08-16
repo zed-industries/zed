@@ -10,7 +10,7 @@ use gpui::{
     div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     PromptLevel, Render, Task, View, ViewContext,
 };
-use http::HttpClient;
+use http_client::HttpClient;
 use isahc::Request;
 use language::Buffer;
 use project::Project;

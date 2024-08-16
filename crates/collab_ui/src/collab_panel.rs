@@ -16,7 +16,7 @@ use gpui::{
     EventEmitter, FocusHandle, FocusableView, FontStyle, InteractiveElement, IntoElement,
     ListOffset, ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
     Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
-    WeakView, WhiteSpace,
+    WeakView,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -2042,7 +2042,7 @@ impl CollabPanel {
         let Some(channel) = channel_store.channel_for_id(channel_id) else {
             return;
         };
-        let item = ClipboardItem::new(channel.link(cx));
+        let item = ClipboardItem::new_string(channel.link(cx));
         cx.write_to_clipboard(item)
     }
 
@@ -2190,14 +2190,12 @@ impl CollabPanel {
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
 
         EditorElement::new(
@@ -2263,7 +2261,7 @@ impl CollabPanel {
                     .size(ButtonSize::None)
                     .visible_on_hover("section-header")
                     .on_click(move |_, cx| {
-                        let item = ClipboardItem::new(channel_link_copy.clone());
+                        let item = ClipboardItem::new_string(channel_link_copy.clone());
                         cx.write_to_clipboard(item)
                     })
                     .tooltip(|cx| Tooltip::text("Copy channel link", cx))
@@ -2809,7 +2807,7 @@ impl Panel for CollabPanel {
         settings::update_settings_file::<CollaborationPanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings| settings.dock = Some(position),
+            move |settings, _| settings.dock = Some(position),
         );
     }
 

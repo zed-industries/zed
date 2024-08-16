@@ -557,33 +557,49 @@ impl<'a> Cursor<'a> {
 pub struct Chunks<'a> {
     chunks: sum_tree::Cursor<'a, Chunk, usize>,
     range: Range<usize>,
+    offset: usize,
     reversed: bool,
 }
 
 impl<'a> Chunks<'a> {
     pub fn new(rope: &'a Rope, range: Range<usize>, reversed: bool) -> Self {
         let mut chunks = rope.chunks.cursor();
-        if reversed {
+        let offset = if reversed {
             chunks.seek(&range.end, Bias::Left, &());
+            range.end
         } else {
             chunks.seek(&range.start, Bias::Right, &());
-        }
+            range.start
+        };
         Self {
             chunks,
             range,
+            offset,
             reversed,
         }
     }
 
-    pub fn offset(&self) -> usize {
+    fn offset_is_valid(&self) -> bool {
         if self.reversed {
-            self.range.end.min(self.chunks.end(&()))
+            if self.offset <= self.range.start || self.offset > self.range.end {
+                return false;
+            }
         } else {
-            self.range.start.max(*self.chunks.start())
+            if self.offset < self.range.start || self.offset >= self.range.end {
+                return false;
+            }
         }
+
+        true
     }
 
-    pub fn seek(&mut self, offset: usize) {
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
+    pub fn seek(&mut self, mut offset: usize) {
+        offset = offset.clamp(self.range.start, self.range.end);
+
         let bias = if self.reversed {
             Bias::Left
         } else {
@@ -596,26 +612,128 @@ impl<'a> Chunks<'a> {
             self.chunks.seek(&offset, bias, &());
         }
 
-        if self.reversed {
-            self.range.end = offset;
-        } else {
-            self.range.start = offset;
+        self.offset = offset;
+    }
+
+    pub fn set_range(&mut self, range: Range<usize>) {
+        self.range = range.clone();
+        self.seek(range.start);
+    }
+
+    /// Moves this cursor to the start of the next line in the rope.
+    ///
+    /// This method advances the cursor to the beginning of the next line.
+    /// If the cursor is already at the end of the rope, this method does nothing.
+    /// Reversed chunks iterators are not currently supported and will panic.
+    ///
+    /// Returns `true` if the cursor was successfully moved to the next line start,
+    /// or `false` if the cursor was already at the end of the rope.
+    pub fn next_line(&mut self) -> bool {
+        assert!(!self.reversed);
+
+        let mut found = false;
+        if let Some(chunk) = self.peek() {
+            if let Some(newline_ix) = chunk.find('\n') {
+                self.offset += newline_ix + 1;
+                found = self.offset <= self.range.end;
+            } else {
+                self.chunks
+                    .search_forward(|summary| summary.text.lines.row > 0, &());
+                self.offset = *self.chunks.start();
+
+                if let Some(newline_ix) = self.peek().and_then(|chunk| chunk.find('\n')) {
+                    self.offset += newline_ix + 1;
+                    found = self.offset <= self.range.end;
+                } else {
+                    self.offset = self.chunks.end(&());
+                }
+            }
+
+            if self.offset == self.chunks.end(&()) {
+                self.next();
+            }
         }
+
+        if self.offset > self.range.end {
+            self.offset = cmp::min(self.offset, self.range.end);
+            self.chunks.seek(&self.offset, Bias::Right, &());
+        }
+
+        found
+    }
+
+    /// Move this cursor to the preceding position in the rope that starts a new line.
+    /// Reversed chunks iterators are not currently supported and will panic.
+    ///
+    /// If this cursor is not on the start of a line, it will be moved to the start of
+    /// its current line. Otherwise it will be moved to the start of the previous line.
+    /// It updates the cursor's position and returns true if a previous line was found,
+    /// or false if the cursor was already at the start of the rope.
+    pub fn prev_line(&mut self) -> bool {
+        assert!(!self.reversed);
+
+        let initial_offset = self.offset;
+
+        if self.offset == *self.chunks.start() {
+            self.chunks.prev(&());
+        }
+
+        if let Some(chunk) = self.chunks.item() {
+            let mut end_ix = self.offset - *self.chunks.start();
+            if chunk.0.as_bytes()[end_ix - 1] == b'\n' {
+                end_ix -= 1;
+            }
+
+            if let Some(newline_ix) = chunk.0[..end_ix].rfind('\n') {
+                self.offset = *self.chunks.start() + newline_ix + 1;
+                if self.offset_is_valid() {
+                    return true;
+                }
+            }
+        }
+
+        self.chunks
+            .search_backward(|summary| summary.text.lines.row > 0, &());
+        self.offset = *self.chunks.start();
+        if let Some(chunk) = self.chunks.item() {
+            if let Some(newline_ix) = chunk.0.rfind('\n') {
+                self.offset += newline_ix + 1;
+                if self.offset_is_valid() {
+                    if self.offset == self.chunks.end(&()) {
+                        self.chunks.next(&());
+                    }
+
+                    return true;
+                }
+            }
+        }
+
+        if !self.offset_is_valid() || self.chunks.item().is_none() {
+            self.offset = self.range.start;
+            self.chunks.seek(&self.offset, Bias::Right, &());
+        }
+
+        self.offset < initial_offset && self.offset == 0
     }
 
     pub fn peek(&self) -> Option<&'a str> {
-        let chunk = self.chunks.item()?;
-        if self.reversed && self.range.start >= self.chunks.end(&()) {
-            return None;
-        }
-        let chunk_start = *self.chunks.start();
-        if self.range.end <= chunk_start {
+        if !self.offset_is_valid() {
             return None;
         }
 
-        let start = self.range.start.saturating_sub(chunk_start);
-        let end = self.range.end - chunk_start;
-        Some(&chunk.0[start..chunk.0.len().min(end)])
+        let chunk = self.chunks.item()?;
+        let chunk_start = *self.chunks.start();
+        let slice_range = if self.reversed {
+            let slice_start = cmp::max(chunk_start, self.range.start) - chunk_start;
+            let slice_end = self.offset - chunk_start;
+            slice_start..slice_end
+        } else {
+            let slice_start = self.offset - chunk_start;
+            let slice_end = cmp::min(self.chunks.end(&()), self.range.end) - chunk_start;
+            slice_start..slice_end
+        };
+
+        Some(&chunk.0[slice_range])
     }
 
     pub fn lines(self) -> Lines<'a> {
@@ -633,15 +751,20 @@ impl<'a> Iterator for Chunks<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = self.peek();
-        if result.is_some() {
-            if self.reversed {
+        let chunk = self.peek()?;
+        if self.reversed {
+            self.offset -= chunk.len();
+            if self.offset <= *self.chunks.start() {
                 self.chunks.prev(&());
-            } else {
+            }
+        } else {
+            self.offset += chunk.len();
+            if self.offset >= self.chunks.end(&()) {
                 self.chunks.next(&());
             }
         }
-        result
+
+        Some(chunk)
     }
 }
 
@@ -1299,6 +1422,13 @@ mod tests {
     use util::RandomCharIter;
     use Bias::{Left, Right};
 
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
+    }
+
     #[test]
     fn test_all_4_byte_chars() {
         let mut rope = Rope::new();
@@ -1353,6 +1483,50 @@ mod tests {
             rope.clip_offset_utf16(OffsetUtf16(3), Bias::Right),
             OffsetUtf16(2)
         );
+    }
+
+    #[test]
+    fn test_prev_next_line() {
+        let rope = Rope::from("abc\ndef\nghi\njkl");
+
+        let mut chunks = rope.chunks();
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'a');
+
+        assert!(chunks.next_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'd');
+
+        assert!(chunks.next_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'g');
+
+        assert!(chunks.next_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'j');
+
+        assert!(!chunks.next_line());
+        assert_eq!(chunks.peek(), None);
+
+        assert!(chunks.prev_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'j');
+
+        assert!(chunks.prev_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'g');
+
+        assert!(chunks.prev_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'd');
+
+        assert!(chunks.prev_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'a');
+
+        assert!(!chunks.prev_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'a');
+
+        // Only return true when the cursor has moved to the start of a line
+        let mut chunks = rope.chunks_in_range(5..7);
+        chunks.seek(6);
+        assert!(!chunks.prev_line());
+        assert_eq!(chunks.peek().unwrap().chars().next().unwrap(), 'e');
+
+        assert!(!chunks.next_line());
+        assert_eq!(chunks.peek(), None);
     }
 
     #[test]
@@ -1438,6 +1612,158 @@ mod tests {
                         .collect::<String>(),
                     &expected[start_ix..end_ix]
                 );
+
+                let mut expected_line_starts: Vec<_> = expected[start_ix..end_ix]
+                    .match_indices('\n')
+                    .map(|(index, _)| start_ix + index + 1)
+                    .collect();
+
+                let mut chunks = actual.chunks_in_range(start_ix..end_ix);
+
+                let mut actual_line_starts = Vec::new();
+                while chunks.next_line() {
+                    actual_line_starts.push(chunks.offset());
+                }
+                assert_eq!(
+                    actual_line_starts,
+                    expected_line_starts,
+                    "actual line starts != expected line starts when using next_line() for {:?} ({:?})",
+                    &expected[start_ix..end_ix],
+                    start_ix..end_ix
+                );
+
+                if start_ix < end_ix
+                    && (start_ix == 0 || expected.as_bytes()[start_ix - 1] == b'\n')
+                {
+                    expected_line_starts.insert(0, start_ix);
+                }
+                // Remove the last index if it starts at the end of the range.
+                if expected_line_starts.last() == Some(&end_ix) {
+                    expected_line_starts.pop();
+                }
+
+                let mut actual_line_starts = Vec::new();
+                while chunks.prev_line() {
+                    actual_line_starts.push(chunks.offset());
+                }
+                actual_line_starts.reverse();
+                assert_eq!(
+                    actual_line_starts,
+                    expected_line_starts,
+                    "actual line starts != expected line starts when using prev_line() for {:?} ({:?})",
+                    &expected[start_ix..end_ix],
+                    start_ix..end_ix
+                );
+
+                // Check that next_line/prev_line work correctly from random positions
+                let mut offset = rng.gen_range(start_ix..=end_ix);
+                while !expected.is_char_boundary(offset) {
+                    offset -= 1;
+                }
+                chunks.seek(offset);
+
+                for _ in 0..5 {
+                    if rng.gen() {
+                        let expected_next_line_start = expected[offset..end_ix]
+                            .find('\n')
+                            .map(|newline_ix| offset + newline_ix + 1);
+
+                        let moved = chunks.next_line();
+                        assert_eq!(
+                            moved,
+                            expected_next_line_start.is_some(),
+                            "unexpected result from next_line after seeking to {} in range {:?} ({:?})",
+                            offset,
+                            start_ix..end_ix,
+                            &expected[start_ix..end_ix]
+                        );
+                        if let Some(expected_next_line_start) = expected_next_line_start {
+                            assert_eq!(
+                                chunks.offset(),
+                                expected_next_line_start,
+                                "invalid position after seeking to {} in range {:?} ({:?})",
+                                offset,
+                                start_ix..end_ix,
+                                &expected[start_ix..end_ix]
+                            );
+                        } else {
+                            assert_eq!(
+                                chunks.offset(),
+                                end_ix,
+                                "invalid position after seeking to {} in range {:?} ({:?})",
+                                offset,
+                                start_ix..end_ix,
+                                &expected[start_ix..end_ix]
+                            );
+                        }
+                    } else {
+                        let search_end = if offset > 0 && expected.as_bytes()[offset - 1] == b'\n' {
+                            offset - 1
+                        } else {
+                            offset
+                        };
+
+                        let expected_prev_line_start = expected[..search_end]
+                            .rfind('\n')
+                            .and_then(|newline_ix| {
+                                let line_start_ix = newline_ix + 1;
+                                if line_start_ix >= start_ix {
+                                    Some(line_start_ix)
+                                } else {
+                                    None
+                                }
+                            })
+                            .or_else(|| {
+                                if offset > 0 && start_ix == 0 {
+                                    Some(0)
+                                } else {
+                                    None
+                                }
+                            });
+
+                        let moved = chunks.prev_line();
+                        assert_eq!(
+                            moved,
+                            expected_prev_line_start.is_some(),
+                            "unexpected result from prev_line after seeking to {} in range {:?} ({:?})",
+                            offset,
+                            start_ix..end_ix,
+                            &expected[start_ix..end_ix]
+                        );
+                        if let Some(expected_prev_line_start) = expected_prev_line_start {
+                            assert_eq!(
+                                chunks.offset(),
+                                expected_prev_line_start,
+                                "invalid position after seeking to {} in range {:?} ({:?})",
+                                offset,
+                                start_ix..end_ix,
+                                &expected[start_ix..end_ix]
+                            );
+                        } else {
+                            assert_eq!(
+                                chunks.offset(),
+                                start_ix,
+                                "invalid position after seeking to {} in range {:?} ({:?})",
+                                offset,
+                                start_ix..end_ix,
+                                &expected[start_ix..end_ix]
+                            );
+                        }
+                    }
+
+                    assert!((start_ix..=end_ix).contains(&chunks.offset()));
+                    if rng.gen() {
+                        offset = rng.gen_range(start_ix..=end_ix);
+                        while !expected.is_char_boundary(offset) {
+                            offset -= 1;
+                        }
+                        chunks.seek(offset);
+                    } else {
+                        chunks.next();
+                        offset = chunks.offset();
+                        assert!((start_ix..=end_ix).contains(&chunks.offset()));
+                    }
+                }
             }
 
             let mut offset_utf16 = OffsetUtf16(0);

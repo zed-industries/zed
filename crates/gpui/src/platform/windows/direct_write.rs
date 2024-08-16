@@ -1,4 +1,4 @@
-use std::{borrow::Cow, mem::ManuallyDrop, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Result};
@@ -16,9 +16,9 @@ use windows::{
             DirectWrite::*,
             Dxgi::Common::*,
             Gdi::LOGFONTW,
-            Imaging::{D2D::IWICImagingFactory2, *},
+            Imaging::*,
         },
-        System::{Com::*, SystemServices::LOCALE_NAME_MAX_LENGTH},
+        System::SystemServices::LOCALE_NAME_MAX_LENGTH,
         UI::WindowsAndMessaging::*,
     },
 };
@@ -30,6 +30,7 @@ struct FontInfo {
     font_family: String,
     font_face: IDWriteFontFace3,
     features: IDWriteTypography,
+    fallbacks: Option<IDWriteFontFallback>,
     is_system_font: bool,
     is_emoji: bool,
 }
@@ -39,7 +40,7 @@ pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
 struct DirectWriteComponent {
     locale: String,
     factory: IDWriteFactory5,
-    bitmap_factory: ManuallyDrop<IWICImagingFactory2>,
+    bitmap_factory: AgileReference<IWICImagingFactory>,
     d2d1_factory: ID2D1Factory,
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
@@ -51,10 +52,6 @@ struct GlyphRenderContext {
     params: IDWriteRenderingParams3,
     dc_target: ID2D1DeviceContext4,
 }
-
-// All use of the IUnknown methods should be "thread-safe".
-unsafe impl Sync for DirectWriteComponent {}
-unsafe impl Send for DirectWriteComponent {}
 
 struct DirectWriteState {
     components: DirectWriteComponent,
@@ -74,12 +71,10 @@ struct FontIdentifier {
 }
 
 impl DirectWriteComponent {
-    pub fn new() -> Result<Self> {
+    pub fn new(bitmap_factory: &IWICImagingFactory) -> Result<Self> {
         unsafe {
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
-            let bitmap_factory: IWICImagingFactory2 =
-                CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)?;
-            let bitmap_factory = ManuallyDrop::new(bitmap_factory);
+            let bitmap_factory = AgileReference::new(bitmap_factory)?;
             let d2d1_factory: ID2D1Factory =
                 D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)?;
             // The `IDWriteInMemoryFontFileLoader` here is supported starting from
@@ -144,8 +139,8 @@ impl GlyphRenderContext {
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new() -> Result<Self> {
-        let components = DirectWriteComponent::new()?;
+    pub(crate) fn new(bitmap_factory: &IWICImagingFactory) -> Result<Self> {
+        let components = DirectWriteComponent::new(bitmap_factory)?;
         let system_font_collection = unsafe {
             let mut result = std::mem::zeroed();
             components
@@ -239,11 +234,6 @@ impl PlatformTextSystem for DirectWriteTextSystem {
                 ..Default::default()
             })
     }
-
-    fn destroy(&self) {
-        let mut lock = self.0.write();
-        unsafe { ManuallyDrop::drop(&mut lock.components.bitmap_factory) };
-    }
 }
 
 impl DirectWriteState {
@@ -287,6 +277,63 @@ impl DirectWriteState {
         Ok(())
     }
 
+    fn generate_font_fallbacks(
+        &self,
+        fallbacks: Option<&FontFallbacks>,
+    ) -> Result<Option<IDWriteFontFallback>> {
+        if fallbacks.is_some_and(|fallbacks| fallbacks.fallback_list().is_empty()) {
+            return Ok(None);
+        }
+        unsafe {
+            let builder = self.components.factory.CreateFontFallbackBuilder()?;
+            let font_set = &self.system_font_collection.GetFontSet()?;
+            if let Some(fallbacks) = fallbacks {
+                for family_name in fallbacks.fallback_list() {
+                    let Some(fonts) = font_set
+                        .GetMatchingFonts(
+                            &HSTRING::from(family_name),
+                            DWRITE_FONT_WEIGHT_NORMAL,
+                            DWRITE_FONT_STRETCH_NORMAL,
+                            DWRITE_FONT_STYLE_NORMAL,
+                        )
+                        .log_err()
+                    else {
+                        continue;
+                    };
+                    if fonts.GetFontCount() == 0 {
+                        log::error!("No mathcing font find for {}", family_name);
+                        continue;
+                    }
+                    let font = fonts.GetFontFaceReference(0)?.CreateFontFace()?;
+                    let mut count = 0;
+                    font.GetUnicodeRanges(None, &mut count).ok();
+                    if count == 0 {
+                        continue;
+                    }
+                    let mut unicode_ranges = vec![DWRITE_UNICODE_RANGE::default(); count as usize];
+                    let Some(_) = font
+                        .GetUnicodeRanges(Some(&mut unicode_ranges), &mut count)
+                        .log_err()
+                    else {
+                        continue;
+                    };
+                    let target_family_name = HSTRING::from(family_name);
+                    builder.AddMapping(
+                        &unicode_ranges,
+                        &[target_family_name.as_ptr()],
+                        None,
+                        None,
+                        None,
+                        1.0,
+                    )?;
+                }
+            }
+            let system_fallbacks = self.components.factory.GetSystemFontFallback()?;
+            builder.AddMappings(&system_fallbacks)?;
+            Ok(Some(builder.CreateFontFallback()?))
+        }
+    }
+
     unsafe fn generate_font_features(
         &self,
         font_features: &FontFeatures,
@@ -302,6 +349,7 @@ impl DirectWriteState {
         font_weight: FontWeight,
         font_style: FontStyle,
         font_features: &FontFeatures,
+        font_fallbacks: Option<&FontFallbacks>,
         is_system_font: bool,
     ) -> Option<FontId> {
         let collection = if is_system_font {
@@ -334,11 +382,16 @@ impl DirectWriteState {
             else {
                 continue;
             };
+            let fallbacks = self
+                .generate_font_fallbacks(font_fallbacks)
+                .log_err()
+                .unwrap_or_default();
             let font_info = FontInfo {
                 font_family: family_name.to_owned(),
                 font_face,
-                is_system_font,
                 features: direct_write_features,
+                fallbacks,
+                is_system_font,
                 is_emoji,
             };
             let font_id = FontId(self.fonts.len());
@@ -371,6 +424,7 @@ impl DirectWriteState {
                     target_font.weight,
                     target_font.style,
                     &target_font.features,
+                    target_font.fallbacks.as_ref(),
                 )
                 .unwrap()
             } else {
@@ -379,6 +433,7 @@ impl DirectWriteState {
                     target_font.weight,
                     target_font.style,
                     &target_font.features,
+                    target_font.fallbacks.as_ref(),
                 )
                 .unwrap_or_else(|| {
                     let family = self.system_ui_font_name.clone();
@@ -388,6 +443,7 @@ impl DirectWriteState {
                         target_font.weight,
                         target_font.style,
                         &target_font.features,
+                        target_font.fallbacks.as_ref(),
                         true,
                     )
                     .unwrap()
@@ -402,16 +458,38 @@ impl DirectWriteState {
         weight: FontWeight,
         style: FontStyle,
         features: &FontFeatures,
+        fallbacks: Option<&FontFallbacks>,
     ) -> Option<FontId> {
         // try to find target font in custom font collection first
-        self.get_font_id_from_font_collection(family_name, weight, style, features, false)
-            .or_else(|| {
-                self.get_font_id_from_font_collection(family_name, weight, style, features, true)
-            })
-            .or_else(|| {
-                self.update_system_font_collection();
-                self.get_font_id_from_font_collection(family_name, weight, style, features, true)
-            })
+        self.get_font_id_from_font_collection(
+            family_name,
+            weight,
+            style,
+            features,
+            fallbacks,
+            false,
+        )
+        .or_else(|| {
+            self.get_font_id_from_font_collection(
+                family_name,
+                weight,
+                style,
+                features,
+                fallbacks,
+                true,
+            )
+        })
+        .or_else(|| {
+            self.update_system_font_collection();
+            self.get_font_id_from_font_collection(
+                family_name,
+                weight,
+                style,
+                features,
+                fallbacks,
+                true,
+            )
+        })
     }
 
     fn layout_line(
@@ -440,15 +518,22 @@ impl DirectWriteState {
                 } else {
                     &self.custom_font_collection
                 };
-                let format = self.components.factory.CreateTextFormat(
-                    &HSTRING::from(&font_info.font_family),
-                    collection,
-                    font_info.font_face.GetWeight(),
-                    font_info.font_face.GetStyle(),
-                    DWRITE_FONT_STRETCH_NORMAL,
-                    font_size.0,
-                    &HSTRING::from(&self.components.locale),
-                )?;
+                let format: IDWriteTextFormat1 = self
+                    .components
+                    .factory
+                    .CreateTextFormat(
+                        &HSTRING::from(&font_info.font_family),
+                        collection,
+                        font_info.font_face.GetWeight(),
+                        font_info.font_face.GetStyle(),
+                        DWRITE_FONT_STRETCH_NORMAL,
+                        font_size.0,
+                        &HSTRING::from(&self.components.locale),
+                    )?
+                    .cast()?;
+                if let Some(ref fallbacks) = font_info.fallbacks {
+                    format.SetFontFallback(fallbacks)?;
+                }
 
                 let layout = self.components.factory.CreateTextLayout(
                     &text_wide,
@@ -702,8 +787,9 @@ impl DirectWriteState {
             bitmap_dpi = 192.0;
         }
 
+        let bitmap_factory = self.components.bitmap_factory.resolve()?;
         unsafe {
-            let bitmap = self.components.bitmap_factory.CreateBitmap(
+            let bitmap = bitmap_factory.CreateBitmap(
                 bitmap_width,
                 bitmap_height,
                 bitmap_format,
@@ -805,7 +891,7 @@ impl DirectWriteState {
                     pixel[2] = (pixel[2] as f32 / a) as u8;
                 }
             } else {
-                let scaler = self.components.bitmap_factory.CreateBitmapScaler()?;
+                let scaler = bitmap_factory.CreateBitmapScaler()?;
                 scaler.Initialize(
                     &bitmap,
                     bitmap_size.width.0 as u32,
@@ -924,7 +1010,7 @@ struct RendererContext<'t, 'a, 'b> {
 }
 
 #[allow(non_snake_case)]
-impl IDWritePixelSnapping_Impl for TextRenderer {
+impl IDWritePixelSnapping_Impl for TextRenderer_Impl {
     fn IsPixelSnappingDisabled(
         &self,
         _clientdrawingcontext: *const ::core::ffi::c_void,
@@ -959,7 +1045,7 @@ impl IDWritePixelSnapping_Impl for TextRenderer {
 }
 
 #[allow(non_snake_case)]
-impl IDWriteTextRenderer_Impl for TextRenderer {
+impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
     fn DrawGlyphRun(
         &self,
         clientdrawingcontext: *const ::core::ffi::c_void,
@@ -1183,6 +1269,7 @@ fn get_font_identifier_and_font_struct(
         features: FontFeatures::default(),
         weight: weight.into(),
         style: style.into(),
+        fallbacks: None,
     };
     let is_emoji = unsafe { font_face.IsColorFont().as_bool() };
     Some((identifier, font_struct, is_emoji))

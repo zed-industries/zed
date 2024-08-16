@@ -102,7 +102,7 @@ impl zed::Extension for SvelteExtension {
             "propertyDeclarationTypes": {
               "enabled": true
             },
-            "functionLikeReturnType": {
+            "functionLikeReturnTypes": {
               "enabled": true
             },
             "enumMemberValues": {

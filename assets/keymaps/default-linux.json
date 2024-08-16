@@ -2,13 +2,11 @@
   // Standard Linux bindings
   {
     "bindings": {
-      "up": "menu::SelectPrev",
       "shift-tab": "menu::SelectPrev",
       "home": "menu::SelectFirst",
       "pageup": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
       "ctrl-p": "menu::SelectPrev",
-      "down": "menu::SelectNext",
       "tab": "menu::SelectNext",
       "end": "menu::SelectLast",
       "pagedown": "menu::SelectLast",
@@ -34,13 +32,26 @@
     }
   },
   {
+    "context": "Picker || menu",
+    "bindings": {
+      "up": "menu::SelectPrev",
+      "down": "menu::SelectNext"
+    }
+  },
+  {
+    "context": "Prompt",
+    "bindings": {
+      "left": "menu::SelectPrev",
+      "right": "menu::SelectNext"
+    }
+  },
+  {
     "context": "Editor",
     "bindings": {
       "escape": "editor::Cancel",
       "backspace": "editor::Backspace",
       "shift-backspace": "editor::Backspace",
       "delete": "editor::Delete",
-      "ctrl-d": "editor::Delete",
       "tab": "editor::Tab",
       "shift-tab": "editor::TabPrev",
       "ctrl-k": "editor::CutToEndOfLine",
@@ -78,10 +89,8 @@
       "shift-down": "editor::SelectDown",
       "shift-left": "editor::SelectLeft",
       "shift-right": "editor::SelectRight",
-      "ctrl-shift-left": "editor::SelectToPreviousWordStart",
-      "ctrl-shift-right": "editor::SelectToNextWordEnd",
-      "ctrl-shift-up": "editor::AddSelectionAbove",
-      "ctrl-shift-down": "editor::AddSelectionBelow",
+      "ctrl-shift-left": "editor::SelectToPreviousWordStart", // cursorWordLeftSelect
+      "ctrl-shift-right": "editor::SelectToNextWordEnd", // cursorWordRightSelect
       "ctrl-shift-home": "editor::SelectToBeginning",
       "ctrl-shift-end": "editor::SelectToEnd",
       "ctrl-a": "editor::SelectAll",
@@ -108,8 +117,8 @@
     "bindings": {
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
-      "ctrl-shift-enter": "editor::NewlineBelow",
       "ctrl-enter": "editor::NewlineAbove",
+      "ctrl-shift-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
       "ctrl-f": "buffer_search::Deploy",
       "ctrl-h": ["buffer_search::Deploy", { "replace_enabled": true }],
@@ -124,7 +133,7 @@
     "bindings": {
       "alt-]": "editor::NextInlineCompletion",
       "alt-[": "editor::PreviousInlineCompletion",
-      "alt-right": "editor::AcceptPartialInlineCompletion"
+      "ctrl-right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {
@@ -152,7 +161,9 @@
     "bindings": {
       "ctrl-g": "search::SelectNextMatch",
       "ctrl-shift-g": "search::SelectPrevMatch",
-      "alt-m": "assistant::ToggleModelSelector"
+      "alt-m": "assistant::ToggleModelSelector",
+      "ctrl-k h": "assistant::DeployHistory",
+      "ctrl-k l": "assistant::DeployPromptLibrary"
     }
   },
   {
@@ -207,7 +218,7 @@
     }
   },
   {
-    "context": "ProjectSearchBar && in_replace",
+    "context": "ProjectSearchBar && in_replace > Editor",
     "bindings": {
       "enter": "search::ReplaceNext",
       "ctrl-alt-enter": "search::ReplaceAll"
@@ -247,33 +258,26 @@
       "ctrl-alt-shift-x": "search::ToggleRegex"
     }
   },
-  {
-    "context": "Terminal",
-    "bindings": {
-      "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
-      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"]
-    }
-  },
   // Bindings from VS Code
   {
     "context": "Editor",
     "bindings": {
       "ctrl-[": "editor::Outdent",
       "ctrl-]": "editor::Indent",
-      "shift-alt-up": "editor::AddSelectionAbove",
-      "shift-alt-down": "editor::AddSelectionBelow",
+      "shift-alt-up": "editor::AddSelectionAbove", // Insert Cursor Above
+      "shift-alt-down": "editor::AddSelectionBelow", // Insert Cursor Below
       "ctrl-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
       "ctrl-alt-shift-up": "editor::DuplicateLineUp",
       "ctrl-alt-shift-down": "editor::DuplicateLineDown",
-      "ctrl-shift-left": "editor::SelectToPreviousWordStart",
-      "ctrl-shift-right": "editor::SelectToNextWordEnd",
-      "ctrl-shift-up": "editor::SelectLargerSyntaxNode", //todo(linux) tmp keybinding
-      "ctrl-shift-down": "editor::SelectSmallerSyntaxNode", //todo(linux) tmp keybinding
+      "alt-shift-right": "editor::SelectLargerSyntaxNode", // Expand Selection
+      "alt-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
+      "ctrl-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
+      "ctrl-f2": "editor::SelectAllMatches", // Select all occurrences of current word
       "ctrl-d": ["editor::SelectNext", { "replace_newest": false }],
-      "ctrl-shift-l": "editor::SelectAllMatches",
-      "ctrl-shift-d": ["editor::SelectPrevious", { "replace_newest": false }],
+      "ctrl-shift-down": ["editor::SelectNext", { "replace_newest": false }], // Add selection to Next Find Match
+      "ctrl-shift-up": ["editor::SelectPrevious", { "replace_newest": false }],
       "ctrl-k ctrl-d": ["editor::SelectNext", { "replace_newest": true }],
       "ctrl-k ctrl-shift-d": ["editor::SelectPrevious", { "replace_newest": true }],
       "ctrl-k ctrl-i": "editor::Hover",
@@ -433,7 +437,7 @@
     "context": "Editor && showing_completions",
     "bindings": {
       "enter": "editor::ConfirmCompletion",
-      "tab": "editor::ConfirmCompletion"
+      "tab": "editor::ComposeCompletion"
     }
   },
   {
@@ -463,10 +467,14 @@
   {
     "bindings": {
       "ctrl-alt-shift-f": "workspace::FollowNextCollaborator",
-      // TODO: Move this to a dock open action
-      "ctrl-shift-c": "collab_panel::ToggleFocus",
       "ctrl-alt-i": "zed::DebugElements",
       "ctrl-:": "editor::ToggleInlayHints"
+    }
+  },
+  {
+    "context": "!Terminal",
+    "bindings": {
+      "ctrl-shift-c": "collab_panel::ToggleFocus"
     }
   },
   {
@@ -478,6 +486,13 @@
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPrevHunk",
       "ctrl-enter": "assistant::InlineAssist"
+    }
+  },
+  {
+    "context": "Editor && jupyter && !ContextEditor",
+    "bindings": {
+      "ctrl-shift-enter": "repl::Run",
+      "ctrl-alt-enter": "repl::RunInPlace"
     }
   },
   {
@@ -596,11 +611,14 @@
     "context": "Terminal",
     "bindings": {
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
-      "shift-ctrl-c": "terminal::Copy",
+      "ctrl-shift-c": "terminal::Copy",
       "ctrl-insert": "terminal::Copy",
-      "shift-ctrl-v": "terminal::Paste",
+      // "ctrl-a": "editor::SelectAll", // conflicts with readline
+      "ctrl-shift-v": "terminal::Paste",
       "shift-insert": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",
+      "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "up": ["terminal::SendKeystroke", "up"],
       "pageup": ["terminal::SendKeystroke", "pageup"],
       "down": ["terminal::SendKeystroke", "down"],

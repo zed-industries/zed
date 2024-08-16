@@ -20,7 +20,11 @@ path_suffixes = [
     "thor",
     "pryrc",
     "simplecov",
+    "Steepfile",
     "Podfile",
+    "Brewfile",
+    "Vagrantfile",
+    "Puppetfile",
 ]
 first_line_pattern = '^#!.*\bruby\b'
 line_comments = ["# "]

@@ -1,15 +1,15 @@
 use crate::{
-    item::{Item, ItemEvent, TabContentParams},
+    item::{Item, ItemEvent},
     ItemNavHistory, WorkspaceId,
 };
 use call::{RemoteVideoTrack, RemoteVideoTrackView};
 use client::{proto::PeerId, User};
 use gpui::{
-    div, AppContext, Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    ParentElement, Render, SharedString, Styled, View, ViewContext, VisualContext, WindowContext,
+    div, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement, ParentElement,
+    Render, SharedString, Styled, View, ViewContext, VisualContext, WindowContext,
 };
 use std::sync::Arc;
-use ui::{h_flex, prelude::*, Icon, IconName, Label};
+use ui::{prelude::*, Icon, IconName};
 
 pub enum Event {
     Close,
@@ -76,20 +76,12 @@ impl Item for SharedScreen {
         }
     }
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> gpui::AnyElement {
-        h_flex()
-            .gap_1()
-            .child(Icon::new(IconName::Screen))
-            .child(
-                Label::new(format!("{}'s screen", self.user.github_login)).color(
-                    if params.selected {
-                        Color::Default
-                    } else {
-                        Color::Muted
-                    },
-                ),
-            )
-            .into_any()
+    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+        Some(Icon::new(IconName::Screen))
+    }
+
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some(format!("{}'s screen", self.user.github_login).into())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

@@ -27,7 +27,7 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::Center)
     }
 
-    /// scrolls so the neweset cursor is near the top
+    /// scrolls so the newest cursor is near the top
     /// (offset by vertical_scroll_margin)
     pub fn focused() -> Self {
         Self::Strategy(AutoscrollStrategy::Focused)
@@ -61,8 +61,8 @@ impl AutoscrollStrategy {
 }
 
 impl Editor {
-    pub fn autoscroll_requested(&self) -> bool {
-        self.scroll_manager.autoscroll_requested()
+    pub fn autoscroll_request(&self) -> Option<Autoscroll> {
+        self.scroll_manager.autoscroll_request()
     }
 
     pub fn autoscroll_vertically(
@@ -189,8 +189,8 @@ impl Editor {
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Focused => {
-                scroll_position.y =
-                    (target_top - self.scroll_manager.vertical_scroll_margin).max(0.0);
+                let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
+                scroll_position.y = (target_top - margin).max(0.0);
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Top => {

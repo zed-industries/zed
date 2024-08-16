@@ -66,7 +66,7 @@ async fn test_dev_server(cx: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppC
         .update(cx, |store, cx| {
             let projects = store.dev_server_projects();
             assert_eq!(projects.len(), 1);
-            assert_eq!(projects[0].path, "/remote");
+            assert_eq!(projects[0].paths, vec!["/remote"]);
             workspace::join_dev_server_project(
                 projects[0].id,
                 projects[0].project_id.unwrap(),
@@ -206,7 +206,7 @@ async fn create_dev_server_project(
         .update(cx, |store, cx| {
             let projects = store.dev_server_projects();
             assert_eq!(projects.len(), 1);
-            assert_eq!(projects[0].path, "/remote");
+            assert_eq!(projects[0].paths, vec!["/remote"]);
             workspace::join_dev_server_project(
                 projects[0].id,
                 projects[0].project_id.unwrap(),

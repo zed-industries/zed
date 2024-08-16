@@ -188,13 +188,15 @@ impl BladeAtlasState {
             dimension: gpu::TextureDimension::D2,
             usage,
         });
-        let raw_view = self.gpu.create_texture_view(gpu::TextureViewDesc {
-            name: "",
-            texture: raw,
-            format,
-            dimension: gpu::ViewDimension::D2,
-            subresources: &Default::default(),
-        });
+        let raw_view = self.gpu.create_texture_view(
+            raw,
+            gpu::TextureViewDesc {
+                name: "",
+                format,
+                dimension: gpu::ViewDimension::D2,
+                subresources: &Default::default(),
+            },
+        );
 
         let textures = &mut self.storage[kind];
         let atlas_texture = BladeAtlasTexture {
