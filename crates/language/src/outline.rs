@@ -89,7 +89,6 @@ impl<T> Outline<T> {
 
     /// Find the most similar symbol to the provided query using normalized Levenshtein distance.
     pub fn find_most_similar(&self, symbol: &str) -> Option<(SymbolPath, &OutlineItem<T>)> {
-        dbg!(&symbol);
         // Sometimes the model incorrectly includes a space or colon in the query,
         // e.g. in Elm, Roc, etc. it might say `foo : ...` because it's trying to include the symbol's type,
         // which isn't part of the symbol and won't be in the outline. Trim the first space and anything after it.
