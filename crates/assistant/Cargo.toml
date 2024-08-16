@@ -68,6 +68,7 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
+similar.workspace = true
 smol.workspace = true
 telemetry_events.workspace = true
 terminal.workspace = true
