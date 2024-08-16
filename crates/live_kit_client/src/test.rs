@@ -100,7 +100,7 @@ impl TestServer {
         self.executor.simulate_random_delay().await;
 
         let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
-        let identity = ParticipantIdentity(claims.sub.unwrap().to_string().into());
+        let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
         let room = (*server_rooms).entry(room_name.to_string()).or_default();
