@@ -63,9 +63,13 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: `1.0`
     pub active_pane_magnification: Option<f32>,
-    //TODO: Add some comment
+    // Direction to split horizontally.
+    //
+    // Default: "up"
     pub pane_split_direction_horizontal: Option<PaneSplitDirectionHorizontal>,
-    //TODO: Add some comment
+    // Direction to split vertically.
+    //
+    // Default: "left"
     pub pane_split_direction_vertical: Option<PaneSplitDirectionVertical>,
     // Centered layout related settings.
     pub centered_layout: Option<CenteredLayoutSettings>,
