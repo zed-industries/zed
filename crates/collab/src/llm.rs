@@ -593,3 +593,33 @@ impl<S> Drop for TokenCountingStream<S> {
         })
     }
 }
+
+pub fn log_usage_periodically(state: Arc<LlmState>) {
+    state.executor.clone().spawn_detached(async move {
+        loop {
+            state
+                .executor
+                .sleep(std::time::Duration::from_secs(30))
+                .await;
+
+            let Some(usages) = state
+                .db
+                .get_application_wide_usages_by_model(Utc::now())
+                .await
+                .log_err()
+            else {
+                continue;
+            };
+
+            for usage in usages {
+                tracing::info!(
+                    target: "computed usage",
+                    provider = usage.provider.to_string(),
+                    model = usage.model,
+                    requests_this_minute = usage.requests_this_minute,
+                    tokens_this_minute = usage.tokens_this_minute,
+                );
+            }
+        }
+    })
+}
