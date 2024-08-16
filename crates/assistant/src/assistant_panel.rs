@@ -3709,19 +3709,17 @@ impl Render for ContextEditor {
                                         })
                                         .tooltip(move |cx| {
                                             cx.new_view(|cx| {
-                                                let key_binding = focus_handle
-                                                    .as_ref()
-                                                    .map(|handle| {
-                                                        KeyBinding::for_action_in(
-                                                            &QuoteSelection,
-                                                            &handle,
-                                                            cx,
-                                                        )
-                                                    })
-                                                    .flatten();
                                                 Tooltip::new("Insert Selection")
                                                     .meta("Press to quote via keyboard")
-                                                    .key_binding(key_binding)
+                                                    .key_binding(focus_handle.as_ref().and_then(
+                                                        |handle| {
+                                                            KeyBinding::for_action_in(
+                                                                &QuoteSelection,
+                                                                &handle,
+                                                                cx,
+                                                            )
+                                                        },
+                                                    ))
                                             })
                                             .into()
                                         }),
@@ -4141,7 +4139,7 @@ impl Render for ContextEditorToolbarItem {
                         let weak_self = weak_self.clone();
                         move |cx| {
                             let weak_self = weak_self.clone();
-                            ContextMenu::build(cx, move |menu, cx| {
+                            Some(ContextMenu::build(cx, move |menu, cx| {
                                 let context = weak_self
                                     .update(cx, |this, cx| {
                                         active_editor_focus_handle(&this.workspace, cx)
@@ -4153,10 +4151,10 @@ impl Render for ContextEditorToolbarItem {
                                         let weak_self = weak_self.clone();
                                         move |cx| {
                                             weak_self
-                                    .update(cx, |_, cx| {
-                                        cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
-                                    })
-                                    .ok();
+                                                .update(cx, |_, cx| {
+                                                    cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
+                                                })
+                                                .ok();
                                         }
                                     })
                                     .custom_entry(
@@ -4175,7 +4173,7 @@ impl Render for ContextEditorToolbarItem {
                                                 weak_self
                                                     .update(cx, |this, cx| {
                                                         if let Some(editor) =
-                                                            &this.active_context_editor
+                                                        &this.active_context_editor
                                                         {
                                                             editor
                                                                 .update(cx, |this, cx| {
@@ -4190,9 +4188,7 @@ impl Render for ContextEditorToolbarItem {
                                         },
                                     )
                                     .action("Insert Selection", QuoteSelection.boxed_clone())
-                                    .into()
-                            })
-                            .into()
+                            }))
                         }
                     }),
             );
