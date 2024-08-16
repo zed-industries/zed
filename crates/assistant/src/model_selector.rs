@@ -1,15 +1,15 @@
 use feature_flags::ZedPro;
+use gpui::Action;
 use gpui::DismissEvent;
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
+use workspace::ShowConfiguration;
 
 use std::sync::Arc;
 use ui::ListItemSpacing;
 
 use crate::assistant_settings::AssistantSettings;
-use crate::ShowConfiguration;
 use fs::Fs;
-use gpui::Action;
 use gpui::SharedString;
 use gpui::Task;
 use picker::{Picker, PickerDelegate};

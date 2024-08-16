@@ -59,7 +59,6 @@ actions!(
         InsertIntoEditor,
         ToggleFocus,
         InsertActivePrompt,
-        ShowConfiguration,
         DeployHistory,
         DeployPromptLibrary,
         ConfirmCommand,

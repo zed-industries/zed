@@ -16,7 +16,7 @@ use crate::{
     QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus,
     ToggleModelSelector, WorkflowStepResolution, WorkflowStepView,
 };
-use crate::{ContextStoreEvent, ModelPickerDelegate, ShowConfiguration};
+use crate::{ContextStoreEvent, ModelPickerDelegate};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use client::{proto, Client, Status};
@@ -77,7 +77,8 @@ use workspace::{
     item::{self, FollowableItem, Item, ItemHandle},
     pane::{self, SaveIntent},
     searchable::{SearchEvent, SearchableItem},
-    Pane, Save, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    Pane, Save, ShowConfiguration, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation,
+    ToolbarItemView, Workspace,
 };
 use workspace::{searchable::SearchableItemHandle, NewFile};
 
@@ -704,7 +705,9 @@ impl AssistantPanel {
             self.authenticate_provider_task = Some((
                 provider.id(),
                 cx.spawn(|this, mut cx| async move {
-                    let _ = load_credentials.await;
+                    if let Some(future) = load_credentials {
+                        let _ = future.await;
+                    }
                     this.update(&mut cx, |this, _cx| {
                         this.authenticate_provider_task = None;
                     })
@@ -735,6 +738,7 @@ impl AssistantPanel {
         };
 
         let initial_prompt = action.prompt.clone();
+
         if assistant_panel.update(cx, |assistant, cx| assistant.is_authenticated(cx)) {
             match inline_assist_target {
                 InlineAssistTarget::Editor(active_editor, include_context) => {
@@ -763,9 +767,27 @@ impl AssistantPanel {
         } else {
             let assistant_panel = assistant_panel.downgrade();
             cx.spawn(|workspace, mut cx| async move {
-                assistant_panel
-                    .update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
-                    .await?;
+                let Some(task) =
+                    assistant_panel.update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
+                else {
+                    let answer = cx
+                        .prompt(
+                            gpui::PromptLevel::Warning,
+                            "No language model provider configured",
+                            None,
+                            &["Configure", "Cancel"],
+                        )
+                        .await
+                        .ok();
+                    if let Some(answer) = answer {
+                        if answer == 0 {
+                            cx.update(|cx| cx.dispatch_action(Box::new(ShowConfiguration)))
+                                .ok();
+                        }
+                    }
+                    return Ok(());
+                };
+                task.await?;
                 if assistant_panel.update(&mut cx, |panel, cx| panel.is_authenticated(cx))? {
                     cx.update(|cx| match inline_assist_target {
                         InlineAssistTarget::Editor(active_editor, include_context) => {
@@ -1173,13 +1195,10 @@ impl AssistantPanel {
             .map_or(false, |provider| provider.is_authenticated(cx))
     }
 
-    fn authenticate(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+    fn authenticate(&mut self, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
         LanguageModelRegistry::read_global(cx)
             .active_provider()
-            .map_or(
-                Task::ready(Err(anyhow!("no active language model provider"))),
-                |provider| provider.authenticate(cx),
-            )
+            .map_or(None, |provider| Some(provider.authenticate(cx)))
     }
 }
 
