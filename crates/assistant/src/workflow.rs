@@ -23,6 +23,8 @@ use workspace::Workspace;
 
 pub use step_view::WorkflowStepView;
 
+const IMPORTS_SYMBOL: &str = "#imports";
+
 pub struct WorkflowStep {
     context: WeakModel<Context>,
     context_buffer_range: Range<Anchor>,
@@ -357,10 +359,15 @@ impl WorkflowSuggestion {
         cx: &mut WindowContext,
     ) -> Option<InlineAssistId> {
         let mut initial_transaction_id = None;
-        let initial_prompt;
+        let mut initial_prompt;
         let suggestion_range;
         let buffer = editor.read(cx).buffer().clone();
         let snapshot = buffer.read(cx).snapshot(cx);
+
+        let allow_adding_imports = self
+            .symbol_path()
+            .map(|p| &p.0 == IMPORTS_SYMBOL)
+            .unwrap_or(false);
 
         match self {
             Self::Update {
@@ -449,6 +456,11 @@ impl WorkflowSuggestion {
             }
         }
 
+        if !allow_adding_imports {
+            initial_prompt
+                .push_str(". Do not add any import statements, assume all usages you want to add are already imported.");
+        }
+
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
             Some(inline_assistant.suggest_assist(
                 editor,
@@ -467,7 +479,7 @@ pub mod tool {
     use super::*;
     use anyhow::Context as _;
     use gpui::AsyncAppContext;
-    use language::ParseStatus;
+    use language::{Outline, OutlineItem, ParseStatus};
     use language_model::LanguageModelTool;
     use project::ProjectPath;
     use schemars::JsonSchema;
@@ -562,10 +574,7 @@ pub mod tool {
                     symbol,
                     description,
                 } => {
-                    let (symbol_path, symbol) = outline
-                        .find_most_similar(&symbol)
-                        .with_context(|| format!("symbol not found: {:?}", symbol))?;
-                    let symbol = symbol.to_point(&snapshot);
+                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
                     let start = symbol
                         .annotation_range
                         .map_or(symbol.range.start, |range| range.start);
@@ -588,10 +597,7 @@ pub mod tool {
                     symbol,
                     description,
                 } => {
-                    let (symbol_path, symbol) = outline
-                        .find_most_similar(&symbol)
-                        .with_context(|| format!("symbol not found: {:?}", symbol))?;
-                    let symbol = symbol.to_point(&snapshot);
+                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
                     let position = snapshot.anchor_before(
                         symbol
                             .annotation_range
@@ -609,10 +615,7 @@ pub mod tool {
                     symbol,
                     description,
                 } => {
-                    let (symbol_path, symbol) = outline
-                        .find_most_similar(&symbol)
-                        .with_context(|| format!("symbol not found: {:?}", symbol))?;
-                    let symbol = symbol.to_point(&snapshot);
+                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
                     let position = snapshot.anchor_after(symbol.range.end);
                     WorkflowSuggestion::InsertSiblingAfter {
                         position,
@@ -625,10 +628,8 @@ pub mod tool {
                     description,
                 } => {
                     if let Some(symbol) = symbol {
-                        let (symbol_path, symbol) = outline
-                            .find_most_similar(&symbol)
-                            .with_context(|| format!("symbol not found: {:?}", symbol))?;
-                        let symbol = symbol.to_point(&snapshot);
+                        let (symbol_path, symbol) =
+                            Self::resolve_symbol(&snapshot, &outline, &symbol)?;
 
                         let position = snapshot.anchor_after(
                             symbol
@@ -653,10 +654,8 @@ pub mod tool {
                     description,
                 } => {
                     if let Some(symbol) = symbol {
-                        let (symbol_path, symbol) = outline
-                            .find_most_similar(&symbol)
-                            .with_context(|| format!("symbol not found: {:?}", symbol))?;
-                        let symbol = symbol.to_point(&snapshot);
+                        let (symbol_path, symbol) =
+                            Self::resolve_symbol(&snapshot, &outline, &symbol)?;
 
                         let position = snapshot.anchor_before(
                             symbol
@@ -677,10 +676,7 @@ pub mod tool {
                     }
                 }
                 WorkflowSuggestionToolKind::Delete { symbol } => {
-                    let (symbol_path, symbol) = outline
-                        .find_most_similar(&symbol)
-                        .with_context(|| format!("symbol not found: {:?}", symbol))?;
-                    let symbol = symbol.to_point(&snapshot);
+                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
                     let start = symbol
                         .annotation_range
                         .map_or(symbol.range.start, |range| range.start);
@@ -695,6 +691,24 @@ pub mod tool {
             };
 
             Ok((buffer, suggestion))
+        }
+
+        fn resolve_symbol(
+            snapshot: &BufferSnapshot,
+            outline: &Outline<Anchor>,
+            symbol: &str,
+        ) -> Result<(SymbolPath, OutlineItem<Point>)> {
+            if symbol == IMPORTS_SYMBOL {
+                Ok((
+                    SymbolPath(IMPORTS_SYMBOL.to_string()),
+                    OutlineItem::default(),
+                ))
+            } else {
+                let (symbol_path, symbol) = outline
+                    .find_most_similar(symbol)
+                    .with_context(|| format!("symbol not found: {symbol}"))?;
+                Ok((symbol_path, symbol.to_point(snapshot)))
+            }
         }
     }
 
