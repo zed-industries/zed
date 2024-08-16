@@ -66,7 +66,11 @@ pub enum Model {
     #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini-2024-07-18")]
     FourOmniMini,
     #[serde(rename = "custom")]
-    Custom { name: String, max_tokens: usize },
+    Custom {
+        name: String,
+        max_tokens: usize,
+        max_output_tokens: Option<u32>,
+    },
 }
 
 impl Model {
@@ -113,6 +117,15 @@ impl Model {
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
+
+    pub fn max_output_tokens(&self) -> Option<u32> {
+        match self {
+            Self::Custom {
+                max_output_tokens, ..
+            } => *max_output_tokens,
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -121,7 +134,7 @@ pub struct Request {
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<usize>,
+    pub max_tokens: Option<u32>,
     pub stop: Vec<String>,
     pub temperature: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
