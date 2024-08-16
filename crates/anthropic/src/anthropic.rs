@@ -38,6 +38,8 @@ pub enum Model {
     Custom {
         name: String,
         max_tokens: usize,
+        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        display_name: Option<String>,
         /// Override this model with a different Anthropic model for tool calls.
         tool_override: Option<String>,
         /// Indicates whether this custom model supports caching.
@@ -77,7 +79,9 @@ impl Model {
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
-            Self::Custom { name, .. } => name,
+            Self::Custom {
+                name, display_name, ..
+            } => display_name.as_ref().unwrap_or(name),
         }
     }
 
