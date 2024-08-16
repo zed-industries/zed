@@ -457,8 +457,7 @@ impl WorkflowSuggestion {
         }
 
         if !allow_adding_imports {
-            initial_prompt
-                .push_str(". Do not add any import statements, assume all usages you want to add are already imported.");
+            initial_prompt.push_str(". Assume all usages you want to add are already imported.");
         }
 
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
