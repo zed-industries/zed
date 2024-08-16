@@ -1,7 +1,7 @@
 use futures::channel::oneshot;
 use fuzzy::StringMatchCandidate;
 use picker::{Picker, PickerDelegate};
-use project::{compare_paths, DirectoryLister};
+use project::DirectoryLister;
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -11,7 +11,7 @@ use std::{
 };
 use ui::{prelude::*, LabelLike, ListItemSpacing};
 use ui::{ListItem, ViewContext};
-use util::maybe;
+use util::{maybe, paths::compare_paths};
 use workspace::Workspace;
 
 pub(crate) struct OpenPathPrompt;

@@ -260,14 +260,21 @@ impl SupermavenAgent {
         client: Arc<Client>,
         cx: &mut ModelContext<Supermaven>,
     ) -> Result<Self> {
-        let mut process = Command::new(&binary_path)
+        let mut process = Command::new(&binary_path);
+        process
             .arg("stdio")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .context("failed to start the binary")?;
+            .kill_on_drop(true);
+
+        #[cfg(target_os = "windows")]
+        {
+            use smol::process::windows::CommandExt;
+            process.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+        }
+
+        let mut process = process.spawn().context("failed to start the binary")?;
 
         let stdin = process
             .stdin

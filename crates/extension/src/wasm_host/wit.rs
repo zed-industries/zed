@@ -262,11 +262,11 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         command: &SlashCommand,
-        query: &str,
+        arguments: &[String],
     ) -> Result<Result<Vec<SlashCommandArgumentCompletion>, String>> {
         match self {
             Extension::V010(ext) => {
-                ext.call_complete_slash_command_argument(store, command, query)
+                ext.call_complete_slash_command_argument(store, command, arguments)
                     .await
             }
             Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Ok(Ok(Vec::new())),
@@ -277,17 +277,30 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         command: &SlashCommand,
-        argument: Option<&str>,
+        arguments: &[String],
         resource: Option<Resource<Arc<dyn LspAdapterDelegate>>>,
     ) -> Result<Result<SlashCommandOutput, String>> {
         match self {
             Extension::V010(ext) => {
-                ext.call_run_slash_command(store, command, argument, resource)
+                ext.call_run_slash_command(store, command, arguments, resource)
                     .await
             }
             Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => {
                 Err(anyhow!("`run_slash_command` not available prior to v0.1.0"))
             }
+        }
+    }
+
+    pub async fn call_suggest_docs_packages(
+        &self,
+        store: &mut Store<WasmState>,
+        provider: &str,
+    ) -> Result<Result<Vec<String>, String>> {
+        match self {
+            Extension::V010(ext) => ext.call_suggest_docs_packages(store, provider).await,
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => Err(anyhow!(
+                "`suggest_docs_packages` not available prior to v0.1.0"
+            )),
         }
     }
 

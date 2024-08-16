@@ -19,6 +19,7 @@ use fs::Fs;
 use futures::{
     channel::mpsc,
     future::{BoxFuture, LocalBoxFuture},
+    join,
     stream::{self, BoxStream},
     SinkExt, Stream, StreamExt,
 };
@@ -45,7 +46,7 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
-use text::ToOffset as _;
+use text::OffsetRangeExt as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
@@ -139,18 +140,23 @@ impl InlineAssistant {
         cx: &mut WindowContext,
     ) {
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-
         struct CodegenRange {
             transform_range: Range<Point>,
             selection_ranges: Vec<Range<Point>>,
             focus_assist: bool,
         }
 
-        let newest_selection = editor.read(cx).selections.newest::<Point>(cx);
+        let newest_selection_range = editor.read(cx).selections.newest::<Point>(cx).range();
         let mut codegen_ranges: Vec<CodegenRange> = Vec::new();
-        for selection in editor.read(cx).selections.all::<Point>(cx) {
-            let selection_is_newest = selection.id == newest_selection.id;
-            let mut transform_range = selection.start..selection.end;
+
+        let selection_ranges = snapshot
+            .split_ranges(editor.read(cx).selections.disjoint_anchor_ranges())
+            .map(|range| range.to_point(&snapshot))
+            .collect::<Vec<Range<Point>>>();
+
+        for selection_range in selection_ranges {
+            let selection_is_newest = newest_selection_range.contains_inclusive(&selection_range);
+            let mut transform_range = selection_range.start..selection_range.end;
 
             // Expand the transform range to start/end of lines.
             // If a non-empty selection ends at the start of the last line, clip at the end of the penultimate line.
@@ -159,7 +165,8 @@ impl InlineAssistant {
                 transform_range.end.row -= 1;
             }
             transform_range.end.column = snapshot.line_len(MultiBufferRow(transform_range.end.row));
-            let selection_range = selection.start..selection.end.min(transform_range.end);
+            let selection_range =
+                selection_range.start..selection_range.end.min(transform_range.end);
 
             // If we intersect the previous transform range,
             if let Some(CodegenRange {
@@ -1102,6 +1109,7 @@ impl InlineAssistant {
                     editor.set_show_gutter(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
                     editor.set_read_only(true);
+                    editor.set_show_inline_completions(false);
                     editor.highlight_rows::<DeletedLines>(
                         Anchor::min()..=Anchor::max(),
                         Some(cx.theme().status().deleted_background),
@@ -1273,12 +1281,6 @@ fn build_assist_editor_renderer(editor: &View<PromptEditor>) -> RenderBlock {
         *editor.read(cx).gutter_dimensions.lock() = *cx.gutter_dimensions;
         editor.clone().into_any_element()
     })
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum InitialInsertion {
-    NewlineBefore,
-    NewlineAfter,
 }
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
@@ -2343,7 +2345,7 @@ impl Codegen {
         let language_name = language_name.as_deref();
         let start = buffer.point_to_buffer_offset(self.transform_range.start);
         let end = buffer.point_to_buffer_offset(self.transform_range.end);
-        let (buffer, range) = if let Some((start, end)) = start.zip(end) {
+        let (transform_buffer, transform_range) = if let Some((start, end)) = start.zip(end) {
             let (start_buffer, start_buffer_offset) = start;
             let (end_buffer, end_buffer_offset) = end;
             if start_buffer.remote_id() == end_buffer.remote_id() {
@@ -2355,19 +2357,39 @@ impl Codegen {
             return Err(anyhow::anyhow!("invalid transformation range"));
         };
 
+        let mut transform_context_range = transform_range.to_point(&transform_buffer);
+        transform_context_range.start.row = transform_context_range.start.row.saturating_sub(3);
+        transform_context_range.start.column = 0;
+        transform_context_range.end =
+            (transform_context_range.end + Point::new(3, 0)).min(transform_buffer.max_point());
+        transform_context_range.end.column =
+            transform_buffer.line_len(transform_context_range.end.row);
+        let transform_context_range = transform_context_range.to_offset(&transform_buffer);
+
         let selected_ranges = self
             .selected_ranges
             .iter()
-            .map(|range| {
-                let start = range.start.text_anchor.to_offset(&buffer);
-                let end = range.end.text_anchor.to_offset(&buffer);
-                start..end
+            .filter_map(|selected_range| {
+                let start = buffer
+                    .point_to_buffer_offset(selected_range.start)
+                    .map(|(_, offset)| offset)?;
+                let end = buffer
+                    .point_to_buffer_offset(selected_range.end)
+                    .map(|(_, offset)| offset)?;
+                Some(start..end)
             })
             .collect::<Vec<_>>();
 
         let prompt = self
             .prompt_builder
-            .generate_content_prompt(user_prompt, language_name, buffer, range, selected_ranges)
+            .generate_content_prompt(
+                user_prompt,
+                language_name,
+                transform_buffer,
+                transform_range,
+                selected_ranges,
+                transform_context_range,
+            )
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
 
         let mut messages = Vec::new();
@@ -2377,7 +2399,8 @@ impl Codegen {
 
         messages.push(LanguageModelRequestMessage {
             role: Role::User,
-            content: prompt,
+            content: vec![prompt.into()],
+            cache: false,
         });
 
         Ok(LanguageModelRequest {
@@ -2424,12 +2447,12 @@ impl Codegen {
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
         let mut edit_start = edit_range.start.to_offset(&snapshot);
-        self.generation = cx.spawn(|this, mut cx| {
+        self.generation = cx.spawn(|codegen, mut cx| {
             async move {
                 let chunks = stream.await;
                 let generate = async {
                     let (mut diff_tx, mut diff_rx) = mpsc::channel(1);
-                    let diff: Task<anyhow::Result<()>> =
+                    let line_based_stream_diff: Task<anyhow::Result<()>> =
                         cx.background_executor().spawn(async move {
                             let mut response_latency = None;
                             let request_start = Instant::now();
@@ -2480,10 +2503,10 @@ impl Codegen {
                         });
 
                     while let Some((char_ops, line_diff)) = diff_rx.next().await {
-                        this.update(&mut cx, |this, cx| {
-                            this.last_equal_ranges.clear();
+                        codegen.update(&mut cx, |codegen, cx| {
+                            codegen.last_equal_ranges.clear();
 
-                            let transaction = this.buffer.update(cx, |buffer, cx| {
+                            let transaction = codegen.buffer.update(cx, |buffer, cx| {
                                 // Avoid grouping assistant edits with user edits.
                                 buffer.finalize_last_transaction(cx);
 
@@ -2508,23 +2531,24 @@ impl Codegen {
                                                 let edit_range = snapshot.anchor_after(edit_start)
                                                     ..snapshot.anchor_before(edit_end);
                                                 edit_start = edit_end;
-                                                this.last_equal_ranges.push(edit_range);
+                                                codegen.last_equal_ranges.push(edit_range);
                                                 None
                                             }
                                         }),
                                     None,
                                     cx,
                                 );
-                                this.edit_position = Some(snapshot.anchor_after(edit_start));
+                                codegen.edit_position = Some(snapshot.anchor_after(edit_start));
 
                                 buffer.end_transaction(cx)
                             });
 
                             if let Some(transaction) = transaction {
-                                if let Some(first_transaction) = this.transformation_transaction_id
+                                if let Some(first_transaction) =
+                                    codegen.transformation_transaction_id
                                 {
                                     // Group all assistant edits into the first transaction.
-                                    this.buffer.update(cx, |buffer, cx| {
+                                    codegen.buffer.update(cx, |buffer, cx| {
                                         buffer.merge_transactions(
                                             transaction,
                                             first_transaction,
@@ -2532,36 +2556,45 @@ impl Codegen {
                                         )
                                     });
                                 } else {
-                                    this.transformation_transaction_id = Some(transaction);
-                                    this.buffer.update(cx, |buffer, cx| {
+                                    codegen.transformation_transaction_id = Some(transaction);
+                                    codegen.buffer.update(cx, |buffer, cx| {
                                         buffer.finalize_last_transaction(cx)
                                     });
                                 }
                             }
 
-                            this.update_diff(edit_range.clone(), line_diff, cx);
+                            codegen.reapply_line_based_diff(edit_range.clone(), line_diff, cx);
 
                             cx.notify();
                         })?;
                     }
 
-                    diff.await?;
+                    // Streaming stopped and we have the new text in the buffer, and a line-based diff applied for the whole new buffer.
+                    // That diff is not what a regular diff is and might look unexpected, ergo apply a regular diff.
+                    // It's fine to apply even if the rest of the line diffing fails, as no more hunks are coming through `diff_rx`.
+                    let batch_diff_task = codegen.update(&mut cx, |codegen, cx| {
+                        codegen.reapply_batch_diff(edit_range.clone(), cx)
+                    })?;
+                    let (line_based_stream_diff, ()) =
+                        join!(line_based_stream_diff, batch_diff_task);
+                    line_based_stream_diff?;
 
                     anyhow::Ok(())
                 };
 
                 let result = generate.await;
-                this.update(&mut cx, |this, cx| {
-                    this.last_equal_ranges.clear();
-                    if let Err(error) = result {
-                        this.status = CodegenStatus::Error(error);
-                    } else {
-                        this.status = CodegenStatus::Done;
-                    }
-                    cx.emit(CodegenEvent::Finished);
-                    cx.notify();
-                })
-                .ok();
+                codegen
+                    .update(&mut cx, |this, cx| {
+                        this.last_equal_ranges.clear();
+                        if let Err(error) = result {
+                            this.status = CodegenStatus::Error(error);
+                        } else {
+                            this.status = CodegenStatus::Done;
+                        }
+                        cx.emit(CodegenEvent::Finished);
+                        cx.notify();
+                    })
+                    .ok();
             }
         });
         cx.notify();
@@ -2593,7 +2626,7 @@ impl Codegen {
         });
     }
 
-    fn update_diff(
+    fn reapply_line_based_diff(
         &mut self,
         edit_range: Range<Anchor>,
         line_operations: Vec<LineOperation>,
@@ -2651,6 +2684,99 @@ impl Codegen {
 
             cx.notify();
         }
+    }
+
+    fn reapply_batch_diff(
+        &mut self,
+        edit_range: Range<Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<()> {
+        let old_snapshot = self.snapshot.clone();
+        let old_range = edit_range.to_point(&old_snapshot);
+        let new_snapshot = self.buffer.read(cx).snapshot(cx);
+        let new_range = edit_range.to_point(&new_snapshot);
+
+        cx.spawn(|codegen, mut cx| async move {
+            let (deleted_row_ranges, inserted_row_ranges) = cx
+                .background_executor()
+                .spawn(async move {
+                    let old_text = old_snapshot
+                        .text_for_range(
+                            Point::new(old_range.start.row, 0)
+                                ..Point::new(
+                                    old_range.end.row,
+                                    old_snapshot.line_len(MultiBufferRow(old_range.end.row)),
+                                ),
+                        )
+                        .collect::<String>();
+                    let new_text = new_snapshot
+                        .text_for_range(
+                            Point::new(new_range.start.row, 0)
+                                ..Point::new(
+                                    new_range.end.row,
+                                    new_snapshot.line_len(MultiBufferRow(new_range.end.row)),
+                                ),
+                        )
+                        .collect::<String>();
+
+                    let mut old_row = old_range.start.row;
+                    let mut new_row = new_range.start.row;
+                    let batch_diff =
+                        similar::TextDiff::from_lines(old_text.as_str(), new_text.as_str());
+
+                    let mut deleted_row_ranges: Vec<(Anchor, RangeInclusive<u32>)> = Vec::new();
+                    let mut inserted_row_ranges = Vec::new();
+                    for change in batch_diff.iter_all_changes() {
+                        let line_count = change.value().lines().count() as u32;
+                        match change.tag() {
+                            similar::ChangeTag::Equal => {
+                                old_row += line_count;
+                                new_row += line_count;
+                            }
+                            similar::ChangeTag::Delete => {
+                                let old_end_row = old_row + line_count - 1;
+                                let new_row = new_snapshot.anchor_before(Point::new(new_row, 0));
+
+                                if let Some((_, last_deleted_row_range)) =
+                                    deleted_row_ranges.last_mut()
+                                {
+                                    if *last_deleted_row_range.end() + 1 == old_row {
+                                        *last_deleted_row_range =
+                                            *last_deleted_row_range.start()..=old_end_row;
+                                    } else {
+                                        deleted_row_ranges.push((new_row, old_row..=old_end_row));
+                                    }
+                                } else {
+                                    deleted_row_ranges.push((new_row, old_row..=old_end_row));
+                                }
+
+                                old_row += line_count;
+                            }
+                            similar::ChangeTag::Insert => {
+                                let new_end_row = new_row + line_count - 1;
+                                let start = new_snapshot.anchor_before(Point::new(new_row, 0));
+                                let end = new_snapshot.anchor_before(Point::new(
+                                    new_end_row,
+                                    new_snapshot.line_len(MultiBufferRow(new_end_row)),
+                                ));
+                                inserted_row_ranges.push(start..=end);
+                                new_row += line_count;
+                            }
+                        }
+                    }
+
+                    (deleted_row_ranges, inserted_row_ranges)
+                })
+                .await;
+
+            codegen
+                .update(&mut cx, |codegen, cx| {
+                    codegen.diff.deleted_row_ranges = deleted_row_ranges;
+                    codegen.diff.inserted_row_ranges = inserted_row_ranges;
+                    cx.notify();
+                })
+                .ok();
+        })
     }
 }
 

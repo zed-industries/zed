@@ -65,6 +65,7 @@ serde_json.workspace = true
 slotmap = "1.0.6"
 smallvec.workspace = true
 smol.workspace = true
+strum.workspace = true
 sum_tree.workspace = true
 taffy = "0.4.3"
 thiserror.workspace = true

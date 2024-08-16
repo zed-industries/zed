@@ -22,7 +22,7 @@
 # Using Zed
 
 - [Multibuffers](./multibuffers.md)
-- [Language model integration](./language-model-integration.md)
+- [Assistant](./assistant.md)
 - [Code Completions](./completions.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
@@ -38,6 +38,7 @@
 - [Developing Extensions](./extensions/developing-extensions.md)
 - [Language Extensions](./extensions/languages.md)
 - [Theme Extensions](./extensions/themes.md)
+- [Slash Commands](./extensions/slash-commands.md)
 
 # Language Support
 

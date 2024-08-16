@@ -295,5 +295,6 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
             .menu(move |_cx| Some(picker_view.clone()))
             .trigger(self.trigger)
             .attach(gpui::AnchorCorner::BottomLeft)
+            .when_some(self.handle, |menu, handle| menu.with_handle(handle))
     }
 }

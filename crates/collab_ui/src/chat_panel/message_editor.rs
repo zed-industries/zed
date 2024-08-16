@@ -314,7 +314,6 @@ impl MessageEditor {
                     server_id: LanguageServerId(0), // TODO: Make this optional or something?
                     lsp_completion: Default::default(), // TODO: Make this optional or something?
                     confirm: None,
-                    show_new_completions_on_confirm: false,
                 }
             })
             .collect()

@@ -1632,7 +1632,7 @@ impl Pane {
             .and_then(|entry| entry.project_path(cx))
             .map(|p| p.path.to_string_lossy().to_string())
         {
-            cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
+            cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
         }
     }
 
@@ -1842,7 +1842,7 @@ impl Pane {
                                     "Copy Path",
                                     Some(Box::new(CopyPath)),
                                     cx.handler_for(&pane, move |_, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new(
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
                                             abs_path.to_string_lossy().to_string(),
                                         ));
                                     }),

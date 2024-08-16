@@ -193,7 +193,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         if let Some(message) = request.messages.last() {
-            if message.content.trim().is_empty() {
+            if message.contents_empty() {
                 const EMPTY_PROMPT_MSG: &str =
                     "Empty prompts aren't allowed. Please provide a non-empty prompt.";
                 return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
@@ -252,7 +252,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         _description: String,
         _schema: serde_json::Value,
         _cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         future::ready(Err(anyhow!("not implemented"))).boxed()
     }
 }
@@ -270,7 +270,7 @@ impl CopilotChatLanguageModel {
                         Role::Assistant => CopilotChatRole::Assistant,
                         Role::System => CopilotChatRole::System,
                     },
-                    content: msg.content,
+                    content: msg.string_contents(),
                 })
                 .collect(),
         )

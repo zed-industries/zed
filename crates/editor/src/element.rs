@@ -373,6 +373,13 @@ impl EditorElement {
             }
         });
         register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.compose_completion(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
+        register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.confirm_code_action(action, cx) {
                 task.detach_and_log_err(cx);
             } else {
@@ -642,7 +649,7 @@ impl EditorElement {
             }
 
             #[cfg(target_os = "linux")]
-            if let Some(item) = cx.read_from_primary() {
+            if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
                 let point_for_position =
                     position_map.point_for_position(text_hitbox.bounds, event.position);
                 let position = point_for_position.previous_valid;
@@ -655,7 +662,7 @@ impl EditorElement {
                     },
                     cx,
                 );
-                editor.insert(item.text(), cx);
+                editor.insert(&text, cx);
             }
             cx.stop_propagation()
         }
@@ -4290,7 +4297,7 @@ fn deploy_blame_entry_context_menu(
         let sha = format!("{}", blame_entry.sha);
         menu.on_blur_subscription(Subscription::new(|| {}))
             .entry("Copy commit SHA", None, move |cx| {
-                cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
+                cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
             })
             .when_some(
                 details.and_then(|details| details.permalink.clone()),
