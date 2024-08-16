@@ -94,38 +94,46 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) {
     init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/the-root",
-        json!({
-            ".zed": {
-                "settings.json": r#"{ "tab_size": 8 }"#,
-                "tasks.json": r#"[{
+    let dir = temp_tree(json!({
+        ".zed": {
+            "settings.json": r#"{ "tab_size": 8, "ensure_final_newline_on_save": false }"#,
+            "tasks.json": r#"[{
                     "label": "cargo check",
                     "command": "cargo",
                     "args": ["check", "--all"]
                 },]"#,
-            },
-            "a": {
-                "a.rs": "fn a() {\n    A\n}"
-            },
-            "b": {
-                ".zed": {
-                    "settings.json": r#"{ "tab_size": 2 }"#,
-                    "tasks.json": r#"[{
+        },
+        ".editorconfig": r#"root = true
+			   [*.rs]
+			   insert_final_newline = true
+			"#,
+        "a": {
+            "a.rs": "fn a() {\n    A\n}"
+        },
+        "b": {
+            ".zed": {
+                "settings.json": r#"{ "tab_size": 2 }"#,
+                "tasks.json": r#"[{
                         "label": "cargo check",
                         "command": "cargo",
                         "args": ["check"]
                     },]"#,
-                },
-                "b.rs": "fn b() {\n  B\n}"
-            }
-        }),
-    )
-    .await;
+            },
+            "b.rs": "fn b() {\n  B\n}"
+        },
+        "c": {
+            "c.rs": "fn c() {\n  C\n}",
+            ".editorconfig": r#"[*.rs]
+                   indent_size = 4
+                "#,
+        }
+    }));
 
-    let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
+    let path = dir.path();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree_from_real_fs(path, path).await;
+
+    let project = Project::test(fs.clone(), [path], cx).await;
     let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let task_context = TaskContext::default();
 
@@ -137,7 +145,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     });
     let global_task_source_kind = TaskSourceKind::Worktree {
         id: worktree_id,
-        abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
+        abs_path: PathBuf::from(format!("{}/.zed/tasks.json", path.display())),
         id_base: "local_tasks_for_worktree".into(),
     };
 
@@ -195,7 +203,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
+                    abs_path: PathBuf::from(format!("{}/b/.zed/tasks.json", path.display())),
                     id_base: "local_tasks_for_worktree".into(),
                 },
                 "cargo check".to_string(),
@@ -236,7 +244,10 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     cx.update(|cx| {
         project.update(cx, |project, cx| {
             project.task_inventory().update(cx, |inventory, cx| {
-                inventory.remove_local_static_source(Path::new("/the-root/.zed/tasks.json"));
+                inventory.remove_local_static_source(&PathBuf::from(format!(
+                    "{}/.zed/tasks.json",
+                    path.display()
+                )));
                 inventory.add_source(
                     global_task_source_kind.clone(),
                     |tx, cx| StaticSource::new(TrackedFile::new(rx, tx, cx)),
@@ -268,7 +279,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
+                    abs_path: PathBuf::from(format!("{}/.zed/tasks.json", path.display())),
                     id_base: "local_tasks_for_worktree".into(),
                 },
                 "cargo check".to_string(),
@@ -285,7 +296,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
+                    abs_path: PathBuf::from(format!("{}/b/.zed/tasks.json", path.display())),
                     id_base: "local_tasks_for_worktree".into(),
                 },
                 "cargo check".to_string(),

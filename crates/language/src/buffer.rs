@@ -2654,11 +2654,7 @@ impl BufferSnapshot {
     }
 
     /// Returns the settings for the language at the given location.
-    pub fn settings_at<'a, D: ToOffset>(
-        &self,
-        position: D,
-        cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
+    pub fn settings_at<D: ToOffset>(&self, position: D, cx: &AppContext) -> LanguageSettings {
         language_settings(self.language_at(position), self.file.as_ref(), cx)
     }
 

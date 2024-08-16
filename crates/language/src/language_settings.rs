@@ -4,6 +4,7 @@ use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
+use ec4rs::property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs};
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
@@ -26,13 +27,65 @@ pub fn init(cx: &mut AppContext) {
 }
 
 /// Returns the settings for the specified language from the provided file.
-pub fn language_settings<'a>(
+pub fn language_settings(
     language: Option<&Arc<Language>>,
     file: Option<&Arc<dyn File>>,
-    cx: &'a AppContext,
-) -> &'a LanguageSettings {
+    cx: &AppContext,
+) -> LanguageSettings {
     let language_name = language.map(|l| l.name());
-    all_language_settings(file, cx).language(language_name.as_ref())
+    let mut settings = all_language_settings(file, cx)
+        .language(language_name.as_ref())
+        .clone();
+    let path = file
+        .and_then(|f| f.as_local())
+        .map(|f| f.abs_path(cx))
+        .unwrap_or_else(|| std::path::PathBuf::new());
+    let mut cfg = ec4rs::properties_of(path).unwrap();
+    cfg.use_fallbacks();
+    fn merge<T>(target: &mut T, value: Option<T>) {
+        if let Some(value) = value {
+            *target = value;
+        }
+    }
+    merge(
+        &mut settings.tab_size,
+        cfg.get::<IndentSize>()
+            .map(|v| match v {
+                IndentSize::Value(u) => NonZeroU32::new(u as u32),
+                IndentSize::UseTabWidth => cfg
+                    .get::<TabWidth>()
+                    .map(|w| match w {
+                        TabWidth::Value(u) => NonZeroU32::new(u as u32),
+                    })
+                    .ok()
+                    .flatten(),
+            })
+            .ok()
+            .flatten(),
+    );
+    merge(
+        &mut settings.hard_tabs,
+        cfg.get::<IndentStyle>()
+            .map(|v| v.eq(&IndentStyle::Tabs))
+            .ok(),
+    );
+    merge(
+        &mut settings.remove_trailing_whitespace_on_save,
+        cfg.get::<TrimTrailingWs>()
+            .map(|v| match v {
+                TrimTrailingWs::Value(b) => b,
+            })
+            .ok(),
+    );
+    merge(
+        &mut settings.ensure_final_newline_on_save,
+        cfg.get::<FinalNewline>()
+            .map(|v| match v {
+                FinalNewline::Value(b) => b,
+            })
+            .ok(),
+    );
+    settings
 }
 
 /// Returns the settings for all languages from the provided file.

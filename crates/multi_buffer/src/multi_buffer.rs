@@ -1723,11 +1723,7 @@ impl MultiBuffer {
             .and_then(|(buffer, offset, _)| buffer.read(cx).language_at(offset))
     }
 
-    pub fn settings_at<'a, T: ToOffset>(
-        &self,
-        point: T,
-        cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
+    pub fn settings_at<T: ToOffset>(&self, point: T, cx: &AppContext) -> LanguageSettings {
         let mut language = None;
         let mut file = None;
         if let Some((buffer, offset, _)) = self.point_to_buffer_offset(point, cx) {
@@ -3462,7 +3458,7 @@ impl MultiBufferSnapshot {
         &'a self,
         point: T,
         cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
+    ) -> LanguageSettings {
         let mut language = None;
         let mut file = None;
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point) {
