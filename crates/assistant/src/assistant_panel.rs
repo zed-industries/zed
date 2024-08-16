@@ -4071,6 +4071,7 @@ impl ContextEditorToolbarItem {
 impl Render for ContextEditorToolbarItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let left_side = h_flex()
+            .pl_1()
             .gap_2()
             .flex_1()
             .min_w(rems(DEFAULT_TAB_TITLE.len() as f32))
@@ -4133,6 +4134,7 @@ impl Render for ContextEditorToolbarItem {
                 PopoverMenu::new("context-editor-popover")
                     .trigger(
                         IconButton::new("context-editor-trigger", IconName::EllipsisVertical)
+                            .icon_size(IconSize::Small)
                             .tooltip(|cx| Tooltip::text("Open Context Options", cx)),
                     )
                     .menu({
