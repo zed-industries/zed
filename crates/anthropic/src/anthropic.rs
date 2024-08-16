@@ -42,6 +42,7 @@ pub enum Model {
         tool_override: Option<String>,
         /// Indicates whether this custom model supports caching.
         cache_configuration: Option<AnthropicModelCacheConfiguration>,
+        max_output_tokens: Option<u32>,
     },
 }
 
@@ -102,6 +103,16 @@ impl Model {
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => 200_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
+        }
+    }
+
+    pub fn max_output_tokens(&self) -> u32 {
+        match self {
+            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
+            Self::Claude3_5Sonnet => 8_192,
+            Self::Custom {
+                max_output_tokens, ..
+            } => max_output_tokens.unwrap_or(4_096),
         }
     }
 

@@ -64,6 +64,9 @@ pub trait LanguageModel: Send + Sync {
     }
 
     fn max_token_count(&self) -> usize;
+    fn max_output_tokens(&self) -> Option<u32> {
+        None
+    }
 
     fn count_tokens(
         &self,
