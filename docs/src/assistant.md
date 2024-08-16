@@ -103,8 +103,6 @@ Slash commands enhance the assistant's capabilities. Begin by typing a `/` at th
 - `/tab`: Inserts the content of the active tab or all open tabs into the context
 - `/terminal`: Inserts a select number of lines of output from the terminal
 
-Additionally, you can use `assistant: quote selection` (`cmd + >`) to insert the active editor buffer selection as a quoted code block in the assistant panel.
-
 ## Inline Assistant
 
 You can use `ctrl-enter` to open the inline assistant in both a normal editor and within the assistant panel.
