@@ -169,7 +169,10 @@ async fn perform_completion(
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     Json(params): Json<PerformCompletionParams>,
 ) -> Result<impl IntoResponse> {
-    let model = normalize_model_name(params.provider, params.model);
+    let model = normalize_model_name(
+        state.db.model_names_for_provider(params.provider),
+        params.model,
+    );
 
     authorize_access_to_language_model(
         &state.config,
@@ -373,31 +376,13 @@ async fn perform_completion(
     })))
 }
 
-fn normalize_model_name(provider: LanguageModelProvider, name: String) -> String {
-    let prefixes: &[_] = match provider {
-        LanguageModelProvider::Anthropic => &[
-            "claude-3-5-sonnet",
-            "claude-3-haiku",
-            "claude-3-opus",
-            "claude-3-sonnet",
-        ],
-        LanguageModelProvider::OpenAi => &[
-            "gpt-3.5-turbo",
-            "gpt-4-turbo-preview",
-            "gpt-4o-mini",
-            "gpt-4o",
-            "gpt-4",
-        ],
-        LanguageModelProvider::Google => &[],
-        LanguageModelProvider::Zed => &[],
-    };
-
-    if let Some(prefix) = prefixes
+fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
+    if let Some(known_model_name) = known_models
         .iter()
-        .filter(|&&prefix| name.starts_with(prefix))
-        .max_by_key(|&&prefix| prefix.len())
+        .filter(|known_model_name| name.starts_with(known_model_name.as_str()))
+        .max_by_key(|known_model_name| known_model_name.len())
     {
-        prefix.to_string()
+        known_model_name.to_string()
     } else {
         name
     }
