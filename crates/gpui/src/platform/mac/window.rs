@@ -2235,11 +2235,11 @@ mod tests {
             SimulatedImeState {
                 selected_range: Some(11..11),
                 marked_range: Some(10..11),
-                inputs: SmallVec::from_slice(&[ImeInput::SetMarkedText(
+                inputs: smallvec::smallvec![ImeInput::SetMarkedText(
                     None,
                     "あ".to_string(),
                     Some(1..1)
-                )]),
+                )],
             }
         )
     }
