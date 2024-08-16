@@ -42,6 +42,7 @@ pub enum Model {
         tool_override: Option<String>,
         /// Indicates whether this custom model supports caching.
         cache_configuration: Option<AnthropicModelCacheConfiguration>,
+        max_output_tokens: Option<u32>,
     },
 }
 
@@ -105,6 +106,16 @@ impl Model {
         }
     }
 
+    pub fn max_output_tokens(&self) -> u32 {
+        match self {
+            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
+            Self::Claude3_5Sonnet => 8_192,
+            Self::Custom {
+                max_output_tokens, ..
+            } => max_output_tokens.unwrap_or(4_096),
+        }
+    }
+
     pub fn tool_model_id(&self) -> &str {
         if let Self::Custom {
             tool_override: Some(tool_override),
@@ -131,7 +142,7 @@ pub async fn complete(
         .header("Anthropic-Version", "2023-06-01")
         .header(
             "Anthropic-Beta",
-            "tools-2024-04-04,prompt-caching-2024-07-31",
+            "tools-2024-04-04,prompt-caching-2024-07-31,max-tokens-3-5-sonnet-2024-07-15",
         )
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
@@ -191,7 +202,7 @@ pub async fn stream_completion(
         .header("Anthropic-Version", "2023-06-01")
         .header(
             "Anthropic-Beta",
-            "tools-2024-04-04,prompt-caching-2024-07-31",
+            "tools-2024-04-04,prompt-caching-2024-07-31,max-tokens-3-5-sonnet-2024-07-15",
         )
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");

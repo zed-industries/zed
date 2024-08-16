@@ -286,7 +286,7 @@ impl LanguageModelRequest {
         }
     }
 
-    pub fn into_anthropic(self, model: String) -> anthropic::Request {
+    pub fn into_anthropic(self, model: String, max_output_tokens: u32) -> anthropic::Request {
         let mut new_messages: Vec<anthropic::Message> = Vec::new();
         let mut system_message = String::new();
 
@@ -353,7 +353,7 @@ impl LanguageModelRequest {
         anthropic::Request {
             model,
             messages: new_messages,
-            max_tokens: 4092,
+            max_tokens: max_output_tokens,
             system: Some(system_message),
             tools: Vec::new(),
             tool_choice: None,

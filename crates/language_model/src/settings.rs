@@ -97,6 +97,7 @@ impl AnthropicSettingsContent {
                                     max_tokens,
                                     tool_override,
                                     cache_configuration,
+                                    max_output_tokens,
                                 } => Some(provider::anthropic::AvailableModel {
                                     name,
                                     max_tokens,
@@ -108,6 +109,7 @@ impl AnthropicSettingsContent {
                                             min_total_token: config.min_total_token,
                                         },
                                     ),
+                                    max_output_tokens,
                                 }),
                                 _ => None,
                             })

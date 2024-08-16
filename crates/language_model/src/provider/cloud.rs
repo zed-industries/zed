@@ -57,6 +57,7 @@ pub struct AvailableModel {
     max_tokens: usize,
     tool_override: Option<String>,
     cache_configuration: Option<LanguageModelCacheConfiguration>,
+    max_output_tokens: Option<u32>,
 }
 
 pub struct CloudLanguageModelProvider {
@@ -210,6 +211,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                                     min_total_token: config.min_total_token,
                                 }
                             }),
+                            max_output_tokens: model.max_output_tokens,
                         })
                     }
                     AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
@@ -446,7 +448,7 @@ impl LanguageModel for CloudLanguageModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         match &self.model {
             CloudModel::Anthropic(model) => {
-                let request = request.into_anthropic(model.id().into());
+                let request = request.into_anthropic(model.id().into(), model.max_output_tokens());
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
@@ -556,7 +558,8 @@ impl LanguageModel for CloudLanguageModel {
 
         match &self.model {
             CloudModel::Anthropic(model) => {
-                let mut request = request.into_anthropic(model.tool_model_id().into());
+                let mut request =
+                    request.into_anthropic(model.tool_model_id().into(), model.max_output_tokens());
                 request.tool_choice = Some(anthropic::ToolChoice::Tool {
                     name: tool_name.clone(),
                 });
