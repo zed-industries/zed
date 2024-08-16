@@ -286,6 +286,6 @@ You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the m
 
 You can obtain an API key [here](https://aistudio.google.com/app/apikey).
 
-### GitHub Copilot
+### GitHub Copilot Chat
 
 You can use GitHub Copilot chat with the Zed assistant by choosing it via the model dropdown in the assistant panel.
