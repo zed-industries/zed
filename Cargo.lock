@@ -223,6 +223,7 @@ name = "anthropic"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "futures 0.3.30",
  "http_client",
  "isahc",
@@ -232,6 +233,7 @@ dependencies = [
  "strum",
  "thiserror",
  "tokio",
+ "util",
 ]
 
 [[package]]

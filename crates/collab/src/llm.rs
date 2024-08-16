@@ -217,7 +217,7 @@ async fn perform_completion(
                 _ => request.model,
             };
 
-            let chunks = anthropic::stream_completion(
+            let (chunks, rate_limit_info) = anthropic::stream_completion_with_rate_limit_info(
                 &state.http_client,
                 anthropic::ANTHROPIC_API_URL,
                 api_key,
@@ -244,6 +244,18 @@ async fn perform_completion(
                 },
                 anthropic::AnthropicError::Other(err) => Error::Internal(err),
             })?;
+
+            if let Some(rate_limit_info) = rate_limit_info {
+                tracing::info!(
+                    target: "upstream rate limit",
+                    provider = params.provider.to_string(),
+                    model = model,
+                    tokens_remaining = rate_limit_info.tokens_remaining,
+                    requests_remaining = rate_limit_info.requests_remaining,
+                    requests_reset = ?rate_limit_info.requests_reset,
+                    tokens_reset = ?rate_limit_info.tokens_reset,
+                );
+            }
 
             chunks
                 .map(move |event| {
