@@ -307,7 +307,6 @@ impl LanguageModelRequest {
                     let anthropic_message_content: Vec<anthropic::Content> = message
                         .content
                         .into_iter()
-                        // TODO: filter out the empty messages in the message construction step
                         .filter_map(|content| match content {
                             MessageContent::Text(t) if !t.is_empty() => {
                                 Some(anthropic::Content::Text {
