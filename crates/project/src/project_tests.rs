@@ -5204,7 +5204,7 @@ async fn search(
         .collect())
 }
 
-fn init_test(cx: &mut gpui::TestAppContext) {
+pub fn init_test(cx: &mut gpui::TestAppContext) {
     if std::env::var("RUST_LOG").is_ok() {
         env_logger::try_init().ok();
     }

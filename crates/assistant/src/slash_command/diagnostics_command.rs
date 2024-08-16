@@ -153,7 +153,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
                 .map(|completion| ArgumentCompletion {
                     label: completion.clone().into(),
                     new_text: completion,
-                    run_command: true,
+                    after_completion: assistant_slash_command::AfterCompletion::Run,
                     replace_previous_arguments: false,
                 })
                 .collect())
