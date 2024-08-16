@@ -94,12 +94,14 @@ impl AnthropicSettingsContent {
                             .filter_map(|model| match model {
                                 anthropic::Model::Custom {
                                     name,
+                                    display_name,
                                     max_tokens,
                                     tool_override,
                                     cache_configuration,
                                     max_output_tokens,
                                 } => Some(provider::anthropic::AvailableModel {
                                     name,
+                                    display_name,
                                     max_tokens,
                                     tool_override,
                                     cache_configuration: cache_configuration.as_ref().map(

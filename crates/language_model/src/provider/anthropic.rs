@@ -29,15 +29,22 @@ const PROVIDER_NAME: &str = "Anthropic";
 pub struct AnthropicSettings {
     pub api_url: String,
     pub low_speed_timeout: Option<Duration>,
+    /// Extend Zed's list of Anthropic models.
     pub available_models: Vec<AvailableModel>,
     pub needs_setting_migration: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
+    /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-20240620
     pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    pub display_name: Option<String>,
+    /// The model's context window size.
     pub max_tokens: usize,
+    /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
     pub tool_override: Option<String>,
+    /// Configuration of Anthropic's caching API.
     pub cache_configuration: Option<LanguageModelCacheConfiguration>,
     pub max_output_tokens: Option<u32>,
 }
@@ -171,6 +178,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                 model.name.clone(),
                 anthropic::Model::Custom {
                     name: model.name.clone(),
+                    display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                     tool_override: model.tool_override.clone(),
                     cache_configuration: model.cache_configuration.as_ref().map(|config| {
