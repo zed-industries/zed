@@ -494,7 +494,10 @@ impl PromptLibrary {
                             let mut editor = Editor::auto_width(cx);
                             editor.set_placeholder_text("Untitled", cx);
                             editor.set_text(prompt_metadata.title.unwrap_or_default(), cx);
-                            editor.set_read_only(prompt_id.is_built_in());
+                            if prompt_id.is_built_in() {
+                                editor.set_read_only(true);
+                                editor.set_show_inline_completions(false);
+                            }
                             editor
                         });
                         let body_editor = cx.new_view(|cx| {
@@ -506,7 +509,10 @@ impl PromptLibrary {
                             });
 
                             let mut editor = Editor::for_buffer(buffer, None, cx);
-                            editor.set_read_only(prompt_id.is_built_in());
+                            if prompt_id.is_built_in() {
+                                editor.set_read_only(true);
+                                editor.set_show_inline_completions(false);
+                            }
                             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
                             editor.set_show_gutter(false, cx);
                             editor.set_show_wrap_guides(false, cx);

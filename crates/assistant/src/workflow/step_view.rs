@@ -78,6 +78,7 @@ impl WorkflowStepView {
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_read_only(true);
+            editor.set_show_inline_completions(false);
             editor.insert_blocks(
                 [
                     BlockProperties {
