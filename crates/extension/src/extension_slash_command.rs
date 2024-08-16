@@ -67,7 +67,7 @@ impl SlashCommand for ExtensionSlashCommand {
                                         label: completion.label.into(),
                                         new_text: completion.new_text,
                                         replace_previous_arguments: false,
-                                        run_command: completion.run_command,
+                                        after_completion: completion.run_command.into(),
                                     })
                                     .collect(),
                             )

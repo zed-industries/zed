@@ -94,7 +94,7 @@ impl SlashCommand for TabSlashCommand {
                     label: path_string.clone().into(),
                     new_text: path_string,
                     replace_previous_arguments: false,
-                    run_command,
+                    after_completion: run_command.into(),
                 })
             });
 
@@ -106,7 +106,7 @@ impl SlashCommand for TabSlashCommand {
                     label: path_string.clone().into(),
                     new_text: path_string,
                     replace_previous_arguments: false,
-                    run_command,
+                    after_completion: run_command.into(),
                 });
 
             Ok(active_item_completion
@@ -115,7 +115,7 @@ impl SlashCommand for TabSlashCommand {
                     label: ALL_TABS_COMPLETION_ITEM.into(),
                     new_text: ALL_TABS_COMPLETION_ITEM.to_owned(),
                     replace_previous_arguments: false,
-                    run_command: true,
+                    after_completion: true.into(),
                 }))
                 .chain(tab_completion_items)
                 .collect())

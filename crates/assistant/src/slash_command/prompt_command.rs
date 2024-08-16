@@ -45,7 +45,7 @@ impl SlashCommand for PromptSlashCommand {
                     Some(ArgumentCompletion {
                         label: prompt_title.clone().into(),
                         new_text: prompt_title,
-                        run_command: true,
+                        after_completion: true.into(),
                         replace_previous_arguments: true,
                     })
                 })

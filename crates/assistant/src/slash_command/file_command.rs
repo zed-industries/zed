@@ -1,6 +1,6 @@
 use super::{diagnostics_command::write_single_file_diagnostics, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{AfterCompletion, ArgumentCompletion, SlashCommandOutputSection};
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
@@ -164,7 +164,11 @@ impl SlashCommand for FileSlashCommand {
                     Some(ArgumentCompletion {
                         label,
                         new_text: text,
-                        run_command: true,
+                        after_completion: if path_match.is_dir {
+                            AfterCompletion::Compose
+                        } else {
+                            AfterCompletion::Run
+                        },
                         replace_previous_arguments: false,
                     })
                 })

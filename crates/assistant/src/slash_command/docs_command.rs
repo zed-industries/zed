@@ -181,7 +181,7 @@ impl SlashCommand for DocsSlashCommand {
                     .map(|item| ArgumentCompletion {
                         label: item.clone().into(),
                         new_text: item.to_string(),
-                        run_command: true,
+                        after_completion: assistant_slash_command::AfterCompletion::Run,
                         replace_previous_arguments: false,
                     })
                     .collect()
@@ -194,7 +194,7 @@ impl SlashCommand for DocsSlashCommand {
                         return Ok(vec![ArgumentCompletion {
                             label: "No available docs providers.".into(),
                             new_text: String::new(),
-                            run_command: false,
+                            after_completion: false.into(),
                             replace_previous_arguments: false,
                         }]);
                     }
@@ -204,7 +204,7 @@ impl SlashCommand for DocsSlashCommand {
                         .map(|provider| ArgumentCompletion {
                             label: provider.to_string().into(),
                             new_text: provider.to_string(),
-                            run_command: false,
+                            after_completion: false.into(),
                             replace_previous_arguments: false,
                         })
                         .collect())
@@ -236,7 +236,7 @@ impl SlashCommand for DocsSlashCommand {
                         .map(|package_name| ArgumentCompletion {
                             label: format!("{package_name} (unindexed)").into(),
                             new_text: format!("{package_name}"),
-                            run_command: true,
+                            after_completion: true.into(),
                             replace_previous_arguments: false,
                         })
                         .collect::<Vec<_>>();
@@ -250,7 +250,7 @@ impl SlashCommand for DocsSlashCommand {
                             )
                             .into(),
                             new_text: provider.to_string(),
-                            run_command: false,
+                            after_completion: false.into(),
                             replace_previous_arguments: false,
                         }]);
                     }

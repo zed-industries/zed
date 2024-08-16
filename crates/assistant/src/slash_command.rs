@@ -1,5 +1,6 @@
 use crate::assistant_panel::ContextEditor;
 use anyhow::Result;
+use assistant_slash_command::AfterCompletion;
 pub use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandRegistry};
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
@@ -197,7 +198,9 @@ impl SlashCommandCompletionProvider {
                                         let command_range = command_range.clone();
                                         let command_name = command_name.clone();
                                         move |intent: CompletionIntent, cx: &mut WindowContext| {
-                                            if new_argument.run_command || intent.is_complete() {
+                                            if new_argument.after_completion.run()
+                                                || intent.is_complete()
+                                            {
                                                 editor
                                                     .update(cx, |editor, cx| {
                                                         editor.run_command(
@@ -212,14 +215,14 @@ impl SlashCommandCompletionProvider {
                                                     .ok();
                                                 false
                                             } else {
-                                                !new_argument.run_command
+                                                !new_argument.after_completion.run()
                                             }
                                         }
                                     }) as Arc<_>
                                 });
 
                         let mut new_text = new_argument.new_text.clone();
-                        if !new_argument.run_command {
+                        if new_argument.after_completion == AfterCompletion::Continue {
                             new_text.push(' ');
                         }
 
