@@ -2631,12 +2631,21 @@ impl ContextEditor {
         let context = self.context.read(cx);
         let language_registry = context.language_registry();
         let step = context.workflow_step_for_range(step_range, cx)?;
-        let view = cx.new_view(|cx| {
-            WorkflowStepView::new(self.context.clone(), step, language_registry, cx)
-        });
+        let context = self.context.clone();
         cx.deref_mut().defer(move |cx| {
             pane.update(cx, |pane, cx| {
-                pane.add_item(Box::new(view), true, true, None, cx);
+                let existing_item = pane
+                    .items_of_type::<WorkflowStepView>()
+                    .find(|item| *item.read(cx).step() == step.downgrade());
+                if let Some(item) = existing_item {
+                    if let Some(index) = pane.index_for_item(&item) {
+                        pane.activate_item(index, true, true, cx);
+                    }
+                } else {
+                    let view = cx
+                        .new_view(|cx| WorkflowStepView::new(context, step, language_registry, cx));
+                    pane.add_item(Box::new(view), true, true, None, cx);
+                }
             });
         });
         None

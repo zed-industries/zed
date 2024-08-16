@@ -146,6 +146,10 @@ impl WorkflowStepView {
         }
     }
 
+    pub fn step(&self) -> &WeakModel<WorkflowStep> {
+        &self.step
+    }
+
     fn render_result(&mut self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         let step = self.step.upgrade()?;
         let result = step.read(cx).resolution.as_ref()?;
