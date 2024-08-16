@@ -88,7 +88,13 @@ impl<T> Outline<T> {
     }
 
     /// Find the most similar symbol to the provided query using normalized Levenshtein distance.
-    pub fn find_most_similar(&self, query: &str) -> Option<(SymbolPath, &OutlineItem<T>)> {
+    pub fn find_most_similar(&self, symbol: &str) -> Option<(SymbolPath, &OutlineItem<T>)> {
+        dbg!(&symbol);
+        // Sometimes the model incorrectly includes a space or colon in the query,
+        // e.g. in Elm, Roc, etc. it might say `foo : ...` because it's trying to include the symbol's type,
+        // which isn't part of the symbol and won't be in the outline. Trim the first space and anything after it.
+        let symbol = &symbol[..symbol.find(' ').unwrap_or(symbol.len())];
+
         const SIMILARITY_THRESHOLD: f64 = 0.6;
 
         let (position, similarity) = self
@@ -96,7 +102,7 @@ impl<T> Outline<T> {
             .iter()
             .enumerate()
             .map(|(index, candidate)| {
-                let similarity = strsim::normalized_levenshtein(&candidate.string, query);
+                let similarity = strsim::normalized_levenshtein(&candidate.string, symbol);
                 (index, similarity)
             })
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())?;
