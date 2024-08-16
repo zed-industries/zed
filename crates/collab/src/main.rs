@@ -154,7 +154,8 @@ async fn main() -> Result<()> {
                             matched_path,
                             user_id = tracing::field::Empty,
                             login = tracing::field::Empty,
-                            authn.jti = tracing::field::Empty
+                            authn.jti = tracing::field::Empty,
+                            is_staff = tracing::field::Empty
                         )
                     })
                     .on_response(

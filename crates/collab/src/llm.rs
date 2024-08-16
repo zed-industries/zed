@@ -141,7 +141,8 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
             tracing::Span::current()
                 .record("user_id", claims.user_id)
                 .record("login", claims.github_user_login.clone())
-                .record("authn.jti", &claims.jti);
+                .record("authn.jti", &claims.jti)
+                .record("is_staff", &claims.is_staff);
 
             req.extensions_mut().insert(claims);
             Ok::<_, Error>(next.run(req).await.into_response())
@@ -558,6 +559,7 @@ impl<S> Drop for TokenCountingStream<S> {
                     user_id = claims.user_id,
                     login = claims.github_user_login,
                     authn.jti = claims.jti,
+                    is_staff = claims.is_staff,
                     requests_this_minute = usage.requests_this_minute,
                     tokens_this_minute = usage.tokens_this_minute,
                 );
