@@ -11,10 +11,11 @@ use gpui::{
 };
 use language::{language_settings::SoftWrap, Anchor, Buffer, LanguageRegistry};
 use std::{ops::DerefMut, sync::Arc};
+use text::OffsetRangeExt;
 use theme::ActiveTheme as _;
 use ui::{
-    h_flex, v_flex, ButtonCommon as _, ButtonLike, ButtonStyle, Color, InteractiveElement as _,
-    Label, LabelCommon as _,
+    h_flex, v_flex, ButtonCommon as _, ButtonLike, ButtonStyle, Color, Icon, IconName,
+    InteractiveElement as _, Label, LabelCommon as _,
 };
 use workspace::{
     item::{self, Item},
@@ -145,6 +146,10 @@ impl WorkflowStepView {
         }
     }
 
+    pub fn step(&self) -> &WeakModel<WorkflowStep> {
+        &self.step
+    }
+
     fn render_result(&mut self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         let step = self.step.upgrade()?;
         let result = step.read(cx).resolution.as_ref()?;
@@ -155,14 +160,17 @@ impl WorkflowStepView {
                         .child(result.title.clone())
                         .children(result.suggestion_groups.iter().filter_map(
                             |(buffer, suggestion_groups)| {
-                                let path = buffer.read(cx).file().map(|f| f.path());
+                                let buffer = buffer.read(cx);
+                                let path = buffer.file().map(|f| f.path());
+                                let snapshot = buffer.snapshot();
                                 v_flex()
                                     .mb_2()
                                     .border_b_1()
                                     .children(path.map(|path| format!("path: {}", path.display())))
                                     .children(suggestion_groups.iter().map(|group| {
-                                        v_flex().pl_2().children(group.suggestions.iter().map(
-                                            |suggestion| {
+                                        v_flex().pt_2().pl_2().children(
+                                            group.suggestions.iter().map(|suggestion| {
+                                                let range = suggestion.range().to_point(&snapshot);
                                                 v_flex()
                                                     .children(
                                                         suggestion.description().map(|desc| {
@@ -173,8 +181,13 @@ impl WorkflowStepView {
                                                     .children(suggestion.symbol_path().map(
                                                         |path| format!("symbol path: {}", path.0),
                                                     ))
-                                            },
-                                        ))
+                                                    .child(format!(
+                                                        "lines: {} - {}",
+                                                        range.start.row + 1,
+                                                        range.end.row + 1
+                                                    ))
+                                            }),
+                                        )
                                     }))
                                     .into()
                             },
@@ -247,8 +260,19 @@ impl FocusableView for WorkflowStepView {
 impl Item for WorkflowStepView {
     type Event = EditorEvent;
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
-        Some("workflow step".into())
+    fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
+        let step = self.step.upgrade()?.read(cx);
+        let context = step.context.upgrade()?.read(cx);
+        let buffer = context.buffer().read(cx);
+        let index = context
+            .workflow_step_index_for_range(&step.context_buffer_range, buffer)
+            .ok()?
+            + 1;
+        Some(format!("Step {index}").into())
+    }
+
+    fn tab_icon(&self, _cx: &WindowContext) -> Option<ui::Icon> {
+        Some(Icon::new(IconName::Pencil))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(item::ItemEvent)) {

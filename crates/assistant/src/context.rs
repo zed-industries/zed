@@ -872,14 +872,20 @@ impl Context {
     pub fn workflow_step_for_range(
         &self,
         range: Range<language::Anchor>,
+        cx: &AppContext,
     ) -> Option<Model<WorkflowStep>> {
-        Some(
-            self.workflow_steps
-                .iter()
-                .find(|step| step.range == range)?
-                .step
-                .clone(),
-        )
+        let buffer = self.buffer.read(cx);
+        let index = self.workflow_step_index_for_range(&range, buffer).ok()?;
+        Some(self.workflow_steps[index].step.clone())
+    }
+
+    pub fn workflow_step_index_for_range(
+        &self,
+        tagged_range: &Range<text::Anchor>,
+        buffer: &text::BufferSnapshot,
+    ) -> Result<usize, usize> {
+        self.workflow_steps
+            .binary_search_by(|probe| probe.range.cmp(&tagged_range, buffer))
     }
 
     pub fn pending_slash_commands(&self) -> &[PendingSlashCommand] {
@@ -1126,9 +1132,8 @@ impl Context {
                         ..buffer.anchor_before(step_end_tag_start_ix);
 
                     // Check if a step with the same range already exists
-                    let existing_step_index = self
-                        .workflow_steps
-                        .binary_search_by(|probe| probe.range.cmp(&tagged_range, &buffer));
+                    let existing_step_index =
+                        self.workflow_step_index_for_range(&tagged_range, &buffer);
 
                     if let Err(ix) = existing_step_index {
                         new_edit_steps.push((
