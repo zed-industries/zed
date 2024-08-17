@@ -544,6 +544,7 @@ pub struct Window {
     hovered: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    present_completed: RefCell<Option<oneshot::Sender<()>>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
     pub(crate) draw_phase: DrawPhase,
@@ -820,6 +821,7 @@ impl Window {
             hovered,
             dirty,
             needs_present,
+            present_completed: RefCell::default(),
             last_input_timestamp,
             refreshing: false,
             draw_phase: DrawPhase::None,
@@ -1491,17 +1493,27 @@ impl<'a> WindowContext<'a> {
         self.window.needs_present.set(true);
 
         if let Some(TimeToFirstWindowDraw::Pending(start)) = self.app.time_to_first_window_draw {
-            let duration = start.elapsed();
-            self.app.time_to_first_window_draw = Some(TimeToFirstWindowDraw::Done(duration));
-            log::info!("time to first window draw: {:?}", duration);
+            let (tx, rx) = oneshot::channel();
+            *self.window.present_completed.borrow_mut() = Some(tx);
+            self.spawn(|mut cx| async move {
+                rx.await.ok();
+                cx.update(|cx| {
+                    let duration = start.elapsed();
+                    cx.time_to_first_window_draw = Some(TimeToFirstWindowDraw::Done(duration));
+                    log::info!("time to first window draw: {:?}", duration);
+                    cx.push_effect(Effect::Refresh);
+                })
+            })
+            .detach();
         }
     }
 
     #[profiling::function]
     fn present(&self) {
+        let on_complete = self.window.present_completed.take();
         self.window
             .platform_window
-            .draw(&self.window.rendered_frame.scene);
+            .draw(&self.window.rendered_frame.scene, on_complete);
         self.window.needs_present.set(false);
         profiling::finish_frame!();
     }

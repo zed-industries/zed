@@ -14,6 +14,7 @@ use cocoa::{
 use collections::HashMap;
 use core_foundation::base::TCFType;
 use foreign_types::ForeignType;
+use futures::channel::oneshot;
 use media::core_video::CVMetalTextureCache;
 use metal::{CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
@@ -292,7 +293,8 @@ impl MetalRenderer {
         // nothing to do
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    pub fn draw(&mut self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
+        let on_complete = Arc::new(Mutex::new(on_complete));
         let layer = self.layer.clone();
         let viewport_size = layer.drawable_size();
         let viewport_size: Size<DevicePixels> = size(
@@ -320,6 +322,9 @@ impl MetalRenderer {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
                     let block = ConcreteBlock::new(move |_| {
+                        if let Some(on_complete) = on_complete.lock().take() {
+                            on_complete.send(()).ok();
+                        }
                         if let Some(instance_buffer) = instance_buffer.take() {
                             instance_buffer_pool.lock().release(instance_buffer);
                         }
