@@ -303,27 +303,26 @@ impl<'a> MarkdownParser<'a> {
                             }
                         }
                         if new_highlight {
-                            highlights
-                                .push((last_run_len..text.len(), MarkdownHighlight::Style(style.clone())));
+                            highlights.push((
+                                last_run_len..text.len(),
+                                MarkdownHighlight::Style(style.clone()),
+                            ));
                         }
                     }
                     if let Some(image) = image.clone() {
                         let is_valid_image = match image.clone() {
-                            Image::Path { display_path, path:_ } => {
-                                display_path.is_file()
-                            }
-                            Image::Web { url } => {
-                                match isahc::get(url) {
-                                    Ok(response) => {
-                                        match response.status().as_u16() {
-                                            200 => true,
-                                            404 => false,
-                                            _ => false, 
-                                        }
-                                    }
-                                    Err(_) => false
-                                }
-                            }
+                            Image::Path {
+                                display_path,
+                                path: _,
+                            } => display_path.is_file(),
+                            Image::Web { url } => match isahc::get(url) {
+                                Ok(response) => match response.status().as_u16() {
+                                    200 => true,
+                                    404 => false,
+                                    _ => false,
+                                },
+                                Err(_) => false,
+                            },
                         };
 
                         if is_valid_image {
@@ -334,7 +333,6 @@ impl<'a> MarkdownParser<'a> {
                             code: false,
                             link: None,
                             image: Some(image),
-
                         });
                         style.underline = true;
                     };
@@ -376,18 +374,18 @@ impl<'a> MarkdownParser<'a> {
                             self.file_location_directory.clone(),
                             dest_url.to_string(),
                         );
-                    },
+                    }
                     Tag::Image {
                         link_type: _,
                         dest_url,
                         title: _,
-                        id: _
-                        } => {
-                            image = Image::identify(
-                                self.file_location_directory.clone(),
-                                dest_url.to_string()
-                            );
-                        },
+                        id: _,
+                    } => {
+                        image = Image::identify(
+                            self.file_location_directory.clone(),
+                            dest_url.to_string(),
+                        );
+                    }
                     _ => {
                         break;
                     }
@@ -417,7 +415,6 @@ impl<'a> MarkdownParser<'a> {
                         break;
                     }
                 },
-
                 _ => {
                     break;
                 }
@@ -893,7 +890,6 @@ mod tests {
     #[gpui::test]
     async fn test_raw_links_detection() {
         let parsed = parse("Checkout this https://zed.dev link").await;
-     
         assert_eq!(
             parsed.children,
             vec![p("Checkout this https://zed.dev link", 0..34)]
@@ -945,7 +941,7 @@ mod tests {
                 link: None,
                 image: Some(Image::Web {
                     url: "https://zed.dev/logo.png".to_string()
-                }),   
+                }),
             }]
         );
         assert_eq!(paragraph.region_ranges, vec![14..14]);

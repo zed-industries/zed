@@ -1,9 +1,10 @@
 use gpui::{
-    px, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle, RenderOnce, ImageSource, Styled, img
+    img, px, FontStyle, FontWeight, HighlightStyle, ImageSource, RenderOnce, SharedString,
+    StrikethroughStyle, Styled, UnderlineStyle,
 };
-use ui::{div, IntoElement, ParentElement};
 use language::HighlightId;
 use std::{fmt::Display, ops::Range, path::PathBuf};
+use ui::{div, IntoElement, ParentElement};
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -271,13 +272,11 @@ impl Display for Link {
     }
 }
 
-
 /// A Markdown Image
 #[derive(Debug, Clone, IntoElement)]
 #[cfg_attr(test, derive(PartialEq))]
-
 pub enum Image {
-     Web {
+    Web {
         /// The URL of the Image.
         url: String,
     },
@@ -301,7 +300,7 @@ impl Image {
                 display_path: path.clone(),
                 path,
             });
-            }
+        }
         if let Some(file_location_directory) = file_location_directory {
             let display_path = path;
             let path = file_location_directory.join(text);
@@ -325,18 +324,12 @@ impl Display for Image {
     }
 }
 
-impl RenderOnce for Image{
+impl RenderOnce for Image {
     fn render(self, _: &mut ui::WindowContext) -> impl ui::IntoElement {
         let image_src = match self {
             Image::Web { url } => ImageSource::Uri(url.into()),
             Image::Path { path, .. } => ImageSource::File(path.into()),
         };
-        div().child(
-            div()
-                .flex_row()
-                .size_full()
-                .child(img(image_src))
-        )
+        div().child(div().flex_row().size_full().child(img(image_src)))
     }
 }
-
