@@ -11,11 +11,11 @@ use crate::{
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
-    DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId, InlineAssistant,
-    InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus,
-    QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus,
-    ToggleModelSelector, WorkflowStepResolution, WorkflowStepView,
+    Assist, CacheStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
+    CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
+    InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
+    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split,
+    ToggleFocus, ToggleModelSelector, WorkflowStepResolution, WorkflowStepView,
 };
 use crate::{ContextStoreEvent, ModelPickerDelegate};
 use anyhow::{anyhow, Result};
@@ -3151,6 +3151,35 @@ impl ContextEditor {
                                 .relative()
                                 .gap_1()
                                 .child(sender)
+                                .children(match &message.cache {
+                                    Some(cache) if cache.is_final_anchor => match cache.status {
+                                        CacheStatus::Cached => Some(
+                                            ButtonLike::new("cached")
+                                                .child(
+                                                    Icon::new(IconName::Bolt)
+                                                        .size(IconSize::XSmall)
+                                                        .color(Color::Hint),
+                                                )
+                                                .tooltip(|cx| {
+                                                    Tooltip::with_meta(
+                                                        "Conversation cached.",
+                                                        None,
+                                                        "Editing this or prior messages may impact performance.",
+                                                        cx,
+                                                    )
+                                                })
+                                        ),
+                                        CacheStatus::Pending => Some(
+                                            ButtonLike::new("cache-pending")
+                                                    .child(
+                                                        Icon::new(IconName::Ellipsis)
+                                                            .size(IconSize::XSmall)
+                                                            .color(Color::Hint),
+                                                    )
+                                        ),
+                                    },
+                                    _ => None,
+                                })
                                 .children(match &message.status {
                                     MessageStatus::Error(error) => Some(
                                         Button::new("show-error", "Error")
