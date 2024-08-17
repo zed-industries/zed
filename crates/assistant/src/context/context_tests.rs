@@ -473,7 +473,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_edit_step_parsing(cx: &mut TestAppContext) {
+async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     cx.update(prompt_library::init);
     let settings_store = cx.update(SettingsStore::test);
     cx.set_global(settings_store);

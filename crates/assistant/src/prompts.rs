@@ -1,11 +1,13 @@
+use anyhow::Result;
 use assets::Assets;
 use fs::Fs;
 use futures::StreamExt;
-use handlebars::{Handlebars, RenderError, TemplateError};
+use gpui::AssetSource;
+use handlebars::{Handlebars, RenderError};
 use language::BufferSnapshot;
 use parking_lot::Mutex;
 use serde::Serialize;
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use util::ResultExt;
 
 #[derive(Serialize)]
@@ -38,115 +40,162 @@ pub struct StepResolutionContext {
     pub step_to_resolve: String,
 }
 
+pub struct PromptLoadingParams<'a> {
+    pub fs: Arc<dyn Fs>,
+    pub repo_path: Option<PathBuf>,
+    pub cx: &'a gpui::AppContext,
+}
+
 pub struct PromptBuilder {
     handlebars: Arc<Mutex<Handlebars<'static>>>,
 }
 
 impl PromptBuilder {
-    pub fn new(
-        fs_and_cx: Option<(Arc<dyn Fs>, &gpui::AppContext)>,
-    ) -> Result<Self, Box<TemplateError>> {
+    pub fn new(loading_params: Option<PromptLoadingParams>) -> Result<Self> {
         let mut handlebars = Handlebars::new();
-        Self::register_templates(&mut handlebars)?;
+        Self::register_built_in_templates(&mut handlebars)?;
 
         let handlebars = Arc::new(Mutex::new(handlebars));
 
-        if let Some((fs, cx)) = fs_and_cx {
-            Self::watch_fs_for_template_overrides(fs, cx, handlebars.clone());
+        if let Some(params) = loading_params {
+            Self::watch_fs_for_template_overrides(params, handlebars.clone());
         }
 
         Ok(Self { handlebars })
     }
 
+    /// Watches the filesystem for changes to prompt template overrides.
+    ///
+    /// This function sets up a file watcher on the prompt templates directory. It performs
+    /// an initial scan of the directory and registers any existing template overrides.
+    /// Then it continuously monitors for changes, reloading templates as they are
+    /// modified or added.
+    ///
+    /// If the templates directory doesn't exist initially, it waits for it to be created.
+    /// If the directory is removed, it restores the built-in templates and waits for the
+    /// directory to be recreated.
+    ///
+    /// # Arguments
+    ///
+    /// * `params` - A `PromptLoadingParams` struct containing the filesystem, repository path,
+    ///   and application context.
+    /// * `handlebars` - An `Arc<Mutex<Handlebars>>` for registering and updating templates.
     fn watch_fs_for_template_overrides(
-        fs: Arc<dyn Fs>,
-        cx: &gpui::AppContext,
+        mut params: PromptLoadingParams,
         handlebars: Arc<Mutex<Handlebars<'static>>>,
     ) {
-        let templates_dir = paths::prompt_overrides_dir();
-
-        cx.background_executor()
+        params.repo_path = None;
+        let templates_dir = paths::prompt_overrides_dir(params.repo_path.as_deref());
+        params.cx.background_executor()
             .spawn(async move {
-                // Create the prompt templates directory if it doesn't exist
-                if !fs.is_dir(templates_dir).await {
-                    if let Err(e) = fs.create_dir(templates_dir).await {
-                        log::error!("Failed to create prompt templates directory: {}", e);
-                        return;
+                let Some(parent_dir) = templates_dir.parent() else {
+                    return;
+                };
+
+                let mut found_dir_once = false;
+                loop {
+                    // Check if the templates directory exists and handle its status
+                    // If it exists, log its presence and check if it's a symlink
+                    // If it doesn't exist:
+                    //   - Log that we're using built-in prompts
+                    //   - Check if it's a broken symlink and log if so
+                    //   - Set up a watcher to detect when it's created
+                    // After the first check, set the `found_dir_once` flag
+                    // This allows us to avoid logging when looping back around after deleting the prompt overrides directory.
+                    let dir_status = params.fs.is_dir(&templates_dir).await;
+                    let symlink_status = params.fs.read_link(&templates_dir).await.ok();
+                    if dir_status {
+                        let mut log_message = format!("Prompt template overrides directory found at {}", templates_dir.display());
+                        if let Some(target) = symlink_status {
+                            log_message.push_str(" -> ");
+                            log_message.push_str(&target.display().to_string());
+                        }
+                        log::info!("{}.", log_message);
+                    } else {
+                        if !found_dir_once {
+                            log::info!("No prompt template overrides directory found at {}. Using built-in prompts.", templates_dir.display());
+                            if let Some(target) = symlink_status {
+                                log::info!("Symlink found pointing to {}, but target is invalid.", target.display());
+                            }
+                        }
+
+                        if params.fs.is_dir(parent_dir).await {
+                            let (mut changes, _watcher) = params.fs.watch(parent_dir, Duration::from_secs(1)).await;
+                            while let Some(changed_paths) = changes.next().await {
+                                if changed_paths.iter().any(|p| p == &templates_dir) {
+                                    let mut log_message = format!("Prompt template overrides directory detected at {}", templates_dir.display());
+                                    if let Ok(target) = params.fs.read_link(&templates_dir).await {
+                                        log_message.push_str(" -> ");
+                                        log_message.push_str(&target.display().to_string());
+                                    }
+                                    log::info!("{}.", log_message);
+                                    break;
+                                }
+                            }
+                        } else {
+                            return;
+                        }
                     }
-                }
 
-                // Initial scan of the prompts directory
-                if let Ok(mut entries) = fs.read_dir(templates_dir).await {
-                    while let Some(Ok(file_path)) = entries.next().await {
-                        if file_path.to_string_lossy().ends_with(".hbs") {
-                            if let Ok(content) = fs.load(&file_path).await {
-                                let file_name = file_path.file_stem().unwrap().to_string_lossy();
+                    found_dir_once = true;
 
-                                match handlebars.lock().register_template_string(&file_name, content) {
-                                    Ok(_) => {
-                                        log::info!(
-                                            "Successfully registered template override: {} ({})",
-                                            file_name,
-                                            file_path.display()
-                                        );
-                                    },
-                                    Err(e) => {
-                                        log::error!(
-                                            "Failed to register template during initial scan: {} ({})",
-                                            e,
-                                            file_path.display()
-                                        );
-                                    },
+                    // Initial scan of the prompt overrides directory
+                    if let Ok(mut entries) = params.fs.read_dir(&templates_dir).await {
+                        while let Some(Ok(file_path)) = entries.next().await {
+                            if file_path.to_string_lossy().ends_with(".hbs") {
+                                if let Ok(content) = params.fs.load(&file_path).await {
+                                    let file_name = file_path.file_stem().unwrap().to_string_lossy();
+                                    log::info!("Registering prompt template override: {}", file_name);
+                                    handlebars.lock().register_template_string(&file_name, content).log_err();
                                 }
                             }
                         }
                     }
-                }
 
-                // Watch for changes
-                let (mut changes, watcher) = fs.watch(templates_dir, Duration::from_secs(1)).await;
-                while let Some(changed_paths) = changes.next().await {
-                    for changed_path in changed_paths {
-                        if changed_path.extension().map_or(false, |ext| ext == "hbs") {
-                            log::info!("Reloading template: {}", changed_path.display());
-                            if let Some(content) = fs.load(&changed_path).await.log_err() {
-                                let file_name = changed_path.file_stem().unwrap().to_string_lossy();
-                                let file_path = changed_path.to_string_lossy();
-                                match handlebars.lock().register_template_string(&file_name, content) {
-                                    Ok(_) => log::info!(
-                                        "Successfully reloaded template: {} ({})",
-                                        file_name,
-                                        file_path
-                                    ),
-                                    Err(e) => log::error!(
-                                        "Failed to register template: {} ({})",
-                                        e,
-                                        file_path
-                                    ),
+                    // Watch both the parent directory and the template overrides directory:
+                    // - Monitor the parent directory to detect if the template overrides directory is deleted.
+                    // - Monitor the template overrides directory to re-register templates when they change.
+                    // Combine both watch streams into a single stream.
+                    let (parent_changes, parent_watcher) = params.fs.watch(parent_dir, Duration::from_secs(1)).await;
+                    let (changes, watcher) = params.fs.watch(&templates_dir, Duration::from_secs(1)).await;
+                    let mut combined_changes = futures::stream::select(changes, parent_changes);
+
+                    while let Some(changed_paths) = combined_changes.next().await {
+                        if changed_paths.iter().any(|p| p == &templates_dir) {
+                            if !params.fs.is_dir(&templates_dir).await {
+                                log::info!("Prompt template overrides directory removed. Restoring built-in prompt templates.");
+                                Self::register_built_in_templates(&mut handlebars.lock()).log_err();
+                                break;
+                            }
+                        }
+                        for changed_path in changed_paths {
+                            if changed_path.starts_with(&templates_dir) && changed_path.extension().map_or(false, |ext| ext == "hbs") {
+                                log::info!("Reloading prompt template override: {}", changed_path.display());
+                                if let Some(content) = params.fs.load(&changed_path).await.log_err() {
+                                    let file_name = changed_path.file_stem().unwrap().to_string_lossy();
+                                    handlebars.lock().register_template_string(&file_name, content).log_err();
                                 }
                             }
                         }
                     }
+
+                    drop(watcher);
+                    drop(parent_watcher);
                 }
-                drop(watcher);
             })
             .detach();
     }
 
-    fn register_templates(handlebars: &mut Handlebars) -> Result<(), Box<TemplateError>> {
-        let mut register_template = |id: &str| {
-            let prompt = Assets::get(&format!("prompts/{}.hbs", id))
-                .unwrap_or_else(|| panic!("{} prompt template not found", id))
-                .data;
-            handlebars
-                .register_template_string(id, String::from_utf8_lossy(&prompt))
-                .map_err(Box::new)
-        };
-
-        register_template("content_prompt")?;
-        register_template("terminal_assistant_prompt")?;
-        register_template("edit_workflow")?;
-        register_template("step_resolution")?;
+    fn register_built_in_templates(handlebars: &mut Handlebars) -> Result<()> {
+        for path in Assets.list("prompts")? {
+            if let Some(id) = path.split('/').last().and_then(|s| s.strip_suffix(".hbs")) {
+                if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
+                    log::info!("Registering built-in prompt template: {}", id);
+                    handlebars
+                        .register_template_string(id, String::from_utf8_lossy(prompt.as_ref()))?
+                }
+            }
+        }
 
         Ok(())
     }
