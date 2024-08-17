@@ -5,12 +5,12 @@ Output {{ content_type }} to insert into the given `<document>` in accordance wi
 Generate output to be inserted prior to the special ⎀ character.
 </task>
 
-<instruction>
+<rule>
 You are only to insert NEW {{{ content_type }}} based on the specified `<prompt>` tag.
-Do NOT repeat any content that surrounds the ⎀ character
-Do NOT repeat the ⎀ character.
+DO NOT repeat any content that surrounds the ⎀ character
+DO NOT repeat the ⎀ character itself.
 
-<instruction_example>
+<rule_example>
 <example_input>
 <document language="Rust">
 impl Foo {
@@ -36,12 +36,8 @@ impl Foo {
     // This is an example of a doc commment
     // It could be multiple lines
 </good_output>
-</instruction_example>
-</instruction>
-
-<instruction>
-Do not add extra indentation to the generated content.
-</instruction>
+</rule_example>
+</rule>
 
 {{#if truncated}}
 <document language="{{{ language }}}" truncated="true">
@@ -57,10 +53,9 @@ The contents of the document tag above have been truncated for brevity.
 </note>
 {{/if}}
 
-<instructions>
+<instruction>
 Focus on inserting {{{ content_type }}} at the location prior to the ⎀ character based on the `<prompt>` below.
-Do not generate an initial empty line.
-</instructions>
+</instruction>
 
 Here's the excerpt from the document where you will perform the edit.
 
@@ -72,9 +67,13 @@ Here's the excerpt from the document where you will perform the edit.
 {{{ prompt }}}
 </prompt>
 
-<directive>
-Output {{{ content_type }}} immediately. No commentary.
-Your first token should be {{{ content_type }}} written in {{{ language }}}.
-DO NOT repeat existing {{{ content_type }}}.
-Do NOT output the ⎀ character.
-</directive>
+<rules>
+- Your first token should be {{{ content_type }}} written in {{{ language }}}.
+- DO NOT repeat existing {{{ content_type }}}.
+- DO NOT output the ⎀ character.
+- DO NOT add extra indentation to the generated content.
+</rules>
+
+<output_format>
+Output pure {{{ language }}} with no commentary.
+</output_format>

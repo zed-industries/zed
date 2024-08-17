@@ -72,6 +72,7 @@ const PROMPT_HISTORY_MAX_LEN: usize = 20;
 pub struct InlineAssistant {
     next_assist_id: InlineAssistId,
     next_assist_group_id: InlineAssistGroupId,
+
     assists: HashMap<InlineAssistId, InlineAssist>,
     assists_by_editor: HashMap<WeakView<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
@@ -2313,10 +2314,11 @@ impl Codegen {
             } else {
                 let request = self.build_request(user_prompt, assistant_panel_context, cx)?;
 
-                println!(
-                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n{}",
-                    request
-                );
+                // todo!
+                // println!(
+                //     "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n{}",
+                //     request
+                // );
 
                 let chunks =
                     cx.spawn(|_, cx| async move { model.stream_completion(request, &cx).await });
@@ -2501,9 +2503,10 @@ impl Codegen {
                             };
 
                             let result = diff.await;
-                            println!("Base indent: {:?}", base_indent_size);
-                            println!("Raw output: {:?}", raw_output);
-                            println!("Generated text: {:?}", generated_text);
+                            // todo!
+                            // println!("Base indent: {:?}", base_indent_size);
+                            // println!("Raw output: {:?}", raw_output);
+                            // println!("Generated text: {:?}", generated_text);
 
                             let error_message =
                                 result.as_ref().err().map(|error| error.to_string());
