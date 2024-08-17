@@ -2545,14 +2545,15 @@ impl ContextEditor {
                                         .id("step")
                                         .group("step-label")
                                         .items_center()
-                                        .gap_1p5()
+                                        .gap_1()
                                         .child(step_label_element)
                                         .child(
-                                            IconButton::new("edit-step", IconName::Pencil)
+                                            IconButton::new("edit-step", IconName::SearchCode)
                                                 .size(ButtonSize::Compact)
+                                                .icon_size(IconSize::Small)
                                                 .shape(IconButtonShape::Square)
                                                 .visible_on_hover("step-label")
-                                                .tooltip(|cx| Tooltip::text("Edit Step", cx))
+                                                .tooltip(|cx| Tooltip::text("Open Step View", cx))
                                                 .on_click({
                                                     let this = weak_self.clone();
                                                     let step_range = step_range.clone();
