@@ -16,6 +16,7 @@ mod blade;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
+mod fps;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -51,6 +52,7 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
+pub use fps::*;
 pub use keystroke::*;
 
 #[cfg(target_os = "linux")]

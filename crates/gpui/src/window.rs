@@ -544,6 +544,7 @@ pub struct Window {
     hovered: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    /// We assign this to be notified when the platform graphics backend fires the next completion callback for drawing the window.
     present_completed: RefCell<Option<oneshot::Sender<()>>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,

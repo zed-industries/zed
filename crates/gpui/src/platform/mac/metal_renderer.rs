@@ -1,7 +1,7 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
     point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
-    Hsla, MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite,
+    FpsCounter, Hsla, MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite,
     PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
 };
 use anyhow::{anyhow, Result};
@@ -106,6 +106,7 @@ pub(crate) struct MetalRenderer {
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     sprite_atlas: Arc<MetalAtlas>,
     core_video_texture_cache: CVMetalTextureCache,
+    fps_counter: Arc<FpsCounter>,
 }
 
 impl MetalRenderer {
@@ -251,6 +252,7 @@ impl MetalRenderer {
             instance_buffer_pool,
             sprite_atlas,
             core_video_texture_cache,
+            fps_counter: FpsCounter::new(),
         }
     }
 
@@ -321,16 +323,24 @@ impl MetalRenderer {
                 Ok(command_buffer) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
-                    let block = ConcreteBlock::new(move |_| {
-                        if let Some(on_complete) = on_complete.lock().take() {
-                            on_complete.send(()).ok();
-                        }
-                        if let Some(instance_buffer) = instance_buffer.take() {
-                            instance_buffer_pool.lock().release(instance_buffer);
-                        }
-                    });
-                    let block = block.copy();
-                    command_buffer.add_completed_handler(&block);
+                    let device = self.device.clone();
+                    let fps_counter = self.fps_counter.clone();
+                    let completed_handler =
+                        ConcreteBlock::new(move |_: &metal::CommandBufferRef| {
+                            let mut cpu_timestamp = 0;
+                            let mut gpu_timestamp = 0;
+                            device.sample_timestamps(&mut cpu_timestamp, &mut gpu_timestamp);
+
+                            fps_counter.increment(gpu_timestamp);
+                            if let Some(on_complete) = on_complete.lock().take() {
+                                on_complete.send(()).ok();
+                            }
+                            if let Some(instance_buffer) = instance_buffer.take() {
+                                instance_buffer_pool.lock().release(instance_buffer);
+                            }
+                        });
+                    let completed_handler = completed_handler.copy();
+                    command_buffer.add_completed_handler(&completed_handler);
 
                     if self.presents_with_transaction {
                         command_buffer.commit();
