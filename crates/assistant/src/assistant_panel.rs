@@ -3745,17 +3745,15 @@ impl Render for ContextEditor {
                                         })
                                         .tooltip(move |cx| {
                                             cx.new_view(|cx| {
-                                                Tooltip::new("Insert Selection")
-                                                    .meta("Press to quote via keyboard")
-                                                    .key_binding(focus_handle.as_ref().and_then(
-                                                        |handle| {
-                                                            KeyBinding::for_action_in(
-                                                                &QuoteSelection,
-                                                                &handle,
-                                                                cx,
-                                                            )
-                                                        },
-                                                    ))
+                                                Tooltip::new("Insert Selection").key_binding(
+                                                    focus_handle.as_ref().and_then(|handle| {
+                                                        KeyBinding::for_action_in(
+                                                            &QuoteSelection,
+                                                            &handle,
+                                                            cx,
+                                                        )
+                                                    }),
+                                                )
                                             })
                                             .into()
                                         }),
