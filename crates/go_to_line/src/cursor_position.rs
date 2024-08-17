@@ -44,7 +44,10 @@ impl CursorPosition {
         self.selected_count.selections = editor.selections.count();
         let mut last_selection: Option<Selection<usize>> = None;
         for selection in editor.selections.all::<usize>(cx) {
-            self.selected_count.characters += selection.end - selection.start;
+            self.selected_count.characters += buffer
+                .text_for_range(selection.start..selection.end)
+                .map(|t| t.chars().count())
+                .sum::<usize>();
             if last_selection
                 .as_ref()
                 .map_or(true, |last_selection| selection.id > last_selection.id)
