@@ -34,7 +34,6 @@ use language_model::{
 };
 pub(crate) use model_selector::*;
 pub use prompts::PromptBuilder;
-use prompts::PromptOverrideContext;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
@@ -181,12 +180,7 @@ impl Assistant {
     }
 }
 
-pub fn init(
-    fs: Arc<dyn Fs>,
-    client: Arc<Client>,
-    dev_mode: bool,
-    cx: &mut AppContext,
-) -> Arc<PromptBuilder> {
+pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) -> Arc<PromptBuilder> {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
     SlashCommandSettings::register(cx);
@@ -223,14 +217,10 @@ pub fn init(
     assistant_panel::init(cx);
     context_servers::init(cx);
 
-    let prompt_builder = prompts::PromptBuilder::new(Some(PromptOverrideContext {
-        dev_mode,
-        fs: fs.clone(),
-        cx,
-    }))
-    .log_err()
-    .map(Arc::new)
-    .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
+    let prompt_builder = prompts::PromptBuilder::new(Some((fs.clone(), cx)))
+        .log_err()
+        .map(Arc::new)
+        .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
     register_slash_commands(Some(prompt_builder.clone()), cx);
     inline_assistant::init(
         fs.clone(),
