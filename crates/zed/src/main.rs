@@ -187,12 +187,7 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) -> Arc<PromptBuild
     );
     snippet_provider::init(cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
-    let prompt_builder = assistant::init(
-        app_state.fs.clone(),
-        app_state.client.clone(),
-        stdout_is_a_pty(),
-        cx,
-    );
+    let prompt_builder = assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
     repl::init(
         app_state.fs.clone(),
         app_state.client.telemetry().clone(),
