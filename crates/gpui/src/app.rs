@@ -1310,6 +1310,14 @@ impl AppContext {
 
         (task, is_first)
     }
+
+    /// Returns the time to first window draw, if available.
+    pub fn time_to_first_window_draw(&self) -> Option<Duration> {
+        match self.time_to_first_window_draw {
+            Some(TimeToFirstWindowDraw::Done(duration)) => Some(duration),
+            _ => None,
+        }
+    }
 }
 
 impl Context for AppContext {
