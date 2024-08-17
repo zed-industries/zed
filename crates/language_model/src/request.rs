@@ -196,6 +196,24 @@ pub struct LanguageModelRequestMessage {
     pub cache: bool,
 }
 
+impl std::fmt::Display for LanguageModelRequestMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Role: {}\n", self.role)?;
+        write!(f, "Content:\n")?;
+        for (index, content) in self.content.iter().enumerate() {
+            match content {
+                MessageContent::Text(text) => write!(f, "  {}: Text ({})\n", index, text)?,
+                MessageContent::Image(image) => write!(
+                    f,
+                    "  {}: Image ({}x{})\n",
+                    index, image.size.width.0, image.size.height.0
+                )?,
+            }
+        }
+        write!(f, "Cache: {}", self.cache)
+    }
+}
+
 impl LanguageModelRequestMessage {
     pub fn string_contents(&self) -> String {
         let mut string_buffer = String::new();
@@ -226,6 +244,20 @@ pub struct LanguageModelRequest {
     pub messages: Vec<LanguageModelRequestMessage>,
     pub stop: Vec<String>,
     pub temperature: f32,
+}
+
+impl std::fmt::Display for LanguageModelRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "LanguageModelRequest {{")?;
+        writeln!(f, "  messages: [")?;
+        for message in &self.messages {
+            writeln!(f, "    {}", message)?;
+        }
+        writeln!(f, "  ],")?;
+        writeln!(f, "  stop: {:?},", self.stop)?;
+        writeln!(f, "  temperature: {}", self.temperature)?;
+        write!(f, "}}")
+    }
 }
 
 impl LanguageModelRequest {

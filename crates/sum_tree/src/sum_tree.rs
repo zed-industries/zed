@@ -1275,6 +1275,15 @@ mod tests {
         max: u8,
     }
 
+    /// Represents a summary of integers with various properties.
+    ///
+    /// This struct provides a summary of a collection of integers, including:
+    /// - The count of integers
+    /// - The sum of all integers
+    /// - Whether the collection contains any even numbers
+    /// - The maximum value in the collection
+    ///
+    /// It is used as the summary type for the `SumTree` when storing `u8` values.
     #[derive(Ord, PartialOrd, Default, Eq, PartialEq, Clone, Debug)]
     struct Count(usize);
 

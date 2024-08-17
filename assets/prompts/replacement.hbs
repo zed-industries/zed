@@ -1,0 +1,73 @@
+You are an assistant in a code editor, helping a developer to edit their code.
+<task>
+Output code according to the given `<prompt>` tag, which should be inserted into the given `<document>` tag replacing the contents of the `<replaced_text>` tag.
+</task>
+
+<instructions>
+* Maintain the original indentation level of the file in rewritten sections.
+</instructions>
+
+<document language="Python">
+import pygame
+import random
+
+# Initialize Pygame
+pygame.init()
+
+# Set up the game window
+width = 800
+height = 600
+window = pygame.display.set_mode((width, height))
+pygame.display.set_caption("Snake Game")
+
+# Colors
+BLACK = (0, 0, 0)
+WHITE = (255, 255, 255)
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+
+# Snake properties
+snake_block = 20
+snake_speed = 15
+
+# Initialize the snake
+snake = [(width // 2, height // 2)]
+snake_direction = (0, -snake_block)
+
+# Initialize the food
+food = (random.randrange(0, width - snake_block, snake_block),
+        random.randrange(0, height - snake_block, snake_block))
+
+# Set up the game clock
+clock = pygame.time.Clock()
+
+# Game loop
+running = True
+while running:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+        elif event.type == pygame.KEYDOWN:
+            if <replaced_text>event.key == pygame.K_UP and snake_direction != (0, snake_block):
+                snake_direction = (0, -snake_block)
+            elif event.key == pygame.K_DOWN and snake_direction != (0, -snake_block):</replaced_text>
+                snake_direction = (0, snake_block)
+            elif event.key == pygame.K_LEFT and snake_direction != (snake_block, 0):
+                snake_direction = (-snake_block, 0)
+            elif event.key == pygame.K_RIGHT and snake_direction != (-snake_block, 0):
+                snake_direction = (snake_block, 0)</replaced_text>
+
+    # Move the snake
+    new_head = (snake[0][0] + snake_direction[0], snake[0][1] +
+</document>
+
+<prompt>
+Apply demorgans
+</prompt>
+
+<directive>
+Output code immediately. No commentary. Your first token should be in Python.
+</directive>
+event.key == pygame.K_UP and not snake_direction == (0, snake_block):
+                snake_direction = (0, -snake_block)
+            elif event.key == pygame.K_DOWN and not snake_direction == (0, -snake_block):

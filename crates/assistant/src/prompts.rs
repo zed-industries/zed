@@ -6,7 +6,18 @@ use language::BufferSnapshot;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{ops::Range, sync::Arc, time::Duration};
+use text::Anchor;
 use util::ResultExt;
+
+#[derive(Serialize)]
+pub struct InsertionContext {
+    pub document_prefix: String,
+    pub document_suffix: String,
+    pub prompt: String,
+    pub language: String,
+    pub content_type: String,
+    pub truncated: bool,
+}
 
 #[derive(Serialize)]
 pub struct ContentPromptContext {
@@ -166,6 +177,40 @@ impl PromptBuilder {
         register_template("step_resolution")?;
 
         Ok(())
+    }
+
+    pub fn build_inline_transformation_prompt(
+        &self,
+        user_prompt: String,
+        language_name: Option<&str>,
+        buffer: BufferSnapshot,
+        transform_range: Range<Anchor>,
+        selected_ranges: Vec<Range<Anchor>>,
+        transform_context_range: Range<Anchor>,
+    ) -> Result<String, RenderError> {
+        let mut document_prefix = String::new();
+        for chunk in buffer.text_for_range(0..transform_range.start) {
+            document_prefix.push_str(chunk);
+        }
+
+        let mut document_suffix = String::new();
+        for chunk in buffer.text_for_range(transform_range.end..buffer.len()) {
+            document_suffix.push_str(chunk);
+        }
+
+        let context = InsertionContext {
+            document_prefix,
+            document_suffix,
+            prompt: user_prompt,
+            language: language_name.unwrap_or("").to_string(),
+            content_type: match language_name {
+                None | Some("Markdown" | "Plain Text") => "text".to_string(),
+                Some(_) => "code".to_string(),
+            },
+            truncated: false, // Assuming no truncation for now
+        };
+
+        self.handlebars.lock().render("insertion", &context)
     }
 
     pub fn generate_content_prompt(

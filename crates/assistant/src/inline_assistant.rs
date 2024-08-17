@@ -1,6 +1,8 @@
 use crate::{
-    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
-    CharOperation, LineDiff, LineOperation, ModelSelector, StreamingDiff,
+    humanize_token_count,
+    prompts::{InsertionContext, PromptBuilder},
+    AssistantPanel, AssistantPanelEvent, CharOperation, LineDiff, LineOperation, ModelSelector,
+    StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{telemetry::Telemetry, ErrorExt};
@@ -2303,6 +2305,11 @@ impl Codegen {
             } else {
                 let request = self.build_request(user_prompt, assistant_panel_context, cx)?;
 
+                println!(
+                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n{}",
+                    request
+                );
+
                 let chunks =
                     cx.spawn(|_, cx| async move { model.stream_completion(request, &cx).await });
                 async move { Ok(chunks.await?.boxed()) }.boxed_local()
@@ -2380,17 +2387,30 @@ impl Codegen {
             })
             .collect::<Vec<_>>();
 
+        // todo! Support more than inserting in one location
+
         let prompt = self
             .prompt_builder
-            .generate_content_prompt(
-                user_prompt,
-                language_name,
-                transform_buffer,
-                transform_range,
-                selected_ranges,
-                transform_context_range,
-            )
-            .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
+            .build_inline_transformation_prompt(InsertionContext {
+                document_prefix: ,
+                document_suffix: (),
+                prompt: (),
+                language: (),
+                content_type: (),
+                truncated: (),
+            });
+
+        // let prompt = self
+        //     .prompt_builder
+        //     .generate_content_prompt(
+        //         user_prompt,
+        //         language_name,
+        //         transform_buffer,
+        //         transform_range,
+        //         selected_ranges,
+        //         transform_context_range,
+        //     )
+        //     .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
 
         let mut messages = Vec::new();
         if let Some(context_request) = assistant_panel_context {
