@@ -16,8 +16,8 @@
 # --worktree option. It also provides informative output and error handling.
 
 if [ "$1" = "link" ]; then
-    # Remove existing link
-    rm -f ~/.config/zed/prompt_overrides
+    # Remove existing link (or directory)
+    rm -rf ~/.config/zed/prompt_overrides
     if [ "$2" = "--worktree" ]; then
         # Check if 'prompts' branch exists, create if not
         if ! git show-ref --quiet refs/heads/prompts; then
@@ -30,17 +30,21 @@ if [ "$1" = "link" ]; then
             # Create worktree if it doesn't exist
             git worktree add ../zed_prompts prompts || git worktree add ../zed_prompts -b prompts
         fi
-        ln -sf "$(pwd)/../zed_prompts/assets/prompts" ~/.config/zed/prompt_overrides
+        ln -sf "$(realpath "$(pwd)/../zed_prompts/assets/prompts")" ~/.config/zed/prompt_overrides
         echo "Linked $(realpath "$(pwd)/../zed_prompts/assets/prompts") to ~/.config/zed/prompt_overrides"
-        echo -e "\033[0;31mDon't forget you have it linked, or your prompts will go stale\033[0m"
+        echo -e "\033[0;33mDon't forget you have it linked, or your prompts will go stale\033[0m"
     else
         ln -sf "$(pwd)/assets/prompts" ~/.config/zed/prompt_overrides
         echo "Linked $(pwd)/assets/prompts to ~/.config/zed/prompt_overrides"
     fi
 elif [ "$1" = "unlink" ]; then
-    # Remove symbolic link
-    rm ~/.config/zed/prompt_overrides
-    echo "Unlinked ~/.config/zed/prompt_overrides"
+    if [ -e ~/.config/zed/prompt_overrides ]; then
+        # Remove symbolic link
+        rm -rf ~/.config/zed/prompt_overrides
+        echo "Unlinked ~/.config/zed/prompt_overrides"
+    else
+        echo -e "\033[33mWarning: No file exists at ~/.config/zed/prompt_overrides\033[0m"
+    fi
 else
     echo "This script helps you manage prompt overrides for Zed."
     echo "You can link this directory to have Zed use the contents of your current repo templates as your active prompts,"
