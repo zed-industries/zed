@@ -1,7 +1,6 @@
 use crate::db::{self, ChannelRole, NewUserParams};
 
 use anyhow::Context;
-use chrono::{DateTime, Utc};
 use db::Database;
 use serde::{de::DeserializeOwned, Deserialize};
 use std::{fmt::Write, fs, path::Path};
@@ -13,7 +12,6 @@ struct GitHubUser {
     id: i32,
     login: String,
     email: Option<String>,
-    created_at: DateTime<Utc>,
 }
 
 #[derive(Deserialize)]
@@ -131,7 +129,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
                         &github_user.login,
                         Some(github_user.id),
                         github_user.email.as_deref(),
-                        Some(github_user.created_at),
+                        None,
                         None,
                     )
                     .await
@@ -161,9 +159,9 @@ async fn fetch_github<T: DeserializeOwned>(client: &reqwest::Client, url: &str) 
         .header("user-agent", "zed")
         .send()
         .await
-        .unwrap_or_else(|_| panic!("failed to fetch '{url}'"));
+        .unwrap_or_else(|error| panic!("failed to fetch '{url}': {error}"));
     response
         .json()
         .await
-        .unwrap_or_else(|_| panic!("failed to deserialize github user from '{url}'"))
+        .unwrap_or_else(|error| panic!("failed to deserialize github user from '{url}': {error}"))
 }
