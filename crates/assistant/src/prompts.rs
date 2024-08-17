@@ -188,7 +188,7 @@ impl PromptBuilder {
 
     fn register_built_in_templates(handlebars: &mut Handlebars) -> Result<()> {
         for path in Assets.list("prompts")? {
-            if let Some(id) = path.split('/').last() {
+            if let Some(id) = path.split('/').last().and_then(|s| s.strip_suffix(".hbs")) {
                 if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
                     log::info!("Registering built-in prompt template: {}", id);
                     handlebars
