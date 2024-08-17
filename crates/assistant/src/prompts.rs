@@ -4,15 +4,17 @@ use futures::StreamExt;
 use handlebars::{Handlebars, RenderError, TemplateError};
 use language::BufferSnapshot;
 use parking_lot::Mutex;
+use rope::Point;
 use serde::Serialize;
-use std::{ops::Range, sync::Arc, time::Duration};
-use text::Anchor;
+use std::{cmp, ops::Range, sync::Arc, time::Duration};
 use util::ResultExt;
 
 #[derive(Serialize)]
 pub struct InsertionContext {
     pub document_prefix: String,
     pub document_suffix: String,
+    pub context_prefix: String,
+    pub context_suffix: String,
     pub prompt: String,
     pub language: String,
     pub content_type: String,
@@ -171,6 +173,7 @@ impl PromptBuilder {
                 .map_err(Box::new)
         };
 
+        register_template("insertion")?;
         register_template("content_prompt")?;
         register_template("terminal_assistant_prompt")?;
         register_template("edit_workflow")?;
@@ -179,35 +182,54 @@ impl PromptBuilder {
         Ok(())
     }
 
-    pub fn build_inline_transformation_prompt(
+    pub fn build_insertion_prompt(
         &self,
         user_prompt: String,
         language_name: Option<&str>,
         buffer: BufferSnapshot,
-        transform_range: Range<Anchor>,
-        selected_ranges: Vec<Range<Anchor>>,
-        transform_context_range: Range<Anchor>,
+        position: Point,
     ) -> Result<String, RenderError> {
         let mut document_prefix = String::new();
-        for chunk in buffer.text_for_range(0..transform_range.start) {
+        for chunk in buffer.text_for_range(Point::zero()..position) {
             document_prefix.push_str(chunk);
         }
 
         let mut document_suffix = String::new();
-        for chunk in buffer.text_for_range(transform_range.end..buffer.len()) {
+        for chunk in buffer.text_for_range(position..buffer.max_point()) {
             document_suffix.push_str(chunk);
         }
+
+        // Get 5 lines of context above and below the insertion
+        let mut context_range = position..position;
+        context_range.start.row = context_range.start.row.saturating_sub(5);
+        context_range.start.column = 0;
+        context_range.end = cmp::min(context_range.end + Point::new(5, 0), buffer.max_point());
+        context_range.end.column = buffer.line_len(context_range.end.row);
+        let mut context_prefix = String::new();
+        let mut context_suffix = String::new();
+        for chunk in buffer.text_for_range(context_range.start..position) {
+            context_prefix.push_str(chunk);
+        }
+        for chunk in buffer.text_for_range(position..context_range.end) {
+            context_suffix.push_str(chunk);
+        }
+
+        let language = language_name.unwrap_or("Unknown").to_string();
+        let content_type = match language_name {
+            None | Some("Markdown" | "Plain Text") => "text".to_string(),
+            Some(_) => "code".to_string(),
+        };
+        let truncated = false; // Assuming no truncation for now
 
         let context = InsertionContext {
             document_prefix,
             document_suffix,
+            context_prefix,
+            context_suffix,
             prompt: user_prompt,
-            language: language_name.unwrap_or("").to_string(),
-            content_type: match language_name {
-                None | Some("Markdown" | "Plain Text") => "text".to_string(),
-                Some(_) => "code".to_string(),
-            },
-            truncated: false, // Assuming no truncation for now
+            language,
+            content_type,
+            truncated,
         };
 
         self.handlebars.lock().render("insertion", &context)

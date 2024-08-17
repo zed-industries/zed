@@ -1,8 +1,6 @@
 use crate::{
-    humanize_token_count,
-    prompts::{InsertionContext, PromptBuilder},
-    AssistantPanel, AssistantPanelEvent, CharOperation, LineDiff, LineOperation, ModelSelector,
-    StreamingDiff,
+    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
+    CharOperation, LineDiff, LineOperation, ModelSelector, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{telemetry::Telemetry, ErrorExt};
@@ -48,7 +46,6 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
-use text::OffsetRangeExt as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
@@ -156,40 +153,51 @@ impl InlineAssistant {
             .map(|range| range.to_point(&snapshot))
             .collect::<Vec<Range<Point>>>();
 
-        for selection_range in selection_ranges {
-            let selection_is_newest = newest_selection_range.contains_inclusive(&selection_range);
-            let mut transform_range = selection_range.start..selection_range.end;
-
-            // Expand the transform range to start/end of lines.
-            // If a non-empty selection ends at the start of the last line, clip at the end of the penultimate line.
-            transform_range.start.column = 0;
-            if transform_range.end.column == 0 && transform_range.end > transform_range.start {
-                transform_range.end.row -= 1;
-            }
-            transform_range.end.column = snapshot.line_len(MultiBufferRow(transform_range.end.row));
-            let selection_range =
-                selection_range.start..selection_range.end.min(transform_range.end);
-
-            // If we intersect the previous transform range,
-            if let Some(CodegenRange {
-                transform_range: prev_transform_range,
-                selection_ranges,
-                focus_assist,
-            }) = codegen_ranges.last_mut()
-            {
-                if transform_range.start <= prev_transform_range.end {
-                    prev_transform_range.end = transform_range.end;
-                    selection_ranges.push(selection_range);
-                    *focus_assist |= selection_is_newest;
-                    continue;
-                }
-            }
-
+        if selection_ranges.len() == 1 {
+            let selection_range = &selection_ranges[0];
             codegen_ranges.push(CodegenRange {
-                transform_range,
-                selection_ranges: vec![selection_range],
-                focus_assist: selection_is_newest,
-            })
+                transform_range: selection_range.clone(),
+                selection_ranges: vec![selection_range.clone()],
+                focus_assist: true,
+            });
+        } else {
+            for selection_range in selection_ranges {
+                let selection_is_newest =
+                    newest_selection_range.contains_inclusive(&selection_range);
+                let mut transform_range = selection_range.start..selection_range.end;
+
+                // Expand the transform range to start/end of lines.
+                // If a non-empty selection ends at the start of the last line, clip at the end of the penultimate line.
+                transform_range.start.column = 0;
+                if transform_range.end.column == 0 && transform_range.end > transform_range.start {
+                    transform_range.end.row -= 1;
+                }
+                transform_range.end.column =
+                    snapshot.line_len(MultiBufferRow(transform_range.end.row));
+                let selection_range =
+                    selection_range.start..selection_range.end.min(transform_range.end);
+
+                // If we intersect the previous transform range,
+                if let Some(CodegenRange {
+                    transform_range: prev_transform_range,
+                    selection_ranges,
+                    focus_assist,
+                }) = codegen_ranges.last_mut()
+                {
+                    if transform_range.start <= prev_transform_range.end {
+                        prev_transform_range.end = transform_range.end;
+                        selection_ranges.push(selection_range);
+                        *focus_assist |= selection_is_newest;
+                        continue;
+                    }
+                }
+
+                codegen_ranges.push(CodegenRange {
+                    transform_range,
+                    selection_ranges: vec![selection_range],
+                    focus_assist: selection_is_newest,
+                })
+            }
         }
 
         let assist_group_id = self.next_assist_group_id.post_inc();
@@ -1080,10 +1088,10 @@ impl InlineAssistant {
             let mut new_blocks = Vec::new();
             for (new_row, old_row_range) in deleted_row_ranges {
                 let (_, buffer_start) = old_snapshot
-                    .point_to_buffer_offset(Point::new(*old_row_range.start(), 0))
+                    .position_to_buffer_offset(Point::new(*old_row_range.start(), 0))
                     .unwrap();
                 let (_, buffer_end) = old_snapshot
-                    .point_to_buffer_offset(Point::new(
+                    .position_to_buffer_offset(Point::new(
                         *old_row_range.end(),
                         old_snapshot.line_len(MultiBufferRow(*old_row_range.end())),
                     ))
@@ -2324,8 +2332,8 @@ impl Codegen {
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &AppContext,
     ) -> Result<LanguageModelRequest> {
-        let buffer = self.buffer.read(cx).snapshot(cx);
-        let language = buffer.language_at(self.transform_range.start);
+        let multi_buffer = self.buffer.read(cx).snapshot(cx);
+        let language = multi_buffer.language_at(self.transform_range.start);
         let language_name = if let Some(language) = language.as_ref() {
             if Arc::ptr_eq(language, &language::PLAIN_TEXT) {
                 None
@@ -2350,67 +2358,55 @@ impl Codegen {
         };
 
         let language_name = language_name.as_deref();
-        let start = buffer.point_to_buffer_offset(self.transform_range.start);
-        let end = buffer.point_to_buffer_offset(self.transform_range.end);
-        let (transform_buffer, transform_range) = if let Some((start, end)) = start.zip(end) {
-            let (start_buffer, start_buffer_offset) = start;
-            let (end_buffer, end_buffer_offset) = end;
-            if start_buffer.remote_id() == end_buffer.remote_id() {
-                (start_buffer.clone(), start_buffer_offset..end_buffer_offset)
-            } else {
-                return Err(anyhow::anyhow!("invalid transformation range"));
-            }
-        } else {
-            return Err(anyhow::anyhow!("invalid transformation range"));
-        };
-
-        let mut transform_context_range = transform_range.to_point(&transform_buffer);
-        transform_context_range.start.row = transform_context_range.start.row.saturating_sub(3);
-        transform_context_range.start.column = 0;
-        transform_context_range.end =
-            (transform_context_range.end + Point::new(3, 0)).min(transform_buffer.max_point());
-        transform_context_range.end.column =
-            transform_buffer.line_len(transform_context_range.end.row);
-        let transform_context_range = transform_context_range.to_offset(&transform_buffer);
+        let start = multi_buffer.position_to_buffer_offset(self.transform_range.start);
+        let end = multi_buffer.position_to_buffer_offset(self.transform_range.end);
+        let buffer = start
+            .zip(end)
+            .and_then(|((start_buffer, _), (end_buffer, _))| {
+                if start_buffer.remote_id() == end_buffer.remote_id() {
+                    Some(start_buffer.clone())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| anyhow::anyhow!("invalid transformation range"))?;
 
         let selected_ranges = self
             .selected_ranges
             .iter()
             .filter_map(|selected_range| {
-                let start = buffer
-                    .point_to_buffer_offset(selected_range.start)
+                let start = multi_buffer
+                    .position_to_buffer_point(selected_range.start)
                     .map(|(_, offset)| offset)?;
-                let end = buffer
-                    .point_to_buffer_offset(selected_range.end)
+                let end = multi_buffer
+                    .position_to_buffer_point(selected_range.end)
                     .map(|(_, offset)| offset)?;
+
                 Some(start..end)
             })
             .collect::<Vec<_>>();
 
-        // todo! Support more than inserting in one location
-
-        let prompt = self
-            .prompt_builder
-            .build_inline_transformation_prompt(InsertionContext {
-                document_prefix: ,
-                document_suffix: (),
-                prompt: (),
-                language: (),
-                content_type: (),
-                truncated: (),
-            });
-
-        // let prompt = self
-        //     .prompt_builder
-        //     .generate_content_prompt(
-        //         user_prompt,
-        //         language_name,
-        //         transform_buffer,
-        //         transform_range,
-        //         selected_ranges,
-        //         transform_context_range,
-        //     )
-        //     .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
+        let inline_assist_prompt = if selected_ranges.len() == 1 {
+            let selected_range = &selected_ranges[0];
+            if selected_range.start == selected_range.end {
+                self.prompt_builder.build_insertion_prompt(
+                    user_prompt,
+                    language_name,
+                    buffer,
+                    selected_range.start,
+                )?
+            } else {
+                // Single non-empty range
+                // Implement logic for replacement
+                // TODO: Add replacement logic here
+                anyhow::bail!("Unsupported transformation!")
+            }
+        } else {
+            // Multiple ranges
+            // Implement logic for handling multiple ranges
+            // TODO: Add multiple range handling logic here
+            anyhow::bail!("Unsupported transformation!")
+        };
 
         let mut messages = Vec::new();
         if let Some(context_request) = assistant_panel_context {
@@ -2419,7 +2415,7 @@ impl Codegen {
 
         messages.push(LanguageModelRequestMessage {
             role: Role::User,
-            content: vec![prompt.into()],
+            content: vec![inline_assist_prompt.into()],
             cache: false,
         });
 

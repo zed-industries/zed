@@ -2650,11 +2650,11 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn point_to_buffer_offset<T: ToOffset>(
+    pub fn position_to_buffer_offset<T: ToOffset>(
         &self,
-        point: T,
+        position: T,
     ) -> Option<(&BufferSnapshot, usize)> {
-        let offset = point.to_offset(self);
+        let offset = position.to_offset(self);
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&offset, Bias::Right, &());
         if cursor.item().is_none() {
@@ -2664,6 +2664,24 @@ impl MultiBufferSnapshot {
         cursor.item().map(|excerpt| {
             let excerpt_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
             let buffer_point = excerpt_start + offset - *cursor.start();
+            (&excerpt.buffer, buffer_point)
+        })
+    }
+
+    pub fn position_to_buffer_point<T: ToPoint>(
+        &self,
+        position: T,
+    ) -> Option<(&BufferSnapshot, Point)> {
+        let point = position.to_point(self);
+        let mut cursor = self.excerpts.cursor::<Point>();
+        cursor.seek(&point, Bias::Right, &());
+        if cursor.item().is_none() {
+            cursor.prev(&());
+        }
+
+        cursor.item().map(|excerpt| {
+            let excerpt_start = excerpt.range.context.start.to_point(&excerpt.buffer);
+            let buffer_point = excerpt_start + point - *cursor.start();
             (&excerpt.buffer, buffer_point)
         })
     }
@@ -3448,12 +3466,12 @@ impl MultiBufferSnapshot {
     }
 
     pub fn file_at<T: ToOffset>(&self, point: T) -> Option<&Arc<dyn File>> {
-        self.point_to_buffer_offset(point)
+        self.position_to_buffer_offset(point)
             .and_then(|(buffer, _)| buffer.file())
     }
 
     pub fn language_at<T: ToOffset>(&self, point: T) -> Option<&Arc<Language>> {
-        self.point_to_buffer_offset(point)
+        self.position_to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
@@ -3464,7 +3482,7 @@ impl MultiBufferSnapshot {
     ) -> &'a LanguageSettings {
         let mut language = None;
         let mut file = None;
-        if let Some((buffer, offset)) = self.point_to_buffer_offset(point) {
+        if let Some((buffer, offset)) = self.position_to_buffer_offset(point) {
             language = buffer.language_at(offset);
             file = buffer.file();
         }
@@ -3472,7 +3490,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn language_scope_at<T: ToOffset>(&self, point: T) -> Option<LanguageScope> {
-        self.point_to_buffer_offset(point)
+        self.position_to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_scope_at(offset))
     }
 
@@ -3481,7 +3499,7 @@ impl MultiBufferSnapshot {
         position: T,
         cx: &AppContext,
     ) -> Option<IndentSize> {
-        let (buffer_snapshot, offset) = self.point_to_buffer_offset(position)?;
+        let (buffer_snapshot, offset) = self.position_to_buffer_offset(position)?;
         Some(buffer_snapshot.language_indent_size_at(offset, cx))
     }
 

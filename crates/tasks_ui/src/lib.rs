@@ -166,7 +166,7 @@ fn active_item_selection_properties(
                 let multi_buffer = editor.buffer().clone();
                 let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
                 let (buffer_snapshot, buffer_offset) =
-                    multi_buffer_snapshot.point_to_buffer_offset(selection.head())?;
+                    multi_buffer_snapshot.position_to_buffer_offset(selection.head())?;
                 let buffer_anchor = buffer_snapshot.anchor_before(buffer_offset);
                 let buffer = multi_buffer.read(cx).buffer(buffer_snapshot.remote_id())?;
                 Some(Location {
