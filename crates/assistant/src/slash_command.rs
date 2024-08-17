@@ -33,6 +33,7 @@ pub mod symbols_command;
 pub mod tab_command;
 pub mod terminal_command;
 pub mod workflow_command;
+pub mod your_command;
 
 pub(crate) struct SlashCommandCompletionProvider {
     cancel_flag: Mutex<Arc<AtomicBool>>,

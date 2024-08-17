@@ -143,7 +143,7 @@ impl PickerDelegate for SlashCommandDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .child(
-                    h_flex().w_full().min_w(px(220.)).child(
+                    h_flex().w_full().min_w(px(260.)).child(
                         v_flex()
                             .child(
                                 Label::new(format!("/{}", command_info.name))
