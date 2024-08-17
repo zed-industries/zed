@@ -152,6 +152,25 @@ pub struct IndentSize {
     pub kind: IndentKind,
 }
 
+impl std::fmt::Display for IndentSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            IndentKind::Space => {
+                for _ in 0..self.len {
+                    write!(f, " ")?;
+                }
+                Ok(())
+            }
+            IndentKind::Tab => {
+                for _ in 0..self.len {
+                    write!(f, "\t")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 /// A whitespace character that's used for indentation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum IndentKind {

@@ -28,7 +28,7 @@ use gpui::{
     FontWeight, Global, HighlightStyle, Model, ModelContext, Subscription, Task, TextStyle,
     UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
-use language::{Buffer, IndentKind, Point, TransactionId};
+use language::{Buffer, Point, TransactionId};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
@@ -2438,26 +2438,13 @@ impl Codegen {
             .text_for_range(edit_range.start..edit_range.end)
             .collect::<Rope>();
 
-        let selection_start = edit_range.start.to_point(&snapshot);
-
-        // Start with the indentation of the first line in the selection
-        let mut suggested_line_indent = snapshot
-            .suggested_indents(selection_start.row..=selection_start.row, cx)
-            .into_values()
-            .next()
-            .unwrap_or_else(|| snapshot.indent_size_for_line(MultiBufferRow(selection_start.row)));
-
-        // If the first line in the selection does not have indentation, check the following lines
-        if suggested_line_indent.len == 0 && suggested_line_indent.kind == IndentKind::Space {
-            for row in selection_start.row..=edit_range.end.to_point(&snapshot).row {
-                let line_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
-                // Prefer tabs if a line in the selection uses tabs as indentation
-                if line_indent.kind == IndentKind::Tab {
-                    suggested_line_indent.kind = IndentKind::Tab;
-                    break;
-                }
-            }
-        }
+        // let selection_start = edit_range.start.to_point(&snapshot);
+        // let base_indent = snapshot
+        //     .indent_size_for_line(MultiBufferRow(selection_start.row))
+        //     .to_string();
+        let base_indent = String::new();
+        let mut generated_text = String::new();
+        let mut raw_output = String::new();
 
         let telemetry = self.telemetry.clone();
         self.diff = Diff::default();
@@ -2483,7 +2470,17 @@ impl Codegen {
                                         response_latency = Some(request_start.elapsed());
                                     }
                                     let chunk = chunk?;
-                                    let char_ops = diff.push_new(&chunk);
+                                    raw_output.push_str(&chunk);
+
+                                    let start_offset = generated_text.len();
+                                    for line in chunk.split_inclusive('\n') {
+                                        if generated_text.ends_with('\n') {
+                                            generated_text.push_str(&base_indent);
+                                        }
+                                        generated_text.push_str(line);
+                                    }
+
+                                    let char_ops = diff.push_new(&generated_text[start_offset..]);
                                     line_diff.push_char_operations(&char_ops, &selected_text);
                                     diff_tx
                                         .send((char_ops, line_diff.line_operations()))
@@ -2501,6 +2498,9 @@ impl Codegen {
                             };
 
                             let result = diff.await;
+                            println!("Base indent: {:?}", base_indent);
+                            println!("Raw output: {:?}", raw_output);
+                            println!("Generated text: {:?}", generated_text);
 
                             let error_message =
                                 result.as_ref().err().map(|error| error.to_string());
