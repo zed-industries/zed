@@ -5,7 +5,7 @@ use handlebars::{Handlebars, RenderError, TemplateError};
 use language::BufferSnapshot;
 use parking_lot::Mutex;
 use serde::Serialize;
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use util::ResultExt;
 
 #[derive(Serialize)]
@@ -38,48 +38,50 @@ pub struct StepResolutionContext {
     pub step_to_resolve: String,
 }
 
+pub struct PromptLoadingParams<'a> {
+    pub fs: Arc<dyn Fs>,
+    pub repo_path: Option<PathBuf>,
+    pub cx: &'a gpui::AppContext,
+}
+
 pub struct PromptBuilder {
     handlebars: Arc<Mutex<Handlebars<'static>>>,
 }
 
 impl PromptBuilder {
-    pub fn new(
-        fs_and_cx: Option<(Arc<dyn Fs>, &gpui::AppContext)>,
-    ) -> Result<Self, Box<TemplateError>> {
+    pub fn new(loading_params: Option<PromptLoadingParams>) -> Result<Self, Box<TemplateError>> {
         let mut handlebars = Handlebars::new();
         Self::register_templates(&mut handlebars)?;
 
         let handlebars = Arc::new(Mutex::new(handlebars));
 
-        if let Some((fs, cx)) = fs_and_cx {
-            Self::watch_fs_for_template_overrides(fs, cx, handlebars.clone());
+        if let Some(params) = loading_params {
+            Self::watch_fs_for_template_overrides(params, handlebars.clone());
         }
 
         Ok(Self { handlebars })
     }
 
     fn watch_fs_for_template_overrides(
-        fs: Arc<dyn Fs>,
-        cx: &gpui::AppContext,
+        params: PromptLoadingParams,
         handlebars: Arc<Mutex<Handlebars<'static>>>,
     ) {
-        let templates_dir = paths::prompt_overrides_dir();
-
-        cx.background_executor()
+        let templates_dir = paths::prompt_overrides_dir(params.repo_path.as_deref());
+        params.cx.background_executor()
             .spawn(async move {
                 // Create the prompt templates directory if it doesn't exist
-                if !fs.is_dir(templates_dir).await {
-                    if let Err(e) = fs.create_dir(templates_dir).await {
+                if !params.fs.is_dir(&templates_dir).await {
+                    if let Err(e) = params.fs.create_dir(&templates_dir).await {
                         log::error!("Failed to create prompt templates directory: {}", e);
                         return;
                     }
                 }
 
                 // Initial scan of the prompts directory
-                if let Ok(mut entries) = fs.read_dir(templates_dir).await {
+                if let Ok(mut entries) = params.fs.read_dir(&templates_dir).await {
                     while let Some(Ok(file_path)) = entries.next().await {
                         if file_path.to_string_lossy().ends_with(".hbs") {
-                            if let Ok(content) = fs.load(&file_path).await {
+                            if let Ok(content) = params.fs.load(&file_path).await {
                                 let file_name = file_path.file_stem().unwrap().to_string_lossy();
 
                                 match handlebars.lock().register_template_string(&file_name, content) {
@@ -104,12 +106,12 @@ impl PromptBuilder {
                 }
 
                 // Watch for changes
-                let (mut changes, watcher) = fs.watch(templates_dir, Duration::from_secs(1)).await;
+                let (mut changes, watcher) = params.fs.watch(&templates_dir, Duration::from_secs(1)).await;
                 while let Some(changed_paths) = changes.next().await {
                     for changed_path in changed_paths {
                         if changed_path.extension().map_or(false, |ext| ext == "hbs") {
                             log::info!("Reloading template: {}", changed_path.display());
-                            if let Some(content) = fs.load(&changed_path).await.log_err() {
+                            if let Some(content) = params.fs.load(&changed_path).await.log_err() {
                                 let file_name = changed_path.file_stem().unwrap().to_string_lossy();
                                 let file_path = changed_path.to_string_lossy();
                                 match handlebars.lock().register_template_string(&file_name, content) {
