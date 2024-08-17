@@ -273,7 +273,7 @@ impl Item for WorkflowStepView {
     }
 
     fn tab_icon(&self, _cx: &WindowContext) -> Option<ui::Icon> {
-        Some(Icon::new(IconName::Pencil))
+        Some(Icon::new(IconName::SearchCode))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(item::ItemEvent)) {

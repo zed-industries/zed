@@ -36,10 +36,10 @@ use fs::Fs;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
     AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    Context as _, CursorStyle, DismissEvent, Empty, Entity, EntityId, EventEmitter, FocusHandle,
-    FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
-    ReadGlobal, Render, RenderImage, SharedString, Size, StatefulInteractiveElement, Styled,
-    Subscription, Task, Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
+    Context as _, DismissEvent, Empty, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
+    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render,
+    RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task,
+    Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -69,8 +69,8 @@ use ui::TintColor;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
-    Avatar, AvatarShape, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
-    ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
+    Avatar, AvatarShape, ButtonLike, ContextMenu, Disclosure, ElevationIndex, IconButtonShape,
+    KeyBinding, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use util::ResultExt;
 use workspace::{
@@ -2539,19 +2539,35 @@ impl ContextEditor {
                                         div().child(step_label)
                                     };
 
-                                    let step_label = step_label
+                                    let step_label_element = step_label.into_any_element();
+
+                                    let step_label = h_flex()
                                         .id("step")
-                                        .cursor(CursorStyle::PointingHand)
-                                        .on_click({
-                                            let this = weak_self.clone();
-                                            let step_range = step_range.clone();
-                                            move |_, cx| {
-                                                this.update(cx, |this, cx| {
-                                                    this.open_workflow_step(step_range.clone(), cx);
-                                                })
-                                                .ok();
-                                            }
-                                        });
+                                        .group("step-label")
+                                        .items_center()
+                                        .gap_1()
+                                        .child(step_label_element)
+                                        .child(
+                                            IconButton::new("edit-step", IconName::SearchCode)
+                                                .size(ButtonSize::Compact)
+                                                .icon_size(IconSize::Small)
+                                                .shape(IconButtonShape::Square)
+                                                .visible_on_hover("step-label")
+                                                .tooltip(|cx| Tooltip::text("Open Step View", cx))
+                                                .on_click({
+                                                    let this = weak_self.clone();
+                                                    let step_range = step_range.clone();
+                                                    move |_, cx| {
+                                                        this.update(cx, |this, cx| {
+                                                            this.open_workflow_step(
+                                                                step_range.clone(),
+                                                                cx,
+                                                            );
+                                                        })
+                                                        .ok();
+                                                    }
+                                                }),
+                                        );
 
                                     div()
                                         .w_full()
