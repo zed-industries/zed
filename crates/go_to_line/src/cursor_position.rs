@@ -12,11 +12,11 @@ use ui::{
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
-#[derive(Copy, Clone, Default, PartialOrd, PartialEq)]
-struct SelectionStats {
-    lines: usize,
-    characters: usize,
-    selections: usize,
+#[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
+pub(crate) struct SelectionStats {
+    pub lines: usize,
+    pub characters: usize,
+    pub selections: usize,
 }
 
 pub struct CursorPosition {
@@ -108,6 +108,11 @@ impl CursorPosition {
             wrote_once = true;
         }
         text.push(')');
+    }
+
+    #[cfg(test)]
+    pub(crate) fn selection_stats(&self) -> &SelectionStats {
+        &self.selected_count
     }
 }
 
