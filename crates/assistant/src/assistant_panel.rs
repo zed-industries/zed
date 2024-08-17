@@ -2088,14 +2088,14 @@ impl ContextEditor {
         command_range: Range<language::Anchor>,
         name: &str,
         arguments: &[String],
-        insert_trailing_newline: bool,
+        ensure_trailing_newline: bool,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
             let output = command.run(arguments, workspace, self.lsp_adapter_delegate.clone(), cx);
             self.context.update(cx, |context, cx| {
-                context.insert_command_output(command_range, output, insert_trailing_newline, cx)
+                context.insert_command_output(command_range, output, ensure_trailing_newline, cx)
             });
         }
     }

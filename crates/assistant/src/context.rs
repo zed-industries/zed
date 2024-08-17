@@ -1395,7 +1395,7 @@ impl Context {
         &mut self,
         command_range: Range<language::Anchor>,
         output: Task<Result<SlashCommandOutput>>,
-        insert_trailing_newline: bool,
+        ensure_trailing_newline: bool,
         cx: &mut ModelContext<Self>,
     ) {
         self.reparse_slash_commands(cx);
@@ -1406,8 +1406,14 @@ impl Context {
                 let output = output.await;
                 this.update(&mut cx, |this, cx| match output {
                     Ok(mut output) => {
-                        if insert_trailing_newline {
-                            output.text.push('\n');
+                        if ensure_trailing_newline {
+                            let has_newline_after_last_section =
+                                output.sections.last().map_or(false, |last_section| {
+                                    output.text[last_section.range.end..].contains('\n')
+                                });
+                            if !has_newline_after_last_section {
+                                output.text.push('\n');
+                            }
                         }
 
                         let version = this.version.clone();
