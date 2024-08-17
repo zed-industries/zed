@@ -4,7 +4,7 @@ use futures::{future, StreamExt};
 use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
-    language_settings::{AllLanguageSettings, LanguageSettingsContent},
+    language_settings::{AllLanguageSettings, LanguageSettingsContent, SoftWrap},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, FakeLspAdapter,
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
@@ -15,7 +15,7 @@ use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
 
-use std::{mem, ops::Range, task::Poll};
+use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
 use task::{ResolvedTask, TaskContext, TaskTemplate, TaskTemplates};
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree, TryFutureExt as _};
@@ -92,48 +92,132 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) {
+async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     init_test(cx);
+    cx.executor().allow_parking();
+
     let dir = temp_tree(json!({
+        ".editorconfig": r#"
+			root = true
+			[*.rs]
+			indent_style = tab
+			indent_size = 3
+			end_of_line = lf
+			insert_final_newline = true
+			trim_trailing_whitespace = true
+			max_line_length = 80
+			[*.rb]
+			tab_width = 10
+		"#,
         ".zed": {
-            "settings.json": r#"{ "tab_size": 8, "ensure_final_newline_on_save": false }"#,
-            "tasks.json": r#"[{
-                    "label": "cargo check",
-                    "command": "cargo",
-                    "args": ["check", "--all"]
-                },]"#,
+            "settings.json": r#"{
+                "tab_size": 8,
+                "hard_tabs": false,
+                "ensure_final_newline_on_save": false,
+                "remove_trailing_whitespace_on_save": false,
+                "preferred_line_length": 64,
+                "soft_wrap": "editor_width"
+            }"#,
         },
-        ".editorconfig": r#"root = true
-			   [*.rs]
-			   insert_final_newline = true
-			"#,
-        "a": {
-            "a.rs": "fn a() {\n    A\n}"
-        },
+        "a.rs": "fn a() {\n    A\n}",
         "b": {
-            ".zed": {
-                "settings.json": r#"{ "tab_size": 2 }"#,
-                "tasks.json": r#"[{
-                        "label": "cargo check",
-                        "command": "cargo",
-                        "args": ["check"]
-                    },]"#,
-            },
-            "b.rs": "fn b() {\n  B\n}"
+            ".editorconfig": r#"
+				[*.rs]
+				indent_size = 2
+				max_line_length = off
+			"#,
+            "b.rs": "fn b() {\n    B\n}",
         },
-        "c": {
-            "c.rs": "fn c() {\n  C\n}",
-            ".editorconfig": r#"[*.rs]
-                   indent_size = 4
-                "#,
-        }
+        "c.rb": "def c\n  C\nend",
+        "README.md": "tabs are better\n",
     }));
 
     let path = dir.path();
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree_from_real_fs(path, path).await;
+    let project = Project::test(fs, [path], cx).await;
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
 
-    let project = Project::test(fs.clone(), [path], cx).await;
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let settings_for = |path: &str| {
+            language_settings(
+                None,
+                Some(
+                    &(File::for_entry(tree.entry_for_path(path).unwrap().clone(), worktree.clone())
+                        as _),
+                ),
+                cx,
+            )
+        };
+
+        let settings_a = settings_for("a.rs");
+        let settings_b = settings_for("b/b.rs");
+        let settings_c = settings_for("c.rb");
+        let settings_readme = settings_for("README.md");
+
+        // .editorconfig overrides .zed/settings
+        assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));
+        assert_eq!(settings_a.hard_tabs, true);
+        assert_eq!(settings_a.ensure_final_newline_on_save, true);
+        assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
+        assert_eq!(settings_a.preferred_line_length, 80);
+
+        // "max_line_length" also sets "soft_wrap"
+        assert_eq!(settings_a.soft_wrap, SoftWrap::PreferredLineLength);
+
+        // .editorconfig in b/ overrides .editorconfig in root
+        assert_eq!(Some(settings_b.tab_size), NonZeroU32::new(2));
+
+        // "indent_size" is not set, so "tab_width" is used
+        assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
+
+        // When max_line_length is "off", default to .zed/settings.json
+        assert_eq!(settings_b.preferred_line_length, 64);
+        assert_eq!(settings_b.soft_wrap, SoftWrap::EditorWidth);
+
+        // README.md should not be affected by .editorconfig's globe "*.rs"
+        assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
+    });
+}
+
+#[gpui::test]
+async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/the-root",
+        json!({
+            ".zed": {
+                "settings.json": r#"{ "tab_size": 8 }"#,
+                "tasks.json": r#"[{
+                    "label": "cargo check",
+                    "command": "cargo",
+                    "args": ["check", "--all"]
+                },]"#,
+            },
+            "a": {
+                "a.rs": "fn a() {\n    A\n}"
+            },
+            "b": {
+                ".zed": {
+                    "settings.json": r#"{ "tab_size": 2 }"#,
+                    "tasks.json": r#"[{
+                        "label": "cargo check",
+                        "command": "cargo",
+                        "args": ["check"]
+                    },]"#,
+                },
+                "b.rs": "fn b() {\n  B\n}"
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
     let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let task_context = TaskContext::default();
 
@@ -145,7 +229,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     });
     let global_task_source_kind = TaskSourceKind::Worktree {
         id: worktree_id,
-        abs_path: PathBuf::from(format!("{}/.zed/tasks.json", path.display())),
+        abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
         id_base: "local_tasks_for_worktree".into(),
     };
 
@@ -203,7 +287,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    abs_path: PathBuf::from(format!("{}/b/.zed/tasks.json", path.display())),
+                    abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
                     id_base: "local_tasks_for_worktree".into(),
                 },
                 "cargo check".to_string(),
@@ -244,10 +328,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     cx.update(|cx| {
         project.update(cx, |project, cx| {
             project.task_inventory().update(cx, |inventory, cx| {
-                inventory.remove_local_static_source(&PathBuf::from(format!(
-                    "{}/.zed/tasks.json",
-                    path.display()
-                )));
+                inventory.remove_local_static_source(Path::new("/the-root/.zed/tasks.json"));
                 inventory.add_source(
                     global_task_source_kind.clone(),
                     |tx, cx| StaticSource::new(TrackedFile::new(rx, tx, cx)),
@@ -279,7 +360,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    abs_path: PathBuf::from(format!("{}/.zed/tasks.json", path.display())),
+                    abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
                     id_base: "local_tasks_for_worktree".into(),
                 },
                 "cargo check".to_string(),
@@ -296,7 +377,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    abs_path: PathBuf::from(format!("{}/b/.zed/tasks.json", path.display())),
+                    abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
                     id_base: "local_tasks_for_worktree".into(),
                 },
                 "cargo check".to_string(),

@@ -54,6 +54,7 @@ fn editorconfig_settings(
         // avoids a performance hit of cloning settings. We could consider showing
         // the error to the user though (it may be a parsing error).
         .and_then(|local_file| ec4rs::properties_of(local_file.abs_path(cx)).ok())
+        .and_then(|cfg| if cfg.is_empty() { None } else { Some(cfg) })
         .map(|mut cfg| {
             cfg.use_fallbacks();
             let max_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
