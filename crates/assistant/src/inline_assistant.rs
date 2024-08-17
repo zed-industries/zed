@@ -2438,11 +2438,14 @@ impl Codegen {
             .text_for_range(edit_range.start..edit_range.end)
             .collect::<Rope>();
 
-        // let selection_start = edit_range.start.to_point(&snapshot);
-        // let base_indent = snapshot
-        //     .indent_size_for_line(MultiBufferRow(selection_start.row))
-        //     .to_string();
-        let base_indent = String::new();
+        let selection_start = edit_range.start.to_point(&snapshot);
+        let base_indent_size = snapshot.indent_size_for_line(MultiBufferRow(selection_start.row));
+        let indent_len_before_selection = base_indent_size.len.min(selection_start.column);
+        let base_indent = match base_indent_size.kind {
+            language::IndentKind::Space => " ".repeat(indent_len_before_selection as usize),
+            language::IndentKind::Tab => "\t".repeat(indent_len_before_selection as usize),
+        };
+
         let mut generated_text = String::new();
         let mut raw_output = String::new();
 
@@ -2498,7 +2501,7 @@ impl Codegen {
                             };
 
                             let result = diff.await;
-                            println!("Base indent: {:?}", base_indent);
+                            println!("Base indent: {:?}", base_indent_size);
                             println!("Raw output: {:?}", raw_output);
                             println!("Generated text: {:?}", generated_text);
 

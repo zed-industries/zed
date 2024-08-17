@@ -40,87 +40,7 @@ impl Foo {
 </instruction>
 
 <instruction>
-Indent the first line of code you generate to match surrounding code.
-
-<instruction_example>
-<example_input>
-<document language="Python">
-class Calculator:
-⎀
-    def square(self, n):
-        return n * n
-</document>
-<prompt>add docstring</prompt>
-</example_input>
-
-<bad_output failure="The first line is not indented">
-"""
-Calculate the square of a given number.
-"""
-</bad_output>
-
-<good_output success="The first line is indented to match surrounding code">
-    """
-    Calculate the square of a given number.
-    """
-</bad_output>
-</instruction_example>
-</instruction>
-
-<instruction>
-Indent all subsequent lines relative to the first line.
-
-<instruction_example>
-<example_input>
-<document language="Rust">
-impl Foo {
-    ⎀
-    fn bar() {}
-}
-</document>
-<prompt>Add a multi-line comment</prompt>
-</example_input>
-<bad_output failure="Subsequent lines are not indented relative to the first line">
-    // This is a multi-line comment. The first line is indented correctly.
-// But subsequent lines aren't relative to it
-// So it's wrong
-</bad_output>
-<good_output success="Subsequent lines are aligned to the first line">
-    // This is a multi-line comment. The first line is indented correctly.
-    // But subsequent lines aren't relative to it
-    // So it's wrong
-</good_output>
-</instruction_example>
-
-</instruction>
-
-<instruction>
-Avoid inserting unnecessary empty lines at the start of the output.
-Start the first line with ' ', '\t', or {{{ content_type }}}, not '\n'.
-
-<instruction_example>
-<example_input>
-<document language="JavaScript">
-test('sum function performs basic arithmetic correctly', () => {
-  expect(sum(2, 3)).toBe(5);
-
-  expect(sum(-5, 10)).toBe(5);
-  expect(sum(3.14, 2.86)).toBeCloseTo(6, 2);
-  expect(sum(0, 100)).toBe(100);
-});
-</document language="JavaScript">
-<prompt>Add 2 more insertions</prompt>
-</example_input>
-<bad_output failure="Generated an initial blank line">
-⎀
-    expect(sum(1000, -1000)).toBe(0);
-    expect(sum(0.1, 0.2)).toBeCloseTo(0.3, 5);
-<bad_output>
-<good_output success="No leading blank line. Generated indentation and code on the first line as instructed.">
-    expect(sum(1000, -1000)).toBe(0);
-    expect(sum(0.1, 0.2)).toBeCloseTo(0.3, 5);
-<bad_output>
-</instruction_example>
+Do not add extra indentation to the generated content.
 </instruction>
 
 {{#if truncated}}
@@ -140,8 +60,6 @@ The contents of the document tag above have been truncated for brevity.
 <instructions>
 Focus on inserting {{{ content_type }}} at the location prior to the ⎀ character based on the `<prompt>` below.
 Do not generate an initial empty line.
-Be sure to indent the first line correctly.
-Be sure to indent subsequent lines based on the first line.
 </instructions>
 
 Here's the excerpt from the document where you will perform the edit.
@@ -156,8 +74,7 @@ Here's the excerpt from the document where you will perform the edit.
 
 <directive>
 Output {{{ content_type }}} immediately. No commentary.
-If indentation is needed, your first tokens must be spaces or tabs to insert before ⎀.
-Your next tokens should be {{{ content_type }}} written in {{{ language }}}.
+Your first token should be {{{ content_type }}} written in {{{ language }}}.
 DO NOT repeat existing {{{ content_type }}}.
 Do NOT output the ⎀ character.
 </directive>
