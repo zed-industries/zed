@@ -11,9 +11,9 @@ use crate::{
     PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
     Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
     SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
+    TimeToFirstWindowDraw, TransformationMatrix, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -1489,6 +1489,12 @@ impl<'a> WindowContext<'a> {
         self.window.refreshing = false;
         self.window.draw_phase = DrawPhase::None;
         self.window.needs_present.set(true);
+
+        if let Some(TimeToFirstWindowDraw::Pending(start)) = self.app.time_to_first_window_draw {
+            let duration = start.elapsed();
+            self.app.time_to_first_window_draw = Some(TimeToFirstWindowDraw::Done(duration));
+            log::info!("time to first window draw: {:?}", duration);
+        }
     }
 
     #[profiling::function]
