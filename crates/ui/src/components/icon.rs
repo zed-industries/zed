@@ -107,6 +107,7 @@ impl IconSize {
 pub enum IconName {
     Ai,
     AiAnthropic,
+    AiAnthropicHosted,
     AiOpenAi,
     AiGoogle,
     AiOllama,
@@ -275,6 +276,7 @@ impl IconName {
         match self {
             IconName::Ai => "icons/ai.svg",
             IconName::AiAnthropic => "icons/ai_anthropic.svg",
+            IconName::AiAnthropicHosted => "icons/ai_anthropic_hosted.svg",
             IconName::AiOpenAi => "icons/ai_open_ai.svg",
             IconName::AiGoogle => "icons/ai_google.svg",
             IconName::AiOllama => "icons/ai_ollama.svg",
