@@ -1211,9 +1211,9 @@ impl PlatformWindow for X11Window {
     }
 
     // TODO: on_complete not yet supported for X11 windows
-    fn draw(&self, scene: &Scene, _on_complete: Option<oneshot::Sender<()>>) {
+    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene, None);
+        inner.renderer.draw(scene, on_complete);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

@@ -934,10 +934,9 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    // TODO: on_complete not yet supported for Wayland windows
-    fn draw(&self, scene: &Scene, _on_complete: Option<oneshot::Sender<()>>) {
+    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
         let mut state = self.borrow_mut();
-        state.renderer.draw(scene, None);
+        state.renderer.draw(scene, on_complete);
     }
 
     fn completed_frame(&self) {
