@@ -7608,6 +7608,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "perplexity"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "zed_extension_api 0.1.0",
+]
+
+[[package]]
 name = "pest"
 version = "2.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
