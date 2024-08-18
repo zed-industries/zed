@@ -493,28 +493,31 @@ impl PlatformInput {
 unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     use cocoa::appkit::*;
 
-    let ime_key = native_event.characters().to_str().to_string();
+    let scancode = native_event.keyCode();
+
+    let mut ime_key = native_event.characters().to_str().to_string();
 
     let mut modifiers = read_modifiers(native_event);
     modifiers.function &= !ime_key.chars().next().map_or(false, |ch| {
         matches!(ch as u16, NSUpArrowFunctionKey..=NSModeSwitchFunctionKey)
     });
 
-    let key = physical_key_from_scancode(native_event.keyCode(), false)
+    let key = physical_key_from_scancode(scancode, false)
         .unwrap_or_default()
         .to_string();
 
-    let ime_key = (if ime_key == key && modifiers.shift {
-        physical_key_from_scancode(native_event.keyCode(), true).map(str::to_string)
+    let ime_key = if modifiers.shift && (modifiers.control || modifiers.platform) {
+        physical_key_from_scancode(scancode, true).map(str::to_string)
     } else {
         Some(ime_key)
-    })
-    .take_if(|ime_key| ime_key.is_empty());
+    }
+    .take_if(|ime_key| !ime_key.is_empty());
 
-    Keystroke {
+    let keystroke = Keystroke {
         modifiers,
         key,
         ime_key,
         ime_inputs: Default::default(),
-    }
+    };
+    keystroke
 }
