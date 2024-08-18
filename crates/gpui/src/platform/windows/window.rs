@@ -675,6 +675,10 @@ impl PlatformWindow for WindowsWindow {
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         Some(self.0.state.borrow().renderer.gpu_specs())
     }
+
+    fn fps(&self) -> Option<f32> {
+        None
+    }
 }
 
 #[implement(IDropTarget)]

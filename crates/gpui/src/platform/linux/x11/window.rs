@@ -1398,4 +1398,8 @@ impl PlatformWindow for X11Window {
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         self.0.state.borrow().renderer.gpu_specs().into()
     }
+
+    fn fps(&self) -> Option<f32> {
+        None
+    }
 }

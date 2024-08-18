@@ -3737,6 +3737,12 @@ impl<'a> WindowContext<'a> {
     pub fn gpu_specs(&self) -> Option<GPUSpecs> {
         self.window.platform_window.gpu_specs()
     }
+
+    /// Get the current FPS (frames per second) of the window.
+    /// This is only supported on macOS currently.
+    pub fn fps(&self) -> Option<f32> {
+        self.window.platform_window.fps()
+    }
 }
 
 #[cfg(target_os = "windows")]

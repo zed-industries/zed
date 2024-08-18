@@ -282,6 +282,10 @@ impl PlatformWindow for TestWindow {
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         None
     }
+
+    fn fps(&self) -> Option<f32> {
+        None
+    }
 }
 
 pub(crate) struct TestAtlasState {

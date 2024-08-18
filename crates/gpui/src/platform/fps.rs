@@ -65,8 +65,8 @@ impl FpsCounter {
     ///
     /// # Returns
     ///
-    /// The calculated FPS as a `f64`, or 0.0 if no frames have been recorded.
-    pub fn fps(&self) -> f64 {
+    /// The calculated FPS as a `f32`, or 0.0 if no frames have been recorded.
+    pub fn fps(&self) -> f32 {
         let head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Relaxed);
 
@@ -78,7 +78,7 @@ impl FpsCounter {
             self.frame_times[head.wrapping_sub(1) & (WINDOW_SIZE - 1)].load(Ordering::Relaxed);
         let oldest = self.frame_times[tail].load(Ordering::Relaxed);
 
-        let time_diff = newest.wrapping_sub(oldest) as f64;
+        let time_diff = newest.wrapping_sub(oldest) as f32;
         if time_diff == 0.0 {
             return 0.0;
         }
@@ -89,6 +89,6 @@ impl FpsCounter {
             WINDOW_SIZE - tail + head
         };
 
-        (frame_count as f64 - 1.0) * NANOS_PER_SEC as f64 / time_diff
+        (frame_count as f32 - 1.0) * NANOS_PER_SEC as f32 / time_diff
     }
 }

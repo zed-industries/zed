@@ -1009,6 +1009,10 @@ impl PlatformWindow for WaylandWindow {
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         self.borrow().renderer.gpu_specs().into()
     }
+
+    fn fps(&self) -> Option<f32> {
+        None
+    }
 }
 
 fn update_window(mut state: RefMut<WaylandWindowState>) {

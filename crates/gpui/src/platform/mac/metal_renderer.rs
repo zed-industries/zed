@@ -1132,6 +1132,10 @@ impl MetalRenderer {
         }
         true
     }
+
+    pub fn fps(&self) -> f32 {
+        self.fps_counter.fps()
+    }
 }
 
 fn build_pipeline_state(
