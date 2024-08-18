@@ -1,0 +1,132 @@
+<edit_steps_task>
+
+# Goal
+
+Guide the user through code changes in numbered steps that focus on individual functions, type definitions, etc.
+Surround each distinct step in a <edit_step></edit_step> XML tag. The user will be viewing these edit steps
+in a code editor named Zed, which is where they will have entered this prompt and will be seeing the response.
+
+# Output Format
+
+Each <edit_step> may contain the following child tags:
+
+## `<path>` (required)
+
+This tag contains the path to the file that will be changed. It can be an existing path, or a path that should be created.
+
+## `<location>` (optional)
+
+This tag contains content from the the file that identifies the location where the change should occur. It can either
+be a single excerpt, or a combination of starting excerpt, an ellipsis, and an ending excerpt.
+
+## `<within>` (optional)
+
+This tag contains content from the file that identifies a larger region containing the `<location>` content.
+It can be useful for disambiguating between multiple similar passages in a file.
+
+## `<operation>` (required)
+
+This tag indicates what type of change should be made, relative to the given location. It can be one of the following:
+* `replace`: replace the content in the specified location.
+* `delete`: delete the content in the specified location.
+* `insert_before`: add new content before the specified location.
+* `insert_after`: add new content after the specified location.
+
+In addition to all of these child tags, each `<edit_step>` should contain a written description of the change that should
+be made. The description should begin with a high-level overview, and can contain markdown code blocks as well. The description
+should be self-contained and actionable.
+
+# Examples
+
+The following example conversations show how the <edit_step> tags should be used.
+
+<example>
+<user>
+```rust src/lib.rs
+struct Calculator {
+    value: i64,
+}
+
+impl Calculator {
+    pub fn new() -> Self {
+        Self { value: 0 }
+    }
+
+    pub fn value(&self) -> i64 {
+        self.value
+    }
+
+    pub fn add(&mut self, operand: i64) -> i64 {
+        self.value += operand;
+    }
+}
+```
+
+```rust src/main.rs
+use crate::Calculator;
+
+fn main() {
+    let mut calc = Calculator::new();
+    assert_eq!(calc.value(), 0);
+
+    calc.add(7);
+    assert_eq!(calc.value(), 7);
+
+    calc.add(1);
+    assert_eq!(calc.value(), 8);
+}
+```
+
+add subtraction functionality, including assertions
+</user>
+
+<assistant>
+Here's how to add subtraction functionality to the calculator:
+
+<edit_step>
+<path>src/lib.rs</path>
+<location>
+pub fn add(&mut self, operand: i64) -> i64
+...
+}
+</location>
+<within>
+impl Calculator {
+...
+}
+</within>
+<operation>insert_after</operation>
+
+Add a subtract function to the Calculator struct.
+
+```rust
+pub fn subtract(&mut self, operand: i64) -> i64 {
+    self.value -= operand;
+}
+```
+</edit_step>
+
+<edit_step>
+<path>src/main.rs</path>
+<location>
+calc.add(1);
+assert_eq!(calc.value(), 8);
+</location>
+<within>
+fn main() {
+...
+}
+</within>
+<operation>insert_after</operation>
+
+Call the subtract method and assert about the calculator's value.
+
+```rust
+calc.subtract(5);
+assert_eq!(calc.value(), 3);
+```
+</edit_step>
+</assistant>
+</example
+
+</edit_steps_task>

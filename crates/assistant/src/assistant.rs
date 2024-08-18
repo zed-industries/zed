@@ -39,9 +39,10 @@ use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
-    context_server_command, default_command, diagnostics_command, docs_command, fetch_command,
-    file_command, now_command, project_command, prompt_command, search_command, symbols_command,
-    tab_command, terminal_command, workflow_command,
+    context_server_command, default_command, diagnostics_command, docs_command,
+    edit_suggestions_command, fetch_command, file_command, now_command, project_command,
+    prompt_command, search_command, symbols_command, tab_command, terminal_command,
+    workflow_command,
 };
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
@@ -369,7 +370,11 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
 
     if let Some(prompt_builder) = prompt_builder {
         slash_command_registry.register_command(
-            workflow_command::WorkflowSlashCommand::new(prompt_builder),
+            workflow_command::WorkflowSlashCommand::new(prompt_builder.clone()),
+            true,
+        );
+        slash_command_registry.register_command(
+            edit_suggestions_command::WorkflowSlashCommand::new(prompt_builder.clone()),
             true,
         );
     }

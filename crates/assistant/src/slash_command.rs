@@ -23,6 +23,7 @@ pub mod context_server_command;
 pub mod default_command;
 pub mod diagnostics_command;
 pub mod docs_command;
+pub mod edit_suggestions_command;
 pub mod fetch_command;
 pub mod file_command;
 pub mod now_command;
