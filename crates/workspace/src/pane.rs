@@ -3,6 +3,7 @@ use crate::{
         ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings, TabContentParams,
         WeakItemHandle,
     },
+    notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenTerminal, OpenVisible, SplitDirection,
@@ -2019,31 +2020,24 @@ impl Pane {
                     {
                         let load_path_task = workspace.load_path(path, cx);
                         cx.spawn(|workspace, mut cx| async move {
-                            match load_path_task.await {
-                                Ok((project_entry_id, build_item)) => {
-                                    _ = workspace.update(&mut cx, |workspace, cx| {
-                                        if let Some(split_direction) = split_direction {
-                                            to_pane =
-                                                workspace.split_pane(to_pane, split_direction, cx);
-                                        }
-                                        to_pane.update(cx, |pane, cx| {
-                                            pane.open_item(
-                                                project_entry_id,
-                                                true,
-                                                false,
-                                                cx,
-                                                build_item,
-                                            )
-                                        })
-                                    });
-                                    Ok(())
-                                }
-                                Err(e) => {
-                                    _ = workspace.update(&mut cx, |workspace, cx| {
-                                        workspace.show_error(&e, cx);
-                                    });
-                                    Err(e)
-                                }
+                            if let Some((project_entry_id, build_item)) =
+                                load_path_task.await.notify_async_err(&mut cx)
+                            {
+                                _ = workspace.update(&mut cx, |workspace, cx| {
+                                    if let Some(split_direction) = split_direction {
+                                        to_pane =
+                                            workspace.split_pane(to_pane, split_direction, cx);
+                                    }
+                                    to_pane.update(cx, |pane, cx| {
+                                        pane.open_item(
+                                            project_entry_id,
+                                            true,
+                                            false,
+                                            cx,
+                                            build_item,
+                                        )
+                                    })
+                                });
                             }
                         })
                         .detach();
