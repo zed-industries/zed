@@ -68,8 +68,7 @@ impl zed::Extension for Perplexity {
                 while let Ok(Some(chunk)) = stream.next_chunk() {
                     buffer.push_str(&String::from_utf8_lossy(&chunk));
                     for line in buffer.lines() {
-                        if line.starts_with("data: ") {
-                            let json = &line["data: ".len()..];
+                        if let Some(json) = line.strip_prefix("data: ") {
                             if let Ok(event) = serde_json::from_str::<StreamEvent>(json) {
                                 if let Some(choice) = event.choices.first() {
                                     full_content.push_str(&choice.delta.content);
