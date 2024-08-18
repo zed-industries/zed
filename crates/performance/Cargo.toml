@@ -21,13 +21,11 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
-collections.workspace = true
 gpui.workspace = true
 log.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
-util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
