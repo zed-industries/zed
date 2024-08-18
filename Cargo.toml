@@ -146,6 +146,7 @@ members = [
     "extensions/lua",
     "extensions/ocaml",
     "extensions/php",
+    "extensions/perplexity",
     "extensions/prisma",
     "extensions/purescript",
     "extensions/ruff",
