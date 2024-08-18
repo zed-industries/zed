@@ -6116,6 +6116,87 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_document_format_during_save_with_empty_file(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file("/file.rs", Default::default()).await;
+
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
+        .await
+        .unwrap();
+
+    cx.executor().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
+
+    let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
+
+    // insert one line
+    editor.update(cx, |editor, cx| editor.set_text("a", cx));
+    assert!(cx.read(|cx| editor.is_dirty(cx)));
+    let save = editor
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
+        .unwrap();
+    fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+        assert_eq!(
+            params.text_document.uri,
+            lsp::Url::from_file_path("/file.rs").unwrap()
+        );
+        assert_eq!(params.options.insert_final_newline, Some(true));
+        Ok(Some(vec![lsp::TextEdit::new(
+            lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 1)),
+            "a".to_string(),
+        )]))
+    });
+
+    cx.executor().start_waiting();
+    save.await;
+
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+    assert_eq!(editor.update(cx, |editor, cx| editor.text(cx)), "a\n");
+
+    // empty file
+    editor.update(cx, |editor, cx| editor.set_text("", cx));
+    let save = editor
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
+        .unwrap();
+    fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+        assert_eq!(
+            params.text_document.uri,
+            lsp::Url::from_file_path("/file.rs").unwrap()
+        );
+        assert_eq!(params.options.insert_final_newline, Some(true));
+        Ok(Some(vec![lsp::TextEdit::new(
+            lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+            "".to_string(),
+        )]))
+    });
+
+    cx.executor().start_waiting();
+    save.await;
+
+    assert_eq!(editor.update(cx, |editor, cx| editor.text(cx)), "");
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
+
+#[gpui::test]
 async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
