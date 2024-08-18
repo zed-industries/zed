@@ -4135,7 +4135,7 @@ impl Render for ContextEditorToolbarItem {
                                             (Some(provider), Some(model)) => h_flex()
                                                 .gap_1()
                                                 .child(
-                                                    Icon::new(provider.icon())
+                                                    Icon::new(model.icon().unwrap_or_else(|| provider.icon()))
                                                         .color(Color::Muted)
                                                         .size(IconSize::XSmall),
                                                 )

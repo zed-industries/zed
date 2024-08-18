@@ -398,6 +398,10 @@ impl LanguageModel for CloudLanguageModel {
         LanguageModelName::from(self.model.display_name().to_string())
     }
 
+    fn icon(&self) -> Option<IconName> {
+        self.model.icon()
+    }
+
     fn provider_id(&self) -> LanguageModelProviderId {
         LanguageModelProviderId(PROVIDER_ID.into())
     }
