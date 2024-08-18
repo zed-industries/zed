@@ -4843,7 +4843,7 @@ impl Editor {
 
                             let range = Anchor {
                                 buffer_id,
-                                excerpt_id: excerpt_id,
+                                excerpt_id,
                                 text_anchor: start,
                             }..Anchor {
                                 buffer_id,
@@ -9021,7 +9021,21 @@ impl Editor {
         _: &GoToDefinition,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx)
+        let definition = self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
+        cx.spawn(|editor, mut cx| async move {
+            if definition.await? {
+                return Ok(true);
+            }
+
+            let Some(find_all_references) = editor.update(&mut cx, |editor, cx| {
+                editor.find_all_references(&FindAllReferences, cx)
+            })?
+            else {
+                return Ok(false);
+            };
+            let navigated = find_all_references.await?;
+            anyhow::Ok(navigated)
+        })
     }
 
     pub fn go_to_declaration(
@@ -9361,7 +9375,7 @@ impl Editor {
         &mut self,
         _: &FindAllReferences,
         cx: &mut ViewContext<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<bool>>> {
         let multi_buffer = self.buffer.read(cx);
         let selection = self.selections.newest::<usize>(cx);
         let head = selection.head();
@@ -9416,7 +9430,7 @@ impl Editor {
 
             let locations = references.await?;
             if locations.is_empty() {
-                return anyhow::Ok(());
+                return anyhow::Ok(false);
             }
 
             workspace.update(&mut cx, |workspace, cx| {
@@ -9436,6 +9450,7 @@ impl Editor {
                 Self::open_locations_in_multibuffer(
                     workspace, locations, replica_id, title, false, cx,
                 );
+                true
             })
         }))
     }
