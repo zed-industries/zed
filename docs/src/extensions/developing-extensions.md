@@ -32,8 +32,9 @@ my-extension/
   src/
     lib.rs
   languages/
-    config.toml
-    highlights.scm
+    my-language/
+      config.toml
+      highlights.scm
   themes/
     my-theme.json
 ```
