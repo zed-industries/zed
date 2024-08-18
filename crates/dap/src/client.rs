@@ -4,14 +4,14 @@ use anyhow::{anyhow, Context, Result};
 use dap_types::{
     requests::{
         Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Request,
-        Restart, SetBreakpoints, StepBack, StepIn, StepOut, Terminate, TerminateThreads,
+        Restart, SetBreakpoints, StepBack, StepIn, StepOut, Terminate, TerminateThreads, Variables,
     },
     AttachRequestArguments, ConfigurationDoneArguments, ContinueArguments, ContinueResponse,
     DisconnectArguments, InitializeRequestArgumentsPathFormat, LaunchRequestArguments,
     NextArguments, PauseArguments, RestartArguments, Scope, SetBreakpointsArguments,
     SetBreakpointsResponse, Source, SourceBreakpoint, StackFrame, StepBackArguments,
     StepInArguments, StepOutArguments, SteppingGranularity, TerminateArguments,
-    TerminateThreadsArguments, Variable,
+    TerminateThreadsArguments, Variable, VariablesArguments,
 };
 use futures::{AsyncBufRead, AsyncReadExt, AsyncWrite};
 use gpui::{AppContext, AsyncAppContext};
@@ -55,6 +55,9 @@ pub struct DebugAdapterClientId(pub usize);
 pub struct ThreadState {
     pub status: ThreadStatus,
     pub stack_frames: Vec<StackFrame>,
+    // HashMap<variable_reference_id, Vec<Variable>>
+    pub vars: HashMap<u64, Vec<Variable>>,
+    // HashMap<stack_frame_id, <scope, Vec<(depth, Variable)>>>
     pub variables: HashMap<u64, BTreeMap<Scope, Vec<(usize, Variable)>>>,
     pub current_stack_frame_id: u64,
 }
@@ -702,6 +705,20 @@ impl DebugAdapterClient {
         } else {
             self.terminate().await
         }
+    }
+
+    pub async fn variables(&self, variables_reference: u64) -> Result<Vec<Variable>> {
+        anyhow::Ok(
+            self.request::<Variables>(VariablesArguments {
+                variables_reference,
+                filter: None,
+                start: None,
+                count: None,
+                format: None,
+            })
+            .await?
+            .variables,
+        )
     }
 }
 

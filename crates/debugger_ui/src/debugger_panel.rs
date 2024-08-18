@@ -1,13 +1,13 @@
 use crate::debugger_panel_item::DebugPanelItem;
 use anyhow::Result;
 use dap::client::{DebugAdapterClientId, ThreadState, ThreadStatus};
-use dap::requests::{Request, Scopes, StackTrace, StartDebugging, Variables};
+use dap::requests::{Request, Scopes, StackTrace, StartDebugging};
 use dap::transport::Payload;
 use dap::{client::DebugAdapterClient, transport::Events};
 use dap::{
     Capabilities, ContinuedEvent, ExitedEvent, OutputEvent, ScopesArguments, StackFrame,
     StackTraceArguments, StartDebuggingRequestArguments, StoppedEvent, TerminatedEvent,
-    ThreadEvent, ThreadEventReason, Variable, VariablesArguments,
+    ThreadEvent, ThreadEventReason, Variable,
 };
 use editor::Editor;
 use futures::future::try_join_all;
@@ -26,7 +26,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
-use workspace::{pane, Pane};
+use workspace::{pane, Pane, StartDebugger};
 
 enum DebugCurrentRowHighlight {}
 
@@ -396,51 +396,6 @@ impl DebugPanel {
         cx.notify();
     }
 
-    async fn fetch_variables(
-        client: Arc<DebugAdapterClient>,
-        variables_reference: u64,
-        depth: usize,
-    ) -> Result<Vec<(usize, Variable)>> {
-        let response = client
-            .request::<Variables>(VariablesArguments {
-                variables_reference,
-                filter: None,
-                start: None,
-                count: None,
-                format: None,
-            })
-            .await?;
-
-        let mut tasks = Vec::new();
-        for variable in response.variables {
-            let client = client.clone();
-            tasks.push(async move {
-                let mut variables = vec![(depth, variable.clone())];
-
-                if variable.variables_reference > 0 {
-                    let mut nested_variables = Box::pin(Self::fetch_variables(
-                        client,
-                        variable.variables_reference,
-                        depth + 1,
-                    ))
-                    .await?;
-
-                    variables.append(&mut nested_variables);
-                }
-
-                anyhow::Ok(variables)
-            });
-        }
-
-        let mut variables = Vec::new();
-
-        for mut variable_entries in try_join_all(tasks).await? {
-            variables.append(&mut variable_entries);
-        }
-
-        anyhow::Ok(variables)
-    }
-
     fn handle_stopped_event(
         client: Arc<DebugAdapterClient>,
         event: &StoppedEvent,
@@ -493,10 +448,7 @@ impl DebugPanel {
 
                             let client = client.clone();
                             variable_tasks.push(async move {
-                                anyhow::Ok((
-                                    scope,
-                                    Self::fetch_variables(client, scope_reference, 1).await?,
-                                ))
+                                anyhow::Ok((scope, client.variables(scope_reference).await?))
                             });
                         }
 
@@ -511,7 +463,17 @@ impl DebugPanel {
                         .or_insert_with(BTreeMap::default);
 
                     for (scope, variables) in scopes {
-                        stack_frame_state.insert(scope, variables);
+                        thread_state
+                            .vars
+                            .insert(scope.variables_reference, variables.clone());
+
+                        stack_frame_state.insert(
+                            scope,
+                            variables
+                                .into_iter()
+                                .map(|v| (1, v))
+                                .collect::<Vec<(usize, Variable)>>(),
+                        );
                     }
                 }
 
@@ -738,12 +700,43 @@ impl Panel for DebugPanel {
 }
 
 impl Render for DebugPanel {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .key_context("DebugPanel")
             .track_focus(&self.focus_handle)
             .size_full()
-            .child(self.pane.clone())
+            .map(|this| {
+                if self.pane.read(cx).items_len() == 0 {
+                    this.child(
+                        h_flex().size_full().items_center().justify_center().child(
+                            v_flex()
+                                .gap_2()
+                                .rounded_md()
+                                .max_w_64()
+                                .items_start()
+                                .child(
+                                    Label::new("You can create a debug task by creating a new task and setting the `type` key to `debug`")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    h_flex().w_full().justify_end().child(
+                                        Button::new(
+                                            "start-debugger",
+                                            "Choose a debugger",
+                                        )
+                                        .label_size(LabelSize::Small)
+                                        .on_click(move |_, cx| {
+                                            cx.dispatch_action(StartDebugger.boxed_clone());
+                                        })
+                                    ),
+                                ),
+                        ),
+                    )
+                } else {
+                    this.child(self.pane.clone())
+                }
+            })
             .into_any()
     }
 }
