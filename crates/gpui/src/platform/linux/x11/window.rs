@@ -1,5 +1,3 @@
-use anyhow::Context;
-
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
     px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
@@ -9,7 +7,9 @@ use crate::{
     X11ClientStatePtr,
 };
 
+use anyhow::Context;
 use blade_graphics as gpu;
+use futures::channel::oneshot;
 use raw_window_handle as rwh;
 use util::{maybe, ResultExt};
 use x11rb::{
