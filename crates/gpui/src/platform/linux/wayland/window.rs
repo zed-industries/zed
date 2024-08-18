@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use blade_graphics as gpu;
 use collections::HashMap;
-use futures::channel::oneshot::Receiver;
+use futures::channel::oneshot;
 
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
@@ -827,7 +827,7 @@ impl PlatformWindow for WaylandWindow {
         _msg: &str,
         _detail: Option<&str>,
         _answers: &[&str],
-    ) -> Option<Receiver<usize>> {
+    ) -> Option<oneshot::Receiver<usize>> {
         None
     }
 
@@ -934,9 +934,10 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    // TODO: on_complete not yet supported for Wayland windows
+    fn draw(&self, scene: &Scene, _on_complete: Option<oneshot::Sender<()>>) {
         let mut state = self.borrow_mut();
-        state.renderer.draw(scene);
+        state.renderer.draw(scene, None);
     }
 
     fn completed_frame(&self) {

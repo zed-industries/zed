@@ -1210,9 +1210,10 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    // TODO: on_complete not yet supported for X11 windows
+    fn draw(&self, scene: &Scene, _on_complete: Option<oneshot::Sender<()>>) {
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene);
+        inner.renderer.draw(scene, None);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
