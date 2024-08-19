@@ -220,10 +220,11 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             })
             .chain([SlashCommandEntry::Advert {
                 name: "create-your-command".into(),
-                renderer: |_| {
+                renderer: |cx| {
                     v_flex()
                         .child(
                             h_flex()
+                                .font_buffer(cx)
                                 .items_center()
                                 .gap_2()
                                 .child(Label::new("create-your-command").size(LabelSize::Small))
