@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use assistant_slash_command::SlashCommandRegistry;
 use gpui::AnyElement;
 use gpui::DismissEvent;
@@ -118,16 +120,29 @@ impl PickerDelegate for SlashCommandDelegate {
     }
 
     fn separators_after_indices(&self) -> Vec<usize> {
-        if let Some(first_advert) = self
-            .filtered_commands
-            .iter()
-            .position(|info| matches!(info, SlashCommandEntry::Advert { .. }))
-            .filter(|position| *position != 0)
-        {
-            vec![first_advert - 1]
-        } else {
-            vec![]
+        let mut ret = vec![];
+        let mut previous_is_advert = false;
+
+        for (index, command) in self.filtered_commands.iter().enumerate() {
+            if previous_is_advert {
+                if let SlashCommandEntry::Info(_) = command {
+                    previous_is_advert = false;
+                    debug_assert_ne!(
+                        index, 0,
+                        "index cannot be zero, as we can never have a separator at 0th position"
+                    );
+                    ret.push(index - 1);
+                }
+            } else {
+                if let SlashCommandEntry::Advert { .. } = command {
+                    previous_is_advert = true;
+                    if index != 0 {
+                        ret.push(index - 1);
+                    }
+                }
+            }
         }
+        ret
     }
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(command) = self.filtered_commands.get(self.selected_index) {
@@ -157,6 +172,7 @@ impl PickerDelegate for SlashCommandDelegate {
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let command_info = self.filtered_commands.get(ix)?;
+        let theme = cx.theme();
 
         match command_info {
             SlashCommandEntry::Info(info) => Some(
@@ -167,7 +183,9 @@ impl PickerDelegate for SlashCommandDelegate {
                     .child(
                         h_flex().w_full().min_w(px(220.)).child(
                             v_flex()
-                                .child(Label::new(format!("/{}", info.name)).size(LabelSize::Small))
+                                .child(div().font_buffer(cx).child(
+                                    Label::new(format!("/{}", info.name)).size(LabelSize::Small),
+                                ))
                                 .child(
                                     Label::new(info.description.clone())
                                         .size(LabelSize::Small)
