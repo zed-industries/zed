@@ -20,6 +20,8 @@ pub struct LlmTokenClaims {
     #[serde(default)]
     pub github_user_login: Option<String>,
     pub is_staff: bool,
+    #[serde(default)]
+    pub has_llm_closed_beta_feature_flag: bool,
     pub plan: rpc::proto::Plan,
 }
 
@@ -30,6 +32,7 @@ impl LlmTokenClaims {
         user_id: UserId,
         github_user_login: String,
         is_staff: bool,
+        has_llm_closed_beta_feature_flag: bool,
         plan: rpc::proto::Plan,
         config: &Config,
     ) -> Result<String> {
@@ -46,6 +49,7 @@ impl LlmTokenClaims {
             user_id: user_id.to_proto(),
             github_user_login: Some(github_user_login),
             is_staff,
+            has_llm_closed_beta_feature_flag,
             plan,
         };
 
