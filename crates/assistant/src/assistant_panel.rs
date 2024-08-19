@@ -2692,13 +2692,24 @@ impl ContextEditor {
     fn update_active_workflow_step(&mut self, cx: &mut ViewContext<Self>) {
         let new_step = self.active_workflow_step_for_cursor(cx);
         if new_step.as_ref() != self.active_workflow_step.as_ref() {
+            let mut old_editor = None;
+            let mut old_editor_was_open = None;
             if let Some(old_step) = self.active_workflow_step.take() {
-                self.hide_workflow_step(old_step.range, cx);
+                (old_editor, old_editor_was_open) =
+                    self.hide_workflow_step(old_step.range, cx).unzip();
             }
 
+            let mut new_editor = None;
             if let Some(new_step) = new_step {
-                self.show_workflow_step(new_step.range.clone(), cx);
+                new_editor = self.show_workflow_step(new_step.range.clone(), cx);
                 self.active_workflow_step = Some(new_step);
+            }
+
+            if new_editor != old_editor {
+                if let Some((old_editor, old_editor_was_open)) = old_editor.zip(old_editor_was_open)
+                {
+                    self.close_workflow_editor(cx, old_editor, old_editor_was_open)
+                }
             }
         }
     }
@@ -2707,15 +2718,15 @@ impl ContextEditor {
         &mut self,
         step_range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
-    ) {
+    ) -> Option<(View<Editor>, bool)> {
         let Some(step) = self.workflow_steps.get_mut(&step_range) else {
-            return;
+            return None;
         };
         let Some(assist) = step.assist.as_ref() else {
-            return;
+            return None;
         };
         let Some(editor) = assist.editor.upgrade() else {
-            return;
+            return None;
         };
 
         if matches!(step.status(cx), WorkflowStepStatus::Idle) {
@@ -2725,32 +2736,42 @@ impl ContextEditor {
                     assistant.finish_assist(assist_id, true, cx)
                 }
             });
-
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    if let Some(pane) = workspace.pane_for(&editor) {
-                        pane.update(cx, |pane, cx| {
-                            let item_id = editor.entity_id();
-                            if !assist.editor_was_open && pane.is_active_preview_item(item_id) {
-                                pane.close_item_by_id(item_id, SaveIntent::Skip, cx)
-                                    .detach_and_log_err(cx);
-                            }
-                        });
-                    }
-                })
-                .ok();
+            return Some((editor, assist.editor_was_open));
         }
+
+        return None;
+    }
+
+    fn close_workflow_editor(
+        &mut self,
+        cx: &mut ViewContext<ContextEditor>,
+        editor: View<Editor>,
+        editor_was_open: bool,
+    ) {
+        self.workspace
+            .update(cx, |workspace, cx| {
+                if let Some(pane) = workspace.pane_for(&editor) {
+                    pane.update(cx, |pane, cx| {
+                        let item_id = editor.entity_id();
+                        if !editor_was_open && pane.is_active_preview_item(item_id) {
+                            pane.close_item_by_id(item_id, SaveIntent::Skip, cx)
+                                .detach_and_log_err(cx);
+                        }
+                    });
+                }
+            })
+            .ok();
     }
 
     fn show_workflow_step(
         &mut self,
         step_range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
-    ) {
+    ) -> Option<View<Editor>> {
         let Some(step) = self.workflow_steps.get_mut(&step_range) else {
-            return;
+            return None;
         };
-
+        let mut editor_to_return = None;
         let mut scroll_to_assist_id = None;
         match step.status(cx) {
             WorkflowStepStatus::Idle => {
@@ -2764,6 +2785,10 @@ impl ContextEditor {
                         &self.workspace,
                         cx,
                     );
+                    editor_to_return = step
+                        .assist
+                        .as_ref()
+                        .and_then(|assist| assist.editor.upgrade());
                 }
             }
             WorkflowStepStatus::Pending => {
@@ -2785,14 +2810,15 @@ impl ContextEditor {
         }
 
         if let Some(assist_id) = scroll_to_assist_id {
-            if let Some(editor) = step
+            if let Some(assist_editor) = step
                 .assist
                 .as_ref()
                 .and_then(|assists| assists.editor.upgrade())
             {
+                editor_to_return = Some(assist_editor.clone());
                 self.workspace
                     .update(cx, |workspace, cx| {
-                        workspace.activate_item(&editor, false, false, cx);
+                        workspace.activate_item(&assist_editor, false, false, cx);
                     })
                     .ok();
                 InlineAssistant::update_global(cx, |assistant, cx| {
@@ -2800,6 +2826,8 @@ impl ContextEditor {
                 });
             }
         }
+
+        return editor_to_return;
     }
 
     fn open_assists_for_step(
@@ -2843,7 +2871,6 @@ impl ContextEditor {
                     )
                 })
                 .log_err()?;
-
             let (&excerpt_id, _, _) = editor
                 .read(cx)
                 .buffer()

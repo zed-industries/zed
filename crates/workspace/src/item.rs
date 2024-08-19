@@ -373,6 +373,7 @@ pub trait ItemHandle: 'static + Send {
     fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
+    fn project_paths(&self, cx: &AppContext) -> SmallVec<[ProjectPath; 3]>;
     fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]>;
     fn for_each_project_item(
         &self,
@@ -525,6 +526,16 @@ impl<T: Item> ItemHandle for View<T> {
         let mut result = SmallVec::new();
         self.read(cx).for_each_project_item(cx, &mut |_, item| {
             if let Some(id) = item.entry_id(cx) {
+                result.push(id);
+            }
+        });
+        result
+    }
+
+    fn project_paths(&self, cx: &AppContext) -> SmallVec<[ProjectPath; 3]> {
+        let mut result = SmallVec::new();
+        self.read(cx).for_each_project_item(cx, &mut |_, item| {
+            if let Some(id) = item.project_path(cx) {
                 result.push(id);
             }
         });
