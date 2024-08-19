@@ -16,7 +16,8 @@ impl ModeIndicator {
     /// Construct a new mode indicator in this window.
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let _subscriptions = vec![
-            cx.observe_global::<Vim>(|this, cx| this.update_mode(cx)),
+            // todo!()
+            // cx.observe_global::<Vim>(|this, cx| this.update_mode(cx)),
             cx.observe_pending_input(|this, cx| {
                 this.update_pending_keys(cx);
                 cx.notify();
@@ -33,13 +34,13 @@ impl ModeIndicator {
         this
     }
 
-    fn update_mode(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(vim) = self.vim(cx) {
-            self.mode = Some(vim.state().mode);
-            self.operators = self.current_operators_description(&vim);
-        } else {
-            self.mode = None;
-        }
+    fn update_mode(&mut self, _: &mut ViewContext<Self>) {
+        // if let Some(vim) = self.vim(cx) {
+        //     self.mode = Some(vim.mode);
+        //     self.operators = self.current_operators_description(&vim, cx);
+        // } else {
+        //     self.mode = None;
+        // }
     }
 
     fn update_pending_keys(&mut self, cx: &mut ViewContext<Self>) {
@@ -55,25 +56,22 @@ impl ModeIndicator {
         }
     }
 
-    fn vim<'a>(&self, cx: &'a mut ViewContext<Self>) -> Option<&'a Vim> {
+    fn vim<'a>(&self, _cx: &'a mut ViewContext<Self>) -> Option<&'a Vim> {
         // In some tests Vim isn't enabled, so we use try_global.
-        cx.try_global::<Vim>().filter(|vim| vim.enabled)
+        // cx.try_global::<Vim>().filter(|vim| vim.enabled)
+        // todo!()
+        None
     }
 
-    fn current_operators_description(&self, vim: &Vim) -> String {
-        vim.workspace_state
+    fn current_operators_description(&self, vim: &Vim, cx: &mut WindowContext) -> String {
+        Vim::globals(cx)
             .recording_register
             .map(|reg| format!("recording @{reg} "))
             .into_iter()
-            .chain(vim.state().pre_count.map(|count| format!("{}", count)))
-            .chain(vim.state().selected_register.map(|reg| format!("\"{reg}")))
-            .chain(
-                vim.state()
-                    .operator_stack
-                    .iter()
-                    .map(|item| item.id().to_string()),
-            )
-            .chain(vim.state().post_count.map(|count| format!("{}", count)))
+            .chain(vim.pre_count.map(|count| format!("{}", count)))
+            .chain(vim.selected_register.map(|reg| format!("\"{reg}")))
+            .chain(vim.operator_stack.iter().map(|item| item.id().to_string()))
+            .chain(vim.post_count.map(|count| format!("{}", count)))
             .collect::<Vec<_>>()
             .join("")
     }

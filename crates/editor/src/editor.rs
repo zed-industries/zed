@@ -11861,7 +11861,6 @@ impl Editor {
         self.editor_actions.borrow_mut().insert(
             id,
             Box::new(move |cx| {
-                let _view = cx.view().clone();
                 let cx = cx.window_context();
                 let listener = listener.clone();
                 cx.on_action(TypeId::of::<A>(), move |action, phase, cx| {

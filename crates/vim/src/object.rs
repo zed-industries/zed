@@ -2,24 +2,21 @@ use std::ops::Range;
 
 use crate::{
     motion::{coerce_punctuation, right},
-    normal::normal_object,
     state::Mode,
-    visual::visual_object,
     Vim,
 };
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
-    Bias, DisplayPoint,
+    Bias, DisplayPoint, Editor,
 };
 
 use itertools::Itertools;
 
-use gpui::{actions, impl_actions, ViewContext, WindowContext};
+use gpui::{actions, impl_actions, ViewContext};
 use language::{char_kind, BufferSnapshot, CharKind, Point, Selection};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
-use workspace::Workspace;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum Object {
@@ -65,48 +62,45 @@ actions!(
     ]
 );
 
-pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-    workspace.register_action(
-        |_: &mut Workspace, &Word { ignore_punctuation }: &Word, cx: _| {
-            object(Object::Word { ignore_punctuation }, cx)
-        },
+pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+    editor.register_action(cx.listener(|vim, &Word { ignore_punctuation }: &Word, cx| {
+        vim.object(Object::Word { ignore_punctuation }, cx)
+    }));
+    editor.register_action(cx.listener(|vim, _: &Tag, cx| vim.object(Object::Tag, cx)));
+    editor.register_action(cx.listener(|vim, _: &Sentence, cx| vim.object(Object::Sentence, cx)));
+    editor.register_action(cx.listener(|vim, _: &Paragraph, cx| vim.object(Object::Paragraph, cx)));
+    editor.register_action(cx.listener(|vim, _: &Quotes, cx| vim.object(Object::Quotes, cx)));
+    editor
+        .register_action(cx.listener(|vim, _: &BackQuotes, cx| vim.object(Object::BackQuotes, cx)));
+    editor.register_action(
+        cx.listener(|vim, _: &DoubleQuotes, cx| vim.object(Object::DoubleQuotes, cx)),
     );
-    workspace.register_action(|_: &mut Workspace, _: &Tag, cx: _| object(Object::Tag, cx));
-    workspace
-        .register_action(|_: &mut Workspace, _: &Sentence, cx: _| object(Object::Sentence, cx));
-    workspace
-        .register_action(|_: &mut Workspace, _: &Paragraph, cx: _| object(Object::Paragraph, cx));
-    workspace.register_action(|_: &mut Workspace, _: &Quotes, cx: _| object(Object::Quotes, cx));
-    workspace
-        .register_action(|_: &mut Workspace, _: &BackQuotes, cx: _| object(Object::BackQuotes, cx));
-    workspace.register_action(|_: &mut Workspace, _: &DoubleQuotes, cx: _| {
-        object(Object::DoubleQuotes, cx)
-    });
-    workspace.register_action(|_: &mut Workspace, _: &Parentheses, cx: _| {
-        object(Object::Parentheses, cx)
-    });
-    workspace.register_action(|_: &mut Workspace, _: &SquareBrackets, cx: _| {
-        object(Object::SquareBrackets, cx)
-    });
-    workspace.register_action(|_: &mut Workspace, _: &CurlyBrackets, cx: _| {
-        object(Object::CurlyBrackets, cx)
-    });
-    workspace.register_action(|_: &mut Workspace, _: &AngleBrackets, cx: _| {
-        object(Object::AngleBrackets, cx)
-    });
-    workspace.register_action(|_: &mut Workspace, _: &VerticalBars, cx: _| {
-        object(Object::VerticalBars, cx)
-    });
-    workspace
-        .register_action(|_: &mut Workspace, _: &Argument, cx: _| object(Object::Argument, cx));
+    editor.register_action(
+        cx.listener(|vim, _: &Parentheses, cx| vim.object(Object::Parentheses, cx)),
+    );
+    editor.register_action(
+        cx.listener(|vim, _: &SquareBrackets, cx| vim.object(Object::SquareBrackets, cx)),
+    );
+    editor.register_action(
+        cx.listener(|vim, _: &CurlyBrackets, cx| vim.object(Object::CurlyBrackets, cx)),
+    );
+    editor.register_action(
+        cx.listener(|vim, _: &AngleBrackets, cx| vim.object(Object::AngleBrackets, cx)),
+    );
+    editor.register_action(
+        cx.listener(|vim, _: &VerticalBars, cx| vim.object(Object::VerticalBars, cx)),
+    );
+    editor.register_action(cx.listener(|vim, _: &Argument, cx| vim.object(Object::Argument, cx)));
 }
 
-fn object(object: Object, cx: &mut WindowContext) {
-    match Vim::read(cx).state().mode {
-        Mode::Normal => normal_object(object, cx),
-        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_object(object, cx),
-        Mode::Insert | Mode::Replace => {
-            // Shouldn't execute a text object in insert mode. Ignoring
+impl Vim {
+    fn object(&mut self, object: Object, cx: &mut ViewContext<Self>) {
+        match self.mode {
+            Mode::Normal => self.normal_object(object, cx),
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => self.visual_object(object, cx),
+            Mode::Insert | Mode::Replace => {
+                // Shouldn't execute a text object in insert mode. Ignoring
+            }
         }
     }
 }

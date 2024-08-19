@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
-use gpui::{Context, SemanticVersion, View, VisualContext};
+use gpui::{Context, SemanticVersion, UpdateGlobal, View, VisualContext};
 use search::{project_search::ProjectSearchBar, BufferSearchBar};
 
 use crate::{state::Operator, *};
@@ -12,7 +12,7 @@ pub struct VimTestContext {
 
 impl VimTestContext {
     pub fn init(cx: &mut gpui::TestAppContext) {
-        if cx.has_global::<Vim>() {
+        if cx.has_global::<VimGlobals>() {
             return;
         }
         cx.update(|cx| {
