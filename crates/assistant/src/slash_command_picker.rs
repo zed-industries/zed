@@ -172,7 +172,6 @@ impl PickerDelegate for SlashCommandDelegate {
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let command_info = self.filtered_commands.get(ix)?;
-        let theme = cx.theme();
 
         match command_info {
             SlashCommandEntry::Info(info) => Some(
