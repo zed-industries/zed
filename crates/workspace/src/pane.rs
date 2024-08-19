@@ -39,7 +39,7 @@ use theme::ThemeSettings;
 
 use ui::{
     prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconButtonShape, IconName,
-    IconSize, Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
+    IconSize, Indicator, Label, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_flex, ContextMenu};
 use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
@@ -244,8 +244,8 @@ pub struct Pane {
     last_focus_handle_by_item: HashMap<EntityId, WeakFocusHandle>,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
-    pub new_item_menu: Option<View<ContextMenu>>,
-    split_item_menu: Option<View<ContextMenu>>,
+    pub new_item_menu: View<ContextMenu>,
+    split_item_menu: View<ContextMenu>,
     pub(crate) workspace: WeakView<Workspace>,
     project: Model<Project>,
     drag_split_direction: Option<SplitDirection>,
@@ -263,6 +263,8 @@ pub struct Pane {
     display_nav_history_buttons: Option<bool>,
     double_click_dispatch_action: Box<dyn Action>,
     save_modals_spawned: HashSet<EntityId>,
+    pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 pub struct ActivationHistoryEntry {
@@ -363,8 +365,31 @@ impl Pane {
                 next_timestamp,
             }))),
             toolbar: cx.new_view(|_| Toolbar::new()),
-            new_item_menu: None,
-            split_item_menu: None,
+            new_item_menu: {
+                let menu = ContextMenu::build(cx, |menu, _| {
+                    menu.action("New File", NewFile.boxed_clone())
+                        .action("Open File", ToggleFileFinder::default().boxed_clone())
+                        .separator()
+                        .action(
+                            "Search Project",
+                            DeploySearch {
+                                replace_enabled: false,
+                            }
+                            .boxed_clone(),
+                        )
+                        .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
+                        .separator()
+                        .action("New Terminal", NewTerminal.boxed_clone())
+                });
+                menu
+            },
+            split_item_menu: ContextMenu::build(cx, |menu, _| {
+                menu.action("Split Right", SplitRight.boxed_clone())
+                    .action("Split Left", SplitLeft.boxed_clone())
+                    .action("Split Up", SplitUp.boxed_clone())
+                    .action("Split Down", SplitDown.boxed_clone())
+            }),
+
             tab_bar_scroll_handle: ScrollHandle::new(),
             drag_split_direction: None,
             workspace,
@@ -377,16 +402,24 @@ impl Pane {
                 if !pane.has_focus(cx) {
                     return (None, None);
                 }
+                let new_item_menu = pane.new_item_menu.clone();
+                let split_item_menu = pane.split_item_menu.clone();
                 // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
                 // `end_slot`, but due to needing a view here that isn't possible.
                 let right_children = h_flex()
                     // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
                     .gap(Spacing::Small.rems(cx))
                     .child(
-                        IconButton::new("plus", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                let menu = ContextMenu::build(cx, |menu, _| {
+                        PopoverMenu::new("pane-tab-bar-popover-menu")
+                            .trigger(
+                                IconButton::new("plus", IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|cx| Tooltip::text("New...", cx)),
+                            )
+                            .anchor(AnchorCorner::TopRight)
+                            .with_handle(pane.new_item_context_menu_handle.clone())
+                            .menu(move |cx| {
+                                Some(ContextMenu::build(cx, |menu, _| {
                                     menu.action("New File", NewFile.boxed_clone())
                                         .action(
                                             "Open File",
@@ -406,37 +439,22 @@ impl Pane {
                                         )
                                         .separator()
                                         .action("New Terminal", NewTerminal.boxed_clone())
-                                });
-                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
-                                    pane.focus(cx);
-                                    pane.new_item_menu = None;
-                                })
-                                .detach();
-                                pane.new_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("New...", cx)),
+                                }))
+                            }),
                     )
-                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
-                        el.child(Self::render_menu_overlay(new_item_menu))
-                    })
+                    // .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
+                    //     el.child(Self::render_menu_overlay(new_item_menu))
+                    // })
                     .child(
-                        IconButton::new("split", IconName::Split)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                let menu = ContextMenu::build(cx, |menu, _| {
-                                    menu.action("Split Right", SplitRight.boxed_clone())
-                                        .action("Split Left", SplitLeft.boxed_clone())
-                                        .action("Split Up", SplitUp.boxed_clone())
-                                        .action("Split Down", SplitDown.boxed_clone())
-                                });
-                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
-                                    pane.focus(cx);
-                                    pane.split_item_menu = None;
-                                })
-                                .detach();
-                                pane.split_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("Split Pane", cx)),
+                        PopoverMenu::new("pane-tab-bar-split")
+                            .trigger(
+                                IconButton::new("split", IconName::Split)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|cx| Tooltip::text("Split Pane", cx)),
+                            )
+                            //.anchor(AnchorCorner::TopRight)
+                            .with_handle(pane.split_item_context_menu_handle.clone())
+                            .menu(move |_| Some(split_item_menu.clone())),
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
@@ -455,9 +473,6 @@ impl Pane {
                                 )
                             })
                     })
-                    .when_some(pane.split_item_menu.as_ref(), |el, split_item_menu| {
-                        el.child(Self::render_menu_overlay(split_item_menu))
-                    })
                     .into_any_element()
                     .into();
                 (None, right_children)
@@ -468,6 +483,8 @@ impl Pane {
             _subscriptions: subscriptions,
             double_click_dispatch_action,
             save_modals_spawned: HashSet::default(),
+            split_item_context_menu_handle: Default::default(),
+            new_item_context_menu_handle: Default::default(),
         }
     }
 
@@ -552,10 +569,8 @@ impl Pane {
     }
 
     fn context_menu_focused(&self, cx: &mut ViewContext<Self>) -> bool {
-        self.new_item_menu
-            .as_ref()
-            .or(self.split_item_menu.as_ref())
-            .map_or(false, |menu| menu.focus_handle(cx).is_focused(cx))
+        self.new_item_context_menu_handle.is_focused(cx)
+            || self.split_item_context_menu_handle.is_focused(cx)
     }
 
     fn focus_out(&mut self, _event: FocusOutEvent, cx: &mut ViewContext<Self>) {

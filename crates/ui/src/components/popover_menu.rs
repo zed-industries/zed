@@ -56,6 +56,15 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
             }
         }
     }
+    pub fn is_focused(&self, cx: &mut WindowContext) -> bool {
+        self.0.borrow().as_ref().map_or(false, |state| {
+            state
+                .menu
+                .borrow()
+                .as_ref()
+                .map_or(false, |view| view.focus_handle(cx).is_focused(cx))
+        })
+    }
 }
 
 pub struct PopoverMenu<M: ManagedView> {
