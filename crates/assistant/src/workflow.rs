@@ -359,15 +359,10 @@ impl WorkflowSuggestion {
         cx: &mut WindowContext,
     ) -> Option<InlineAssistId> {
         let mut initial_transaction_id = None;
-        let mut initial_prompt;
+        let initial_prompt;
         let suggestion_range;
         let buffer = editor.read(cx).buffer().clone();
         let snapshot = buffer.read(cx).snapshot(cx);
-
-        let allow_adding_imports = self
-            .symbol_path()
-            .map(|p| &p.0 == IMPORTS_SYMBOL)
-            .unwrap_or(false);
 
         match self {
             Self::Update {
@@ -454,10 +449,6 @@ impl WorkflowSuggestion {
                 suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
                     ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
             }
-        }
-
-        if !allow_adding_imports {
-            initial_prompt.push_str(". Assume all usages you want to add are already imported.");
         }
 
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
