@@ -1719,7 +1719,6 @@ struct WorkflowAssist {
     editor: WeakView<Editor>,
     editor_was_open: bool,
     assist_ids: Vec<InlineAssistId>,
-    _observe_assist_status: Task<()>,
 }
 
 pub struct ContextEditor {
@@ -1862,13 +1861,25 @@ impl ContextEditor {
         if let Some(workflow_step) = self.workflow_steps.get(&range) {
             if let Some(assist) = workflow_step.assist.as_ref() {
                 let assist_ids = assist.assist_ids.clone();
-                cx.window_context().defer(|cx| {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        for assist_id in assist_ids {
-                            assistant.start_assist(assist_id, cx);
+                cx.spawn(|this, mut cx| async move {
+                    for assist_id in assist_ids {
+                        let mut receiver = this.update(&mut cx, |_, cx| {
+                            cx.window_context().defer(move |cx| {
+                                InlineAssistant::update_global(cx, |assistant, cx| {
+                                    assistant.start_assist(assist_id, cx);
+                                })
+                            });
+                            InlineAssistant::update_global(cx, |assistant, _| {
+                                assistant.observe_assist(assist_id)
+                            })
+                        })?;
+                        while !receiver.borrow().is_done() {
+                            let _ = receiver.changed().await;
                         }
-                    })
-                });
+                    }
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
             }
         }
     }
@@ -3006,35 +3017,10 @@ impl ContextEditor {
             }
         }
 
-        let mut observations = Vec::new();
-        InlineAssistant::update_global(cx, |assistant, _cx| {
-            for assist_id in &assist_ids {
-                observations.push(assistant.observe_assist(*assist_id));
-            }
-        });
-
         Some(WorkflowAssist {
             assist_ids,
             editor: editor.downgrade(),
             editor_was_open,
-            _observe_assist_status: cx.spawn(|this, mut cx| async move {
-                while !observations.is_empty() {
-                    let (result, ix, _) = futures::future::select_all(
-                        observations
-                            .iter_mut()
-                            .map(|observation| Box::pin(observation.changed())),
-                    )
-                    .await;
-
-                    if result.is_err() {
-                        observations.remove(ix);
-                    }
-
-                    if this.update(&mut cx, |_, cx| cx.notify()).is_err() {
-                        break;
-                    }
-                }
-            }),
         })
     }
 
