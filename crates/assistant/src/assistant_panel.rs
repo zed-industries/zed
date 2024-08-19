@@ -3614,17 +3614,17 @@ impl ContextEditor {
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
-        let mut is_still_resolving = false;
+        let mut should_pulsate = false;
         let button_text = match self.active_workflow_step() {
             Some(step) => match step.status(cx) {
-                WorkflowStepStatus::Resolving { .. } => {
-                    is_still_resolving = true;
-                    "Resolving Step"
-                }
                 WorkflowStepStatus::Empty | WorkflowStepStatus::Error(_) => "Retry Step Resolution",
+                WorkflowStepStatus::Resolving { auto_apply } => {
+                    should_pulsate = auto_apply;
+                    "Transform"
+                }
                 WorkflowStepStatus::Idle => "Transform",
-                WorkflowStepStatus::Pending => "Transforming...",
-                WorkflowStepStatus::Done => "Accept Transformation",
+                WorkflowStepStatus::Pending => "Applying...",
+                WorkflowStepStatus::Done => "Accept",
                 WorkflowStepStatus::Confirmed => "Send",
             },
             None => "Send",
@@ -3659,7 +3659,7 @@ impl ContextEditor {
             && provider
                 .as_ref()
                 .map_or(false, |provider| provider.must_accept_terms(cx));
-        let disabled = has_configuration_error || needs_to_accept_terms || is_still_resolving;
+        let disabled = has_configuration_error || needs_to_accept_terms;
 
         ButtonLike::new("send_button")
             .disabled(disabled)
@@ -3668,7 +3668,20 @@ impl ContextEditor {
                 button.tooltip(move |_| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new(button_text))
+            .child(Label::new(button_text).map(|this| {
+                if should_pulsate {
+                    this.with_animation(
+                        "resolving-suggestion-send-button-animation",
+                        Animation::new(Duration::from_secs(2))
+                            .repeat()
+                            .with_easing(pulsating_between(0.4, 0.8)),
+                        |label, delta| label.alpha(delta),
+                    )
+                    .into_any_element()
+                } else {
+                    this.into_any_element()
+                }
+            }))
             .children(
                 KeyBinding::for_action_in(&Assist, &focus_handle, cx)
                     .map(|binding| binding.into_any_element()),
