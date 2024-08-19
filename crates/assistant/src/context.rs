@@ -36,6 +36,7 @@ use std::{
     iter, mem,
     ops::Range,
     path::{Path, PathBuf},
+    str::FromStr as _,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -286,6 +287,10 @@ pub enum ContextEvent {
     WorkflowStepsRemoved(Vec<Range<language::Anchor>>),
     WorkflowStepUpdated(Range<language::Anchor>),
     StreamedCompletion,
+    EditStepsUpdated {
+        removed: Vec<Range<language::Anchor>>,
+        updated: Vec<Range<language::Anchor>>,
+    },
     PendingSlashCommandsUpdated {
         removed: Vec<Range<language::Anchor>>,
         updated: Vec<PendingSlashCommand>,
@@ -446,6 +451,45 @@ struct WorkflowStepEntry {
     step: Model<WorkflowStep>,
 }
 
+#[derive(Clone, Debug)]
+struct EditStep {
+    source_range: Range<language::Anchor>,
+    suggestion: EditSuggestion,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditSuggestion {
+    path: Option<String>,
+    location: Option<String>,
+    operation: Option<EditSuggestionOperation>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, strum::EnumString)]
+#[strum(serialize_all = "snake_case")]
+enum EditSuggestionOperation {
+    Replace,
+    Delete,
+    InsertAfter,
+    InsertBefore,
+}
+
+#[derive(Clone, Debug)]
+pub struct XmlTag {
+    pub kind: XmlTagKind,
+    pub range: Range<text::Anchor>,
+    pub is_open_tag: bool,
+}
+
+#[derive(Copy, Clone, Debug, strum::EnumString, PartialEq, Eq, strum::AsRefStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum XmlTagKind {
+    EditStep,
+    Path,
+    Location,
+    Within,
+    Operation,
+}
+
 pub struct Context {
     id: ContextId,
     timestamp: clock::Lamport,
@@ -454,7 +498,7 @@ pub struct Context {
     operations: Vec<ContextOperation>,
     buffer: Model<Buffer>,
     pending_slash_commands: Vec<PendingSlashCommand>,
-    edits_since_last_slash_command_parse: language::Subscription,
+    edits_since_last_parse: language::Subscription,
     finished_slash_commands: HashSet<SlashCommandId>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
@@ -474,9 +518,33 @@ pub struct Context {
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
     workflow_steps: Vec<WorkflowStepEntry>,
+    edit_steps: Vec<EditStep>,
+    xml_tags: Vec<XmlTag>,
     edits_since_last_workflow_step_prune: language::Subscription,
     project: Option<Model<Project>>,
     prompt_builder: Arc<PromptBuilder>,
+}
+
+trait ContextAnnotation {
+    fn range(&self) -> &Range<language::Anchor>;
+}
+
+impl ContextAnnotation for PendingSlashCommand {
+    fn range(&self) -> &Range<language::Anchor> {
+        &self.source_range
+    }
+}
+
+impl ContextAnnotation for EditStep {
+    fn range(&self) -> &Range<language::Anchor> {
+        &self.source_range
+    }
+}
+
+impl ContextAnnotation for XmlTag {
+    fn range(&self) -> &Range<language::Anchor> {
+        &self.range
+    }
 }
 
 impl EventEmitter<ContextEvent> for Context {}
@@ -539,7 +607,7 @@ impl Context {
             pending_slash_commands: Vec::new(),
             finished_slash_commands: HashSet::default(),
             slash_command_output_sections: Vec::new(),
-            edits_since_last_slash_command_parse,
+            edits_since_last_parse: edits_since_last_slash_command_parse,
             summary: None,
             pending_summary: Task::ready(None),
             completion_count: Default::default(),
@@ -555,6 +623,8 @@ impl Context {
             project,
             language_registry,
             workflow_steps: Vec::new(),
+            edit_steps: Vec::new(),
+            xml_tags: Vec::new(),
             edits_since_last_workflow_step_prune,
             prompt_builder,
         };
@@ -930,7 +1000,26 @@ impl Context {
         Some(self.workflow_steps[index].step.clone())
     }
 
+    pub fn edit_step_for_range(
+        &self,
+        range: Range<language::Anchor>,
+        cx: &AppContext,
+    ) -> Option<&EditSuggestion> {
+        let buffer = self.buffer.read(cx);
+        let index = self.edit_step_index_for_range(&range, buffer).ok()?;
+        Some(&self.edit_steps[index].suggestion)
+    }
+
     pub fn workflow_step_index_for_range(
+        &self,
+        tagged_range: &Range<text::Anchor>,
+        buffer: &text::BufferSnapshot,
+    ) -> Result<usize, usize> {
+        self.workflow_steps
+            .binary_search_by(|probe| probe.range.cmp(&tagged_range, buffer))
+    }
+
+    pub fn edit_step_index_for_range(
         &self,
         tagged_range: &Range<text::Anchor>,
         buffer: &text::BufferSnapshot,
@@ -971,7 +1060,7 @@ impl Context {
             )),
             language::Event::Edited => {
                 self.count_remaining_tokens(cx);
-                self.reparse_slash_commands(cx);
+                self.reparse(cx);
                 // Use `inclusive = true` to invalidate a step when an edit occurs
                 // at the start/end of a parsed step.
                 self.prune_invalid_workflow_steps(true, cx);
@@ -1188,10 +1277,10 @@ impl Context {
         cx.notify();
     }
 
-    pub fn reparse_slash_commands(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn reparse(&mut self, cx: &mut ModelContext<Self>) {
         let buffer = self.buffer.read(cx);
         let mut row_ranges = self
-            .edits_since_last_slash_command_parse
+            .edits_since_last_parse
             .consume()
             .into_iter()
             .map(|edit| {
@@ -1201,8 +1290,10 @@ impl Context {
             })
             .peekable();
 
-        let mut removed = Vec::new();
-        let mut updated = Vec::new();
+        let mut removed_slash_command_ranges = Vec::new();
+        let mut updated_slash_commands = Vec::new();
+        let mut removed_edits = Vec::new();
+        let mut updated_edits = Vec::new();
         while let Some(mut row_range) = row_ranges.next() {
             while let Some(next_row_range) = row_ranges.peek() {
                 if row_range.end >= next_row_range.start {
@@ -1219,58 +1310,249 @@ impl Context {
                 buffer.line_len(row_range.end - 1),
             ));
 
-            let old_range = self.pending_command_indices_for_range(start..end, cx);
+            self.reparse_slash_commands_in_range(
+                start,
+                end,
+                buffer,
+                &mut updated_slash_commands,
+                &mut removed_slash_command_ranges,
+                cx,
+            );
+            self.reparse_edit_suggestions_in_range(
+                start,
+                end,
+                buffer,
+                &mut updated_edits,
+                &mut removed_edits,
+                cx,
+            );
+        }
 
-            let mut new_commands = Vec::new();
-            let mut lines = buffer.text_for_range(start..end).lines();
-            let mut offset = lines.offset();
-            while let Some(line) = lines.next() {
-                if let Some(command_line) = SlashCommandLine::parse(line) {
-                    let name = &line[command_line.name.clone()];
-                    let arguments = command_line
-                        .arguments
-                        .iter()
-                        .filter_map(|argument_range| {
-                            if argument_range.is_empty() {
-                                None
-                            } else {
-                                line.get(argument_range.clone())
+        if !updated_slash_commands.is_empty() || !removed_slash_command_ranges.is_empty() {
+            cx.emit(ContextEvent::PendingSlashCommandsUpdated {
+                removed: removed_slash_command_ranges,
+                updated: updated_slash_commands,
+            });
+        }
+
+        if !updated_edits.is_empty() || !removed_edits.is_empty() {
+            cx.emit(ContextEvent::EditStepsUpdated {
+                removed: removed_edits,
+                updated: updated_edits,
+            });
+        }
+    }
+
+    fn reparse_slash_commands_in_range(
+        &mut self,
+        start: text::Anchor,
+        end: text::Anchor,
+        buffer: &Buffer,
+        updated: &mut Vec<PendingSlashCommand>,
+        removed: &mut Vec<Range<text::Anchor>>,
+        cx: &AppContext,
+    ) {
+        let old_range = self.pending_command_indices_for_range(start..end, cx);
+
+        let mut new_commands = Vec::new();
+        let mut lines = buffer.text_for_range(start..end).lines();
+        let mut offset = lines.offset();
+        while let Some(line) = lines.next() {
+            if let Some(command_line) = SlashCommandLine::parse(line) {
+                let name = &line[command_line.name.clone()];
+                let arguments = command_line
+                    .arguments
+                    .iter()
+                    .filter_map(|argument_range| {
+                        if argument_range.is_empty() {
+                            None
+                        } else {
+                            line.get(argument_range.clone())
+                        }
+                    })
+                    .map(ToOwned::to_owned)
+                    .collect::<SmallVec<_>>();
+                if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
+                    if !command.requires_argument() || !arguments.is_empty() {
+                        let start_ix = offset + command_line.name.start - 1;
+                        let end_ix = offset
+                            + command_line
+                                .arguments
+                                .last()
+                                .map_or(command_line.name.end, |argument| argument.end);
+                        let source_range =
+                            buffer.anchor_after(start_ix)..buffer.anchor_after(end_ix);
+                        let pending_command = PendingSlashCommand {
+                            name: name.to_string(),
+                            arguments,
+                            source_range,
+                            status: PendingSlashCommandStatus::Idle,
+                        };
+                        updated.push(pending_command.clone());
+                        new_commands.push(pending_command);
+                    }
+                }
+            }
+
+            offset = lines.offset();
+        }
+
+        let removed_commands = self.pending_slash_commands.splice(old_range, new_commands);
+        removed.extend(removed_commands.map(|command| command.source_range));
+    }
+
+    fn reparse_edit_suggestions_in_range(
+        &mut self,
+        buffer_start: text::Anchor,
+        buffer_end: text::Anchor,
+        buffer: &Buffer,
+        updated: &mut Vec<Range<text::Anchor>>,
+        removed: &mut Vec<Range<text::Anchor>>,
+        cx: &AppContext,
+    ) {
+        // Rebuild the XML tags in the edited range.
+        let intersecting_tags_range =
+            self.indices_intersecting_buffer_range(&self.xml_tags, buffer_start..buffer_end, cx);
+        let mut new_tags = Vec::new();
+        let mut lines = buffer.text_for_range(buffer_start..buffer_end).lines();
+        let mut offset = lines.offset();
+        while let Some(line) = lines.next() {
+            for (start_ix, _) in line.match_indices('<') {
+                let mut name_start_ix = start_ix + 1;
+                let name_end_ix = line[start_ix..].find('>').map(|i| start_ix + i);
+                if let Some(name_end_ix) = name_end_ix {
+                    let end_ix = name_end_ix + 1;
+                    let mut is_open_tag = true;
+                    if line[name_start_ix..name_end_ix].starts_with('/') {
+                        name_start_ix += 1;
+                        is_open_tag = false;
+                    }
+                    let tag_name = &line[name_start_ix..name_end_ix];
+                    if let Ok(kind) = XmlTagKind::from_str(tag_name) {
+                        new_tags.push(XmlTag {
+                            range: buffer.anchor_after(offset + start_ix)
+                                ..buffer.anchor_before(offset + end_ix),
+                            is_open_tag,
+                            kind,
+                        });
+                    };
+                }
+            }
+            offset = lines.offset();
+        }
+        self.xml_tags
+            .splice(intersecting_tags_range.clone(), new_tags);
+
+        // Find which suggestions intersect the changed range.
+        let intersecting_steps_range =
+            self.indices_intersecting_buffer_range(&self.edit_steps, buffer_start..buffer_end, cx);
+
+        // Reparse all tags after the last unchanged suggestion before the change.
+        let mut tags_start_ix = 0;
+        if let Some(preceding_unchanged_step) =
+            self.edit_steps[..intersecting_steps_range.start].last()
+        {
+            tags_start_ix = match self.xml_tags.binary_search_by(|tag| {
+                tag.range
+                    .start
+                    .cmp(&preceding_unchanged_step.source_range.end, buffer)
+                    .then(Ordering::Less)
+            }) {
+                Ok(ix) | Err(ix) => ix,
+            };
+        }
+
+        // Rebuild the edit suggestions in the range.
+        let mut new_suggestions = Vec::new();
+        let mut pending_entry = None;
+        let mut edit_step_depth = 0;
+        let mut tags = self.xml_tags[tags_start_ix..].iter();
+        'tags: while let Some(tag) = tags.next() {
+            if tag.range.start.cmp(&buffer_end, buffer).is_gt() && edit_step_depth == 0 {
+                break;
+            }
+
+            if tag.kind == XmlTagKind::EditStep && tag.is_open_tag {
+                edit_step_depth += 1;
+                let edit_start = tag.range.start;
+                let mut entry = EditStep {
+                    source_range: edit_start..edit_start,
+                    suggestion: EditSuggestion {
+                        path: None,
+                        location: None,
+                        operation: None,
+                    },
+                };
+
+                while let Some(tag) = tags.next() {
+                    if tag.kind == XmlTagKind::EditStep && !tag.is_open_tag {
+                        edit_step_depth -= 1;
+                        if edit_step_depth == 0 {
+                            entry.source_range.end = tag.range.end;
+                            new_suggestions.push(entry);
+                            continue 'tags;
+                        }
+                    }
+
+                    if tag.kind == XmlTagKind::Path && tag.is_open_tag {
+                        let path_start = tag.range.end;
+                        while let Some(tag) = tags.next() {
+                            if tag.kind == XmlTagKind::Path && !tag.is_open_tag {
+                                let path_end = tag.range.start;
+                                entry.suggestion.path =
+                                    Some(buffer.text_for_range(path_start..path_end).collect());
+                                break;
                             }
-                        })
-                        .map(ToOwned::to_owned)
-                        .collect::<SmallVec<_>>();
-                    if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
-                        if !command.requires_argument() || !arguments.is_empty() {
-                            let start_ix = offset + command_line.name.start - 1;
-                            let end_ix = offset
-                                + command_line
-                                    .arguments
-                                    .last()
-                                    .map_or(command_line.name.end, |argument| argument.end);
-                            let source_range =
-                                buffer.anchor_after(start_ix)..buffer.anchor_after(end_ix);
-                            let pending_command = PendingSlashCommand {
-                                name: name.to_string(),
-                                arguments,
-                                source_range,
-                                status: PendingSlashCommandStatus::Idle,
-                            };
-                            updated.push(pending_command.clone());
-                            new_commands.push(pending_command);
+                        }
+                    }
+
+                    if tag.kind == XmlTagKind::Location && tag.is_open_tag {
+                        let path_start = tag.range.end;
+                        while let Some(tag) = tags.next() {
+                            if tag.kind == XmlTagKind::Location && !tag.is_open_tag {
+                                let path_end = tag.range.start;
+                                entry.suggestion.location =
+                                    Some(buffer.text_for_range(path_start..path_end).collect());
+                                break;
+                            }
+                        }
+                    }
+
+                    if tag.kind == XmlTagKind::Operation && tag.is_open_tag {
+                        let path_start = tag.range.end;
+                        while let Some(tag) = tags.next() {
+                            if tag.kind == XmlTagKind::Operation && !tag.is_open_tag {
+                                let path_end = tag.range.start;
+                                entry.suggestion.operation = EditSuggestionOperation::from_str(
+                                    &buffer
+                                        .text_for_range(path_start..path_end)
+                                        .collect::<String>(),
+                                )
+                                .ok();
+                                break;
+                            }
                         }
                     }
                 }
 
-                offset = lines.offset();
+                pending_entry = Some(entry);
             }
-
-            let removed_commands = self.pending_slash_commands.splice(old_range, new_commands);
-            removed.extend(removed_commands.map(|command| command.source_range));
         }
 
-        if !updated.is_empty() || !removed.is_empty() {
-            cx.emit(ContextEvent::PendingSlashCommandsUpdated { removed, updated });
+        if let Some(mut pending_entry) = pending_entry {
+            pending_entry.source_range.end = text::Anchor::MAX;
+            new_suggestions.push(pending_entry);
         }
+
+        updated.extend(new_suggestions.iter().map(|step| step.source_range.clone()));
+        let removed_steps = self
+            .edit_steps
+            .splice(intersecting_steps_range, new_suggestions);
+        removed.extend(
+            removed_steps
+                .map(|step| step.source_range)
+                .filter(|range| !updated.contains(&range)),
+        );
     }
 
     fn prune_invalid_workflow_steps(&mut self, inclusive: bool, cx: &mut ModelContext<Self>) {
@@ -1470,16 +1752,23 @@ impl Context {
         range: Range<language::Anchor>,
         cx: &AppContext,
     ) -> Range<usize> {
+        self.indices_intersecting_buffer_range(&self.pending_slash_commands, range, cx)
+    }
+
+    fn indices_intersecting_buffer_range<T: ContextAnnotation>(
+        &self,
+        all_annotations: &[T],
+        range: Range<language::Anchor>,
+        cx: &AppContext,
+    ) -> Range<usize> {
         let buffer = self.buffer.read(cx);
-        let start_ix = match self
-            .pending_slash_commands
-            .binary_search_by(|probe| probe.source_range.end.cmp(&range.start, &buffer))
+        let start_ix = match all_annotations
+            .binary_search_by(|probe| probe.range().end.cmp(&range.start, &buffer))
         {
             Ok(ix) | Err(ix) => ix,
         };
-        let end_ix = match self
-            .pending_slash_commands
-            .binary_search_by(|probe| probe.source_range.start.cmp(&range.end, &buffer))
+        let end_ix = match all_annotations
+            .binary_search_by(|probe| probe.range().start.cmp(&range.end, &buffer))
         {
             Ok(ix) => ix + 1,
             Err(ix) => ix,
@@ -1495,7 +1784,7 @@ impl Context {
         expand_result: bool,
         cx: &mut ModelContext<Self>,
     ) {
-        self.reparse_slash_commands(cx);
+        self.reparse(cx);
 
         let insert_output_task = cx.spawn(|this, mut cx| {
             let command_range = command_range.clone();

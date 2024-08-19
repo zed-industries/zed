@@ -1,14 +1,13 @@
-<edit_steps_task>
+<edit_suggestions_task_specification>
 
 # Goal
 
-Guide the user through code changes in numbered steps that focus on individual functions, type definitions, etc.
-Surround each distinct step in a <edit_step></edit_step> XML tag. The user will be viewing these edit steps
-in a code editor named Zed, which is where they will have entered this prompt and will be seeing the response.
+Guide the user through code changes using a series of edit steps, where each step describes a change to a
+particular location in a source code file.
 
 # Output Format
 
-Each <edit_step> may contain the following child tags:
+Surround each step with an `<edit_step></edit_step>` XML tag. Each `<edit_step>` may contain the following child tags:
 
 ## `<path>` (required)
 
@@ -17,7 +16,8 @@ This tag contains the path to the file that will be changed. It can be an existi
 ## `<location>` (optional)
 
 This tag contains content from the the file that identifies the location where the change should occur. It can either
-be a single excerpt, or a combination of starting excerpt, an ellipsis, and an ending excerpt.
+be a single excerpt, or a combination of starting excerpt, an ellipsis, and an ending excerpt. If a location is not
+specified, the entire file will be considered the location.
 
 ## `<within>` (optional)
 
@@ -32,7 +32,7 @@ This tag indicates what type of change should be made, relative to the given loc
 * `insert_before`: add new content before the specified location.
 * `insert_after`: add new content after the specified location.
 
-In addition to all of these child tags, each `<edit_step>` should contain a written description of the change that should
+After these child tags, each `<edit_step>` must contain a written description of the change that should
 be made. The description should begin with a high-level overview, and can contain markdown code blocks as well. The description
 should be self-contained and actionable.
 
@@ -129,4 +129,4 @@ assert_eq!(calc.value(), 3);
 </assistant>
 </example
 
-</edit_steps_task>
+</edit_suggestions_task_specification>

@@ -1,3 +1,4 @@
+use super::{EditSuggestion, MessageCacheMetadata};
 use crate::{
     assistant_panel, prompt_library, slash_command::file_command, workflow::tool, CacheStatus,
     Context, ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
@@ -30,10 +31,11 @@ use std::{
 use text::{network::Network, OffsetRangeExt as _, ReplicaId, ToPoint as _};
 use ui::{Context as _, WindowContext};
 use unindent::Unindent;
-use util::{test::marked_text_ranges, RandomCharIter};
+use util::{
+    test::{generate_marked_text, marked_text_ranges},
+    RandomCharIter,
+};
 use workspace::Workspace;
-
-use super::MessageCacheMetadata;
 
 #[gpui::test]
 fn test_inserting_and_removing_messages(cx: &mut AppContext) {
@@ -660,6 +662,250 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
                 (step.range.to_point(buffer), status)
             })
             .collect()
+    }
+}
+
+#[gpui::test]
+async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
+    cx.update(prompt_library::init);
+    let settings_store = cx.update(SettingsStore::test);
+    cx.set_global(settings_store);
+    cx.update(Project::init_settings);
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [Path::new("/root")], cx).await;
+    cx.update(LanguageModelRegistry::test);
+
+    cx.update(assistant_panel::init);
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+
+    // Create a new context
+    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry.clone(),
+            Some(project),
+            None,
+            prompt_builder.clone(),
+            cx,
+        )
+    });
+
+    // No edit tags
+    edit(
+        &context,
+        "
+        «one
+        two
+        »",
+        cx,
+    );
+    expect_suggestion_ranges(
+        &context,
+        "
+        one
+        two
+        ",
+        &[],
+        cx,
+    );
+
+    // Partial edit step tag is added
+    edit(
+        &context,
+        "
+        one
+        two
+        «
+        <edit_step»",
+        cx,
+    );
+    expect_suggestion_ranges(
+        &context,
+        "
+        one
+        two
+
+        <edit_step",
+        &[],
+        cx,
+    );
+
+    // The rest of the edit tag is added. The unclosed
+    // edit_step is treated as an incomplete suggestion.
+    edit(
+        &context,
+        "
+        one
+        two
+
+        <edit_step«>
+        <path>»",
+        cx,
+    );
+    expect_suggestion_ranges(
+        &context,
+        "
+        one
+        two
+
+        «<edit_step>
+        <path>»",
+        &[EditSuggestion {
+            path: None,
+            location: None,
+            operation: None,
+        }],
+        cx,
+    );
+
+    // The full suggestion is added
+    edit(
+        &context,
+        "
+        one
+        two
+
+        <edit_step>
+        <path>«src/lib.rs</path>
+        <location>fn one() {}</location>
+
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+        </edit_step>
+
+        also,»",
+        cx,
+    );
+    expect_suggestion_ranges(
+        &context,
+        "
+        one
+        two
+
+        «<edit_step>
+        <path>src/lib.rs</path>
+        <location>fn one() {}</location>
+
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+        </edit_step>»
+
+        also,",
+        &[EditSuggestion {
+            path: Some("src/lib.rs".into()),
+            location: Some("fn one() {}".into()),
+            operation: None,
+        }],
+        cx,
+    );
+
+    // Another partial suggestion is added
+    edit(
+        &context,
+        "
+        one
+        two
+
+        <edit_step>
+        <path>src/lib.rs</path>
+        <location>fn one() {}</location>
+
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+        </edit_step>
+
+        also,«
+
+        <edit_step>
+        <path>src/main.rs</path>
+        <location>one();</location>
+
+        Call the new function»",
+        cx,
+    );
+    expect_suggestion_ranges(
+        &context,
+        "
+        one
+        two
+
+        «<edit_step>
+        <path>src/lib.rs</path>
+        <location>fn one() {}</location>
+
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+        </edit_step>»
+
+        also,
+
+        «<edit_step>
+        <path>src/main.rs</path>
+        <location>one();</location>
+
+        Call the new function»",
+        &[
+            EditSuggestion {
+                path: Some("src/lib.rs".into()),
+                location: Some("fn one() {}".into()),
+                operation: None,
+            },
+            EditSuggestion {
+                path: Some("src/main.rs".into()),
+                location: Some("one();".into()),
+                operation: None,
+            },
+        ],
+        cx,
+    );
+
+    fn edit(context: &Model<Context>, new_text_marked_with_edits: &str, cx: &mut TestAppContext) {
+        context.update(cx, |context, cx| {
+            context.buffer.update(cx, |buffer, cx| {
+                buffer.edit_via_marked_text(&new_text_marked_with_edits.unindent(), None, cx);
+            });
+        });
+        cx.executor().run_until_parked();
+    }
+
+    fn expect_suggestion_ranges(
+        context: &Model<Context>,
+        expected_marked_text: &str,
+        expected_suggestions: &[EditSuggestion],
+        cx: &mut TestAppContext,
+    ) {
+        context.update(cx, |context, cx| {
+            let expected_marked_text = expected_marked_text.unindent();
+            let (expected_text, expected_ranges) = marked_text_ranges(&expected_marked_text, false);
+            context.buffer.read_with(cx, |buffer, cx| {
+                assert_eq!(buffer.text(), expected_text);
+                let ranges = context
+                    .edit_steps
+                    .iter()
+                    .map(|entry| entry.source_range.to_offset(buffer))
+                    .collect::<Vec<_>>();
+                let marked = generate_marked_text(&expected_text, &ranges, false);
+                assert_eq!(
+                    marked,
+                    expected_marked_text,
+                    "unexpected suggestion ranges. actual: {ranges:?}, expected: {expected_ranges:?}"
+                );
+                let suggestions = context.edit_steps.iter().map(|step| step.suggestion.clone()).collect::<Vec<_>>();
+                assert_eq!(suggestions, expected_suggestions);
+            });
+        });
     }
 }
 

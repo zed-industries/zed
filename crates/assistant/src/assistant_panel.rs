@@ -25,11 +25,12 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockContext, BlockDisposition, BlockProperties, BlockStyle, Crease, CustomBlockId,
-        RenderBlock, ToDisplayPoint,
+        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CustomBlockId, RenderBlock,
+        ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
-    Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowExt, ToOffset as _, ToPoint,
+    Anchor, Editor, EditorEvent, ExcerptRange, GutterDimensions, MultiBuffer, RowExt,
+    ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
@@ -58,6 +59,7 @@ use smol::stream::StreamExt;
 use std::{
     borrow::Cow,
     cmp,
+    collections::hash_map,
     fmt::Write,
     ops::{DerefMut, Range},
     path::PathBuf,
@@ -1358,6 +1360,11 @@ struct WorkflowStep {
     auto_apply: bool,
 }
 
+struct EditStepState {
+    header_block_id: CustomBlockId,
+    footer_block_id: CustomBlockId,
+}
+
 impl WorkflowStep {
     fn status(&self, cx: &AppContext) -> WorkflowStepStatus {
         match self.resolved_step.as_ref() {
@@ -1396,6 +1403,47 @@ impl WorkflowStep {
                 auto_apply: self.auto_apply,
             },
         }
+    }
+}
+
+impl EditStepState {
+    fn status(&self, cx: &AppContext) -> WorkflowStepStatus {
+        WorkflowStepStatus::Idle
+
+        // match self.resolved_step.as_ref() {
+        //     Some(Ok(step)) => {
+        //         if step.suggestion_groups.is_empty() {
+        //             WorkflowStepStatus::Empty
+        //         } else if let Some(assist) = self.assist.as_ref() {
+        //             let assistant = InlineAssistant::global(cx);
+        //             if assist
+        //                 .assist_ids
+        //                 .iter()
+        //                 .any(|assist_id| assistant.assist_status(*assist_id, cx).is_pending())
+        //             {
+        //                 WorkflowStepStatus::Pending
+        //             } else if assist
+        //                 .assist_ids
+        //                 .iter()
+        //                 .all(|assist_id| assistant.assist_status(*assist_id, cx).is_confirmed())
+        //             {
+        //                 WorkflowStepStatus::Confirmed
+        //             } else if assist
+        //                 .assist_ids
+        //                 .iter()
+        //                 .all(|assist_id| assistant.assist_status(*assist_id, cx).is_done())
+        //             {
+        //                 WorkflowStepStatus::Done
+        //             } else {
+        //                 WorkflowStepStatus::Idle
+        //             }
+        //         } else {
+        //             WorkflowStepStatus::Idle
+        //         }
+        //     }
+        //     Some(Err(error)) => WorkflowStepStatus::Error(error.clone()),
+        //     None => WorkflowStepStatus::Resolving,
+        // }
     }
 }
 
@@ -1459,9 +1507,9 @@ impl WorkflowStepStatus {
         step_range: Range<language::Anchor>,
         focus_handle: FocusHandle,
         editor: WeakView<ContextEditor>,
-        cx: &mut BlockContext<'_, '_>,
+        block_id: BlockId,
     ) -> AnyElement {
-        let id = EntityId::from(cx.block_id);
+        let id = EntityId::from(block_id);
         fn display_keybind_in_tooltip(
             step_range: &Range<language::Anchor>,
             editor: &WeakView<ContextEditor>,
@@ -1736,6 +1784,7 @@ pub struct ContextEditor {
     pending_slash_command_blocks: HashMap<Range<language::Anchor>, CustomBlockId>,
     _subscriptions: Vec<Subscription>,
     workflow_steps: HashMap<Range<language::Anchor>, WorkflowStep>,
+    edit_steps: HashMap<Range<language::Anchor>, EditStepState>,
     active_workflow_step: Option<ActiveWorkflowStep>,
     assistant_panel: WeakView<AssistantPanel>,
     error_message: Option<SharedString>,
@@ -1799,6 +1848,7 @@ impl ContextEditor {
             pending_slash_command_blocks: HashMap::default(),
             _subscriptions,
             workflow_steps: HashMap::default(),
+            edit_steps: HashMap::default(),
             active_workflow_step: None,
             assistant_panel,
             error_message: None,
@@ -1817,7 +1867,7 @@ impl ContextEditor {
             editor.insert(&format!("/{command_name}\n\n"), cx)
         });
         let command = self.context.update(cx, |context, cx| {
-            context.reparse_slash_commands(cx);
+            context.reparse(cx);
             context.pending_slash_commands()[0].clone()
         });
         self.run_command(
@@ -2083,7 +2133,7 @@ impl ContextEditor {
         let mut commands_by_range = HashMap::default();
         let workspace = self.workspace.clone();
         self.context.update(cx, |context, cx| {
-            context.reparse_slash_commands(cx);
+            context.reparse(cx);
             for selection in selections.iter() {
                 if let Some(command) =
                     context.pending_command_for_position(selection.head().text_anchor, cx)
@@ -2179,6 +2229,81 @@ impl ContextEditor {
                             point(scroll_position.offset_before_cursor.x, scroll_top),
                             cx,
                         );
+                    }
+                });
+            }
+            ContextEvent::EditStepsUpdated { removed, updated } => {
+                self.editor.update(cx, |editor, cx| {
+                    let mut removed_block_ids = HashSet::default();
+                    for range in removed {
+                        if let Some(state) = self.edit_steps.remove(range) {
+                            removed_block_ids.insert(state.header_block_id);
+                            removed_block_ids.insert(state.footer_block_id);
+                        }
+                    }
+                    editor.remove_blocks(removed_block_ids, None, cx);
+
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let (&excerpt_id, _, _) = snapshot.as_singleton().unwrap();
+
+                    for range in updated {
+                        let start = snapshot.anchor_in_excerpt(excerpt_id, range.start).unwrap();
+                        let end = snapshot.anchor_in_excerpt(excerpt_id, range.end).unwrap();
+                        if let hash_map::Entry::Vacant(e) = self.edit_steps.entry(range.clone()) {
+                            let block_ids = editor.insert_blocks(
+                                [
+                                    BlockProperties {
+                                        position: start,
+                                        height: 1,
+                                        disposition: BlockDisposition::Above,
+                                        priority: 0,
+                                        style: BlockStyle::Sticky,
+                                        render: Box::new({
+                                            let this = context_editor.clone();
+                                            let range = range.clone();
+                                            move |cx| {
+                                                let block_id = cx.block_id;
+                                                let gutter_dimensions = cx.gutter_dimensions;
+                                                this.update(cx.deref_mut(), |this, cx| {
+                                                    this.render_edit_step_header(
+                                                        range.clone(),
+                                                        gutter_dimensions,
+                                                        block_id,
+                                                        cx,
+                                                    )
+                                                })
+                                                .ok()
+                                                .flatten()
+                                                .unwrap_or(div().into_any_element())
+                                            }
+                                        }),
+                                    },
+                                    BlockProperties {
+                                        position: end,
+                                        height: 1,
+                                        disposition: BlockDisposition::Below,
+                                        priority: 0,
+                                        style: BlockStyle::Sticky,
+                                        render: Box::new({
+                                            let this = context_editor.clone();
+                                            let range = range.clone();
+                                            move |cx| {
+                                                this.update(cx.deref_mut(), |this, cx| {
+                                                    this.render_edit_step_footer(range.clone(), cx)
+                                                })
+                                                .unwrap_or(div().into_any_element())
+                                            }
+                                        }),
+                                    },
+                                ],
+                                None,
+                                cx,
+                            );
+                            e.insert(EditStepState {
+                                header_block_id: block_ids[0],
+                                footer_block_id: block_ids[1],
+                            });
+                        }
                     }
                 });
             }
@@ -2326,7 +2451,7 @@ impl ContextEditor {
 
                 if *run_commands_in_output {
                     let commands = self.context.update(cx, |context, cx| {
-                        context.reparse_slash_commands(cx);
+                        context.reparse(cx);
                         context
                             .pending_commands_for_range(output_range.clone(), cx)
                             .to_vec()
@@ -2655,7 +2780,7 @@ impl ContextEditor {
                                                             step_range.clone(),
                                                             editor_focus_handle.clone(),
                                                             weak_self.clone(),
-                                                            cx,
+                                                            cx.block_id,
                                                         ),
                                                     )
                                                 })),
@@ -3571,6 +3696,120 @@ impl ContextEditor {
             .map(|summary| summary.text.clone())
             .map(Cow::Owned)
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
+    }
+
+    fn render_edit_step_header(
+        &self,
+        range: Range<text::Anchor>,
+        gutter_dimensions: &GutterDimensions,
+        block_id: BlockId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<AnyElement> {
+        let edit_state = self.edit_steps.get(&range)?;
+        let status = edit_state.status(cx);
+        let this = cx.view().downgrade();
+
+        let theme = cx.theme().status();
+        let is_confirmed = status.is_confirmed();
+        let border_color = if is_confirmed {
+            theme.ignored_border
+        } else {
+            theme.info_border
+        };
+
+        let editor = self.editor.read(cx);
+        let focus_handle = editor.focus_handle(cx);
+        let snapshot = editor
+            .buffer()
+            .read(cx)
+            .as_singleton()?
+            .read(cx)
+            .text_snapshot();
+        let start_offset = range.start.to_offset(&snapshot);
+        let parent_message = self
+            .context
+            .read(cx)
+            .messages_for_offsets([start_offset], cx);
+        debug_assert_eq!(parent_message.len(), 1);
+        let parent_message = parent_message.first()?;
+
+        let step_index = self
+            .workflow_steps
+            .keys()
+            .filter(|workflow_step_range| {
+                workflow_step_range
+                    .start
+                    .cmp(&parent_message.anchor, &snapshot)
+                    .is_ge()
+                    && workflow_step_range.end.cmp(&range.end, &snapshot).is_le()
+            })
+            .count();
+
+        let step_label = Label::new(format!("Step {step_index}")).size(LabelSize::Small);
+
+        let step_label = if is_confirmed {
+            h_flex()
+                .items_center()
+                .gap_2()
+                .child(step_label.strikethrough(true).color(Color::Muted))
+                .child(
+                    Icon::new(IconName::Check)
+                        .size(IconSize::Small)
+                        .color(Color::Created),
+                )
+        } else {
+            div().child(step_label)
+        };
+
+        let step_label_element = step_label.into_any_element();
+
+        let step_label = h_flex()
+            .id("step")
+            .group("step-label")
+            .items_center()
+            .gap_1()
+            .child(step_label_element)
+            .child(
+                IconButton::new("edit-step", IconName::SearchCode)
+                    .size(ButtonSize::Compact)
+                    .icon_size(IconSize::Small)
+                    .shape(IconButtonShape::Square)
+                    .visible_on_hover("step-label")
+                    .tooltip(|cx| Tooltip::text("Open Step View", cx)),
+            );
+
+        Some(
+            div()
+                .w_full()
+                .px(gutter_dimensions.full_width())
+                .child(
+                    h_flex()
+                        .w_full()
+                        .h_8()
+                        .border_b_1()
+                        .border_color(border_color)
+                        .pb_2()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(h_flex().justify_start().gap_2().child(step_label))
+                        .child(h_flex().w_full().justify_end().child(status.into_element(
+                            range.clone(),
+                            focus_handle.clone(),
+                            this.clone(),
+                            block_id,
+                        ))),
+                )
+                .into_any(),
+        )
+    }
+
+    fn render_edit_step_footer(
+        &self,
+        range: Range<text::Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement {
+        div().into_any_element()
     }
 
     fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
