@@ -30,9 +30,9 @@ pub enum Role {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
+    #[default]
     #[serde(alias = "gpt-4o", rename = "gpt-4o-2024-05-13")]
     Gpt4o,
-    #[default]
     #[serde(alias = "gpt-4", rename = "gpt-4")]
     Gpt4,
     #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
