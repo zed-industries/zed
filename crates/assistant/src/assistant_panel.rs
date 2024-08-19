@@ -1355,6 +1355,7 @@ struct WorkflowStep {
     footer_block_id: CustomBlockId,
     resolved_step: Option<Result<WorkflowStepResolution, Arc<anyhow::Error>>>,
     assist: Option<WorkflowAssist>,
+    auto_apply: bool,
 }
 
 impl WorkflowStep {
@@ -1391,13 +1392,16 @@ impl WorkflowStep {
                 }
             }
             Some(Err(error)) => WorkflowStepStatus::Error(error.clone()),
-            None => WorkflowStepStatus::Resolving,
+            None => WorkflowStepStatus::Resolving {
+                auto_apply: self.auto_apply,
+            },
         }
     }
 }
 
+#[derive(Clone)]
 enum WorkflowStepStatus {
-    Resolving,
+    Resolving { auto_apply: bool },
     Error(Arc<anyhow::Error>),
     Empty,
     Idle,
@@ -1474,16 +1478,6 @@ impl WorkflowStepStatus {
                 .unwrap_or_default()
         }
         match self {
-            WorkflowStepStatus::Resolving => Label::new("Resolving")
-                .size(LabelSize::Small)
-                .with_animation(
-                    ("resolving-suggestion-animation", id),
-                    Animation::new(Duration::from_secs(2))
-                        .repeat()
-                        .with_easing(pulsating_between(0.4, 0.8)),
-                    |label, delta| label.alpha(delta),
-                )
-                .into_any_element(),
             WorkflowStepStatus::Error(error) => Self::render_workflow_step_error(
                 id,
                 editor.clone(),
@@ -1496,43 +1490,72 @@ impl WorkflowStepStatus {
                 step_range.clone(),
                 "Model was unable to locate the code to edit".to_string(),
             ),
-            WorkflowStepStatus::Idle => Button::new(("transform", id), "Transform")
-                .icon(IconName::SparkleAlt)
-                .icon_position(IconPosition::Start)
-                .icon_size(IconSize::Small)
-                .label_size(LabelSize::Small)
-                .style(ButtonStyle::Tinted(TintColor::Accent))
-                .tooltip({
-                    let step_range = step_range.clone();
-                    let editor = editor.clone();
-                    move |cx| {
-                        cx.new_view(|cx| {
-                            let tooltip = Tooltip::new("Transform");
-                            if display_keybind_in_tooltip(&step_range, &editor, cx) {
-                                tooltip.key_binding(KeyBinding::for_action_in(
-                                    &Assist,
-                                    &focus_handle,
-                                    cx,
-                                ))
-                            } else {
-                                tooltip
-                            }
-                        })
-                        .into()
-                    }
-                })
-                .on_click({
-                    let editor = editor.clone();
-                    let step_range = step_range.clone();
-                    move |_, cx| {
-                        editor
-                            .update(cx, |this, cx| {
-                                this.apply_workflow_step(step_range.clone(), cx)
+            WorkflowStepStatus::Idle | WorkflowStepStatus::Resolving { .. } => {
+                let status = self.clone();
+                Button::new(("transform", id), "Transform")
+                    .icon(IconName::SparkleAlt)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .label_size(LabelSize::Small)
+                    .style(ButtonStyle::Tinted(TintColor::Accent))
+                    .tooltip({
+                        let step_range = step_range.clone();
+                        let editor = editor.clone();
+                        move |cx| {
+                            cx.new_view(|cx| {
+                                let tooltip = Tooltip::new("Transform");
+                                if display_keybind_in_tooltip(&step_range, &editor, cx) {
+                                    tooltip.key_binding(KeyBinding::for_action_in(
+                                        &Assist,
+                                        &focus_handle,
+                                        cx,
+                                    ))
+                                } else {
+                                    tooltip
+                                }
                             })
-                            .ok();
-                    }
-                })
-                .into_any_element(),
+                            .into()
+                        }
+                    })
+                    .on_click({
+                        let editor = editor.clone();
+                        let step_range = step_range.clone();
+                        move |_, cx| {
+                            if let WorkflowStepStatus::Idle = &status {
+                                editor
+                                    .update(cx, |this, cx| {
+                                        this.apply_workflow_step(step_range.clone(), cx)
+                                    })
+                                    .ok();
+                            } else if let WorkflowStepStatus::Resolving { auto_apply: false } =
+                                &status
+                            {
+                                editor
+                                    .update(cx, |this, _| {
+                                        if let Some(step) = this.workflow_steps.get_mut(&step_range)
+                                        {
+                                            step.auto_apply = true;
+                                        }
+                                    })
+                                    .ok();
+                            }
+                        }
+                    })
+                    .map(|this| {
+                        if let WorkflowStepStatus::Resolving { auto_apply: true } = &self {
+                            this.with_animation(
+                                ("resolving-suggestion-animation", id),
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                |label, delta| label.alpha(delta),
+                            )
+                            .into_any_element()
+                        } else {
+                            this.into_any_element()
+                        }
+                    })
+            }
             WorkflowStepStatus::Pending => h_flex()
                 .items_center()
                 .gap_2()
@@ -1856,7 +1879,7 @@ impl ContextEditor {
 
         let range = step.range.clone();
         match step.status(cx) {
-            WorkflowStepStatus::Resolving | WorkflowStepStatus::Pending => true,
+            WorkflowStepStatus::Resolving { .. } | WorkflowStepStatus::Pending => true,
             WorkflowStepStatus::Idle => {
                 self.apply_workflow_step(range, cx);
                 true
@@ -2650,11 +2673,17 @@ impl ContextEditor {
                     footer_block_id: block_ids[1],
                     resolved_step,
                     assist: None,
+                    auto_apply: false,
                 },
             );
         }
 
         self.update_active_workflow_step(cx);
+        if let Some(step) = self.workflow_steps.get_mut(&step_range) {
+            if step.auto_apply && matches!(step.status(cx), WorkflowStepStatus::Idle) {
+                self.apply_workflow_step(step_range, cx);
+            }
+        }
     }
 
     fn open_workflow_step(
@@ -3586,13 +3615,17 @@ impl ContextEditor {
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
+        let mut should_pulsate = false;
         let button_text = match self.active_workflow_step() {
             Some(step) => match step.status(cx) {
-                WorkflowStepStatus::Resolving => "Resolving Step...",
                 WorkflowStepStatus::Empty | WorkflowStepStatus::Error(_) => "Retry Step Resolution",
+                WorkflowStepStatus::Resolving { auto_apply } => {
+                    should_pulsate = auto_apply;
+                    "Transform"
+                }
                 WorkflowStepStatus::Idle => "Transform",
-                WorkflowStepStatus::Pending => "Transforming...",
-                WorkflowStepStatus::Done => "Accept Transformation",
+                WorkflowStepStatus::Pending => "Applying...",
+                WorkflowStepStatus::Done => "Accept",
                 WorkflowStepStatus::Confirmed => "Send",
             },
             None => "Send",
@@ -3636,7 +3669,20 @@ impl ContextEditor {
                 button.tooltip(move |_| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new(button_text))
+            .child(Label::new(button_text).map(|this| {
+                if should_pulsate {
+                    this.with_animation(
+                        "resolving-suggestion-send-button-animation",
+                        Animation::new(Duration::from_secs(2))
+                            .repeat()
+                            .with_easing(pulsating_between(0.4, 0.8)),
+                        |label, delta| label.alpha(delta),
+                    )
+                    .into_any_element()
+                } else {
+                    this.into_any_element()
+                }
+            }))
             .children(
                 KeyBinding::for_action_in(&Assist, &focus_handle, cx)
                     .map(|binding| binding.into_any_element()),
