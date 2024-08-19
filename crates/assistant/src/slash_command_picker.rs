@@ -9,7 +9,7 @@ use ui::ListItemSpacing;
 use gpui::SharedString;
 use gpui::Task;
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use ui::{prelude::*, ListItem, PopoverMenu, PopoverTrigger};
 
 use crate::assistant_panel::ContextEditor;
 
@@ -18,7 +18,6 @@ pub(super) struct SlashCommandSelector<T: PopoverTrigger> {
     registry: Arc<SlashCommandRegistry>,
     active_context_editor: WeakView<ContextEditor>,
     trigger: T,
-    info_text: Option<SharedString>,
 }
 
 #[derive(Clone)]
@@ -44,7 +43,6 @@ impl<T: PopoverTrigger> SlashCommandSelector<T> {
             registry,
             active_context_editor,
             trigger,
-            info_text: None,
         }
     }
 }
