@@ -26,6 +26,7 @@ pub(super) struct SlashCommandSelector<T: PopoverTrigger> {
 struct SlashCommandInfo {
     name: SharedString,
     description: SharedString,
+    args: Option<SharedString>,
 }
 
 #[derive(Clone)]
@@ -180,17 +181,42 @@ impl PickerDelegate for SlashCommandDelegate {
                     .spacing(ListItemSpacing::Sparse)
                     .selected(selected)
                     .child(
-                        h_flex().w_full().min_w(px(220.)).child(
-                            v_flex()
-                                .child(div().font_buffer(cx).child(
-                                    Label::new(format!("/{}", info.name)).size(LabelSize::Small),
-                                ))
-                                .child(
-                                    Label::new(info.description.clone())
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                ),
-                        ),
+                        h_flex()
+                            .group(format!("command-entry-label-{ix}"))
+                            .w_full()
+                            .min_w(px(220.))
+                            .child(
+                                v_flex()
+                                    .child(
+                                        h_flex()
+                                            .child(div().font_buffer(cx).child({
+                                                let mut label = format!("/{}", info.name);
+                                                if let Some(args) =
+                                                    info.args.as_ref().filter(|_| selected)
+                                                {
+                                                    label.push_str(&args);
+                                                }
+                                                Label::new(label).size(LabelSize::Small)
+                                            }))
+                                            .children(info.args.clone().filter(|_| !selected).map(
+                                                |args| {
+                                                    div()
+                                                        .font_buffer(cx)
+                                                        .child(
+                                                            Label::new(args).size(LabelSize::Small),
+                                                        )
+                                                        .visible_on_hover(format!(
+                                                            "command-entry-label-{ix}"
+                                                        ))
+                                                },
+                                            )),
+                                    )
+                                    .child(
+                                        Label::new(info.description.clone())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            ),
                     ),
             ),
             SlashCommandEntry::Advert { renderer, .. } => Some(
@@ -213,9 +239,16 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             .filter_map(|command_name| {
                 let command = self.registry.command(&command_name)?;
                 let menu_text = SharedString::from(Arc::from(command.menu_text()));
+                let label = command.label(cx);
+                let args = label.filter_range.end.ne(&label.text.len()).then(|| {
+                    SharedString::from(
+                        label.text[label.filter_range.end..label.text.len()].to_owned(),
+                    )
+                });
                 Some(SlashCommandEntry::Info(SlashCommandInfo {
                     name: command_name.into(),
                     description: menu_text,
+                    args,
                 }))
             })
             .chain([SlashCommandEntry::Advert {
