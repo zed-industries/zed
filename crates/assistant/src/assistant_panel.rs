@@ -3621,12 +3621,12 @@ impl ContextEditor {
 
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
 
+        let has_configuration_error = configuration_error(cx).is_some();
         let needs_to_accept_terms = self.show_accept_terms
             && provider
                 .as_ref()
                 .map_or(false, |provider| provider.must_accept_terms(cx));
-        let has_active_error = self.error_message.is_some();
-        let disabled = needs_to_accept_terms || has_active_error;
+        let disabled = has_configuration_error || needs_to_accept_terms;
 
         ButtonLike::new("send_button")
             .disabled(disabled)
