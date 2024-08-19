@@ -524,7 +524,7 @@ impl<D: PickerDelegate> Picker<D> {
                     picker
                         .border_color(cx.theme().colors().border_variant)
                         .border_b_1()
-                        .pb(px(-1.0))
+                        .py(px(-1.0))
                 },
             )
     }
