@@ -543,19 +543,18 @@ impl AssistantPanel {
                 cx.emit(AssistantPanelEvent::ContextEdited);
                 true
             }
-
-            pane::Event::RemoveItem { idx } => {
-                if self
+            pane::Event::RemovedItem { .. } => {
+                let has_configuration_view = self
                     .pane
                     .read(cx)
-                    .item_for_index(*idx)
-                    .map_or(false, |item| item.downcast::<ConfigurationView>().is_some())
-                {
+                    .items_of_type::<ConfigurationView>()
+                    .next()
+                    .is_some();
+
+                if !has_configuration_view {
                     self.configuration_subscription = None;
                 }
-                false
-            }
-            pane::Event::RemovedItem { .. } => {
+
                 cx.emit(AssistantPanelEvent::ContextEdited);
                 true
             }
@@ -4437,6 +4436,7 @@ impl ConfigurationView {
         provider: &Arc<dyn LanguageModelProvider>,
         cx: &mut ViewContext<Self>,
     ) -> Div {
+        let provider_id = provider.id().0.clone();
         let provider_name = provider.name().0.clone();
         let configuration_view = self.configuration_views.get(&provider.id()).cloned();
 
@@ -4458,12 +4458,15 @@ impl ConfigurationView {
                     .when(provider.is_authenticated(cx), move |this| {
                         this.child(
                             h_flex().justify_end().child(
-                                Button::new("new-context", "Open new context")
-                                    .icon_position(IconPosition::Start)
-                                    .icon(IconName::Plus)
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::ModalSurface)
-                                    .on_click(open_new_context),
+                                Button::new(
+                                    SharedString::from(format!("new-context-{provider_id}")),
+                                    "Open new context",
+                                )
+                                .icon_position(IconPosition::Start)
+                                .icon(IconName::Plus)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::ModalSurface)
+                                .on_click(open_new_context),
                             ),
                         )
                     }),
