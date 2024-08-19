@@ -177,6 +177,37 @@ pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
+fn completion_kind_to_icon(kind: CompletionItemKind) -> IconName {
+    match kind {
+        CompletionItemKind::TEXT => IconName::Eye,
+        CompletionItemKind::CLASS => IconName::Mic,
+        CompletionItemKind::METHOD => IconName::Eye,
+        CompletionItemKind::FUNCTION => IconName::Eye,
+        CompletionItemKind::CONSTRUCTOR => IconName::Eye,
+        CompletionItemKind::FIELD => IconName::Eye,
+        CompletionItemKind::VARIABLE => IconName::Eye,
+        CompletionItemKind::INTERFACE => IconName::Eye,
+        CompletionItemKind::MODULE => IconName::Code,
+        CompletionItemKind::PROPERTY => IconName::Eye,
+        CompletionItemKind::UNIT => IconName::Eye,
+        CompletionItemKind::VALUE => IconName::Eye,
+        CompletionItemKind::ENUM => IconName::Eye,
+        CompletionItemKind::KEYWORD => IconName::Eye,
+        CompletionItemKind::SNIPPET => IconName::Eye,
+        CompletionItemKind::COLOR => IconName::Eye,
+        CompletionItemKind::FILE => IconName::Eye,
+        CompletionItemKind::REFERENCE => IconName::Eye,
+        CompletionItemKind::FOLDER => IconName::Eye,
+        CompletionItemKind::ENUM_MEMBER => IconName::Eye,
+        CompletionItemKind::CONSTANT => IconName::Eye,
+        CompletionItemKind::STRUCT => IconName::Eye,
+        CompletionItemKind::EVENT => IconName::Eye,
+        CompletionItemKind::OPERATOR => IconName::Eye,
+        CompletionItemKind::TYPE_PARAMETER => IconName::Eye,
+        _ => IconName::Eye,
+    }
+}
+
 pub fn render_parsed_markdown(
     element_id: impl Into<ElementId>,
     parsed: &language::ParsedMarkdown,
@@ -1131,6 +1162,12 @@ impl CompletionsMenu {
                                 },
                             ),
                         );
+                        let icon = completion_kind_to_icon(
+                            completion
+                                .lsp_completion
+                                .kind
+                                .unwrap_or(CompletionItemKind::TEXT),
+                        );
                         let completion_label = StyledText::new(completion.label.text.clone())
                             .with_highlights(&style.text, highlights);
                         let documentation_label =
@@ -1164,6 +1201,7 @@ impl CompletionsMenu {
                                         task.detach_and_log_err(cx)
                                     }
                                 }))
+                                .child(Icon::new(icon))
                                 .child(h_flex().overflow_hidden().child(completion_label))
                                 .end_slot::<Label>(documentation_label),
                         )
