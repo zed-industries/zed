@@ -184,6 +184,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
 
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
+    fn discarded(&self, _project: Model<Project>, _cx: &mut ViewContext<Self>) {}
     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
         false
@@ -394,6 +395,7 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut ViewContext<Workspace>,
     );
     fn deactivated(&self, cx: &mut WindowContext);
+    fn discarded(&self, project: Model<Project>, cx: &mut WindowContext);
     fn workspace_deactivated(&self, cx: &mut WindowContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut WindowContext) -> bool;
     fn item_id(&self) -> EntityId;
@@ -733,6 +735,10 @@ impl<T: Item> ItemHandle for View<T> {
         cx.defer(|workspace, cx| {
             workspace.serialize_workspace(cx);
         });
+    }
+
+    fn discarded(&self, project: Model<Project>, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| this.discarded(project, cx));
     }
 
     fn deactivated(&self, cx: &mut WindowContext) {

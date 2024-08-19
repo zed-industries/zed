@@ -15,6 +15,7 @@ With each location, you will produce a brief, one-line description of the change
 - When generating multiple suggestions, ensure the descriptions are specific to each individual operation.
 - Avoid referring to the location in the description. Focus on the change to be made, not the location where it's made. That's implicit with the symbol you provide.
 - Don't generate multiple suggestions at the same location. Instead, combine them together in a single operation with a succinct combined description.
+- To add imports respond with a suggestion where the `"symbol"` key is set to `"#imports"`
 </guidelines>
 </overview>
 
@@ -203,6 +204,7 @@ Add a 'use std::fmt;' statement at the beginning of the file
     {
       "kind": "PrependChild",
       "path": "src/vehicle.rs",
+      "symbol": "#imports",
       "description": "Add 'use std::fmt' statement"
     }
   ]
@@ -413,6 +415,7 @@ Add a 'load_from_file' method to Config and import necessary modules
     {
       "kind": "PrependChild",
       "path": "src/config.rs",
+      "symbol": "#imports",
       "description": "Import std::fs and std::io modules"
     },
     {

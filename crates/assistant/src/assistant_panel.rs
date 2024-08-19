@@ -11,11 +11,11 @@ use crate::{
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
-    DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId, InlineAssistant,
-    InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus,
-    QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus,
-    ToggleModelSelector, WorkflowStepResolution, WorkflowStepView,
+    Assist, CacheStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
+    CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
+    InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
+    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split,
+    ToggleFocus, ToggleModelSelector, WorkflowStepResolution, WorkflowStepView,
 };
 use crate::{ContextStoreEvent, ModelPickerDelegate};
 use anyhow::{anyhow, Result};
@@ -1719,7 +1719,6 @@ struct WorkflowAssist {
     editor: WeakView<Editor>,
     editor_was_open: bool,
     assist_ids: Vec<InlineAssistId>,
-    _observe_assist_status: Task<()>,
 }
 
 pub struct ContextEditor {
@@ -1815,24 +1814,18 @@ impl ContextEditor {
     fn insert_default_prompt(&mut self, cx: &mut ViewContext<Self>) {
         let command_name = DefaultSlashCommand.name();
         self.editor.update(cx, |editor, cx| {
-            editor.insert(&format!("/{command_name}"), cx)
+            editor.insert(&format!("/{command_name}\n\n"), cx)
         });
-        self.split(&Split, cx);
         let command = self.context.update(cx, |context, cx| {
-            let first_message_id = context.messages(cx).next().unwrap().id;
-            context.update_metadata(first_message_id, cx, |metadata| {
-                metadata.role = Role::User;
-            });
             context.reparse_slash_commands(cx);
             context.pending_slash_commands()[0].clone()
         });
-
         self.run_command(
             command.source_range,
             &command.name,
             &command.arguments,
             false,
-            true,
+            false,
             self.workspace.clone(),
             cx,
         );
@@ -1862,13 +1855,25 @@ impl ContextEditor {
         if let Some(workflow_step) = self.workflow_steps.get(&range) {
             if let Some(assist) = workflow_step.assist.as_ref() {
                 let assist_ids = assist.assist_ids.clone();
-                cx.window_context().defer(|cx| {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        for assist_id in assist_ids {
-                            assistant.start_assist(assist_id, cx);
+                cx.spawn(|this, mut cx| async move {
+                    for assist_id in assist_ids {
+                        let mut receiver = this.update(&mut cx, |_, cx| {
+                            cx.window_context().defer(move |cx| {
+                                InlineAssistant::update_global(cx, |assistant, cx| {
+                                    assistant.start_assist(assist_id, cx);
+                                })
+                            });
+                            InlineAssistant::update_global(cx, |assistant, _| {
+                                assistant.observe_assist(assist_id)
+                            })
+                        })?;
+                        while !receiver.borrow().is_done() {
+                            let _ = receiver.changed().await;
                         }
-                    })
-                });
+                    }
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
             }
         }
     }
@@ -2479,6 +2484,18 @@ impl ContextEditor {
         };
 
         let resolved_step = step.read(cx).resolution.clone();
+
+        if let Some(Ok(resolution)) = resolved_step.as_ref() {
+            for (buffer, _) in resolution.suggestion_groups.iter() {
+                let step_range = step_range.clone();
+                cx.subscribe(buffer, move |this, _, event, cx| match event {
+                    language::Event::Discarded => this.undo_workflow_step(step_range.clone(), cx),
+                    _ => {}
+                })
+                .detach();
+            }
+        }
+
         if let Some(existing_step) = self.workflow_steps.get_mut(&step_range) {
             existing_step.resolved_step = resolved_step;
         } else {
@@ -2994,35 +3011,10 @@ impl ContextEditor {
             }
         }
 
-        let mut observations = Vec::new();
-        InlineAssistant::update_global(cx, |assistant, _cx| {
-            for assist_id in &assist_ids {
-                observations.push(assistant.observe_assist(*assist_id));
-            }
-        });
-
         Some(WorkflowAssist {
             assist_ids,
             editor: editor.downgrade(),
             editor_was_open,
-            _observe_assist_status: cx.spawn(|this, mut cx| async move {
-                while !observations.is_empty() {
-                    let (result, ix, _) = futures::future::select_all(
-                        observations
-                            .iter_mut()
-                            .map(|observation| Box::pin(observation.changed())),
-                    )
-                    .await;
-
-                    if result.is_err() {
-                        observations.remove(ix);
-                    }
-
-                    if this.update(&mut cx, |_, cx| cx.notify()).is_err() {
-                        break;
-                    }
-                }
-            }),
         })
     }
 
@@ -3139,6 +3131,36 @@ impl ContextEditor {
                                 .relative()
                                 .gap_1()
                                 .child(sender)
+                                .children(match &message.cache {
+                                    Some(cache) if cache.is_final_anchor => match cache.status {
+                                        CacheStatus::Cached => Some(
+                                            div()
+                                                .id("cached")
+                                                .child(
+                                                    Icon::new(IconName::DatabaseZap)
+                                                        .size(IconSize::XSmall)
+                                                        .color(Color::Hint),
+                                                )
+                                                .tooltip(|cx| {
+                                                    Tooltip::with_meta(
+                                                        "Context cached",
+                                                        None,
+                                                        "Large messages cached to optimize performance",
+                                                        cx,
+                                                    )
+                                                }).into_any_element()
+                                        ),
+                                        CacheStatus::Pending => Some(
+                                            div()
+                                                .child(
+                                                    Icon::new(IconName::Ellipsis)
+                                                        .size(IconSize::XSmall)
+                                                        .color(Color::Hint),
+                                                ).into_any_element()
+                                        ),
+                                    },
+                                    _ => None,
+                                })
                                 .children(match &message.status {
                                     MessageStatus::Error(error) => Some(
                                         Button::new("show-error", "Error")
