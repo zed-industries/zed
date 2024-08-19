@@ -9,17 +9,15 @@ use ui::ListItemSpacing;
 use gpui::SharedString;
 use gpui::Task;
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use ui::{prelude::*, ListItem, PopoverMenu, PopoverTrigger};
 
 use crate::assistant_panel::ContextEditor;
 
 #[derive(IntoElement)]
-pub struct SlashCommandSelector<T: PopoverTrigger> {
-    handle: Option<PopoverMenuHandle<Picker<SlashCommandDelegate>>>,
+pub(super) struct SlashCommandSelector<T: PopoverTrigger> {
     registry: Arc<SlashCommandRegistry>,
     active_context_editor: WeakView<ContextEditor>,
     trigger: T,
-    info_text: Option<SharedString>,
 }
 
 #[derive(Clone)]
@@ -28,7 +26,7 @@ struct SlashCommandInfo {
     description: SharedString,
 }
 
-pub struct SlashCommandDelegate {
+pub(crate) struct SlashCommandDelegate {
     all_commands: Vec<SlashCommandInfo>,
     filtered_commands: Vec<SlashCommandInfo>,
     active_context_editor: WeakView<ContextEditor>,
@@ -36,28 +34,16 @@ pub struct SlashCommandDelegate {
 }
 
 impl<T: PopoverTrigger> SlashCommandSelector<T> {
-    pub fn new(
+    pub(crate) fn new(
         registry: Arc<SlashCommandRegistry>,
         active_context_editor: WeakView<ContextEditor>,
         trigger: T,
     ) -> Self {
         SlashCommandSelector {
-            handle: None,
             registry,
             active_context_editor,
             trigger,
-            info_text: None,
         }
-    }
-
-    pub fn with_handle(mut self, handle: PopoverMenuHandle<Picker<SlashCommandDelegate>>) -> Self {
-        self.handle = Some(handle);
-        self
-    }
-
-    pub fn with_info_text(mut self, text: impl Into<SharedString>) -> Self {
-        self.info_text = Some(text.into());
-        self
     }
 }
 
@@ -188,6 +174,10 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             picker
         });
 
+        let handle = self
+            .active_context_editor
+            .update(cx, |this, _| this.slash_menu_handle.clone())
+            .ok();
         PopoverMenu::new("model-switcher")
             .menu(move |_cx| Some(picker_view.clone()))
             .trigger(self.trigger)
@@ -197,5 +187,6 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
                 x: px(0.0),
                 y: px(-16.0),
             })
+            .when_some(handle, |this, handle| this.with_handle(handle))
     }
 }

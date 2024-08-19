@@ -1718,7 +1718,8 @@ pub struct ContextEditor {
     assistant_panel: WeakView<AssistantPanel>,
     error_message: Option<SharedString>,
     show_accept_terms: bool,
-    slash_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub(crate) slash_menu_handle:
+        PopoverMenuHandle<Picker<slash_command_picker::SlashCommandDelegate>>,
 }
 
 const DEFAULT_TAB_TITLE: &str = "New Context";

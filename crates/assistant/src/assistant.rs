@@ -9,7 +9,7 @@ mod model_selector;
 mod prompt_library;
 mod prompts;
 mod slash_command;
-mod slash_command_picker;
+pub(crate) mod slash_command_picker;
 pub mod slash_command_settings;
 mod streaming_diff;
 mod terminal_inline_assistant;
