@@ -249,6 +249,7 @@ pub struct ThemeSettingsContent {
     pub ui_font_fallbacks: Option<Vec<String>>,
     /// The OpenType features to enable for text in the UI.
     #[serde(default)]
+    #[schemars(default = "default_font_features")]
     pub ui_font_features: Option<FontFeatures>,
     /// The weight of the UI font in CSS units from 100 to 900.
     #[serde(default)]
@@ -270,6 +271,7 @@ pub struct ThemeSettingsContent {
     pub buffer_line_height: Option<BufferLineHeight>,
     /// The OpenType features to enable for rendering in text buffers.
     #[serde(default)]
+    #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeatures>,
     /// The name of the Zed theme to use.
     #[serde(default)]
@@ -286,6 +288,10 @@ pub struct ThemeSettingsContent {
     /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
     pub theme_overrides: Option<ThemeStyleContent>,
+}
+
+fn default_font_features() -> Option<FontFeatures> {
+    Some(FontFeatures::default())
 }
 
 impl ThemeSettingsContent {
