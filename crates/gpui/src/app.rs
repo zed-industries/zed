@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{atomic::Ordering::SeqCst, Arc},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, Result};
@@ -142,6 +142,12 @@ impl App {
         self
     }
 
+    /// Sets a start time for tracking time to first window draw.
+    pub fn measure_time_to_first_window_draw(self, start: Instant) -> Self {
+        self.0.borrow_mut().time_to_first_window_draw = Some(TimeToFirstWindowDraw::Pending(start));
+        self
+    }
+
     /// Start the application. The provided callback will be called once the
     /// app is fully launched.
     pub fn run<F>(self, on_finish_launching: F)
@@ -247,6 +253,7 @@ pub struct AppContext {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
+    pub(crate) time_to_first_window_draw: Option<TimeToFirstWindowDraw>,
 }
 
 impl AppContext {
@@ -300,6 +307,7 @@ impl AppContext {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
+                time_to_first_window_draw: None,
             }),
         });
 
@@ -1302,6 +1310,14 @@ impl AppContext {
 
         (task, is_first)
     }
+
+    /// Returns the time to first window draw, if available.
+    pub fn time_to_first_window_draw(&self) -> Option<Duration> {
+        match self.time_to_first_window_draw {
+            Some(TimeToFirstWindowDraw::Done(duration)) => Some(duration),
+            _ => None,
+        }
+    }
 }
 
 impl Context for AppContext {
@@ -1463,6 +1479,15 @@ impl<G: Global> DerefMut for GlobalLease<G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.global.downcast_mut().unwrap()
     }
+}
+
+/// Represents the initialization duration of the application.
+#[derive(Clone, Copy)]
+pub enum TimeToFirstWindowDraw {
+    /// The application is still initializing, and contains the start time.
+    Pending(Instant),
+    /// The application has finished initializing, and contains the total duration.
+    Done(Duration),
 }
 
 /// Contains state associated with an active drag operation, started by dragging an element

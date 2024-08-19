@@ -141,7 +141,8 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
             tracing::Span::current()
                 .record("user_id", claims.user_id)
                 .record("login", claims.github_user_login.clone())
-                .record("authn.jti", &claims.jti);
+                .record("authn.jti", &claims.jti)
+                .record("is_staff", &claims.is_staff);
 
             req.extensions_mut().insert(claims);
             Ok::<_, Error>(next.run(req).await.into_response())
@@ -169,7 +170,10 @@ async fn perform_completion(
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     Json(params): Json<PerformCompletionParams>,
 ) -> Result<impl IntoResponse> {
-    let model = normalize_model_name(params.provider, params.model);
+    let model = normalize_model_name(
+        state.db.model_names_for_provider(params.provider),
+        params.model,
+    );
 
     authorize_access_to_language_model(
         &state.config,
@@ -200,17 +204,21 @@ async fn perform_completion(
             let mut request: anthropic::Request =
                 serde_json::from_str(&params.provider_request.get())?;
 
-            // Parse the model, throw away the version that was included, and then set a specific
-            // version that we control on the server.
+            // Override the model on the request with the latest version of the model that is
+            // known to the server.
+            //
             // Right now, we use the version that's defined in `model.id()`, but we will likely
             // want to change this code once a new version of an Anthropic model is released,
             // so that users can use the new version, without having to update Zed.
-            request.model = match anthropic::Model::from_id(&request.model) {
-                Ok(model) => model.id().to_string(),
-                Err(_) => request.model,
+            request.model = match model.as_str() {
+                "claude-3-5-sonnet" => anthropic::Model::Claude3_5Sonnet.id().to_string(),
+                "claude-3-opus" => anthropic::Model::Claude3Opus.id().to_string(),
+                "claude-3-haiku" => anthropic::Model::Claude3Haiku.id().to_string(),
+                "claude-3-sonnet" => anthropic::Model::Claude3Sonnet.id().to_string(),
+                _ => request.model,
             };
 
-            let chunks = anthropic::stream_completion(
+            let (chunks, rate_limit_info) = anthropic::stream_completion_with_rate_limit_info(
                 &state.http_client,
                 anthropic::ANTHROPIC_API_URL,
                 api_key,
@@ -237,6 +245,19 @@ async fn perform_completion(
                 },
                 anthropic::AnthropicError::Other(err) => Error::Internal(err),
             })?;
+
+            if let Some(rate_limit_info) = rate_limit_info {
+                tracing::info!(
+                    target: "upstream rate limit",
+                    is_staff = claims.is_staff,
+                    provider = params.provider.to_string(),
+                    model = model,
+                    tokens_remaining = rate_limit_info.tokens_remaining,
+                    requests_remaining = rate_limit_info.requests_remaining,
+                    requests_reset = ?rate_limit_info.requests_reset,
+                    tokens_reset = ?rate_limit_info.tokens_reset,
+                );
+            }
 
             chunks
                 .map(move |event| {
@@ -369,31 +390,13 @@ async fn perform_completion(
     })))
 }
 
-fn normalize_model_name(provider: LanguageModelProvider, name: String) -> String {
-    let prefixes: &[_] = match provider {
-        LanguageModelProvider::Anthropic => &[
-            "claude-3-5-sonnet",
-            "claude-3-haiku",
-            "claude-3-opus",
-            "claude-3-sonnet",
-        ],
-        LanguageModelProvider::OpenAi => &[
-            "gpt-3.5-turbo",
-            "gpt-4-turbo-preview",
-            "gpt-4o-mini",
-            "gpt-4o",
-            "gpt-4",
-        ],
-        LanguageModelProvider::Google => &[],
-        LanguageModelProvider::Zed => &[],
-    };
-
-    if let Some(prefix) = prefixes
+fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
+    if let Some(known_model_name) = known_models
         .iter()
-        .filter(|&&prefix| name.starts_with(prefix))
-        .max_by_key(|&&prefix| prefix.len())
+        .filter(|known_model_name| name.starts_with(known_model_name.as_str()))
+        .max_by_key(|known_model_name| known_model_name.len())
     {
-        prefix.to_string()
+        known_model_name.to_string()
     } else {
         name
     }
@@ -551,33 +554,75 @@ impl<S> Drop for TokenCountingStream<S> {
                 .await
                 .log_err();
 
-            if let Some((clickhouse_client, usage)) = state.clickhouse_client.as_ref().zip(usage) {
-                report_llm_usage(
-                    clickhouse_client,
-                    LlmUsageEventRow {
-                        time: Utc::now().timestamp_millis(),
-                        user_id: claims.user_id as i32,
-                        is_staff: claims.is_staff,
-                        plan: match claims.plan {
-                            Plan::Free => "free".to_string(),
-                            Plan::ZedPro => "zed_pro".to_string(),
+            if let Some(usage) = usage {
+                tracing::info!(
+                    target: "user usage",
+                    user_id = claims.user_id,
+                    login = claims.github_user_login,
+                    authn.jti = claims.jti,
+                    is_staff = claims.is_staff,
+                    requests_this_minute = usage.requests_this_minute,
+                    tokens_this_minute = usage.tokens_this_minute,
+                );
+
+                if let Some(clickhouse_client) = state.clickhouse_client.as_ref() {
+                    report_llm_usage(
+                        clickhouse_client,
+                        LlmUsageEventRow {
+                            time: Utc::now().timestamp_millis(),
+                            user_id: claims.user_id as i32,
+                            is_staff: claims.is_staff,
+                            plan: match claims.plan {
+                                Plan::Free => "free".to_string(),
+                                Plan::ZedPro => "zed_pro".to_string(),
+                            },
+                            model,
+                            provider: provider.to_string(),
+                            input_token_count: input_token_count as u64,
+                            output_token_count: output_token_count as u64,
+                            requests_this_minute: usage.requests_this_minute as u64,
+                            tokens_this_minute: usage.tokens_this_minute as u64,
+                            tokens_this_day: usage.tokens_this_day as u64,
+                            input_tokens_this_month: usage.input_tokens_this_month as u64,
+                            output_tokens_this_month: usage.output_tokens_this_month as u64,
+                            spending_this_month: usage.spending_this_month as u64,
+                            lifetime_spending: usage.lifetime_spending as u64,
                         },
-                        model,
-                        provider: provider.to_string(),
-                        input_token_count: input_token_count as u64,
-                        output_token_count: output_token_count as u64,
-                        requests_this_minute: usage.requests_this_minute as u64,
-                        tokens_this_minute: usage.tokens_this_minute as u64,
-                        tokens_this_day: usage.tokens_this_day as u64,
-                        input_tokens_this_month: usage.input_tokens_this_month as u64,
-                        output_tokens_this_month: usage.output_tokens_this_month as u64,
-                        spending_this_month: usage.spending_this_month as u64,
-                        lifetime_spending: usage.lifetime_spending as u64,
-                    },
-                )
-                .await
-                .log_err();
+                    )
+                    .await
+                    .log_err();
+                }
             }
         })
     }
+}
+
+pub fn log_usage_periodically(state: Arc<LlmState>) {
+    state.executor.clone().spawn_detached(async move {
+        loop {
+            state
+                .executor
+                .sleep(std::time::Duration::from_secs(30))
+                .await;
+
+            let Some(usages) = state
+                .db
+                .get_application_wide_usages_by_model(Utc::now())
+                .await
+                .log_err()
+            else {
+                continue;
+            };
+
+            for usage in usages {
+                tracing::info!(
+                    target: "computed usage",
+                    provider = usage.provider.to_string(),
+                    model = usage.model,
+                    requests_this_minute = usage.requests_this_minute,
+                    tokens_this_minute = usage.tokens_this_minute,
+                );
+            }
+        }
+    })
 }

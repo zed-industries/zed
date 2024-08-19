@@ -5,7 +5,7 @@ use axum::{
     routing::get,
     Extension, Router,
 };
-use collab::llm::db::LlmDatabase;
+use collab::llm::{db::LlmDatabase, log_usage_periodically};
 use collab::migrations::run_database_migrations;
 use collab::{api::billing::poll_stripe_events_periodically, llm::LlmState, ServiceMode};
 use collab::{
@@ -95,6 +95,8 @@ async fn main() -> Result<()> {
 
                 let state = LlmState::new(config.clone(), Executor::Production).await?;
 
+                log_usage_periodically(state.clone());
+
                 app = app
                     .merge(collab::llm::routes())
                     .layer(Extension(state.clone()));
@@ -152,7 +154,8 @@ async fn main() -> Result<()> {
                             matched_path,
                             user_id = tracing::field::Empty,
                             login = tracing::field::Empty,
-                            authn.jti = tracing::field::Empty
+                            authn.jti = tracing::field::Empty,
+                            is_staff = tracing::field::Empty
                         )
                     })
                     .on_response(

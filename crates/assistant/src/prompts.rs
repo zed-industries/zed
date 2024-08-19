@@ -1,26 +1,24 @@
+use anyhow::Result;
 use assets::Assets;
 use fs::Fs;
 use futures::StreamExt;
-use handlebars::{Handlebars, RenderError, TemplateError};
+use gpui::AssetSource;
+use handlebars::{Handlebars, RenderError};
 use language::BufferSnapshot;
 use parking_lot::Mutex;
 use serde::Serialize;
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use util::ResultExt;
 
 #[derive(Serialize)]
 pub struct ContentPromptContext {
     pub content_type: String,
     pub language_name: Option<String>,
+    pub is_insert: bool,
     pub is_truncated: bool,
     pub document_content: String,
     pub user_prompt: String,
-    pub rewrite_section: String,
-    pub rewrite_section_prefix: String,
-    pub rewrite_section_suffix: String,
-    pub rewrite_section_with_edits: String,
-    pub has_insertion: bool,
-    pub has_replacement: bool,
+    pub rewrite_section: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -42,128 +40,162 @@ pub struct StepResolutionContext {
     pub step_to_resolve: String,
 }
 
+pub struct PromptLoadingParams<'a> {
+    pub fs: Arc<dyn Fs>,
+    pub repo_path: Option<PathBuf>,
+    pub cx: &'a gpui::AppContext,
+}
+
 pub struct PromptBuilder {
     handlebars: Arc<Mutex<Handlebars<'static>>>,
 }
 
-pub struct PromptOverrideContext<'a> {
-    pub dev_mode: bool,
-    pub fs: Arc<dyn Fs>,
-    pub cx: &'a mut gpui::AppContext,
-}
-
 impl PromptBuilder {
-    pub fn new(override_cx: Option<PromptOverrideContext>) -> Result<Self, Box<TemplateError>> {
+    pub fn new(loading_params: Option<PromptLoadingParams>) -> Result<Self> {
         let mut handlebars = Handlebars::new();
-        Self::register_templates(&mut handlebars)?;
+        Self::register_built_in_templates(&mut handlebars)?;
 
         let handlebars = Arc::new(Mutex::new(handlebars));
 
-        if let Some(override_cx) = override_cx {
-            Self::watch_fs_for_template_overrides(override_cx, handlebars.clone());
+        if let Some(params) = loading_params {
+            Self::watch_fs_for_template_overrides(params, handlebars.clone());
         }
 
         Ok(Self { handlebars })
     }
 
+    /// Watches the filesystem for changes to prompt template overrides.
+    ///
+    /// This function sets up a file watcher on the prompt templates directory. It performs
+    /// an initial scan of the directory and registers any existing template overrides.
+    /// Then it continuously monitors for changes, reloading templates as they are
+    /// modified or added.
+    ///
+    /// If the templates directory doesn't exist initially, it waits for it to be created.
+    /// If the directory is removed, it restores the built-in templates and waits for the
+    /// directory to be recreated.
+    ///
+    /// # Arguments
+    ///
+    /// * `params` - A `PromptLoadingParams` struct containing the filesystem, repository path,
+    ///   and application context.
+    /// * `handlebars` - An `Arc<Mutex<Handlebars>>` for registering and updating templates.
     fn watch_fs_for_template_overrides(
-        PromptOverrideContext { dev_mode, fs, cx }: PromptOverrideContext,
+        mut params: PromptLoadingParams,
         handlebars: Arc<Mutex<Handlebars<'static>>>,
     ) {
-        cx.background_executor()
+        params.repo_path = None;
+        let templates_dir = paths::prompt_overrides_dir(params.repo_path.as_deref());
+        params.cx.background_executor()
             .spawn(async move {
-                let templates_dir = if dev_mode {
-                    std::env::current_dir()
-                        .ok()
-                        .and_then(|pwd| {
-                            let pwd_assets_prompts = pwd.join("assets").join("prompts");
-                            pwd_assets_prompts.exists().then_some(pwd_assets_prompts)
-                        })
-                        .unwrap_or_else(|| paths::prompt_overrides_dir().clone())
-                } else {
-                    paths::prompt_overrides_dir().clone()
+                let Some(parent_dir) = templates_dir.parent() else {
+                    return;
                 };
 
-                // Create the prompt templates directory if it doesn't exist
-                if !fs.is_dir(&templates_dir).await {
-                    if let Err(e) = fs.create_dir(&templates_dir).await {
-                        log::error!("Failed to create prompt templates directory: {}", e);
-                        return;
+                let mut found_dir_once = false;
+                loop {
+                    // Check if the templates directory exists and handle its status
+                    // If it exists, log its presence and check if it's a symlink
+                    // If it doesn't exist:
+                    //   - Log that we're using built-in prompts
+                    //   - Check if it's a broken symlink and log if so
+                    //   - Set up a watcher to detect when it's created
+                    // After the first check, set the `found_dir_once` flag
+                    // This allows us to avoid logging when looping back around after deleting the prompt overrides directory.
+                    let dir_status = params.fs.is_dir(&templates_dir).await;
+                    let symlink_status = params.fs.read_link(&templates_dir).await.ok();
+                    if dir_status {
+                        let mut log_message = format!("Prompt template overrides directory found at {}", templates_dir.display());
+                        if let Some(target) = symlink_status {
+                            log_message.push_str(" -> ");
+                            log_message.push_str(&target.display().to_string());
+                        }
+                        log::info!("{}.", log_message);
+                    } else {
+                        if !found_dir_once {
+                            log::info!("No prompt template overrides directory found at {}. Using built-in prompts.", templates_dir.display());
+                            if let Some(target) = symlink_status {
+                                log::info!("Symlink found pointing to {}, but target is invalid.", target.display());
+                            }
+                        }
+
+                        if params.fs.is_dir(parent_dir).await {
+                            let (mut changes, _watcher) = params.fs.watch(parent_dir, Duration::from_secs(1)).await;
+                            while let Some(changed_paths) = changes.next().await {
+                                if changed_paths.iter().any(|p| p == &templates_dir) {
+                                    let mut log_message = format!("Prompt template overrides directory detected at {}", templates_dir.display());
+                                    if let Ok(target) = params.fs.read_link(&templates_dir).await {
+                                        log_message.push_str(" -> ");
+                                        log_message.push_str(&target.display().to_string());
+                                    }
+                                    log::info!("{}.", log_message);
+                                    break;
+                                }
+                            }
+                        } else {
+                            return;
+                        }
                     }
-                }
 
-                // Initial scan of the prompts directory
-                if let Ok(mut entries) = fs.read_dir(&templates_dir).await {
-                    while let Some(Ok(file_path)) = entries.next().await {
-                        if file_path.to_string_lossy().ends_with(".hbs") {
-                            if let Ok(content) = fs.load(&file_path).await {
-                                let file_name = file_path.file_stem().unwrap().to_string_lossy();
+                    found_dir_once = true;
 
-                                match handlebars.lock().register_template_string(&file_name, content) {
-                                    Ok(_) => {
-                                        log::info!(
-                                            "Successfully registered template override: {} ({})",
-                                            file_name,
-                                            file_path.display()
-                                        );
-                                    },
-                                    Err(e) => {
-                                        log::error!(
-                                            "Failed to register template during initial scan: {} ({})",
-                                            e,
-                                            file_path.display()
-                                        );
-                                    },
+                    // Initial scan of the prompt overrides directory
+                    if let Ok(mut entries) = params.fs.read_dir(&templates_dir).await {
+                        while let Some(Ok(file_path)) = entries.next().await {
+                            if file_path.to_string_lossy().ends_with(".hbs") {
+                                if let Ok(content) = params.fs.load(&file_path).await {
+                                    let file_name = file_path.file_stem().unwrap().to_string_lossy();
+                                    log::info!("Registering prompt template override: {}", file_name);
+                                    handlebars.lock().register_template_string(&file_name, content).log_err();
                                 }
                             }
                         }
                     }
-                }
 
-                // Watch for changes
-                let (mut changes, watcher) = fs.watch(&templates_dir, Duration::from_secs(1)).await;
-                while let Some(changed_paths) = changes.next().await {
-                    for changed_path in changed_paths {
-                        if changed_path.extension().map_or(false, |ext| ext == "hbs") {
-                            log::info!("Reloading template: {}", changed_path.display());
-                            if let Some(content) = fs.load(&changed_path).await.log_err() {
-                                let file_name = changed_path.file_stem().unwrap().to_string_lossy();
-                                let file_path = changed_path.to_string_lossy();
-                                match handlebars.lock().register_template_string(&file_name, content) {
-                                    Ok(_) => log::info!(
-                                        "Successfully reloaded template: {} ({})",
-                                        file_name,
-                                        file_path
-                                    ),
-                                    Err(e) => log::error!(
-                                        "Failed to register template: {} ({})",
-                                        e,
-                                        file_path
-                                    ),
+                    // Watch both the parent directory and the template overrides directory:
+                    // - Monitor the parent directory to detect if the template overrides directory is deleted.
+                    // - Monitor the template overrides directory to re-register templates when they change.
+                    // Combine both watch streams into a single stream.
+                    let (parent_changes, parent_watcher) = params.fs.watch(parent_dir, Duration::from_secs(1)).await;
+                    let (changes, watcher) = params.fs.watch(&templates_dir, Duration::from_secs(1)).await;
+                    let mut combined_changes = futures::stream::select(changes, parent_changes);
+
+                    while let Some(changed_paths) = combined_changes.next().await {
+                        if changed_paths.iter().any(|p| p == &templates_dir) {
+                            if !params.fs.is_dir(&templates_dir).await {
+                                log::info!("Prompt template overrides directory removed. Restoring built-in prompt templates.");
+                                Self::register_built_in_templates(&mut handlebars.lock()).log_err();
+                                break;
+                            }
+                        }
+                        for changed_path in changed_paths {
+                            if changed_path.starts_with(&templates_dir) && changed_path.extension().map_or(false, |ext| ext == "hbs") {
+                                log::info!("Reloading prompt template override: {}", changed_path.display());
+                                if let Some(content) = params.fs.load(&changed_path).await.log_err() {
+                                    let file_name = changed_path.file_stem().unwrap().to_string_lossy();
+                                    handlebars.lock().register_template_string(&file_name, content).log_err();
                                 }
                             }
                         }
                     }
+
+                    drop(watcher);
+                    drop(parent_watcher);
                 }
-                drop(watcher);
             })
             .detach();
     }
 
-    fn register_templates(handlebars: &mut Handlebars) -> Result<(), Box<TemplateError>> {
-        let mut register_template = |id: &str| {
-            let prompt = Assets::get(&format!("prompts/{}.hbs", id))
-                .unwrap_or_else(|| panic!("{} prompt template not found", id))
-                .data;
-            handlebars
-                .register_template_string(id, String::from_utf8_lossy(&prompt))
-                .map_err(Box::new)
-        };
-
-        register_template("content_prompt")?;
-        register_template("terminal_assistant_prompt")?;
-        register_template("edit_workflow")?;
-        register_template("step_resolution")?;
+    fn register_built_in_templates(handlebars: &mut Handlebars) -> Result<()> {
+        for path in Assets.list("prompts")? {
+            if let Some(id) = path.split('/').last().and_then(|s| s.strip_suffix(".hbs")) {
+                if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
+                    log::info!("Registering built-in prompt template: {}", id);
+                    handlebars
+                        .register_template_string(id, String::from_utf8_lossy(prompt.as_ref()))?
+                }
+            }
+        }
 
         Ok(())
     }
@@ -173,9 +205,7 @@ impl PromptBuilder {
         user_prompt: String,
         language_name: Option<&str>,
         buffer: BufferSnapshot,
-        transform_range: Range<usize>,
-        selected_ranges: Vec<Range<usize>>,
-        transform_context_range: Range<usize>,
+        range: Range<usize>,
     ) -> Result<String, RenderError> {
         let content_type = match language_name {
             None | Some("Markdown" | "Plain Text") => "text",
@@ -183,20 +213,21 @@ impl PromptBuilder {
         };
 
         const MAX_CTX: usize = 50000;
+        let is_insert = range.is_empty();
         let mut is_truncated = false;
 
-        let before_range = 0..transform_range.start;
+        let before_range = 0..range.start;
         let truncated_before = if before_range.len() > MAX_CTX {
             is_truncated = true;
-            transform_range.start - MAX_CTX..transform_range.start
+            range.start - MAX_CTX..range.start
         } else {
             before_range
         };
 
-        let after_range = transform_range.end..buffer.len();
+        let after_range = range.end..buffer.len();
         let truncated_after = if after_range.len() > MAX_CTX {
             is_truncated = true;
-            transform_range.end..transform_range.end + MAX_CTX
+            range.end..range.end + MAX_CTX
         } else {
             after_range
         };
@@ -205,74 +236,37 @@ impl PromptBuilder {
         for chunk in buffer.text_for_range(truncated_before) {
             document_content.push_str(chunk);
         }
-
-        document_content.push_str("<rewrite_this>\n");
-        for chunk in buffer.text_for_range(transform_range.clone()) {
-            document_content.push_str(chunk);
+        if is_insert {
+            document_content.push_str("<insert_here></insert_here>");
+        } else {
+            document_content.push_str("<rewrite_this>\n");
+            for chunk in buffer.text_for_range(range.clone()) {
+                document_content.push_str(chunk);
+            }
+            document_content.push_str("\n</rewrite_this>");
         }
-        document_content.push_str("\n</rewrite_this>");
-
         for chunk in buffer.text_for_range(truncated_after) {
             document_content.push_str(chunk);
         }
 
-        let mut rewrite_section = String::new();
-        for chunk in buffer.text_for_range(transform_range.clone()) {
-            rewrite_section.push_str(chunk);
-        }
-
-        let mut rewrite_section_prefix = String::new();
-        for chunk in buffer.text_for_range(transform_context_range.start..transform_range.start) {
-            rewrite_section_prefix.push_str(chunk);
-        }
-
-        let mut rewrite_section_suffix = String::new();
-        for chunk in buffer.text_for_range(transform_range.end..transform_context_range.end) {
-            rewrite_section_suffix.push_str(chunk);
-        }
-
-        let rewrite_section_with_edits = {
-            let mut section_with_selections = String::new();
-            let mut last_end = 0;
-            for selected_range in &selected_ranges {
-                if selected_range.start > last_end {
-                    section_with_selections.push_str(
-                        &rewrite_section[last_end..selected_range.start - transform_range.start],
-                    );
-                }
-                if selected_range.start == selected_range.end {
-                    section_with_selections.push_str("<insert_here></insert_here>");
-                } else {
-                    section_with_selections.push_str("<edit_here>");
-                    section_with_selections.push_str(
-                        &rewrite_section[selected_range.start - transform_range.start
-                            ..selected_range.end - transform_range.start],
-                    );
-                    section_with_selections.push_str("</edit_here>");
-                }
-                last_end = selected_range.end - transform_range.start;
+        let rewrite_section = if !is_insert {
+            let mut section = String::new();
+            for chunk in buffer.text_for_range(range.clone()) {
+                section.push_str(chunk);
             }
-            if last_end < rewrite_section.len() {
-                section_with_selections.push_str(&rewrite_section[last_end..]);
-            }
-            section_with_selections
+            Some(section)
+        } else {
+            None
         };
-
-        let has_insertion = selected_ranges.iter().any(|range| range.start == range.end);
-        let has_replacement = selected_ranges.iter().any(|range| range.start != range.end);
 
         let context = ContentPromptContext {
             content_type: content_type.to_string(),
             language_name: language_name.map(|s| s.to_string()),
+            is_insert,
             is_truncated,
             document_content,
             user_prompt,
             rewrite_section,
-            rewrite_section_prefix,
-            rewrite_section_suffix,
-            rewrite_section_with_edits,
-            has_insertion,
-            has_replacement,
         };
 
         self.handlebars.lock().render("content_prompt", &context)

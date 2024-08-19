@@ -52,12 +52,20 @@ pub enum AvailableProvider {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
-    provider: AvailableProvider,
-    name: String,
-    max_tokens: usize,
-    tool_override: Option<String>,
-    cache_configuration: Option<LanguageModelCacheConfiguration>,
-    max_output_tokens: Option<u32>,
+    /// The provider of the language model.
+    pub provider: AvailableProvider,
+    /// The model's name in the provider's API. e.g. claude-3-5-sonnet-20240620
+    pub name: String,
+    /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+    pub display_name: Option<String>,
+    /// The size of the context window, indicating the maximum number of tokens the model can process.
+    pub max_tokens: usize,
+    /// The maximum number of output tokens allowed by the model.
+    pub max_output_tokens: Option<u32>,
+    /// Override this model with a different Anthropic model for tool calls.
+    pub tool_override: Option<String>,
+    /// Indicates whether this custom model supports caching.
+    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
 }
 
 pub struct CloudLanguageModelProvider {
@@ -202,6 +210,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     AvailableProvider::Anthropic => {
                         CloudModel::Anthropic(anthropic::Model::Custom {
                             name: model.name.clone(),
+                            display_name: model.display_name.clone(),
                             max_tokens: model.max_tokens,
                             tool_override: model.tool_override.clone(),
                             cache_configuration: model.cache_configuration.as_ref().map(|config| {
@@ -387,6 +396,10 @@ impl LanguageModel for CloudLanguageModel {
 
     fn name(&self) -> LanguageModelName {
         LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn icon(&self) -> Option<IconName> {
+        self.model.icon()
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {

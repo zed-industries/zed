@@ -1,5 +1,6 @@
 use crate::db::UserId;
 use chrono::Duration;
+use futures::StreamExt as _;
 use rpc::LanguageModelProvider;
 use sea_orm::QuerySelect;
 use std::{iter, str::FromStr};
@@ -16,6 +17,14 @@ pub struct Usage {
     pub output_tokens_this_month: usize,
     pub spending_this_month: usize,
     pub lifetime_spending: usize,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ApplicationWideUsage {
+    pub provider: LanguageModelProvider,
+    pub model: String,
+    pub requests_this_minute: usize,
+    pub tokens_this_minute: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -61,6 +70,71 @@ impl LlmDatabase {
             })
             .collect();
         Ok(())
+    }
+
+    pub async fn get_application_wide_usages_by_model(
+        &self,
+        now: DateTimeUtc,
+    ) -> Result<Vec<ApplicationWideUsage>> {
+        self.transaction(|tx| async move {
+            let past_minute = now - Duration::minutes(1);
+            let requests_per_minute = self.usage_measure_ids[&UsageMeasure::RequestsPerMinute];
+            let tokens_per_minute = self.usage_measure_ids[&UsageMeasure::TokensPerMinute];
+
+            let mut results = Vec::new();
+            for (provider, model) in self.models.keys().cloned() {
+                let mut usages = usage::Entity::find()
+                    .filter(
+                        usage::Column::Timestamp
+                            .gte(past_minute.naive_utc())
+                            .and(usage::Column::IsStaff.eq(false))
+                            .and(
+                                usage::Column::MeasureId
+                                    .eq(requests_per_minute)
+                                    .or(usage::Column::MeasureId.eq(tokens_per_minute)),
+                            ),
+                    )
+                    .stream(&*tx)
+                    .await?;
+
+                let mut requests_this_minute = 0;
+                let mut tokens_this_minute = 0;
+                while let Some(usage) = usages.next().await {
+                    let usage = usage?;
+                    if usage.measure_id == requests_per_minute {
+                        requests_this_minute += Self::get_live_buckets(
+                            &usage,
+                            now.naive_utc(),
+                            UsageMeasure::RequestsPerMinute,
+                        )
+                        .0
+                        .iter()
+                        .copied()
+                        .sum::<i64>() as usize;
+                    } else if usage.measure_id == tokens_per_minute {
+                        tokens_this_minute += Self::get_live_buckets(
+                            &usage,
+                            now.naive_utc(),
+                            UsageMeasure::TokensPerMinute,
+                        )
+                        .0
+                        .iter()
+                        .copied()
+                        .sum::<i64>() as usize;
+                    }
+                }
+
+                results.push(ApplicationWideUsage {
+                    provider,
+                    model,
+                    requests_this_minute,
+                    tokens_this_minute,
+                })
+            }
+
+            Ok(results)
+        })
+        .await
     }
 
     pub async fn get_usage(

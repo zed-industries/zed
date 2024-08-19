@@ -223,6 +223,7 @@ name = "anthropic"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "futures 0.3.30",
  "http_client",
  "isahc",
@@ -232,6 +233,7 @@ dependencies = [
  "strum",
  "thiserror",
  "tokio",
+ "util",
 ]
 
 [[package]]
@@ -5057,9 +5059,9 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "heed"
-version = "0.20.4"
+version = "0.20.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "620033c8c8edfd2f53e6f99a30565eb56a33b42c468e3ad80e21d85fb93bafb0"
+checksum = "7d4f449bab7320c56003d37732a917e18798e2f1709d80263face2b4f9436ddb"
 dependencies = [
  "bitflags 2.6.0",
  "byteorder",
@@ -6314,9 +6316,9 @@ dependencies = [
 
 [[package]]
 name = "lmdb-master-sys"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1de7e761853c15ca72821d9f928d7bb123ef4c05377c4e7ab69fa1c742f91d24"
+checksum = "472c3760e2a8d0f61f322fb36788021bb36d573c502b50fa3e2bcaac3ec326c9"
 dependencies = [
  "cc",
  "doxygen-rs",
@@ -7589,6 +7591,29 @@ name = "percent-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
+
+[[package]]
+name = "performance"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "gpui",
+ "log",
+ "schemars",
+ "serde",
+ "settings",
+ "util",
+ "workspace",
+]
+
+[[package]]
+name = "perplexity"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "zed_extension_api 0.1.0",
+]
 
 [[package]]
 name = "pest"
@@ -13875,6 +13900,7 @@ dependencies = [
  "outline_panel",
  "parking_lot",
  "paths",
+ "performance",
  "profiling",
  "project",
  "project_panel",

@@ -1,15 +1,15 @@
 use feature_flags::ZedPro;
+use gpui::Action;
 use gpui::DismissEvent;
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
+use workspace::ShowConfiguration;
 
 use std::sync::Arc;
 use ui::ListItemSpacing;
 
 use crate::assistant_settings::AssistantSettings;
-use crate::ShowConfiguration;
 use fs::Fs;
-use gpui::Action;
 use gpui::SharedString;
 use gpui::Task;
 use picker::{Picker, PickerDelegate};
@@ -36,7 +36,7 @@ pub struct ModelPickerDelegate {
 #[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
-    provider_icon: IconName,
+    icon: IconName,
     availability: LanguageModelAvailability,
     is_selected: bool,
 }
@@ -156,7 +156,7 @@ impl PickerDelegate for ModelPickerDelegate {
                 .selected(selected)
                 .start_slot(
                     div().pr_1().child(
-                        Icon::new(model_info.provider_icon)
+                        Icon::new(model_info.icon)
                             .color(Color::Muted)
                             .size(IconSize::Medium),
                     ),
@@ -261,16 +261,17 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
             .iter()
             .flat_map(|provider| {
                 let provider_id = provider.id();
-                let provider_icon = provider.icon();
+                let icon = provider.icon();
                 let selected_model = selected_model.clone();
                 let selected_provider = selected_provider.clone();
 
                 provider.provided_models(cx).into_iter().map(move |model| {
                     let model = model.clone();
+                    let icon = model.icon().unwrap_or(icon);
 
                     ModelInfo {
                         model: model.clone(),
-                        provider_icon,
+                        icon,
                         availability: model.availability(),
                         is_selected: selected_model.as_ref() == Some(&model.id())
                             && selected_provider.as_ref() == Some(&provider_id),

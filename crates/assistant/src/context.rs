@@ -295,6 +295,7 @@ pub enum ContextEvent {
         output_range: Range<language::Anchor>,
         sections: Vec<SlashCommandOutputSection<language::Anchor>>,
         run_commands_in_output: bool,
+        expand_result: bool,
     },
     Operation(ContextOperation),
 }
@@ -774,6 +775,7 @@ impl Context {
                         cx.emit(ContextEvent::SlashCommandFinished {
                             output_range,
                             sections,
+                            expand_result: false,
                             run_commands_in_output: false,
                         });
                     }
@@ -1395,7 +1397,8 @@ impl Context {
         &mut self,
         command_range: Range<language::Anchor>,
         output: Task<Result<SlashCommandOutput>>,
-        insert_trailing_newline: bool,
+        ensure_trailing_newline: bool,
+        expand_result: bool,
         cx: &mut ModelContext<Self>,
     ) {
         self.reparse_slash_commands(cx);
@@ -1406,8 +1409,27 @@ impl Context {
                 let output = output.await;
                 this.update(&mut cx, |this, cx| match output {
                     Ok(mut output) => {
-                        if insert_trailing_newline {
-                            output.text.push('\n');
+                        // Ensure section ranges are valid.
+                        for section in &mut output.sections {
+                            section.range.start = section.range.start.min(output.text.len());
+                            section.range.end = section.range.end.min(output.text.len());
+                            while !output.text.is_char_boundary(section.range.start) {
+                                section.range.start -= 1;
+                            }
+                            while !output.text.is_char_boundary(section.range.end) {
+                                section.range.end += 1;
+                            }
+                        }
+
+                        // Ensure there is a newline after the last section.
+                        if ensure_trailing_newline {
+                            let has_newline_after_last_section =
+                                output.sections.last().map_or(false, |last_section| {
+                                    output.text[last_section.range.end..].ends_with('\n')
+                                });
+                            if !has_newline_after_last_section {
+                                output.text.push('\n');
+                            }
                         }
 
                         let version = this.version.clone();
@@ -1450,6 +1472,7 @@ impl Context {
                                     output_range,
                                     sections,
                                     run_commands_in_output: output.run_commands_in_text,
+                                    expand_result,
                                 },
                             )
                         });

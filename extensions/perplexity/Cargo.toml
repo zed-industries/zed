@@ -1,0 +1,16 @@
+[package]
+name = "perplexity"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+path = "src/perplexity.rs"
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = "1"
+zed_extension_api = { path = "../../crates/extension_api" }

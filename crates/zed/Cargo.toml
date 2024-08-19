@@ -72,6 +72,7 @@ outline.workspace = true
 outline_panel.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
+performance.workspace = true
 profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true

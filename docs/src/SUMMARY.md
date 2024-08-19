@@ -22,7 +22,7 @@
 # Using Zed
 
 - [Multibuffers](./multibuffers.md)
-- [Language model integration](./language-model-integration.md)
+- [Assistant](./assistant.md)
 - [Code Completions](./completions.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)

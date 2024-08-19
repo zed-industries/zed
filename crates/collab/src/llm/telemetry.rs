@@ -1,5 +1,7 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
+
+use crate::clickhouse::write_to_table;
 
 #[derive(Serialize, Debug, clickhouse::Row)]
 pub struct LlmUsageEventRow {
@@ -40,9 +42,10 @@ pub struct LlmRateLimitEventRow {
 }
 
 pub async fn report_llm_usage(client: &clickhouse::Client, row: LlmUsageEventRow) -> Result<()> {
-    let mut insert = client.insert("llm_usage_events")?;
-    insert.write(&row).await?;
-    insert.end().await?;
+    const LLM_USAGE_EVENTS_TABLE: &str = "llm_usage_events";
+    write_to_table(LLM_USAGE_EVENTS_TABLE, &[row], client)
+        .await
+        .with_context(|| format!("failed to upload to table '{LLM_USAGE_EVENTS_TABLE}'"))?;
     Ok(())
 }
 
@@ -50,8 +53,9 @@ pub async fn report_llm_rate_limit(
     client: &clickhouse::Client,
     row: LlmRateLimitEventRow,
 ) -> Result<()> {
-    let mut insert = client.insert("llm_rate_limits")?;
-    insert.write(&row).await?;
-    insert.end().await?;
+    const LLM_RATE_LIMIT_EVENTS_TABLE: &str = "llm_rate_limit_events";
+    write_to_table(LLM_RATE_LIMIT_EVENTS_TABLE, &[row], client)
+        .await
+        .with_context(|| format!("failed to upload to table '{LLM_RATE_LIMIT_EVENTS_TABLE}'"))?;
     Ok(())
 }

@@ -38,7 +38,7 @@ use gpui::{
     ResizeEdge, Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds,
     WindowHandle, WindowId, WindowOptions,
 };
-use item::{
+pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
 };
@@ -114,6 +114,8 @@ lazy_static! {
 
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
+
+actions!(assistant, [ShowConfiguration]);
 
 actions!(
     workspace,
@@ -2616,6 +2618,33 @@ impl Workspace {
         open_project_item
     }
 
+    pub fn find_project_item<T>(
+        &self,
+        pane: &View<Pane>,
+        project_item: &Model<T::Item>,
+        cx: &AppContext,
+    ) -> Option<View<T>>
+    where
+        T: ProjectItem,
+    {
+        use project::Item as _;
+        let project_item = project_item.read(cx);
+        let entry_id = project_item.entry_id(cx);
+        let project_path = project_item.project_path(cx);
+
+        let mut item = None;
+        if let Some(entry_id) = entry_id {
+            item = pane.read(cx).item_for_entry(entry_id, cx);
+        }
+        if item.is_none() {
+            if let Some(project_path) = project_path {
+                item = pane.read(cx).item_for_path(project_path, cx);
+            }
+        }
+
+        item.and_then(|item| item.downcast::<T>())
+    }
+
     pub fn is_project_item_open<T>(
         &self,
         pane: &View<Pane>,
@@ -2625,13 +2654,7 @@ impl Workspace {
     where
         T: ProjectItem,
     {
-        use project::Item as _;
-
-        project_item
-            .read(cx)
-            .entry_id(cx)
-            .and_then(|entry_id| pane.read(cx).item_for_entry(entry_id, cx))
-            .and_then(|item| item.downcast::<T>())
+        self.find_project_item::<T>(pane, project_item, cx)
             .is_some()
     }
 
@@ -2646,19 +2669,12 @@ impl Workspace {
     where
         T: ProjectItem,
     {
-        use project::Item as _;
-
-        let entry_id = project_item.read(cx).entry_id(cx);
-        if let Some(item) = entry_id
-            .and_then(|entry_id| pane.read(cx).item_for_entry(entry_id, cx))
-            .and_then(|item| item.downcast())
-        {
+        if let Some(item) = self.find_project_item(&pane, &project_item, cx) {
             self.activate_item(&item, activate_pane, focus_item, cx);
             return item;
         }
 
         let item = cx.new_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
-
         let item_id = item.item_id();
         let mut destination_index = None;
         pane.update(cx, |pane, cx| {

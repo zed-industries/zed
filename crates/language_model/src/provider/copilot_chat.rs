@@ -180,6 +180,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
         let model = match self.model {
+            CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
             CopilotChatModel::Gpt4 => open_ai::Model::Four,
             CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
         };

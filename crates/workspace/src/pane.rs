@@ -920,7 +920,22 @@ impl Pane {
         cx: &AppContext,
     ) -> Option<Box<dyn ItemHandle>> {
         self.items.iter().find_map(|item| {
-            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
+            if item.is_singleton(cx) && (item.project_entry_ids(cx).as_slice() == [entry_id]) {
+                Some(item.boxed_clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn item_for_path(
+        &self,
+        project_path: ProjectPath,
+        cx: &AppContext,
+    ) -> Option<Box<dyn ItemHandle>> {
+        self.items.iter().find_map(move |item| {
+            if item.is_singleton(cx) && (item.project_path(cx).as_slice() == [project_path.clone()])
+            {
                 Some(item.boxed_clone())
             } else {
                 None

@@ -473,7 +473,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_edit_step_parsing(cx: &mut TestAppContext) {
+async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     cx.update(prompt_library::init);
     let settings_store = cx.update(SettingsStore::test);
     cx.set_global(settings_store);
@@ -891,6 +891,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             run_commands_in_text: false,
                         })),
                         true,
+                        false,
                         cx,
                     );
                 });
