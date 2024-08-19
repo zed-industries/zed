@@ -82,12 +82,13 @@ impl LlmDatabase {
             let tokens_per_minute = self.usage_measure_ids[&UsageMeasure::TokensPerMinute];
 
             let mut results = Vec::new();
-            for (provider, model) in self.models.keys().cloned() {
+            for ((provider, model_name), model) in self.models.iter() {
                 let mut usages = usage::Entity::find()
                     .filter(
                         usage::Column::Timestamp
                             .gte(past_minute.naive_utc())
                             .and(usage::Column::IsStaff.eq(false))
+                            .and(usage::Column::ModelId.eq(model.id))
                             .and(
                                 usage::Column::MeasureId
                                     .eq(requests_per_minute)
@@ -125,8 +126,8 @@ impl LlmDatabase {
                 }
 
                 results.push(ApplicationWideUsage {
-                    provider,
-                    model,
+                    provider: *provider,
+                    model: model_name.clone(),
                     requests_this_minute,
                     tokens_this_minute,
                 })
