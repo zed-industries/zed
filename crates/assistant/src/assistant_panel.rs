@@ -3154,9 +3154,10 @@ impl ContextEditor {
                                 .children(match &message.cache {
                                     Some(cache) if cache.is_final_anchor => match cache.status {
                                         CacheStatus::Cached => Some(
-                                            ButtonLike::new("cached")
+                                            div()
+                                                .id("cached")
                                                 .child(
-                                                    Icon::new(IconName::Bolt)
+                                                    Icon::new(IconName::DatabaseZap)
                                                         .size(IconSize::XSmall)
                                                         .color(Color::Hint),
                                                 )
@@ -3167,15 +3168,15 @@ impl ContextEditor {
                                                         "Large messages cached to optimize performance",
                                                         cx,
                                                     )
-                                                })
+                                                }).into_any_element()
                                         ),
                                         CacheStatus::Pending => Some(
-                                            ButtonLike::new("cache-pending")
-                                                    .child(
-                                                        Icon::new(IconName::Ellipsis)
-                                                            .size(IconSize::XSmall)
-                                                            .color(Color::Hint),
-                                                    )
+                                            div()
+                                                .child(
+                                                    Icon::new(IconName::Ellipsis)
+                                                        .size(IconSize::XSmall)
+                                                        .color(Color::Hint),
+                                                ).into_any_element()
                                         ),
                                     },
                                     _ => None,
