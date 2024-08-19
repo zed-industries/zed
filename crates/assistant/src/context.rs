@@ -454,6 +454,8 @@ struct WorkflowStepEntry {
 #[derive(Clone, Debug)]
 struct EditStep {
     source_range: Range<language::Anchor>,
+    prefix_end: text::Anchor,
+    suffix_start: Option<text::Anchor>,
     suggestion: EditSuggestion,
 }
 
@@ -1000,6 +1002,10 @@ impl Context {
         Some(self.workflow_steps[index].step.clone())
     }
 
+    pub fn edit_step_ranges(&self) -> impl Iterator<Item = Range<language::Anchor>> + '_ {
+        self.edit_steps.iter().map(|step| step.source_range.clone())
+    }
+
     pub fn edit_step_for_range(
         &self,
         range: Range<language::Anchor>,
@@ -1318,7 +1324,7 @@ impl Context {
                 &mut removed_slash_command_ranges,
                 cx,
             );
-            self.reparse_edit_suggestions_in_range(
+            self.reparse_edit_steps_in_range(
                 start,
                 end,
                 buffer,
@@ -1401,7 +1407,7 @@ impl Context {
         removed.extend(removed_commands.map(|command| command.source_range));
     }
 
-    fn reparse_edit_suggestions_in_range(
+    fn reparse_edit_steps_in_range(
         &mut self,
         buffer_start: text::Anchor,
         buffer_end: text::Anchor,
@@ -1464,7 +1470,7 @@ impl Context {
 
         // Rebuild the edit suggestions in the range.
         let mut new_suggestions = Vec::new();
-        let mut pending_entry = None;
+        let mut pending_step = None;
         let mut edit_step_depth = 0;
         let mut tags = self.xml_tags[tags_start_ix..].iter();
         'tags: while let Some(tag) = tags.next() {
@@ -1475,8 +1481,10 @@ impl Context {
             if tag.kind == XmlTagKind::EditStep && tag.is_open_tag {
                 edit_step_depth += 1;
                 let edit_start = tag.range.start;
-                let mut entry = EditStep {
+                let mut step = EditStep {
                     source_range: edit_start..edit_start,
+                    prefix_end: tag.range.end,
+                    suffix_start: None,
                     suggestion: EditSuggestion {
                         path: None,
                         location: None,
@@ -1488,18 +1496,21 @@ impl Context {
                     if tag.kind == XmlTagKind::EditStep && !tag.is_open_tag {
                         edit_step_depth -= 1;
                         if edit_step_depth == 0 {
-                            entry.source_range.end = tag.range.end;
-                            new_suggestions.push(entry);
+                            step.suffix_start = Some(tag.range.start);
+                            step.source_range.end = tag.range.end;
+                            new_suggestions.push(step);
                             continue 'tags;
                         }
                     }
+
+                    step.prefix_end = tag.range.end;
 
                     if tag.kind == XmlTagKind::Path && tag.is_open_tag {
                         let path_start = tag.range.end;
                         while let Some(tag) = tags.next() {
                             if tag.kind == XmlTagKind::Path && !tag.is_open_tag {
                                 let path_end = tag.range.start;
-                                entry.suggestion.path =
+                                step.suggestion.path =
                                     Some(buffer.text_for_range(path_start..path_end).collect());
                                 break;
                             }
@@ -1511,7 +1522,7 @@ impl Context {
                         while let Some(tag) = tags.next() {
                             if tag.kind == XmlTagKind::Location && !tag.is_open_tag {
                                 let path_end = tag.range.start;
-                                entry.suggestion.location =
+                                step.suggestion.location =
                                     Some(buffer.text_for_range(path_start..path_end).collect());
                                 break;
                             }
@@ -1523,7 +1534,7 @@ impl Context {
                         while let Some(tag) = tags.next() {
                             if tag.kind == XmlTagKind::Operation && !tag.is_open_tag {
                                 let path_end = tag.range.start;
-                                entry.suggestion.operation = EditSuggestionOperation::from_str(
+                                step.suggestion.operation = EditSuggestionOperation::from_str(
                                     &buffer
                                         .text_for_range(path_start..path_end)
                                         .collect::<String>(),
@@ -1535,13 +1546,13 @@ impl Context {
                     }
                 }
 
-                pending_entry = Some(entry);
+                pending_step = Some(step);
             }
         }
 
-        if let Some(mut pending_entry) = pending_entry {
-            pending_entry.source_range.end = text::Anchor::MAX;
-            new_suggestions.push(pending_entry);
+        if let Some(mut pending_step) = pending_step {
+            pending_step.source_range.end = text::Anchor::MAX;
+            new_suggestions.push(pending_step);
         }
 
         updated.extend(new_suggestions.iter().map(|step| step.source_range.clone()));

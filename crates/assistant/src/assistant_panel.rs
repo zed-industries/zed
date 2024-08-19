@@ -1833,6 +1833,7 @@ impl ContextEditor {
         ];
 
         let sections = context.read(cx).slash_command_output_sections().to_vec();
+        let edit_step_ranges = context.read(cx).edit_step_ranges().collect::<Vec<_>>();
         let mut this = Self {
             context,
             editor,
@@ -1858,6 +1859,7 @@ impl ContextEditor {
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
         this.insert_slash_command_output_sections(sections, false, cx);
+        this.edit_steps_updated(&Vec::new(), &edit_step_ranges, cx);
         this
     }
 
@@ -2233,79 +2235,7 @@ impl ContextEditor {
                 });
             }
             ContextEvent::EditStepsUpdated { removed, updated } => {
-                self.editor.update(cx, |editor, cx| {
-                    let mut removed_block_ids = HashSet::default();
-                    for range in removed {
-                        if let Some(state) = self.edit_steps.remove(range) {
-                            removed_block_ids.insert(state.header_block_id);
-                            removed_block_ids.insert(state.footer_block_id);
-                        }
-                    }
-                    editor.remove_blocks(removed_block_ids, None, cx);
-
-                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    let (&excerpt_id, _, _) = snapshot.as_singleton().unwrap();
-
-                    for range in updated {
-                        let start = snapshot.anchor_in_excerpt(excerpt_id, range.start).unwrap();
-                        let end = snapshot.anchor_in_excerpt(excerpt_id, range.end).unwrap();
-                        if let hash_map::Entry::Vacant(e) = self.edit_steps.entry(range.clone()) {
-                            let block_ids = editor.insert_blocks(
-                                [
-                                    BlockProperties {
-                                        position: start,
-                                        height: 1,
-                                        disposition: BlockDisposition::Above,
-                                        priority: 0,
-                                        style: BlockStyle::Sticky,
-                                        render: Box::new({
-                                            let this = context_editor.clone();
-                                            let range = range.clone();
-                                            move |cx| {
-                                                let block_id = cx.block_id;
-                                                let gutter_dimensions = cx.gutter_dimensions;
-                                                this.update(cx.deref_mut(), |this, cx| {
-                                                    this.render_edit_step_header(
-                                                        range.clone(),
-                                                        gutter_dimensions,
-                                                        block_id,
-                                                        cx,
-                                                    )
-                                                })
-                                                .ok()
-                                                .flatten()
-                                                .unwrap_or(div().into_any_element())
-                                            }
-                                        }),
-                                    },
-                                    BlockProperties {
-                                        position: end,
-                                        height: 1,
-                                        disposition: BlockDisposition::Below,
-                                        priority: 0,
-                                        style: BlockStyle::Sticky,
-                                        render: Box::new({
-                                            let this = context_editor.clone();
-                                            let range = range.clone();
-                                            move |cx| {
-                                                this.update(cx.deref_mut(), |this, cx| {
-                                                    this.render_edit_step_footer(range.clone(), cx)
-                                                })
-                                                .unwrap_or(div().into_any_element())
-                                            }
-                                        }),
-                                    },
-                                ],
-                                None,
-                                cx,
-                            );
-                            e.insert(EditStepState {
-                                header_block_id: block_ids[0],
-                                footer_block_id: block_ids[1],
-                            });
-                        }
-                    }
-                });
+                self.edit_steps_updated(removed, updated, cx);
             }
             ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
                 self.editor.update(cx, |editor, cx| {
@@ -2475,6 +2405,95 @@ impl ContextEditor {
                 self.error_message = Some(error_message.clone());
             }
         }
+    }
+
+    fn edit_steps_updated(
+        &mut self,
+        removed: &Vec<Range<text::Anchor>>,
+        updated: &Vec<Range<text::Anchor>>,
+        cx: &mut ViewContext<ContextEditor>,
+    ) {
+        let this = cx.view().downgrade();
+        self.editor.update(cx, |editor, cx| {
+            let mut removed_block_ids = HashSet::default();
+            for range in removed {
+                if let Some(state) = self.edit_steps.remove(range) {
+                    removed_block_ids.insert(state.header_block_id);
+                    removed_block_ids.insert(state.footer_block_id);
+                }
+            }
+            editor.remove_blocks(removed_block_ids, None, cx);
+
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let (&excerpt_id, _, _) = snapshot.as_singleton().unwrap();
+
+            for range in updated {
+                let start = snapshot.anchor_in_excerpt(excerpt_id, range.start).unwrap();
+                let end = snapshot.anchor_in_excerpt(excerpt_id, range.end).unwrap();
+                if let hash_map::Entry::Vacant(e) = self.edit_steps.entry(range.clone()) {
+                    let block_ids = editor.insert_blocks(
+                        [
+                            BlockProperties {
+                                position: start,
+                                height: 1,
+                                disposition: BlockDisposition::Above,
+                                priority: 0,
+                                style: BlockStyle::Sticky,
+                                render: Box::new({
+                                    let this = this.clone();
+                                    let range = range.clone();
+                                    move |cx| {
+                                        let block_id = cx.block_id;
+                                        let gutter_dimensions = cx.gutter_dimensions;
+                                        this.update(cx.deref_mut(), |this, cx| {
+                                            this.render_edit_step_header(
+                                                range.clone(),
+                                                gutter_dimensions,
+                                                block_id,
+                                                cx,
+                                            )
+                                        })
+                                        .ok()
+                                        .flatten()
+                                        .unwrap_or_else(|| div().into_any_element())
+                                    }
+                                }),
+                            },
+                            BlockProperties {
+                                position: end,
+                                height: 1,
+                                disposition: BlockDisposition::Below,
+                                priority: 0,
+                                style: BlockStyle::Sticky,
+                                render: Box::new({
+                                    let this = this.clone();
+                                    let range = range.clone();
+                                    move |cx| {
+                                        let gutter_dimensions = cx.gutter_dimensions;
+                                        this.update(cx.deref_mut(), |this, cx| {
+                                            this.render_edit_step_footer(
+                                                range.clone(),
+                                                gutter_dimensions,
+                                                cx,
+                                            )
+                                        })
+                                        .ok()
+                                        .flatten()
+                                        .unwrap_or_else(|| div().into_any_element())
+                                    }
+                                }),
+                            },
+                        ],
+                        None,
+                        cx,
+                    );
+                    e.insert(EditStepState {
+                        header_block_id: block_ids[0],
+                        footer_block_id: block_ids[1],
+                    });
+                }
+            }
+        });
     }
 
     fn insert_slash_command_output_sections(
@@ -3806,10 +3825,25 @@ impl ContextEditor {
 
     fn render_edit_step_footer(
         &self,
-        range: Range<text::Anchor>,
+        step_range: Range<text::Anchor>,
+        gutter_dimensions: &GutterDimensions,
         cx: &mut ViewContext<Self>,
-    ) -> AnyElement {
-        div().into_any_element()
+    ) -> Option<AnyElement> {
+        let step = self.edit_steps.get(&step_range)?;
+        let current_status = step.status(cx);
+        let theme = cx.theme().status();
+        let border_color = if current_status.is_confirmed() {
+            theme.ignored_border
+        } else {
+            theme.info_border
+        };
+        Some(
+            div()
+                .w_full()
+                .px(gutter_dimensions.full_width())
+                .child(h_flex().h(px(1.)).bg(border_color))
+                .into_any(),
+        )
     }
 
     fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
