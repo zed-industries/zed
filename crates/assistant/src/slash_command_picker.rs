@@ -226,8 +226,10 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
                             h_flex()
                                 .font_buffer(cx)
                                 .items_center()
-                                .gap_2()
-                                .child(Label::new("create-your-command").size(LabelSize::Small))
+                                .gap_1()
+                                .child(div().font_buffer(cx).child(
+                                    Label::new("create-your-command").size(LabelSize::Small),
+                                ))
                                 .child(Icon::new(IconName::ArrowUpRight).size(IconSize::Small)),
                         )
                         .child(
