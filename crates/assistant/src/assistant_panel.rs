@@ -1814,24 +1814,18 @@ impl ContextEditor {
     fn insert_default_prompt(&mut self, cx: &mut ViewContext<Self>) {
         let command_name = DefaultSlashCommand.name();
         self.editor.update(cx, |editor, cx| {
-            editor.insert(&format!("/{command_name}"), cx)
+            editor.insert(&format!("/{command_name}\n\n"), cx)
         });
-        self.split(&Split, cx);
         let command = self.context.update(cx, |context, cx| {
-            let first_message_id = context.messages(cx).next().unwrap().id;
-            context.update_metadata(first_message_id, cx, |metadata| {
-                metadata.role = Role::User;
-            });
             context.reparse_slash_commands(cx);
             context.pending_slash_commands()[0].clone()
         });
-
         self.run_command(
             command.source_range,
             &command.name,
             &command.arguments,
             false,
-            true,
+            false,
             self.workspace.clone(),
             cx,
         );
