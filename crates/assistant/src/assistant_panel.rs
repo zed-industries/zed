@@ -1820,7 +1820,7 @@ impl ContextEditor {
                         let mut receiver = this.update(&mut cx, |_, cx| {
                             cx.window_context().defer(move |cx| {
                                 InlineAssistant::update_global(cx, |assistant, cx| {
-                                    assistant.start_assist(assist_id.clone(), cx);
+                                    assistant.start_assist(assist_id, cx);
                                 })
                             });
                             InlineAssistant::update_global(cx, |assistant, _| {
