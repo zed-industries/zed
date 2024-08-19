@@ -891,6 +891,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             run_commands_in_text: false,
                         })),
                         true,
+                        false,
                         cx,
                     );
                 });

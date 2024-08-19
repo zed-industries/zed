@@ -1808,7 +1808,7 @@ impl ContextEditor {
         };
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
-        this.insert_slash_command_output_sections(sections, cx);
+        this.insert_slash_command_output_sections(sections, false, cx);
         this
     }
 
@@ -1821,7 +1821,7 @@ impl ContextEditor {
         let command = self.context.update(cx, |context, cx| {
             let first_message_id = context.messages(cx).next().unwrap().id;
             context.update_metadata(first_message_id, cx, |metadata| {
-                metadata.role = Role::System;
+                metadata.role = Role::User;
             });
             context.reparse_slash_commands(cx);
             context.pending_slash_commands()[0].clone()
@@ -1832,6 +1832,7 @@ impl ContextEditor {
             &command.name,
             &command.arguments,
             false,
+            true,
             self.workspace.clone(),
             cx,
         );
@@ -2098,6 +2099,7 @@ impl ContextEditor {
                     &command.name,
                     &command.arguments,
                     true,
+                    false,
                     workspace.clone(),
                     cx,
                 );
@@ -2106,19 +2108,27 @@ impl ContextEditor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn run_command(
         &mut self,
         command_range: Range<language::Anchor>,
         name: &str,
         arguments: &[String],
         ensure_trailing_newline: bool,
+        expand_result: bool,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
             let output = command.run(arguments, workspace, self.lsp_adapter_delegate.clone(), cx);
             self.context.update(cx, |context, cx| {
-                context.insert_command_output(command_range, output, ensure_trailing_newline, cx)
+                context.insert_command_output(
+                    command_range,
+                    output,
+                    ensure_trailing_newline,
+                    expand_result,
+                    cx,
+                )
             });
         }
     }
@@ -2203,6 +2213,7 @@ impl ContextEditor {
                                                 command.source_range.clone(),
                                                 &command.name,
                                                 &command.arguments,
+                                                false,
                                                 false,
                                                 workspace.clone(),
                                                 cx,
@@ -2300,8 +2311,13 @@ impl ContextEditor {
                 output_range,
                 sections,
                 run_commands_in_output,
+                expand_result,
             } => {
-                self.insert_slash_command_output_sections(sections.iter().cloned(), cx);
+                self.insert_slash_command_output_sections(
+                    sections.iter().cloned(),
+                    *expand_result,
+                    cx,
+                );
 
                 if *run_commands_in_output {
                     let commands = self.context.update(cx, |context, cx| {
@@ -2316,6 +2332,7 @@ impl ContextEditor {
                             command.source_range,
                             &command.name,
                             &command.arguments,
+                            false,
                             false,
                             self.workspace.clone(),
                             cx,
@@ -2333,6 +2350,7 @@ impl ContextEditor {
     fn insert_slash_command_output_sections(
         &mut self,
         sections: impl IntoIterator<Item = SlashCommandOutputSection<language::Anchor>>,
+        expand_result: bool,
         cx: &mut ViewContext<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
@@ -2387,6 +2405,9 @@ impl ContextEditor {
 
             editor.insert_creases(creases, cx);
 
+            if expand_result {
+                buffer_rows_to_fold.clear();
+            }
             for buffer_row in buffer_rows_to_fold.into_iter().rev() {
                 editor.fold_at(&FoldAt { buffer_row }, cx);
             }
