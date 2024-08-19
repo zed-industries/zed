@@ -43,6 +43,11 @@ impl FeatureFlag for LanguageModels {
     const NAME: &'static str = "language-models";
 }
 
+pub struct LlmClosedBeta {}
+impl FeatureFlag for LlmClosedBeta {
+    const NAME: &'static str = "llm-closed-beta";
+}
+
 pub struct ZedPro {}
 impl FeatureFlag for ZedPro {
     const NAME: &'static str = "zed-pro";
