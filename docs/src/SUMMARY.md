@@ -34,8 +34,8 @@
 
 - [Assistant](./assistant/assistant.md)
   - [Providers & Configuration](./assistant/configuration.md)
-  - [Introducing Contexts](./assistant/contexts.md)
   - [Assistant Panel](./assistant/assistant-panel.md)
+  - [Introducing Contexts](./assistant/contexts.md)
   - [Inline Assistant](./assistant/inline-assistant.md)
   - [Using Commands](./assistant/commands.md)
   - [Prompting](./assistant/prompting.md)

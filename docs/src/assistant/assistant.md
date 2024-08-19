@@ -1,23 +1,17 @@
 # Assistant
 
-The Zed Assistant is a powerful tool that integrates large language models into your development workflow. This section covers various aspects of the Assistant:
+The Assistant is a powerful tool that integrates large language models into your development workflow.
 
-### [Assistant Panel](assistant/assistant-panel.md)
-Learn how to interact with the Assistant panel, create new contexts, and manage interactions with language models.
+This section covers various aspects of the Assistant:
 
-### [Providers & Configuration](assistant/providers.md)
-Set up and configure different language model providers like OpenAI, Ollama, Anthropic, Google Gemini, and GitHub Copilot Chat.
+- [Assistant Panel](assistant/assistant-panel.md): Create and collaboratively edit new contexts, and manage interactions with language models.
 
-### [Introducing Contexts](assistant/contexts.md)
-Understand how to save, load, and manage your contexts within Zed.
+- [Inline Assistant](assistant/inline-assistant.md): Discover how to use the Assistant to power inline transformations directly within your code editor and terminal.
 
-### [Using Commands](assistant/commands.md)
-Explore slash commands that enhance the Assistant's capabilities and learn about extensibility options.
+- [Providers & Configuration](assistant/configuration.md): Configure the Assistant, and set up different language model providers like Anthropic, OpenAI, Ollama, Google Gemini, and GitHub Copilot Chat.
 
-### [Prompting & Prompt Library](assistant/prompting.md)
-Customize default prompts and learn advanced techniques for overriding prompt templates.
+- [Introducing Contexts](assistant/contexts.md): Learn about contexts (similar to conversations), and learn how they power your interactions between you, your project, and the assistant/model.
 
-### [Inline Assistant](assistant/inline-assistant.md)
-Discover how to use the Assistant directly within your code editor and terminal.
+- [Using Commands](assistant/commands.md): Explore slash commands that enhance the Assistant's capabilities and future extensibility.
 
-Next: [Providers & Configuration](assistant/configuration.md)
+- [Prompting & Prompt Library](assistant/prompting.md): Learn how to write and save prompts, how to use the Prompt Library, and how to edit prompt templates.
