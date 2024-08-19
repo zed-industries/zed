@@ -332,6 +332,8 @@ pub enum Event {
     CapabilityChanged,
     /// The buffer was explicitly requested to close.
     Closed,
+    /// The buffer was discarded when closing.
+    Discarded,
 }
 
 /// The file associated with a buffer.
@@ -824,6 +826,12 @@ impl Buffer {
         self.has_conflict = false;
         self.saved_mtime = mtime;
         cx.emit(Event::Saved);
+        cx.notify();
+    }
+
+    /// This method is called to signal that the buffer has been discarded.
+    pub fn discarded(&mut self, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::Discarded);
         cx.notify();
     }
 

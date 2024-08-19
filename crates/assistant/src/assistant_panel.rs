@@ -2479,6 +2479,18 @@ impl ContextEditor {
         };
 
         let resolved_step = step.read(cx).resolution.clone();
+
+        if let Some(Ok(resolution)) = resolved_step.as_ref() {
+            for (buffer, _) in resolution.suggestion_groups.iter() {
+                let step_range = step_range.clone();
+                cx.subscribe(buffer, move |this, _, event, cx| match event {
+                    language::Event::Discarded => this.undo_workflow_step(step_range.clone(), cx),
+                    _ => {}
+                })
+                .detach();
+            }
+        }
+
         if let Some(existing_step) = self.workflow_steps.get_mut(&step_range) {
             existing_step.resolved_step = resolved_step;
         } else {

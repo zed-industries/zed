@@ -1500,8 +1500,13 @@ impl Pane {
                         })?;
                         match answer {
                             Ok(0) => {}
-                            Ok(1) => return Ok(true), // Don't save this file
-                            _ => return Ok(false),    // Cancel
+                            Ok(1) => {
+                                // Don't save this file
+                                pane.update(cx, |_, cx| item.discarded(project, cx))
+                                    .log_err();
+                                return Ok(true);
+                            }
+                            _ => return Ok(false), // Cancel
                         }
                     } else {
                         return Ok(false);
