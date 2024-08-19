@@ -249,6 +249,7 @@ async fn perform_completion(
             if let Some(rate_limit_info) = rate_limit_info {
                 tracing::info!(
                     target: "upstream rate limit",
+                    is_staff = claims.is_staff,
                     provider = params.provider.to_string(),
                     model = model,
                     tokens_remaining = rate_limit_info.tokens_remaining,
