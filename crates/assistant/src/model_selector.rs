@@ -1,6 +1,7 @@
 use feature_flags::ZedPro;
 use gpui::Action;
 use gpui::DismissEvent;
+
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
 use workspace::ShowConfiguration;
@@ -149,6 +150,8 @@ impl PickerDelegate for ModelPickerDelegate {
         use feature_flags::FeatureFlagAppExt;
         let model_info = self.filtered_models.get(ix)?;
         let show_badges = cx.has_flag::<ZedPro>();
+        let provider_name: String = model_info.model.provider_name().0.into();
+
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -166,11 +169,16 @@ impl PickerDelegate for ModelPickerDelegate {
                         .w_full()
                         .justify_between()
                         .font_buffer(cx)
-                        .min_w(px(200.))
+                        .min_w(px(240.))
                         .child(
                             h_flex()
                                 .gap_2()
                                 .child(Label::new(model_info.model.name().0.clone()))
+                                .child(
+                                    Label::new(provider_name)
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
                                 .children(match model_info.availability {
                                     LanguageModelAvailability::Public => None,
                                     LanguageModelAvailability::RequiresPlan(Plan::Free) => None,
