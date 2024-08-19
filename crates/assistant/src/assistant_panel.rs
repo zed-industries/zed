@@ -3162,9 +3162,9 @@ impl ContextEditor {
                                                 )
                                                 .tooltip(|cx| {
                                                     Tooltip::with_meta(
-                                                        "Conversation cached.",
+                                                        "Context cached",
                                                         None,
-                                                        "Editing this or prior messages may impact performance.",
+                                                        "Large messages cached to optimize performance",
                                                         cx,
                                                     )
                                                 })

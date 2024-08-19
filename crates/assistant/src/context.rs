@@ -1007,7 +1007,7 @@ impl Context {
         });
     }
 
-    pub fn mark_longest_messages_for_cache(
+    pub fn mark_cache_anchors(
         &mut self,
         cache_configuration: &Option<LanguageModelCacheConfiguration>,
         speculative: bool,
@@ -1026,6 +1026,8 @@ impl Context {
 
         let mut sorted_messages = messages.clone();
         if speculative {
+            // Avoid caching the last message if this is a speculative cache fetch as
+            // it's likely to change.
             sorted_messages.pop();
         }
         sorted_messages.retain(|m| m.role == Role::User);
@@ -1114,7 +1116,10 @@ impl Context {
     fn start_cache_warming(&mut self, model: &Arc<dyn LanguageModel>, cx: &mut ModelContext<Self>) {
         let cache_configuration = model.cache_configuration();
 
-        if !self.mark_longest_messages_for_cache(&cache_configuration, true, cx) {
+        if !self.mark_cache_anchors(&cache_configuration, true, cx) {
+            return;
+        }
+        if !self.pending_completions.is_empty() {
             return;
         }
         if let Some(cache_configuration) = cache_configuration {
@@ -1164,9 +1169,7 @@ impl Context {
             .iter()
             .filter_map(|(message_id, metadata)| {
                 metadata.cache.as_ref().and_then(|cache| {
-                    if cache.status == CacheStatus::Pending
-                        && cache.cached_at.observed(metadata.timestamp)
-                    {
+                    if cache.status == CacheStatus::Pending {
                         Some(*message_id)
                     } else {
                         None
@@ -1622,7 +1625,7 @@ impl Context {
             return None;
         }
         // Compute which messages to cache, including the last one.
-        self.mark_longest_messages_for_cache(&model.cache_configuration(), false, cx);
+        self.mark_cache_anchors(&model.cache_configuration(), false, cx);
 
         let request = self.to_completion_request(cx);
         let assistant_message = self
