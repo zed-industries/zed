@@ -295,6 +295,7 @@ pub enum ContextEvent {
         output_range: Range<language::Anchor>,
         sections: Vec<SlashCommandOutputSection<language::Anchor>>,
         run_commands_in_output: bool,
+        expand_result: bool,
     },
     Operation(ContextOperation),
 }
@@ -774,6 +775,7 @@ impl Context {
                         cx.emit(ContextEvent::SlashCommandFinished {
                             output_range,
                             sections,
+                            expand_result: false,
                             run_commands_in_output: false,
                         });
                     }
@@ -1396,6 +1398,7 @@ impl Context {
         command_range: Range<language::Anchor>,
         output: Task<Result<SlashCommandOutput>>,
         ensure_trailing_newline: bool,
+        expand_result: bool,
         cx: &mut ModelContext<Self>,
     ) {
         self.reparse_slash_commands(cx);
@@ -1469,6 +1472,7 @@ impl Context {
                                     output_range,
                                     sections,
                                     run_commands_in_output: output.run_commands_in_text,
+                                    expand_result,
                                 },
                             )
                         });
