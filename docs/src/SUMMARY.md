@@ -22,7 +22,6 @@
 # Using Zed
 
 - [Multibuffers](./multibuffers.md)
-- [Assistant](./assistant.md)
 - [Code Completions](./completions.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
@@ -30,6 +29,16 @@
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
 - [REPL](./repl.md)
+
+# Assistant
+
+- [Assistant](./assistant/assistant.md)
+  - [Providers & Configuration](./assistant/configuration.md)
+  - [Introducing Contexts](./assistant/contexts.md)
+  - [Assistant Panel](./assistant/assistant-panel.md)
+  - [Inline Assistant](./assistant/inline-assistant.md)
+  - [Using Commands](./assistant/commands.md)
+  - [Prompting](./assistant/prompting.md)
 
 # Extensions
 
