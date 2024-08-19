@@ -11,11 +11,11 @@ use crate::{
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore, CycleMessageRole,
-    DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId, InlineAssistant,
-    InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus,
-    QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus,
-    ToggleModelSelector, WorkflowStepResolution, WorkflowStepView,
+    Assist, CacheStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
+    CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
+    InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
+    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split,
+    ToggleFocus, ToggleModelSelector, WorkflowStepResolution, WorkflowStepView,
 };
 use crate::{ContextStoreEvent, ModelPickerDelegate};
 use anyhow::{anyhow, Result};
@@ -3137,6 +3137,36 @@ impl ContextEditor {
                                 .relative()
                                 .gap_1()
                                 .child(sender)
+                                .children(match &message.cache {
+                                    Some(cache) if cache.is_final_anchor => match cache.status {
+                                        CacheStatus::Cached => Some(
+                                            div()
+                                                .id("cached")
+                                                .child(
+                                                    Icon::new(IconName::DatabaseZap)
+                                                        .size(IconSize::XSmall)
+                                                        .color(Color::Hint),
+                                                )
+                                                .tooltip(|cx| {
+                                                    Tooltip::with_meta(
+                                                        "Context cached",
+                                                        None,
+                                                        "Large messages cached to optimize performance",
+                                                        cx,
+                                                    )
+                                                }).into_any_element()
+                                        ),
+                                        CacheStatus::Pending => Some(
+                                            div()
+                                                .child(
+                                                    Icon::new(IconName::Ellipsis)
+                                                        .size(IconSize::XSmall)
+                                                        .color(Color::Hint),
+                                                ).into_any_element()
+                                        ),
+                                    },
+                                    _ => None,
+                                })
                                 .children(match &message.status {
                                     MessageStatus::Error(error) => Some(
                                         Button::new("show-error", "Error")
