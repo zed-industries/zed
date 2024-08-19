@@ -18,6 +18,11 @@ In addition to the [Zed Terms of Use](/terms) and [Zed Privacy Policy](/privacy-
 - [Anthropic Privacy Policy](https://www.anthropic.com/legal/privacy)
 - [Anthropic Commercial Terms of Service](https://www.anthropic.com/legal/commercial-terms)
 
+## LiveKit
+
+- [LiveKit Terms of Service](https://livekit.io/legal/terms-of-service)
+- [LiveKit Privacy Policy](https://livekit.io/legal/privacy-policy)
+
 ## OpenAI
 
 - [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/)
@@ -35,3 +40,5 @@ In addition to the [Zed Terms of Use](/terms) and [Zed Privacy Policy](/privacy-
 
 - [SuperMaven Terms of Service](https://supermaven.com/terms-of-service)
 - [SuperMaven Privacy Policy](https://supermaven.com/privacy-policy)
+
+**DATE: August 19, 2024**

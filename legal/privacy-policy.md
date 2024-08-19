@@ -138,7 +138,7 @@ For example:
 It's worth noting that we avoid retaining data unless necessary to provide our Service. For example:
 
 - We do not currently store source code that we proxy during collaboration sessions.
-- We do not currently retain audio or video recordings of Collaboration calls after a call is completed.
+- We do not currently store audio or video recordings of Collaboration calls handled by LiveKit.
 
 ## Personal Data of Children
 
@@ -265,4 +265,4 @@ If you have additional questions about this Privacy Policy, the methods in which
   PO Box 1916
   Denver CO 80205
 
-**DATE: August 16, 2024**
+**DATE: August 19, 2024**

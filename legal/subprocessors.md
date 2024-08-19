@@ -15,5 +15,8 @@ This page provides information about the Subprocessors Zed has engaged to provid
 | ClickHouse   | Analytics            | United States |
 | Metabase     | Analytics            | United States |
 | GitHub       | Authentication       | United States |
+| LiveKit      | Audio Conferencing   | United States |
 | Anthropic    | AI Services          | United States |
 | OpenAI       | AI Services          | United States |
+
+**DATE: August 19, 2024**
