@@ -436,8 +436,8 @@ impl Interactivity {
 
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
-    /// the [`Self::on_drag_move`] API
-    /// The imperative API equivalent to [`StatefulInteractiveElement::on_drag`]
+    /// - the [`Self::on_drag_move`] API
+    /// - the imperative API equivalent to [`StatefulInteractiveElement::on_drag`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_drag<T, W>(
@@ -954,8 +954,8 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
-    /// the [`Self::on_drag_move`] API
-    /// The fluent API equivalent to [`Interactivity::on_drag`]
+    /// - the [`Self::on_drag_move`] API
+    /// - the fluent API equivalent to [`Interactivity::on_drag`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_drag<T, W>(
