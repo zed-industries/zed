@@ -17,11 +17,11 @@ const MIGRATION_RETRIES: usize = 10;
 type QueuedWrite = Box<dyn 'static + Send + FnOnce()>;
 type WriteQueue = Box<dyn 'static + Send + Sync + Fn(QueuedWrite)>;
 type WriteQueueConstructor = Box<dyn 'static + Send + FnMut() -> WriteQueue>;
+
 /// List of queues of tasks by database uri. This lets us serialize writes to the database
 /// and have a single worker thread per db file. This means many thread safe connections
 /// (possibly with different migrations) could all be communicating with the same background
 /// thread.
-
 static QUEUES: LazyLock<RwLock<HashMap<Arc<str>, WriteQueue>>> =
     LazyLock::new(|| Default::default());
 

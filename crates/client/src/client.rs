@@ -67,6 +67,7 @@ impl fmt::Display for DevServerToken {
 static ZED_SERVER_URL: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("ZED_SERVER_URL").ok());
 static ZED_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZED_RPC_URL").ok());
+
 /// An environment variable whose presence indicates that the development auth
 /// provider should be used.
 ///
