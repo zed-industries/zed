@@ -1515,8 +1515,6 @@ impl OutlinePanel {
         )
     }
 
-    // TODO kb render it like an outline item, but for the entire line without the trailing whitespaces.
-    // Need to fill the `highlight_ranges` with a proper style, see `buffer.rs`
     fn render_search_match(
         &self,
         match_range: &Range<editor::Anchor>,
@@ -1541,6 +1539,7 @@ impl OutlinePanel {
         let Some(line_text) = self.text_for_match(&entire_row_range, cx) else {
             return div().id("empty-search-match");
         };
+        let line_text = line_text.trim();
 
         let is_active = match &self.selected_entry {
             Some(PanelEntry::Search(selected_range)) => match_range == selected_range,
@@ -1549,7 +1548,7 @@ impl OutlinePanel {
 
         let label = if match_point_range.start.row != match_point_range.end.row {
             format!(
-                "{line_text} (lines {} -{})",
+                "{line_text} (lines {} - {})",
                 match_point_range.start.row + 1,
                 match_point_range.end.row + 1,
             )
@@ -1560,13 +1559,46 @@ impl OutlinePanel {
             .find(&match_text)
             .map(|match_start| (match_start..match_start + match_text.len()));
 
+        // TODO kb why cannot I use the original label?
+        // TODO kb new label seems to include `\n`? Generally need to select lines better and trim/align them.
+        // TODO kb why search hihglights are offset for this?
+        // TODO kb isn't this a long operation that needs to be run in the background?
+        let theme = cx.theme().syntax();
+        let entire_row_offset_range = entire_row_range.to_offset(&multi_buffer_snapshot);
+        let mut offset = entire_row_offset_range.start;
+        let mut text = String::new();
+        let mut highlight_ranges = Vec::new();
+        for mut chunk in multi_buffer_snapshot.chunks(
+            entire_row_offset_range.start..entire_row_offset_range.end,
+            true,
+        ) {
+            if chunk.text.len() > entire_row_offset_range.end - offset {
+                chunk.text = &chunk.text[0..(entire_row_offset_range.end - offset)];
+                offset = entire_row_offset_range.end;
+            } else {
+                offset += chunk.text.len();
+            }
+            let style = chunk
+                .syntax_highlight_id
+                .and_then(|highlight| highlight.style(theme));
+            if let Some(style) = style {
+                let start = text.len();
+                let end = start + chunk.text.len();
+                highlight_ranges.push((start..end, style));
+            }
+            text.push_str(chunk.text);
+            if offset >= entire_row_offset_range.end {
+                break;
+            }
+        }
+
         let label_element = language::render_item(
             &OutlineItem {
                 depth,
                 range: entire_row_range.clone(),
-                text: label,
+                text,
                 annotation_range: None,
-                highlight_ranges: Vec::new(),
+                highlight_ranges,
                 name_ranges: highlight_indices.iter().cloned().collect(),
                 body_range: Some(entire_row_range),
             },
