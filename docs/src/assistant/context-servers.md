@@ -10,12 +10,12 @@ To configure Zed to use a Context Server, add the command required to start the 
 
 ```json
 {
-  "experimental": {
-    "context_servers": [
+  "experimental.context_servers": {
+    "servers": [
       {
         "id": "python_context_server",
         "executable": "python",
-        "args": ["-m", "my_context_server"]
+        "args": ["-m", "your_context_server_module"]
       }
     ]
   }
