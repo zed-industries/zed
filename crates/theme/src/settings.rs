@@ -608,7 +608,10 @@ impl settings::Settings for ThemeSettings {
                 value.buffer_font_size.map(Into::into),
             );
             merge(&mut this.buffer_line_height, value.buffer_line_height);
+
+            // Clamp the `unnecessary_code_fade` to ensure text can't disappear entirely.
             merge(&mut this.unnecessary_code_fade, value.unnecessary_code_fade);
+            this.unnecessary_code_fade = this.unnecessary_code_fade.clamp(0.0, 0.9);
         }
 
         Ok(this)

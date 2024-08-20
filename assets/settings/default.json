@@ -64,6 +64,8 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
+  // How much to fade out unused code.
+  "unnecessary_code_fade": 0.3,
   // The factor to grow the active pane by. Defaults to 1.0
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,
@@ -570,8 +572,6 @@
     // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]
   },
-  // How much to fade out unused code.
-  "unnecessary_code_fade": 0.3,
   // Settings specific to journaling
   "journal": {
     // The path of the directory where journal entries are stored
