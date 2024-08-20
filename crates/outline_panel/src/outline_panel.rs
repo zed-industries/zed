@@ -1536,33 +1536,15 @@ impl OutlinePanel {
         );
         let entire_row_range =
             (entire_row_range_start..entire_row_range_end).to_anchors(&multi_buffer_snapshot);
-        let Some(line_text) = self.text_for_match(&entire_row_range, cx) else {
-            return div().id("empty-search-match");
-        };
-        let line_text = line_text.trim();
-
         let is_active = match &self.selected_entry {
             Some(PanelEntry::Search(selected_range)) => match_range == selected_range,
             _ => false,
         };
 
-        let label = if match_point_range.start.row != match_point_range.end.row {
-            format!(
-                "{line_text} (lines {} - {})",
-                match_point_range.start.row + 1,
-                match_point_range.end.row + 1,
-            )
-        } else {
-            format!("{line_text} (lines {})", match_point_range.start.row + 1)
-        };
-        let highlight_indices = label
-            .find(&match_text)
-            .map(|match_start| (match_start..match_start + match_text.len()));
-
-        // TODO kb why cannot I use the original label?
         // TODO kb new label seems to include `\n`? Generally need to select lines better and trim/align them.
-        // TODO kb why search hihglights are offset for this?
         // TODO kb isn't this a long operation that needs to be run in the background?
+        // TODO kb panics if I open project search, then switch back to a buffer and open a buffer search, then switch back to project search
+        // TODO kb blinks during buffer search input
         let theme = cx.theme().syntax();
         let entire_row_offset_range = entire_row_range.to_offset(&multi_buffer_snapshot);
         let mut offset = entire_row_offset_range.start;
@@ -1591,6 +1573,10 @@ impl OutlinePanel {
                 break;
             }
         }
+
+        let highlight_indices = text
+            .find(&match_text)
+            .map(|match_start| (match_start..match_start + match_text.len()));
 
         let label_element = language::render_item(
             &OutlineItem {
