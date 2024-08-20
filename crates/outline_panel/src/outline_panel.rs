@@ -1540,7 +1540,6 @@ impl OutlinePanel {
                 ..match_offset_range.end - entire_row_offset_range.start,
         ];
 
-        // TODO kb Need to select lines better and trim/align them, show line numbers too?
         // TODO kb isn't this a long operation that needs to be run in the background?
         // TODO kb blinks during buffer search input
         let theme = cx.theme().syntax();
@@ -2893,9 +2892,17 @@ impl OutlinePanel {
 
     fn update_search_matches(&mut self, cx: &mut ViewContext<OutlinePanel>) {
         let active_editor = self.active_editor();
-        let project_search_matches = active_editor
-            .as_ref()
-            .and_then(|editor| editor.boxed_clone().act_as::<ProjectSearchView>(cx))
+        let project_search_matches = self
+            .workspace
+            .read(cx)
+            .active_pane()
+            .read(cx)
+            .items()
+            .filter_map(|item| item.downcast::<ProjectSearchView>())
+            .find(|project_search| {
+                let project_search_editor = project_search.boxed_clone().act_as::<Editor>(cx);
+                project_search_editor.is_some() && active_editor == project_search_editor
+            })
             .map(|project_search| project_search.read(cx).get_matches(cx))
             .unwrap_or_default();
         let buffer_search_matches = active_editor
