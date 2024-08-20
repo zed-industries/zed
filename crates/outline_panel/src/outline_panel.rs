@@ -1564,6 +1564,7 @@ impl OutlinePanel {
                 depth,
                 range: entire_row_range.clone(),
                 text: label,
+                annotation_range: None,
                 highlight_ranges: Vec::new(),
                 name_ranges: highlight_indices.iter().cloned().collect(),
                 body_range: Some(entire_row_range),
