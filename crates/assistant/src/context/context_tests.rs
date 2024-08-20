@@ -889,7 +889,7 @@ async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
         context.update(cx, |context, cx| {
             let expected_marked_text = expected_marked_text.unindent();
             let (expected_text, expected_ranges) = marked_text_ranges(&expected_marked_text, false);
-            context.buffer.read_with(cx, |buffer, cx| {
+            context.buffer.read_with(cx, |buffer, _| {
                 assert_eq!(buffer.text(), expected_text);
                 let ranges = context
                     .edit_steps

@@ -25,12 +25,11 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CustomBlockId, RenderBlock,
+        BlockDisposition, BlockProperties, BlockStyle, Crease, CustomBlockId, RenderBlock,
         ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
-    Anchor, Editor, EditorEvent, ExcerptRange, GutterDimensions, MultiBuffer, RowExt,
-    ToOffset as _, ToPoint,
+    Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowExt, ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
@@ -1361,8 +1360,8 @@ struct WorkflowStep {
 }
 
 struct EditStepState {
-    header_block_id: CustomBlockId,
-    footer_block_id: CustomBlockId,
+    header_crease_id: CreaseId,
+    footer_crease_id: Option<CreaseId>,
 }
 
 impl WorkflowStep {
@@ -1407,7 +1406,7 @@ impl WorkflowStep {
 }
 
 impl EditStepState {
-    fn status(&self, cx: &AppContext) -> WorkflowStepStatus {
+    fn status(&self, _cx: &AppContext) -> WorkflowStepStatus {
         WorkflowStepStatus::Idle
 
         // match self.resolved_step.as_ref() {
@@ -1464,11 +1463,12 @@ impl WorkflowStepStatus {
     }
 
     fn render_workflow_step_error(
-        id: EntityId,
+        id: impl Into<u64>,
         editor: WeakView<ContextEditor>,
         step_range: Range<language::Anchor>,
         error: String,
     ) -> AnyElement {
+        let id = id.into();
         h_flex()
             .gap_2()
             .child(
@@ -1507,9 +1507,9 @@ impl WorkflowStepStatus {
         step_range: Range<language::Anchor>,
         focus_handle: FocusHandle,
         editor: WeakView<ContextEditor>,
-        block_id: BlockId,
+        id: impl Into<u64>,
     ) -> AnyElement {
-        let id = EntityId::from(block_id);
+        let id = id.into();
         fn display_keybind_in_tooltip(
             step_range: &Range<language::Anchor>,
             editor: &WeakView<ContextEditor>,
@@ -2415,84 +2415,117 @@ impl ContextEditor {
     ) {
         let this = cx.view().downgrade();
         self.editor.update(cx, |editor, cx| {
-            let mut removed_block_ids = HashSet::default();
+            let mut removed_crease_ids = Vec::new();
             for range in removed {
                 if let Some(state) = self.edit_steps.remove(range) {
-                    removed_block_ids.insert(state.header_block_id);
-                    removed_block_ids.insert(state.footer_block_id);
+                    removed_crease_ids.push(state.header_crease_id);
+                    removed_crease_ids.extend(state.footer_crease_id);
                 }
             }
-            editor.remove_blocks(removed_block_ids, None, cx);
 
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let (&excerpt_id, _, _) = snapshot.as_singleton().unwrap();
 
             for range in updated {
-                let start = snapshot.anchor_in_excerpt(excerpt_id, range.start).unwrap();
-                let end = snapshot.anchor_in_excerpt(excerpt_id, range.end).unwrap();
-                if let hash_map::Entry::Vacant(e) = self.edit_steps.entry(range.clone()) {
-                    let block_ids = editor.insert_blocks(
-                        [
-                            BlockProperties {
-                                position: start,
-                                height: 1,
-                                disposition: BlockDisposition::Above,
-                                priority: 0,
-                                style: BlockStyle::Sticky,
-                                render: Box::new({
-                                    let this = this.clone();
-                                    let range = range.clone();
-                                    move |cx| {
-                                        let block_id = cx.block_id;
-                                        let gutter_dimensions = cx.gutter_dimensions;
-                                        this.update(cx.deref_mut(), |this, cx| {
-                                            this.render_edit_step_header(
-                                                range.clone(),
-                                                gutter_dimensions,
-                                                block_id,
-                                                cx,
-                                            )
-                                        })
-                                        .ok()
-                                        .flatten()
-                                        .unwrap_or_else(|| div().into_any_element())
-                                    }
-                                }),
-                            },
-                            BlockProperties {
-                                position: end,
-                                height: 1,
-                                disposition: BlockDisposition::Below,
-                                priority: 0,
-                                style: BlockStyle::Sticky,
-                                render: Box::new({
-                                    let this = this.clone();
-                                    let range = range.clone();
-                                    move |cx| {
-                                        let gutter_dimensions = cx.gutter_dimensions;
-                                        this.update(cx.deref_mut(), |this, cx| {
-                                            this.render_edit_step_footer(
-                                                range.clone(),
-                                                gutter_dimensions,
-                                                cx,
-                                            )
-                                        })
-                                        .ok()
-                                        .flatten()
-                                        .unwrap_or_else(|| div().into_any_element())
-                                    }
-                                }),
-                            },
-                        ],
-                        None,
-                        cx,
-                    );
-                    e.insert(EditStepState {
-                        header_block_id: block_ids[0],
-                        footer_block_id: block_ids[1],
-                    });
+                let Some(step) = self.context.read(cx).edit_step_for_range(range.clone(), cx)
+                else {
+                    continue;
+                };
+
+                let header_range = snapshot
+                    .anchor_in_excerpt(excerpt_id, step.source_range.start)
+                    .unwrap()
+                    ..snapshot
+                        .anchor_in_excerpt(excerpt_id, step.leading_tags_end)
+                        .unwrap();
+                let footer_range = step.trailing_tag_start.map(|start| {
+                    snapshot.anchor_in_excerpt(excerpt_id, start).unwrap()
+                        ..snapshot
+                            .anchor_in_excerpt(excerpt_id, step.source_range.end)
+                            .unwrap()
+                });
+
+                let header_placeholder = FoldPlaceholder {
+                    render: Arc::new({
+                        let this = this.clone();
+                        let range = range.clone();
+                        move |id, _crease_range, cx| {
+                            let max_width = cx.max_width;
+                            this.update(cx.deref_mut(), |this, cx| {
+                                this.render_edit_step_header(range.clone(), max_width, id, cx)
+                            })
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| Empty.into_any_element())
+                        }
+                    }),
+                    constrain_width: false,
+                    merge_adjacent: false,
+                };
+                let footer_placeholder = FoldPlaceholder {
+                    render: Arc::new({
+                        let this = this.clone();
+                        let range = range.clone();
+                        move |_, _crease_range, cx| {
+                            let max_width = cx.max_width;
+                            this.update(cx.deref_mut(), |this, cx| {
+                                this.render_edit_step_footer(range.clone(), max_width, cx)
+                            })
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| Empty.into_any_element())
+                        }
+                    }),
+                    constrain_width: false,
+                    merge_adjacent: false,
+                };
+
+                let new_crease_ids = editor.insert_creases(
+                    [Crease::new(
+                        header_range.clone(),
+                        header_placeholder.clone(),
+                        render_slash_command_output_toggle,
+                        |_, _, _| Empty.into_any_element(),
+                    )]
+                    .into_iter()
+                    .chain(footer_range.clone().map(|footer_range| {
+                        Crease::new(
+                            footer_range,
+                            footer_placeholder.clone(),
+                            render_slash_command_output_toggle,
+                            |_, _, _| Empty.into_any_element(),
+                        )
+                    })),
+                    cx,
+                );
+
+                editor.fold_ranges(
+                    [(header_range, header_placeholder)]
+                        .into_iter()
+                        .chain(footer_range.map(|range| (range, footer_placeholder))),
+                    false,
+                    cx,
+                );
+
+                let state = EditStepState {
+                    header_crease_id: new_crease_ids[0],
+                    footer_crease_id: new_crease_ids.get(1).copied(),
+                };
+
+                match self.edit_steps.entry(range.clone()) {
+                    hash_map::Entry::Vacant(entry) => {
+                        entry.insert(state);
+                    }
+                    hash_map::Entry::Occupied(mut entry) => {
+                        let entry = entry.get_mut();
+                        removed_crease_ids.push(entry.header_crease_id);
+                        removed_crease_ids.extend(entry.footer_crease_id);
+                        *entry = state;
+                    }
                 }
             }
+
+            editor.remove_creases(removed_crease_ids, cx);
         });
     }
 
@@ -2799,7 +2832,7 @@ impl ContextEditor {
                                                             step_range.clone(),
                                                             editor_focus_handle.clone(),
                                                             weak_self.clone(),
-                                                            cx.block_id,
+                                                            EntityId::from(cx.block_id).as_u64(),
                                                         ),
                                                     )
                                                 })),
@@ -3720,8 +3753,8 @@ impl ContextEditor {
     fn render_edit_step_header(
         &self,
         range: Range<text::Anchor>,
-        gutter_dimensions: &GutterDimensions,
-        block_id: BlockId,
+        max_width: Pixels,
+        id: impl Into<u64>,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
         let edit_state = self.edit_steps.get(&range)?;
@@ -3799,8 +3832,8 @@ impl ContextEditor {
 
         Some(
             div()
-                .w_full()
-                .px(gutter_dimensions.full_width())
+                .w(max_width)
+                .occlude()
                 .child(
                     h_flex()
                         .w_full()
@@ -3816,7 +3849,7 @@ impl ContextEditor {
                             range.clone(),
                             focus_handle.clone(),
                             this.clone(),
-                            block_id,
+                            id,
                         ))),
                 )
                 .into_any(),
@@ -3826,7 +3859,7 @@ impl ContextEditor {
     fn render_edit_step_footer(
         &self,
         step_range: Range<text::Anchor>,
-        gutter_dimensions: &GutterDimensions,
+        max_width: Pixels,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
         let step = self.edit_steps.get(&step_range)?;
@@ -3839,8 +3872,7 @@ impl ContextEditor {
         };
         Some(
             div()
-                .w_full()
-                .px(gutter_dimensions.full_width())
+                .w(max_width)
                 .child(h_flex().h(px(1.)).bg(border_color))
                 .into_any(),
         )

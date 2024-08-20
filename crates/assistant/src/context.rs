@@ -452,11 +452,11 @@ struct WorkflowStepEntry {
 }
 
 #[derive(Clone, Debug)]
-struct EditStep {
-    source_range: Range<language::Anchor>,
-    prefix_end: text::Anchor,
-    suffix_start: Option<text::Anchor>,
-    suggestion: EditSuggestion,
+pub struct EditStep {
+    pub source_range: Range<language::Anchor>,
+    pub leading_tags_end: text::Anchor,
+    pub trailing_tag_start: Option<text::Anchor>,
+    pub suggestion: EditSuggestion,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1010,10 +1010,10 @@ impl Context {
         &self,
         range: Range<language::Anchor>,
         cx: &AppContext,
-    ) -> Option<&EditSuggestion> {
+    ) -> Option<&EditStep> {
         let buffer = self.buffer.read(cx);
         let index = self.edit_step_index_for_range(&range, buffer).ok()?;
-        Some(&self.edit_steps[index].suggestion)
+        Some(&self.edit_steps[index])
     }
 
     pub fn workflow_step_index_for_range(
@@ -1030,8 +1030,8 @@ impl Context {
         tagged_range: &Range<text::Anchor>,
         buffer: &text::BufferSnapshot,
     ) -> Result<usize, usize> {
-        self.workflow_steps
-            .binary_search_by(|probe| probe.range.cmp(&tagged_range, buffer))
+        self.edit_steps
+            .binary_search_by(|probe| probe.source_range.cmp(&tagged_range, buffer))
     }
 
     pub fn pending_slash_commands(&self) -> &[PendingSlashCommand] {
@@ -1483,8 +1483,8 @@ impl Context {
                 let edit_start = tag.range.start;
                 let mut step = EditStep {
                     source_range: edit_start..edit_start,
-                    prefix_end: tag.range.end,
-                    suffix_start: None,
+                    leading_tags_end: tag.range.end,
+                    trailing_tag_start: None,
                     suggestion: EditSuggestion {
                         path: None,
                         location: None,
@@ -1496,50 +1496,43 @@ impl Context {
                     if tag.kind == XmlTagKind::EditStep && !tag.is_open_tag {
                         edit_step_depth -= 1;
                         if edit_step_depth == 0 {
-                            step.suffix_start = Some(tag.range.start);
+                            step.trailing_tag_start = Some(tag.range.start);
                             step.source_range.end = tag.range.end;
                             new_suggestions.push(step);
                             continue 'tags;
                         }
                     }
 
-                    step.prefix_end = tag.range.end;
+                    step.leading_tags_end = tag.range.end;
 
-                    if tag.kind == XmlTagKind::Path && tag.is_open_tag {
-                        let path_start = tag.range.end;
+                    if tag.is_open_tag
+                        && [
+                            XmlTagKind::Path,
+                            XmlTagKind::Location,
+                            XmlTagKind::Operation,
+                        ]
+                        .contains(&tag.kind)
+                    {
+                        let kind = tag.kind;
+                        let content_start = tag.range.end;
                         while let Some(tag) = tags.next() {
-                            if tag.kind == XmlTagKind::Path && !tag.is_open_tag {
-                                let path_end = tag.range.start;
-                                step.suggestion.path =
-                                    Some(buffer.text_for_range(path_start..path_end).collect());
-                                break;
-                            }
-                        }
-                    }
-
-                    if tag.kind == XmlTagKind::Location && tag.is_open_tag {
-                        let path_start = tag.range.end;
-                        while let Some(tag) = tags.next() {
-                            if tag.kind == XmlTagKind::Location && !tag.is_open_tag {
-                                let path_end = tag.range.start;
-                                step.suggestion.location =
-                                    Some(buffer.text_for_range(path_start..path_end).collect());
-                                break;
-                            }
-                        }
-                    }
-
-                    if tag.kind == XmlTagKind::Operation && tag.is_open_tag {
-                        let path_start = tag.range.end;
-                        while let Some(tag) = tags.next() {
-                            if tag.kind == XmlTagKind::Operation && !tag.is_open_tag {
-                                let path_end = tag.range.start;
-                                step.suggestion.operation = EditSuggestionOperation::from_str(
-                                    &buffer
-                                        .text_for_range(path_start..path_end)
-                                        .collect::<String>(),
-                                )
-                                .ok();
+                            if tag.kind == kind && !tag.is_open_tag {
+                                let content_end = tag.range.start;
+                                step.leading_tags_end = tag.range.end;
+                                let content = buffer
+                                    .text_for_range(content_start..content_end)
+                                    .collect::<String>();
+                                match kind {
+                                    XmlTagKind::Path => step.suggestion.path = Some(content),
+                                    XmlTagKind::Location => {
+                                        step.suggestion.location = Some(content)
+                                    }
+                                    XmlTagKind::Operation => {
+                                        step.suggestion.operation =
+                                            EditSuggestionOperation::from_str(&content).ok()
+                                    }
+                                    _ => {}
+                                }
                                 break;
                             }
                         }

@@ -41,8 +41,12 @@ use gpui::{
     ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use language::language_settings::{
-    IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings, ShowWhitespaceSetting,
+use language::{
+    language_settings::{
+        IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
+        ShowWhitespaceSetting,
+    },
+    ChunkRendererContext,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow};
@@ -1867,6 +1871,7 @@ impl EditorElement {
         line_number_layouts: &[Option<ShapedLine>],
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
+        editor_width: Pixels,
         cx: &mut WindowContext,
     ) -> Vec<LineWithInvisibles> {
         if rows.start >= rows.end {
@@ -1917,6 +1922,7 @@ impl EditorElement {
                 rows.len(),
                 line_number_layouts,
                 snapshot.mode,
+                editor_width,
                 cx,
             )
         }
@@ -1961,6 +1967,7 @@ impl EditorElement {
         line_height: Pixels,
         em_width: Pixels,
         text_hitbox: &Hitbox,
+        editor_width: Pixels,
         scroll_width: &mut Pixels,
         resized_blocks: &mut HashMap<CustomBlockId, u32>,
         cx: &mut WindowContext,
@@ -1976,7 +1983,7 @@ impl EditorElement {
                         line_layouts[align_to.row().minus(rows.start) as usize]
                             .x_for_index(align_to.column() as usize)
                     } else {
-                        layout_line(align_to.row(), snapshot, &self.style, cx)
+                        layout_line(align_to.row(), snapshot, &self.style, editor_width, cx)
                             .x_for_index(align_to.column() as usize)
                     };
 
@@ -2413,6 +2420,7 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         hitbox: &Hitbox,
         text_hitbox: &Hitbox,
+        editor_width: Pixels,
         scroll_width: &mut Pixels,
         gutter_dimensions: &GutterDimensions,
         em_width: Pixels,
@@ -2452,6 +2460,7 @@ impl EditorElement {
                 line_height,
                 em_width,
                 text_hitbox,
+                editor_width,
                 scroll_width,
                 &mut resized_blocks,
                 cx,
@@ -2495,6 +2504,7 @@ impl EditorElement {
                 line_height,
                 em_width,
                 text_hitbox,
+                editor_width,
                 scroll_width,
                 &mut resized_blocks,
                 cx,
@@ -2539,6 +2549,7 @@ impl EditorElement {
                             line_height,
                             em_width,
                             text_hitbox,
+                            editor_width,
                             scroll_width,
                             &mut resized_blocks,
                             cx,
@@ -4355,6 +4366,7 @@ impl LineWithInvisibles {
         max_line_count: usize,
         line_number_layouts: &[Option<ShapedLine>],
         editor_mode: EditorMode,
+        text_width: Pixels,
         cx: &mut WindowContext,
     ) -> Vec<Self> {
         let mut layouts = Vec::with_capacity(max_line_count);
@@ -4409,7 +4421,10 @@ impl LineWithInvisibles {
                     AvailableSpace::MinContent
                 };
 
-                let mut element = (renderer.render)(cx);
+                let mut element = (renderer.render)(&mut ChunkRendererContext {
+                    context: cx,
+                    max_width: text_width,
+                });
                 let line_height = text_style.line_height_in_pixels(cx.rem_size());
                 let size = element.layout_as_root(
                     size(available_width, AvailableSpace::Definite(line_height)),
@@ -4866,6 +4881,7 @@ impl Element for EditorElement {
                                     &[],
                                     &editor_snapshot,
                                     &style,
+                                    px(f32::MAX),
                                     cx,
                                 )
                                 .pop()
@@ -4978,6 +4994,9 @@ impl Element for EditorElement {
                     };
                     let overscroll = size(em_width + right_margin, px(0.));
 
+                    let editor_width =
+                        text_width - gutter_dimensions.margin - overscroll.width - em_width;
+
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
                         editor.gutter_dimensions = gutter_dimensions;
@@ -4986,8 +5005,6 @@ impl Element for EditorElement {
                         if matches!(editor.mode, EditorMode::AutoHeight { .. }) {
                             snapshot
                         } else {
-                            let editor_width =
-                                text_width - gutter_dimensions.margin - overscroll.width - em_width;
                             let wrap_width = match editor.soft_wrap_mode(cx) {
                                 SoftWrap::None => None,
                                 SoftWrap::PreferLine => {
@@ -5156,6 +5173,7 @@ impl Element for EditorElement {
                         &line_numbers,
                         &snapshot,
                         &self.style,
+                        editor_width,
                         cx,
                     );
                     for line_with_invisibles in &line_layouts {
@@ -5165,7 +5183,8 @@ impl Element for EditorElement {
                     }
 
                     let longest_line_width =
-                        layout_line(snapshot.longest_row(), &snapshot, &style, cx).width;
+                        layout_line(snapshot.longest_row(), &snapshot, &style, editor_width, cx)
+                            .width;
                     let mut scroll_width =
                         longest_line_width.max(max_visible_line_width) + overscroll.width;
 
@@ -5175,6 +5194,7 @@ impl Element for EditorElement {
                             &snapshot,
                             &hitbox,
                             &text_hitbox,
+                            editor_width,
                             &mut scroll_width,
                             &gutter_dimensions,
                             em_width,
@@ -5946,12 +5966,22 @@ fn layout_line(
     row: DisplayRow,
     snapshot: &EditorSnapshot,
     style: &EditorStyle,
+    text_width: Pixels,
     cx: &mut WindowContext,
 ) -> LineWithInvisibles {
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
-    LineWithInvisibles::from_chunks(chunks, &style.text, MAX_LINE_LEN, 1, &[], snapshot.mode, cx)
-        .pop()
-        .unwrap()
+    LineWithInvisibles::from_chunks(
+        chunks,
+        &style.text,
+        MAX_LINE_LEN,
+        1,
+        &[],
+        snapshot.mode,
+        text_width,
+        cx,
+    )
+    .pop()
+    .unwrap()
 }
 
 #[derive(Debug)]

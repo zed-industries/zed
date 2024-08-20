@@ -2,8 +2,8 @@ use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
     Highlights,
 };
-use gpui::{AnyElement, ElementId, WindowContext};
-use language::{Chunk, ChunkRenderer, Edit, Point, TextSummary};
+use gpui::{AnyElement, ElementId};
+use language::{Chunk, ChunkRenderer, ChunkRendererContext, Edit, Point, TextSummary};
 use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, ToOffset};
 use std::{
     cmp::{self, Ordering},
@@ -17,7 +17,8 @@ use util::post_inc;
 #[derive(Clone)]
 pub struct FoldPlaceholder {
     /// Creates an element to represent this fold's placeholder.
-    pub render: Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut WindowContext) -> AnyElement>,
+    pub render:
+        Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut ChunkRendererContext) -> AnyElement>,
     /// If true, the element is constrained to the shaped width of an ellipsis.
     pub constrain_width: bool,
     /// If true, merges the fold with an adjacent one.
@@ -959,6 +960,12 @@ pub struct FoldId(usize);
 impl Into<ElementId> for FoldId {
     fn into(self) -> ElementId {
         ElementId::Integer(self.0)
+    }
+}
+
+impl Into<u64> for FoldId {
+    fn into(self) -> u64 {
+        self.0 as _
     }
 }
 
