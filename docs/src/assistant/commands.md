@@ -18,5 +18,3 @@ Slash commands enhance the assistant's capabilities. Begin by typing a `/` at th
 ## Extensibility
 
 The Zed team plans for assistant commands to be extensible, but this isn't quite ready yet. Stay tuned!
-
-Previous: [Assistant Panel](assistant-panel.md) | Next: [Prompting](prompting.md)
