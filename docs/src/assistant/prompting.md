@@ -31,7 +31,7 @@ You can also use the `prompt-library: toggle` command.
 
 ### Managing Prompts
 
-Once a prompt is selected, you can edit it directly in the editor. It's title can be changed from the editor title bar as well.
+Once a prompt is selected, you can edit it directly in the editor. Its title can be changed from the editor title bar as well.
 
 Prompts can be duplicated, deleted, or added to the default prompt using the buttons in the prompt editor.
 
