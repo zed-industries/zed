@@ -66,15 +66,6 @@ Usage: `/prompt <prompt_name>`
 
 Related: `/default`
 
-## `/search` (Not generally available)
-
-The `/search` command performs a semantic search for content in your project based on natural language queries. This allows you to find relevant code or documentation within your project.
-
-Usage: `/search <query> [--n <limit>]`
-
-- `query`: The natural language query to search for.
-- `--n <limit>`: Optional flag to limit the number of results returned.
-
 ## `/symbols`
 
 The `/symbols` command inserts the active symbols (functions, classes, etc.) from the current tab into the context. This is useful for getting an overview of the structure of the current file.
@@ -100,11 +91,11 @@ Examples:
 
 The `/terminal` command inserts a select number of lines of output from the terminal into the context. This is useful for referencing recent command outputs or logs.
 
-Usage: `/terminal [--line-count <number>]`
+Usage: `/terminal [<number>]`
 
-- `--line-count <number>`: Optional flag to specify the number of lines to insert (default is a predefined number).
+- `<number>`: Optional parameter to specify the number of lines to insert (default is a 50).
 
-## `/workflow` (Not generally available)
+## `/workflow`
 
 The `/workflow` command inserts a prompt that opts into the edit workflow. This sets up the context for the assistant to suggest edits to your code.
 
@@ -112,6 +103,5 @@ Usage: `/workflow`
 
 ## Extensibility
 
-The Zed team plans for assistant commands to be extensible, but this isn't quite ready yet. Stay tuned!
-
-Zed is open source, and all the slash commands are defined in the [assistant crate](https://github.com/zed-industries/zed/tree/main/crates/assistant/src/slash_command). If you are interested in creating your own slash commands a good place to start is by learning from the existing commands.
+A Zed extension can expose custom slash commands in it's API; this means that you too can have your own slash commands.
+Click [here](../extensions/slash-commands.md) to find out how to define them.
