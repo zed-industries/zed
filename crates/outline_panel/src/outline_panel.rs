@@ -55,18 +55,19 @@ use worktree::{Entry, ProjectEntryId, WorktreeId};
 actions!(
     outline_panel,
     [
-        ExpandSelectedEntry,
-        CollapseSelectedEntry,
-        ExpandAllEntries,
         CollapseAllEntries,
+        CollapseSelectedEntry,
         CopyPath,
         CopyRelativePath,
-        RevealInFileManager,
+        ExpandAllEntries,
+        ExpandSelectedEntry,
+        FoldDirectory,
         Open,
+        ToggleActiveEditorPin,
+        RevealInFileManager,
+        SelectParent,
         ToggleFocus,
         UnfoldDirectory,
-        FoldDirectory,
-        SelectParent,
     ]
 );
 
@@ -1523,10 +1524,10 @@ impl OutlinePanel {
         cx: &mut ViewContext<Self>,
     ) -> Stateful<Div> {
         let Some(match_text) = self.text_for_match(match_range, cx) else {
-            return div().id("empty-match-range");
+            return div().id("empty-search-match");
         };
         let Some(active_editor) = self.active_editor() else {
-            return div().id("empty-match-range");
+            return div().id("empty-search-match");
         };
         let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
         let match_point_range = match_range.to_point(&multi_buffer_snapshot);
@@ -1538,7 +1539,7 @@ impl OutlinePanel {
         let entire_row_range =
             (entire_row_range_start..entire_row_range_end).to_anchors(&multi_buffer_snapshot);
         let Some(line_text) = self.text_for_match(&entire_row_range, cx) else {
-            return div().id("empty-match-range");
+            return div().id("empty-search-match");
         };
 
         let is_active = match &self.selected_entry {
@@ -2291,9 +2292,9 @@ impl OutlinePanel {
     }
 
     fn is_singleton_active(&self, cx: &AppContext) -> bool {
-        self.active_editor()
-            .and_then(|active_editor| Some(active_editor.read(cx).buffer().read(cx).is_singleton()))
-            .unwrap_or(false)
+        self.active_editor().map_or(false, |active_editor| {
+            active_editor.read(cx).buffer().read(cx).is_singleton()
+        })
     }
 
     fn invalidate_outlines(&mut self, ids: &[ExcerptId]) {
@@ -2904,6 +2905,7 @@ impl OutlinePanel {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_excerpt_entries(
         &self,
         entry: &FsEntry,
@@ -2977,6 +2979,7 @@ impl OutlinePanel {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_search_entries(
         &self,
         entry: &FsEntry,
@@ -3024,6 +3027,23 @@ impl OutlinePanel {
         self.active_editor().map_or(true, |active_editor| {
             !self.pinned && active_editor.item_id() != new_active_editor.item_id()
         })
+    }
+
+    pub fn toggle_active_editor_pin(
+        &mut self,
+        _: &ToggleActiveEditorPin,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.pinned = !self.pinned;
+        if !self.pinned {
+            if let Some(active_editor) = workspace_active_editor(self.workspace.read(cx), cx) {
+                if self.should_replace_active_editor(&active_editor) {
+                    self.replace_active_editor(active_editor, cx);
+                }
+            }
+        }
+
+        cx.notify();
     }
 }
 
@@ -3203,6 +3223,7 @@ impl Render for OutlinePanel {
             .on_action(cx.listener(Self::collapse_all_entries))
             .on_action(cx.listener(Self::copy_path))
             .on_action(cx.listener(Self::copy_relative_path))
+            .on_action(cx.listener(Self::toggle_active_editor_pin))
             .on_action(cx.listener(Self::unfold_directory))
             .on_action(cx.listener(Self::fold_directory))
             .when(project.is_local_or_ssh(), |el| {
@@ -3354,21 +3375,8 @@ impl Render for OutlinePanel {
                             .shape(IconButtonShape::Square)
                             .on_click(cx.listener(
                                 |outline_panel, _, cx| {
-                                    outline_panel.pinned = !outline_panel.pinned;
-                                    if !outline_panel.pinned {
-                                        if let Some(active_editor) = workspace_active_editor(
-                                            outline_panel.workspace.read(cx),
-                                            cx,
-                                        ) {
-                                            if outline_panel
-                                                .should_replace_active_editor(&active_editor)
-                                            {
-                                                outline_panel
-                                                    .replace_active_editor(active_editor, cx);
-                                            }
-                                        }
-                                    }
-                                    cx.notify();
+                                    outline_panel
+                                        .toggle_active_editor_pin(&ToggleActiveEditorPin, cx);
                                 },
                             )),
                         ),
