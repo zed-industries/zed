@@ -30,7 +30,7 @@ pub struct QuickActionBar {
     buffer_search_bar: View<BufferSearchBar>,
     repl_menu: Option<View<ContextMenu>>,
     show: bool,
-    toggle_selections_menu: Option<View<ContextMenu>>,
+    toggle_selections_handle: PopoverMenuHandle<ContextMenu>,
     toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
     workspace: WeakView<Workspace>,
 }
@@ -47,7 +47,7 @@ impl QuickActionBar {
             buffer_search_bar,
             repl_menu: None,
             show: true,
-            toggle_selections_menu: None,
+            toggle_selections_handle: Default::default(),
             toggle_settings_handle: Default::default(),
             workspace: workspace.weak_handle(),
         };
@@ -159,51 +159,51 @@ impl Render for QuickActionBar {
         );
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
-            IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
-                .shape(IconButtonShape::Square)
-                .icon_size(IconSize::Small)
-                .style(ButtonStyle::Subtle)
-                .selected(self.toggle_selections_menu.is_some())
-                .on_click({
+            let editor = editor.clone();
+            PopoverMenu::new("editor-selections-dropdown")
+                .trigger(
+                    IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::Small)
+                        .style(ButtonStyle::Subtle)
+                        .selected(self.toggle_selections_handle.is_deployed())
+                        .when(!self.toggle_selections_handle.is_deployed(), |this| {
+                            this.tooltip(|cx| Tooltip::text("Selection Controls", cx))
+                        }),
+                )
+                .with_handle(self.toggle_selections_handle.clone())
+                .anchor(AnchorCorner::TopRight)
+                .menu(move |cx| {
                     let focus = editor.focus_handle(cx);
-                    cx.listener(move |quick_action_bar, _, cx| {
-                        let focus = focus.clone();
-                        let menu = ContextMenu::build(cx, move |menu, _| {
-                            menu.context(focus.clone())
-                                .action("Select All", Box::new(SelectAll))
-                                .action(
-                                    "Select Next Occurrence",
-                                    Box::new(SelectNext {
-                                        replace_newest: false,
-                                    }),
-                                )
-                                .action("Expand Selection", Box::new(SelectLargerSyntaxNode))
-                                .action("Shrink Selection", Box::new(SelectSmallerSyntaxNode))
-                                .action("Add Cursor Above", Box::new(AddSelectionAbove))
-                                .action("Add Cursor Below", Box::new(AddSelectionBelow))
-                                .separator()
-                                .action("Go to Symbol", Box::new(ToggleOutline))
-                                .action("Go to Line/Column", Box::new(ToggleGoToLine))
-                                .separator()
-                                .action("Next Problem", Box::new(GoToDiagnostic))
-                                .action("Previous Problem", Box::new(GoToPrevDiagnostic))
-                                .separator()
-                                .action("Next Hunk", Box::new(GoToHunk))
-                                .action("Previous Hunk", Box::new(GoToPrevHunk))
-                                .separator()
-                                .action("Move Line Up", Box::new(MoveLineUp))
-                                .action("Move Line Down", Box::new(MoveLineDown))
-                                .action("Duplicate Selection", Box::new(DuplicateLineDown))
-                        });
-                        cx.subscribe(&menu, |quick_action_bar, _, _: &DismissEvent, _cx| {
-                            quick_action_bar.toggle_selections_menu = None;
-                        })
-                        .detach();
-                        quick_action_bar.toggle_selections_menu = Some(menu);
-                    })
-                })
-                .when(self.toggle_selections_menu.is_none(), |this| {
-                    this.tooltip(|cx| Tooltip::text("Selection Controls", cx))
+                    let focus = focus.clone();
+                    let menu = ContextMenu::build(cx, move |menu, _| {
+                        menu.context(focus.clone())
+                            .action("Select All", Box::new(SelectAll))
+                            .action(
+                                "Select Next Occurrence",
+                                Box::new(SelectNext {
+                                    replace_newest: false,
+                                }),
+                            )
+                            .action("Expand Selection", Box::new(SelectLargerSyntaxNode))
+                            .action("Shrink Selection", Box::new(SelectSmallerSyntaxNode))
+                            .action("Add Cursor Above", Box::new(AddSelectionAbove))
+                            .action("Add Cursor Below", Box::new(AddSelectionBelow))
+                            .separator()
+                            .action("Go to Symbol", Box::new(ToggleOutline))
+                            .action("Go to Line/Column", Box::new(ToggleGoToLine))
+                            .separator()
+                            .action("Next Problem", Box::new(GoToDiagnostic))
+                            .action("Previous Problem", Box::new(GoToPrevDiagnostic))
+                            .separator()
+                            .action("Next Hunk", Box::new(GoToHunk))
+                            .action("Previous Hunk", Box::new(GoToPrevHunk))
+                            .separator()
+                            .action("Move Line Up", Box::new(MoveLineUp))
+                            .action("Move Line Down", Box::new(MoveLineDown))
+                            .action("Duplicate Selection", Box::new(DuplicateLineDown))
+                    });
+                    Some(menu)
                 })
         });
 
@@ -218,6 +218,8 @@ impl Render for QuickActionBar {
                         this.tooltip(|cx| Tooltip::text("Editor Controls", cx))
                     }),
             )
+            .anchor(AnchorCorner::TopRight)
+            .with_handle(self.toggle_settings_handle.clone())
             .menu(move |cx| {
                 let editor = editor.clone();
                 let menu = ContextMenu::build(cx, |mut menu, _| {
@@ -316,12 +318,6 @@ impl Render for QuickActionBar {
             .when_some(self.repl_menu.as_ref(), |el, repl_menu| {
                 el.child(Self::render_menu_overlay(repl_menu))
             })
-            .when_some(
-                self.toggle_selections_menu.as_ref(),
-                |el, toggle_selections_menu| {
-                    el.child(Self::render_menu_overlay(toggle_selections_menu))
-                },
-            )
     }
 }
 
