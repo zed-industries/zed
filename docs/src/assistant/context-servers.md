@@ -6,7 +6,7 @@ If slash commands allow you to extend the Assistant with new capabilities, Conte
 
 ## Using a Context Server
 
-To configure Zed to use a Context Server, add the command required to start the server to your [settings](./configuring-zed.md):
+To configure Zed to use a Context Server, add the command required to start the server to your [settings](../configuring-zed.md):
 
 ```json
 {
@@ -24,11 +24,7 @@ To configure Zed to use a Context Server, add the command required to start the 
 
 ## Developing a Context Server
 
-A Context Server is a server listening for JSON-RPC requests over stdin/stdout. The server must follow the Model Context Protocol (defined below) in order to declare its capabilities such that Zed can make use of them.
-
-### Implementing a Context Server
-
-Context Servers are JSON-RPC servers communicating over stdio. Context Servers must comply with the [Model Context Protocol (MCP)](./model_context_protocol).
+Context Servers are JSON-RPC servers communicating over stdio. Context Servers must comply with the [Model Context Protocol (MCP)](./model-context-protocol.md).
 
 See [python-context-server](https://github.com/zed-industries/python-context-server) for a minimal working example.
 
