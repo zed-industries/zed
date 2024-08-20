@@ -97,7 +97,7 @@ use language::{point_to_lsp, BufferRow, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
-use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
+use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
 pub use lsp::CompletionContext;
 use lsp::{
     CompletionItemKind, CompletionTriggerKind, DiagnosticSeverity, InsertTextFormat,
@@ -155,7 +155,7 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
-use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
+use workspace::{OpenInTerminal, OpenTerminal, OpenVisible, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
 use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
@@ -9171,6 +9171,79 @@ impl Editor {
             } else {
                 Ok(())
             }
+        })
+        .detach();
+    }
+
+    // `gf`
+    pub fn open_file(&mut self, _: &OpenFile, cx: &mut ViewContext<Self>) {
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+
+        let position = self.selections.newest_anchor().head();
+
+        let Some((buffer, buffer_position)) =
+            self.buffer.read(cx).text_anchor_for_position(position, cx)
+        else {
+            return;
+        };
+
+        let mut search_paths: Vec<PathBuf> = vec![];
+
+        if let Some(file) = buffer.read(cx).file() {
+            if let Some(dir) = file.abs_path(cx).parent() {
+                search_paths.push(dir.to_path_buf());
+            }
+        }
+
+        if let Some(project) = self.project.as_ref() {
+            for worktree in project.read(cx).worktrees(cx) {
+                search_paths.push(worktree.read(cx).abs_path().to_path_buf())
+            }
+        }
+
+        let project = self.project.clone();
+
+        cx.spawn(|_, mut cx| async move {
+            let result = find_file(&buffer, buffer_position, cx.clone());
+
+            if let Some((_, candidate_file_path)) = result {
+                let candidate_paths = search_paths
+                    .into_iter()
+                    .map(|search_path| {
+                        search_path
+                            .join(PathBuf::from(&candidate_file_path))
+                            .to_string_lossy()
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>();
+
+                let tasks = candidate_paths
+                    .iter()
+                    .filter_map(|candidate_path| {
+                        project
+                            .clone()?
+                            .update(&mut cx, |project, cx| {
+                                project.file_exists(candidate_path, cx)
+                            })
+                            .ok()
+                    })
+                    .collect::<Vec<Task<_>>>();
+
+                let paths = futures::future::join_all(tasks).await;
+                let buffer = paths
+                    .into_iter()
+                    .zip(candidate_paths)
+                    .find(|(exists, _)| *exists);
+                if let Some((_, path)) = buffer {
+                    let task = workspace.update(&mut cx, |workspace, cx| {
+                        workspace.open_paths(vec![PathBuf::from(path)], OpenVisible::All, None, cx)
+                    })?;
+                    task.await;
+                }
+            }
+            anyhow::Ok(())
         })
         .detach();
     }

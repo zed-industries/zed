@@ -54,7 +54,7 @@ use language::{
     },
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
-    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName,
     LspAdapterDelegate, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
     ToPointUtf16, Transaction, Unclipped,
 };
@@ -401,6 +401,13 @@ impl ProjectPath {
             path: self.path.to_string_lossy().to_string(),
         }
     }
+
+    pub fn join(&self, other: PathBuf) -> Self {
+        Self {
+            worktree_id: self.worktree_id,
+            path: self.path.join(other).into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -649,16 +656,17 @@ impl DirectoryLister {
         };
         "~/".to_string()
     }
-    pub fn list_directory(&self, query: String, cx: &mut AppContext) -> Task<Result<Vec<PathBuf>>> {
+
+    pub fn list_directory(&self, path: String, cx: &mut AppContext) -> Task<Result<Vec<PathBuf>>> {
         match self {
             DirectoryLister::Project(project) => {
-                project.update(cx, |project, cx| project.list_directory(query, cx))
+                project.update(cx, |project, cx| project.list_directory(path, cx))
             }
             DirectoryLister::Local(fs) => {
                 let fs = fs.clone();
                 cx.background_executor().spawn(async move {
                     let mut results = vec![];
-                    let expanded = shellexpand::tilde(&query);
+                    let expanded = shellexpand::tilde(&path);
                     let query = Path::new(expanded.as_ref());
                     let mut response = fs.read_dir(query).await?;
                     while let Some(path) = response.next().await {
@@ -7765,6 +7773,17 @@ impl Project {
             ProjectClientState::Shared { .. } => true,
             ProjectClientState::Local => false,
             ProjectClientState::Remote { in_room, .. } => *in_room,
+        }
+    }
+
+    pub fn file_exists(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<bool> {
+        if self.is_local() {
+            let fs = self.fs.clone();
+            let path = PathBuf::from(&query);
+            cx.background_executor()
+                .spawn(async move { fs.is_file(&path).await })
+        } else {
+            Task::ready(false)
         }
     }
 

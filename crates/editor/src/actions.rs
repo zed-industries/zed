@@ -262,6 +262,7 @@ gpui::actions!(
         OpenExcerptsSplit,
         OpenPermalinkToLine,
         OpenUrl,
+        OpenFile,
         Outdent,
         PageDown,
         PageUp,

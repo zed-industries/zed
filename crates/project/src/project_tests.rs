@@ -2452,12 +2452,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let target_buffer = definition.target.buffer.read(cx);
         assert_eq!(
-            target_buffer
-                .file()
-                .unwrap()
-                .as_local()
-                .unwrap()
-                .abs_path(cx),
+            target_buffer.file().unwrap().abs_path(cx),
             Path::new("/dir/a.rs"),
         );
         assert_eq!(definition.target.range.to_offset(target_buffer), 9..10);

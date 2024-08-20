@@ -9,8 +9,8 @@ use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
 use project::{
-    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink,
-    ResolveState,
+    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, Item, LocationLink,
+    ProjectPath, ResolveState,
 };
 use std::ops::Range;
 use theme::ActiveTheme as _;
@@ -686,6 +686,87 @@ pub(crate) fn find_url(
     None
 }
 
+pub(crate) fn find_file(
+    snapshot: language::BufferSnapshot,
+    position: text::Anchor,
+) -> Option<(Range<text::Anchor>, String)> {
+    const LIMIT: usize = 2048;
+
+    // relative: file.txt
+    // absolute: /blah
+    // home abs: ~/asda
+    // whitespace, escaped: i\ dont\ -\ like-whitespace.txt
+    // punctuation: "file.txt"
+
+    let offset = position.to_offset(&snapshot);
+    let mut token_start = offset;
+    let mut token_end = offset;
+    let mut found_start = false;
+    let mut found_end = false;
+
+    let mut filename = String::new();
+    let mut backwards = snapshot.reversed_chars_at(offset).take(LIMIT).peekable();
+    while let Some(ch) = backwards.next() {
+        // a\ a
+        if backwards.peek() == Some(&'\\') && ch == ' ' {
+            filename.push(ch);
+            token_start -= ch.len_utf8();
+            backwards.next();
+            token_start -= '\\'.len_utf8();
+            continue;
+        }
+        if ch.is_whitespace() {
+            found_start = true;
+            break;
+        }
+        filename.push(ch);
+        token_start -= ch.len_utf8();
+    }
+    if !found_start && token_start != 0 {
+        return None;
+    }
+
+    filename = filename
+        .chars()
+        .rev()
+        .skip_while(|ch| !ch.is_alphanumeric())
+        .collect();
+
+    let mut forwards = snapshot
+        .chars_at(offset)
+        .take(LIMIT - (offset - token_start));
+
+    while let Some(ch) = forwards.next() {
+        if ch == '\\' {
+            token_end += ch.len_utf8();
+            // todo!() check for ch == ' '
+            if let Some(ch) = forwards.next() {
+                filename.push(ch);
+                token_end += ch.len_utf8();
+            }
+        }
+        if ch.is_whitespace() {
+            found_end = true;
+            break;
+        }
+        filename.push(ch);
+        token_end += ch.len_utf8();
+    }
+    // Check if we didn't find the ending whitespace or if we read more or equal than LIMIT
+    // which at this point would happen only if we reached the end of buffer
+    if !found_end && (token_end - token_start >= LIMIT) {
+        return None;
+    }
+
+    let possible_file_path = snapshot
+        .text_for_range(token_start..token_end)
+        .collect::<String>();
+
+    let range = snapshot.anchor_before(token_start)..snapshot.anchor_after(token_end);
+
+    Some((range, possible_file_path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1267,5 +1348,45 @@ mod tests {
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
         assert_eq!(cx.opened_url(), Some("https://zed.dev/releases".into()));
+    }
+
+    #[gpui::test]
+    async fn test_find_file(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        let test_cases = [(
+            r#"Let's test a file path: /ˇhome/user/documents/file.txt"#,
+            "/home/user/documents/file.txt",
+        )];
+
+        for (input, expected) in test_cases {
+            cx.set_state(input);
+
+            let (position, snapshot) = cx.editor(|editor, cx| {
+                let positions = editor.selections.newest_anchor().head().text_anchor;
+                let snapshot = editor
+                    .buffer()
+                    .clone()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap()
+                    .read(cx)
+                    .snapshot();
+                (positions, snapshot)
+            });
+
+            let result = find_file(snapshot, position);
+            assert!(result.is_some(), "Failed to find file path: {}", input);
+
+            let (_, path) = result.unwrap();
+            assert_eq!(path, expected, "Incorrect file path for input: {}", input);
+        }
     }
 }

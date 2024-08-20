@@ -1261,13 +1261,13 @@ mod tests {
         fn is_private(&self) -> bool {
             false
         }
+
+        fn abs_path(&self) -> PathBuf {
+            self.abs_path.clone()
+        }
     }
 
     impl language::LocalFile for File {
-        fn abs_path(&self, _: &AppContext) -> PathBuf {
-            self.abs_path.clone()
-        }
-
         fn load(&self, _: &AppContext) -> Task<Result<String>> {
             unimplemented!()
         }
