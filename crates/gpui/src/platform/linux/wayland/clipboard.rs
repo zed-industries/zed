@@ -112,14 +112,18 @@ impl Clipboard {
     }
 
     pub fn send(&self, _mime_type: String, fd: OwnedFd) {
-        if let Some(contents) = &self.contents {
-            self.send_internal(fd, contents.text.as_bytes().to_owned());
+        if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
+            self.send_internal(fd, text.as_bytes().to_owned());
         }
     }
 
     pub fn send_primary(&self, _mime_type: String, fd: OwnedFd) {
-        if let Some(primary_contents) = &self.primary_contents {
-            self.send_internal(fd, primary_contents.text.as_bytes().to_owned());
+        if let Some(text) = self
+            .primary_contents
+            .as_ref()
+            .and_then(|contents| contents.text())
+        {
+            self.send_internal(fd, text.as_bytes().to_owned());
         }
     }
 
@@ -145,7 +149,7 @@ impl Clipboard {
 
         match unsafe { read_fd(fd) } {
             Ok(v) => {
-                self.cached_read = Some(ClipboardItem::new(v));
+                self.cached_read = Some(ClipboardItem::new_string(v));
                 self.cached_read.clone()
             }
             Err(err) => {
@@ -177,7 +181,7 @@ impl Clipboard {
 
         match unsafe { read_fd(fd) } {
             Ok(v) => {
-                self.cached_primary_read = Some(ClipboardItem::new(v.clone()));
+                self.cached_primary_read = Some(ClipboardItem::new_string(v.clone()));
                 self.cached_primary_read.clone()
             }
             Err(err) => {

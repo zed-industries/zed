@@ -153,6 +153,17 @@ impl StatusBar {
         cx.notify();
     }
 
+    pub fn remove_items_of_type<T>(&mut self, cx: &mut ViewContext<Self>)
+    where
+        T: 'static + StatusItemView,
+    {
+        self.left_items
+            .retain(|item| item.item_type() != TypeId::of::<T>());
+        self.right_items
+            .retain(|item| item.item_type() != TypeId::of::<T>());
+        cx.notify();
+    }
+
     pub fn add_right_item<T>(&mut self, item: View<T>, cx: &mut ViewContext<Self>)
     where
         T: 'static + StatusItemView,

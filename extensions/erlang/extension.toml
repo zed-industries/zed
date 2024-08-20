@@ -3,13 +3,17 @@ name = "Erlang"
 description = "Erlang support."
 version = "0.0.1"
 schema_version = 1
-authors = ["Dairon M <dairon.medina@gmail.com>"]
+authors = ["Dairon M <dairon.medina@gmail.com>", "Fabian Bergström <fabian@fmbb.se>"]
 repository = "https://github.com/zed-industries/zed"
 
 [language_servers.erlang-ls]
 name = "Erlang Language Server"
 language = "Erlang"
 
+[language_servers.elp]
+name = "Erlang Language Platform"
+language = "Erlang"
+
 [grammars.erlang]
 repository = "https://github.com/WhatsApp/tree-sitter-erlang"
-commit = "57e69513efd831f9cc8207d65d96bad917ca4aa4"
+commit = "19ca500fa5a17ab58dc18aa03b50e2db305e7a8a"

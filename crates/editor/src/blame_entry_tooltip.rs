@@ -2,18 +2,14 @@ use futures::Future;
 use git::blame::BlameEntry;
 use git::Oid;
 use gpui::{
-    Asset, Element, ParentElement, Render, ScrollHandle, StatefulInteractiveElement, WeakView,
-    WindowContext,
+    AppContext, Asset, ClipboardItem, Element, ParentElement, Render, ScrollHandle,
+    StatefulInteractiveElement, WeakView,
 };
 use settings::Settings;
 use std::hash::Hash;
-use theme::{ActiveTheme, ThemeSettings};
-use ui::{
-    div, h_flex, tooltip_container, v_flex, Avatar, Button, ButtonStyle, Clickable as _, Color,
-    FluentBuilder, Icon, IconName, IconPosition, InteractiveElement as _, IntoElement,
-    SharedString, Styled as _, ViewContext,
-};
-use ui::{ButtonCommon, Disableable as _};
+use theme::ThemeSettings;
+use time::UtcOffset;
+use ui::{prelude::*, tooltip_container, Avatar};
 use workspace::Workspace;
 
 use crate::git::blame::{CommitDetails, GitRemote};
@@ -39,7 +35,7 @@ impl<'a> CommitAvatar<'a> {
 
         let avatar_url = CommitAvatarAsset::new(remote.clone(), self.sha);
 
-        let element = match cx.use_cached_asset::<CommitAvatarAsset>(&avatar_url) {
+        let element = match cx.use_asset::<CommitAvatarAsset>(&avatar_url) {
             // Loading or no avatar found
             None | Some(None) => Icon::new(IconName::Person)
                 .color(Color::Muted)
@@ -77,7 +73,7 @@ impl Asset for CommitAvatarAsset {
 
     fn load(
         source: Self::Source,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let client = cx.http_client();
 
@@ -129,7 +125,8 @@ impl Render for BlameEntryTooltip {
         let author_email = self.blame_entry.author_mail.clone();
 
         let short_commit_id = self.blame_entry.sha.display_short();
-        let absolute_timestamp = blame_entry_absolute_timestamp(&self.blame_entry, cx);
+        let full_sha = self.blame_entry.sha.to_string().clone();
+        let absolute_timestamp = blame_entry_absolute_timestamp(&self.blame_entry);
 
         let message = self
             .details
@@ -239,6 +236,16 @@ impl Render for BlameEntryTooltip {
                                                     })
                                                 },
                                             ),
+                                        )
+                                        .child(
+                                            IconButton::new("copy-sha-button", IconName::Copy)
+                                                .icon_color(Color::Muted)
+                                                .on_click(move |_, cx| {
+                                                    cx.stop_propagation();
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(full_sha.clone()),
+                                                    )
+                                                }),
                                         ),
                                 ),
                         ),
@@ -247,30 +254,25 @@ impl Render for BlameEntryTooltip {
     }
 }
 
-fn blame_entry_timestamp(
-    blame_entry: &BlameEntry,
-    format: time_format::TimestampFormat,
-    cx: &WindowContext,
-) -> String {
+fn blame_entry_timestamp(blame_entry: &BlameEntry, format: time_format::TimestampFormat) -> String {
     match blame_entry.author_offset_date_time() {
-        Ok(timestamp) => time_format::format_localized_timestamp(
-            timestamp,
-            time::OffsetDateTime::now_utc(),
-            cx.local_timezone(),
-            format,
-        ),
+        Ok(timestamp) => {
+            let local = chrono::Local::now().offset().local_minus_utc();
+            time_format::format_localized_timestamp(
+                timestamp,
+                time::OffsetDateTime::now_utc(),
+                UtcOffset::from_whole_seconds(local).unwrap(),
+                format,
+            )
+        }
         Err(_) => "Error parsing date".to_string(),
     }
 }
 
-pub fn blame_entry_relative_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) -> String {
-    blame_entry_timestamp(blame_entry, time_format::TimestampFormat::Relative, cx)
+pub fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
+    blame_entry_timestamp(blame_entry, time_format::TimestampFormat::Relative)
 }
 
-fn blame_entry_absolute_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) -> String {
-    blame_entry_timestamp(
-        blame_entry,
-        time_format::TimestampFormat::MediumAbsolute,
-        cx,
-    )
+fn blame_entry_absolute_timestamp(blame_entry: &BlameEntry) -> String {
+    blame_entry_timestamp(blame_entry, time_format::TimestampFormat::MediumAbsolute)
 }

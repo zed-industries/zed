@@ -3,17 +3,17 @@
     "bindings": {
       "ctrl-shift-[": "pane::ActivatePrevItem",
       "ctrl-shift-]": "pane::ActivateNextItem",
-      "ctrl-pagedown": "pane::ActivatePrevItem",
-      "ctrl-pageup": "pane::ActivateNextItem",
-      "ctrl-shift-tab": "pane::ActivateNextItem",
-      "ctrl-tab": "pane::ActivatePrevItem"
+      "ctrl-pageup": "pane::ActivatePrevItem",
+      "ctrl-pagedown": "pane::ActivateNextItem",
+      "ctrl-tab": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivatePrevItem"
     }
   },
   {
     "context": "Editor",
     "bindings": {
-      "ctrl-shift-up": "editor::AddSelectionAbove",
-      "ctrl-shift-down": "editor::AddSelectionBelow",
+      "ctrl-shift-up": "editor::MoveLineUp",
+      "ctrl-shift-down": "editor::MoveLineDown",
       "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-l": "editor::SplitSelectionIntoLines",
       "ctrl-shift-a": "editor::SelectLargerSyntaxNode",

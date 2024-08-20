@@ -59,6 +59,9 @@ main() {
                 echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.zshrc"
                 echo "   source ~/.zshrc"
                 ;;
+            *fish)
+                echo "   fish_add_path -U $HOME/.local/bin"
+                ;;
             *)
                 echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
                 echo "   source ~/.bashrc"

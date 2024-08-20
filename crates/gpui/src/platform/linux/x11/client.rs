@@ -24,7 +24,7 @@ use x11rb::xcb_ffi::XCBConnection;
 use xim::{x11rb::X11rbClient, Client};
 use xim::{AttributeName, InputStyle};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
-use xkbcommon::xkb as xkbc;
+use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask};
 
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
@@ -94,6 +94,13 @@ impl From<xim::ClientError> for EventHandlerError {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+struct XKBStateNotiy {
+    depressed_layout: LayoutIndex,
+    latched_layout: LayoutIndex,
+    locked_layout: LayoutIndex,
+}
+
 pub struct X11ClientState {
     pub(crate) loop_handle: LoopHandle<'static, X11Client>,
     pub(crate) event_loop: Option<calloop::EventLoop<'static, X11Client>>,
@@ -104,7 +111,9 @@ pub struct X11ClientState {
 
     pub(crate) scale_factor: f32,
 
+    xkb_context: xkbc::Context,
     pub(crate) xcb_connection: Rc<XCBConnection>,
+    xkb_device_id: i32,
     client_side_decorations_supported: bool,
     pub(crate) x_root_index: usize,
     pub(crate) _resource_database: Database,
@@ -113,6 +122,7 @@ pub struct X11ClientState {
     pub(crate) mouse_focused_window: Option<xproto::Window>,
     pub(crate) keyboard_focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
+    previous_xkb_state: XKBStateNotiy,
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
     pub modifiers: Modifiers,
@@ -245,7 +255,9 @@ impl X11Client {
             .reply()
             .unwrap();
 
-        let events = xkb::EventType::STATE_NOTIFY;
+        let events = xkb::EventType::STATE_NOTIFY
+            | xkb::EventType::MAP_NOTIFY
+            | xkb::EventType::NEW_KEYBOARD_NOTIFY;
         xcb_connection
             .xkb_select_events(
                 xkb::ID::USE_CORE_KBD.into(),
@@ -259,8 +271,8 @@ impl X11Client {
         assert!(xkb.supported);
 
         let xkb_context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
+        let xkb_device_id = xkbc::x11::get_core_keyboard_device_id(&xcb_connection);
         let xkb_state = {
-            let xkb_device_id = xkbc::x11::get_core_keyboard_device_id(&xcb_connection);
             let xkb_keymap = xkbc::x11::keymap_new_from_device(
                 &xkb_context,
                 &xcb_connection,
@@ -341,7 +353,9 @@ impl X11Client {
             current_count: 0,
             scale_factor,
 
+            xkb_context,
             xcb_connection,
+            xkb_device_id,
             client_side_decorations_supported,
             x_root_index,
             _resource_database: resource_database,
@@ -350,6 +364,7 @@ impl X11Client {
             mouse_focused_window: None,
             keyboard_focused_window: None,
             xkb: xkb_state,
+            previous_xkb_state: XKBStateNotiy::default(),
             ximc,
             xim_handler,
 
@@ -612,6 +627,23 @@ impl X11Client {
                 self.disable_ime();
                 window.handle_ime_delete();
             }
+            Event::XkbNewKeyboardNotify(_) | Event::MapNotify(_) => {
+                let mut state = self.0.borrow_mut();
+                let xkb_state = {
+                    let xkb_keymap = xkbc::x11::keymap_new_from_device(
+                        &state.xkb_context,
+                        &state.xcb_connection,
+                        state.xkb_device_id,
+                        xkbc::KEYMAP_COMPILE_NO_FLAGS,
+                    );
+                    xkbc::x11::state_new_from_device(
+                        &xkb_keymap,
+                        &state.xcb_connection,
+                        state.xkb_device_id,
+                    )
+                };
+                state.xkb = xkb_state;
+            }
             Event::XkbStateNotify(event) => {
                 let mut state = self.0.borrow_mut();
                 state.xkb.update_mask(
@@ -622,7 +654,11 @@ impl X11Client {
                     event.latched_group as u32,
                     event.locked_group.into(),
                 );
-
+                state.previous_xkb_state = XKBStateNotiy {
+                    depressed_layout: event.base_group as u32,
+                    latched_layout: event.latched_group as u32,
+                    locked_layout: event.locked_group.into(),
+                };
                 let modifiers = Modifiers::from_xkb(&state.xkb);
                 if state.modifiers == modifiers {
                     drop(state);
@@ -644,11 +680,18 @@ impl X11Client {
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
                 state.pre_ime_key_down.take();
-
                 let keystroke = {
                     let code = event.detail.into();
+                    let xkb_state = state.previous_xkb_state.clone();
+                    state.xkb.update_mask(
+                        event.state.bits() as ModMask,
+                        0,
+                        0,
+                        xkb_state.depressed_layout,
+                        xkb_state.latched_layout,
+                        xkb_state.locked_layout,
+                    );
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
-                    state.xkb.update_key(code, xkbc::KeyDirection::Down);
                     let keysym = state.xkb.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
                         return Some(());
@@ -707,8 +750,16 @@ impl X11Client {
 
                 let keystroke = {
                     let code = event.detail.into();
+                    let xkb_state = state.previous_xkb_state.clone();
+                    state.xkb.update_mask(
+                        event.state.bits() as ModMask,
+                        0,
+                        0,
+                        xkb_state.depressed_layout,
+                        xkb_state.latched_layout,
+                        xkb_state.locked_layout,
+                    );
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
-                    state.xkb.update_key(code, xkbc::KeyDirection::Up);
                     let keysym = state.xkb.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
                         return Some(());
@@ -962,20 +1013,17 @@ impl X11Client {
     fn xim_handle_commit(&self, window: xproto::Window, text: String) -> Option<()> {
         let window = self.get_window(window).unwrap();
         let mut state = self.0.borrow_mut();
-        if !state.composing {
-            if let Some(keystroke) = state.pre_ime_key_down.take() {
-                drop(state);
-                window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
-                    keystroke,
-                    is_held: false,
-                }));
-                return Some(());
-            }
-        }
+        let keystroke = state.pre_ime_key_down.take();
         state.composing = false;
         drop(state);
+        if let Some(mut keystroke) = keystroke {
+            keystroke.ime_key = Some(text.clone());
+            window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
+                keystroke,
+                is_held: false,
+            }));
+        }
 
-        window.handle_ime_commit(text);
         Some(())
     }
 
@@ -1211,7 +1259,7 @@ impl LinuxClient for X11Client {
             .store(
                 state.clipboard.setter.atoms.primary,
                 state.clipboard.setter.atoms.utf8_string,
-                item.text().as_bytes(),
+                item.text().unwrap_or_default().as_bytes(),
             )
             .ok();
     }
@@ -1223,7 +1271,7 @@ impl LinuxClient for X11Client {
             .store(
                 state.clipboard.setter.atoms.clipboard,
                 state.clipboard.setter.atoms.utf8_string,
-                item.text().as_bytes(),
+                item.text().unwrap_or_default().as_bytes(),
             )
             .ok();
         state.clipboard_item.replace(item);
@@ -1239,10 +1287,7 @@ impl LinuxClient for X11Client {
                 state.clipboard.getter.atoms.property,
                 Duration::from_secs(3),
             )
-            .map(|text| crate::ClipboardItem {
-                text: String::from_utf8(text).unwrap(),
-                metadata: None,
-            })
+            .map(|text| crate::ClipboardItem::new_string(String::from_utf8(text).unwrap()))
             .ok()
     }
 
@@ -1270,10 +1315,7 @@ impl LinuxClient for X11Client {
                 state.clipboard.getter.atoms.property,
                 Duration::from_secs(3),
             )
-            .map(|text| crate::ClipboardItem {
-                text: String::from_utf8(text).unwrap(),
-                metadata: None,
-            })
+            .map(|text| crate::ClipboardItem::new_string(String::from_utf8(text).unwrap()))
             .ok()
     }
 
@@ -1296,6 +1338,48 @@ impl LinuxClient for X11Client {
                 .get(&focused_window)
                 .map(|window| window.handle())
         })
+    }
+
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        let state = self.0.borrow();
+        let root = state.xcb_connection.setup().roots[state.x_root_index].root;
+
+        let reply = state
+            .xcb_connection
+            .get_property(
+                false,
+                root,
+                state.atoms._NET_CLIENT_LIST_STACKING,
+                xproto::AtomEnum::WINDOW,
+                0,
+                u32::MAX,
+            )
+            .ok()?
+            .reply()
+            .ok()?;
+
+        let window_ids = reply
+            .value
+            .chunks_exact(4)
+            .map(|chunk| u32::from_ne_bytes(chunk.try_into().unwrap()))
+            .collect::<Vec<xproto::Window>>();
+
+        let mut handles = Vec::new();
+
+        // We need to reverse, since _NET_CLIENT_LIST_STACKING has
+        // a back-to-front order.
+        // See: https://specifications.freedesktop.org/wm-spec/1.3/ar01s03.html
+        for window_ref in window_ids
+            .iter()
+            .rev()
+            .filter_map(|&win| state.windows.get(&win))
+        {
+            if !window_ref.window.state.borrow().destroyed {
+                handles.push(window_ref.handle());
+            }
+        }
+
+        Some(handles)
     }
 }
 

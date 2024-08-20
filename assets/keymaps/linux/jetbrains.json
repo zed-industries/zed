@@ -13,6 +13,7 @@
       "ctrl-shift-j": "editor::JoinLines",
       "ctrl-d": "editor::DuplicateLineDown",
       "ctrl-y": "editor::DeleteLine",
+      "ctrl-m": "editor::ScrollCursorCenter",
       "ctrl-pagedown": "editor::MovePageDown",
       "ctrl-pageup": "editor::MovePageUp",
       // "ctrl-alt-shift-b": "editor::SelectToPreviousWordStart",

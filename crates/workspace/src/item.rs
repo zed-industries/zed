@@ -3,8 +3,8 @@ use crate::{
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
-    DelayedDebouncedEditAction, FollowableItemBuilders, ItemNavHistory, ToolbarItemLocation,
-    ViewId, Workspace, WorkspaceId,
+    DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory, SerializableItemRegistry,
+    ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
 };
 use anyhow::Result;
 use client::{
@@ -31,7 +31,8 @@ use std::{
     time::Duration,
 };
 use theme::Theme;
-use ui::Element as _;
+use ui::{Color, Element as _, Icon, IntoElement, Label, LabelCommon};
+use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
@@ -39,6 +40,7 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
+    pub file_icons: bool,
 }
 
 #[derive(Deserialize)]
@@ -75,6 +77,10 @@ pub struct ItemSettingsContent {
     ///
     /// Default: right
     close_position: Option<ClosePosition>,
+    /// Whether to show the file icon for a tab.
+    ///
+    /// Default: true
+    file_icons: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -136,14 +142,49 @@ pub struct TabContentParams {
     pub preview: bool,
 }
 
+impl TabContentParams {
+    /// Returns the text color to be used for the tab content.
+    pub fn text_color(&self) -> Color {
+        if self.selected {
+            Color::Default
+        } else {
+            Color::Muted
+        }
+    }
+}
+
 pub trait Item: FocusableView + EventEmitter<Self::Event> {
     type Event;
-    fn tab_content(&self, _params: TabContentParams, _cx: &WindowContext) -> AnyElement {
-        gpui::Empty.into_any()
+
+    /// Returns the tab contents.
+    ///
+    /// By default this returns a [`Label`] that displays that text from
+    /// `tab_content_text`.
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+        let Some(text) = self.tab_content_text(cx) else {
+            return gpui::Empty.into_any();
+        };
+
+        Label::new(text)
+            .color(params.text_color())
+            .into_any_element()
     }
+
+    /// Returns the textual contents of the tab.
+    ///
+    /// Use this if you don't need to customize the tab contents.
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        None
+    }
+
+    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+        None
+    }
+
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
 
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
+    fn discarded(&self, _project: Model<Project>, _cx: &mut ViewContext<Self>) {}
     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
         false
@@ -240,9 +281,27 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
 
     fn added_to_workspace(&mut self, _workspace: &mut Workspace, _cx: &mut ViewContext<Self>) {}
 
-    fn serialized_item_kind() -> Option<&'static str> {
+    fn show_toolbar(&self) -> bool {
+        true
+    }
+
+    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
         None
     }
+
+    fn preserve_preview(&self, _cx: &AppContext) -> bool {
+        false
+    }
+}
+
+pub trait SerializableItem: Item {
+    fn serialized_item_kind() -> &'static str;
+
+    fn cleanup(
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<()>>;
 
     fn deserialize(
         _project: Model<Project>,
@@ -250,16 +309,53 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         _workspace_id: WorkspaceId,
         _item_id: ItemId,
         _cx: &mut ViewContext<Pane>,
-    ) -> Task<Result<View<Self>>> {
-        unimplemented!(
-            "deserialize() must be implemented if serialized_item_kind() returns Some(_)"
-        )
+    ) -> Task<Result<View<Self>>>;
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: ItemId,
+        closing: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>>;
+
+    fn should_serialize(&self, event: &Self::Event) -> bool;
+}
+
+pub trait SerializableItemHandle: ItemHandle {
+    fn serialized_item_kind(&self) -> &'static str;
+    fn serialize(
+        &self,
+        workspace: &mut Workspace,
+        closing: bool,
+        cx: &mut WindowContext,
+    ) -> Option<Task<Result<()>>>;
+    fn should_serialize(&self, event: &dyn Any, cx: &AppContext) -> bool;
+}
+
+impl<T> SerializableItemHandle for View<T>
+where
+    T: SerializableItem,
+{
+    fn serialized_item_kind(&self) -> &'static str {
+        T::serialized_item_kind()
     }
-    fn show_toolbar(&self) -> bool {
-        true
+
+    fn serialize(
+        &self,
+        workspace: &mut Workspace,
+        closing: bool,
+        cx: &mut WindowContext,
+    ) -> Option<Task<Result<()>>> {
+        self.update(cx, |this, cx| {
+            this.serialize(workspace, cx.entity_id().as_u64(), closing, cx)
+        })
     }
-    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
-        None
+
+    fn should_serialize(&self, event: &dyn Any, cx: &AppContext) -> bool {
+        event
+            .downcast_ref::<T::Event>()
+            .map_or(false, |event| self.read(cx).should_serialize(event))
     }
 }
 
@@ -273,10 +369,12 @@ pub trait ItemHandle: 'static + Send {
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
+    fn tab_icon(&self, cx: &WindowContext) -> Option<Icon>;
     fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str>;
     fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
+    fn project_paths(&self, cx: &AppContext) -> SmallVec<[ProjectPath; 3]>;
     fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]>;
     fn for_each_project_item(
         &self,
@@ -297,6 +395,7 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut ViewContext<Workspace>,
     );
     fn deactivated(&self, cx: &mut WindowContext);
+    fn discarded(&self, project: Model<Project>, cx: &mut WindowContext);
     fn workspace_deactivated(&self, cx: &mut WindowContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut WindowContext) -> bool;
     fn item_id(&self) -> EntityId;
@@ -319,6 +418,10 @@ pub trait ItemHandle: 'static + Send {
     fn reload(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyView>;
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
+    fn to_serializable_item_handle(
+        &self,
+        cx: &AppContext,
+    ) -> Option<Box<dyn SerializableItemHandle>>;
     fn on_release(
         &self,
         cx: &mut AppContext,
@@ -327,15 +430,16 @@ pub trait ItemHandle: 'static + Send {
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
-    fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
     fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings;
+    fn preserve_preview(&self, cx: &AppContext) -> bool;
 }
 
 pub trait WeakItemHandle: Send + Sync {
     fn id(&self) -> EntityId;
+    fn boxed_clone(&self) -> Box<dyn WeakItemHandle>;
     fn upgrade(&self) -> Option<Box<dyn ItemHandle>>;
 }
 
@@ -381,6 +485,10 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).tab_content(params, cx)
     }
 
+    fn tab_icon(&self, cx: &WindowContext) -> Option<Icon> {
+        self.read(cx).tab_icon(cx)
+    }
+
     fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         self.read(cx).tab_content(
             TabContentParams {
@@ -420,6 +528,16 @@ impl<T: Item> ItemHandle for View<T> {
         let mut result = SmallVec::new();
         self.read(cx).for_each_project_item(cx, &mut |_, item| {
             if let Some(id) = item.entry_id(cx) {
+                result.push(id);
+            }
+        });
+        result
+    }
+
+    fn project_paths(&self, cx: &AppContext) -> SmallVec<[ProjectPath; 3]> {
+        let mut result = SmallVec::new();
+        self.read(cx).for_each_project_item(cx, &mut |_, item| {
+            if let Some(id) = item.project_path(cx) {
                 result.push(id);
             }
         });
@@ -472,20 +590,10 @@ impl<T: Item> ItemHandle for View<T> {
             this.added_to_workspace(workspace, cx);
         });
 
-        if let Some(followed_item) = self.to_followable_item_handle(cx) {
-            if let Some(message) = followed_item.to_state_proto(cx) {
-                workspace.update_followers(
-                    followed_item.is_project_item(cx),
-                    proto::update_followers::Variant::CreateView(proto::View {
-                        id: followed_item
-                            .remote_id(&workspace.client(), cx)
-                            .map(|id| id.to_proto()),
-                        variant: Some(message),
-                        leader_id: workspace.leader_for_pane(&pane),
-                    }),
-                    cx,
-                );
-            }
+        if let Some(serializable_item) = self.to_serializable_item_handle(cx) {
+            workspace
+                .enqueue_item_serialization(serializable_item)
+                .log_err();
         }
 
         if workspace
@@ -548,11 +656,11 @@ impl<T: Item> ItemHandle for View<T> {
 
                     if let Some(item) = item.to_followable_item_handle(cx) {
                         let leader_id = workspace.leader_for_pane(&pane);
-                        let follow_event = item.to_follow_event(event);
-                        if leader_id.is_some()
-                            && matches!(follow_event, Some(FollowEvent::Unfollow))
-                        {
-                            workspace.unfollow(&pane, cx);
+
+                        if let Some(leader_id) = leader_id {
+                            if let Some(FollowEvent::Unfollow) = item.to_follow_event(event) {
+                                workspace.unfollow(leader_id, cx);
+                            }
                         }
 
                         if item.focus_handle(cx).contains_focused(cx) {
@@ -562,6 +670,12 @@ impl<T: Item> ItemHandle for View<T> {
                                 cx,
                             );
                             pending_update_tx.unbounded_send(leader_id).ok();
+                        }
+                    }
+
+                    if let Some(item) = item.to_serializable_item_handle(cx) {
+                        if item.should_serialize(event, cx) {
+                            workspace.enqueue_item_serialization(item).ok();
                         }
                     }
 
@@ -623,6 +737,10 @@ impl<T: Item> ItemHandle for View<T> {
         });
     }
 
+    fn discarded(&self, project: Model<Project>, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| this.discarded(project, cx));
+    }
+
     fn deactivated(&self, cx: &mut WindowContext) {
         self.update(cx, |this, cx| this.deactivated(cx));
     }
@@ -682,9 +800,7 @@ impl<T: Item> ItemHandle for View<T> {
     }
 
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>> {
-        let builders = cx.try_global::<FollowableItemBuilders>()?;
-        let item = self.to_any();
-        Some(builders.get(&item.entity_type())?.1(&item))
+        FollowableViewRegistry::to_followable_view(self.clone(), cx)
     }
 
     fn on_release(
@@ -707,10 +823,6 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).breadcrumbs(theme, cx)
     }
 
-    fn serialized_item_kind(&self) -> Option<&'static str> {
-        T::serialized_item_kind()
-    }
-
     fn show_toolbar(&self, cx: &AppContext) -> bool {
         self.read(cx).show_toolbar()
     }
@@ -721,6 +833,17 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle> {
         Box::new(self.downgrade())
+    }
+
+    fn to_serializable_item_handle(
+        &self,
+        cx: &AppContext,
+    ) -> Option<Box<dyn SerializableItemHandle>> {
+        SerializableItemRegistry::view_to_serializable_item_handle(self.to_any(), cx)
+    }
+
+    fn preserve_preview(&self, cx: &AppContext) -> bool {
+        self.read(cx).preserve_preview(cx)
     }
 }
 
@@ -747,6 +870,10 @@ impl<T: Item> WeakItemHandle for WeakView<T> {
         self.entity_id()
     }
 
+    fn boxed_clone(&self) -> Box<dyn WeakItemHandle> {
+        Box::new(self.clone())
+    }
+
     fn upgrade(&self) -> Option<Box<dyn ItemHandle>> {
         self.upgrade().map(|v| Box::new(v) as Box<dyn ItemHandle>)
     }
@@ -769,11 +896,15 @@ pub enum FollowEvent {
     Unfollow,
 }
 
+pub enum Dedup {
+    KeepExisting,
+    ReplaceExisting,
+}
+
 pub trait FollowableItem: Item {
     fn remote_id(&self) -> Option<ViewId>;
     fn to_state_proto(&self, cx: &WindowContext) -> Option<proto::view::Variant>;
     fn from_state_proto(
-        pane: View<Pane>,
         project: View<Workspace>,
         id: ViewId,
         state: &mut Option<proto::view::Variant>,
@@ -794,6 +925,7 @@ pub trait FollowableItem: Item {
     ) -> Task<Result<()>>;
     fn is_project_item(&self, cx: &WindowContext) -> bool;
     fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>);
+    fn dedup(&self, existing: &Self, cx: &WindowContext) -> Option<Dedup>;
 }
 
 pub trait FollowableItemHandle: ItemHandle {
@@ -815,6 +947,7 @@ pub trait FollowableItemHandle: ItemHandle {
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn is_project_item(&self, cx: &WindowContext) -> bool;
+    fn dedup(&self, existing: &dyn FollowableItemHandle, cx: &WindowContext) -> Option<Dedup>;
 }
 
 impl<T: FollowableItem> FollowableItemHandle for View<T> {
@@ -868,6 +1001,11 @@ impl<T: FollowableItem> FollowableItemHandle for View<T> {
     fn is_project_item(&self, cx: &WindowContext) -> bool {
         self.read(cx).is_project_item(cx)
     }
+
+    fn dedup(&self, existing: &dyn FollowableItemHandle, cx: &WindowContext) -> Option<Dedup> {
+        let existing = existing.to_any().downcast::<T>().ok()?;
+        self.read(cx).dedup(existing.read(cx), cx)
+    }
 }
 
 pub trait WeakFollowableItemHandle: Send + Sync {
@@ -882,7 +1020,7 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakView<T> {
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
-    use super::{Item, ItemEvent, TabContentParams};
+    use super::{Item, ItemEvent, SerializableItem, TabContentParams};
     use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
@@ -911,6 +1049,7 @@ pub mod test {
         pub nav_history: Option<ItemNavHistory>,
         pub tab_descriptions: Option<Vec<&'static str>>,
         pub tab_detail: Cell<Option<usize>>,
+        serialize: Option<Box<dyn Fn() -> Option<Task<anyhow::Result<()>>>>>,
         focus_handle: gpui::FocusHandle,
     }
 
@@ -974,6 +1113,7 @@ pub mod test {
                 tab_detail: Default::default(),
                 workspace_id: Default::default(),
                 focus_handle: cx.focus_handle(),
+                serialize: None,
             }
         }
 
@@ -1006,6 +1146,14 @@ pub mod test {
         pub fn with_project_items(mut self, items: &[Model<TestProjectItem>]) -> Self {
             self.project_items.clear();
             self.project_items.extend(items.iter().cloned());
+            self
+        }
+
+        pub fn with_serialize(
+            mut self,
+            serialize: impl Fn() -> Option<Task<anyhow::Result<()>>> + 'static,
+        ) -> Self {
+            self.serialize = Some(Box::new(serialize));
             self
         }
 
@@ -1117,6 +1265,7 @@ pub mod test {
                 tab_detail: Default::default(),
                 workspace_id: self.workspace_id,
                 focus_handle: cx.focus_handle(),
+                serialize: None,
             }))
         }
 
@@ -1167,9 +1316,11 @@ pub mod test {
             self.is_dirty = false;
             Task::ready(Ok(()))
         }
+    }
 
-        fn serialized_item_kind() -> Option<&'static str> {
-            Some("TestItem")
+    impl SerializableItem for TestItem {
+        fn serialized_item_kind() -> &'static str {
+            "TestItem"
         }
 
         fn deserialize(
@@ -1180,7 +1331,35 @@ pub mod test {
             cx: &mut ViewContext<Pane>,
         ) -> Task<anyhow::Result<View<Self>>> {
             let view = cx.new_view(|cx| Self::new_deserialized(workspace_id, cx));
-            Task::Ready(Some(anyhow::Ok(view)))
+            Task::ready(Ok(view))
+        }
+
+        fn cleanup(
+            _workspace_id: WorkspaceId,
+            _alive_items: Vec<ItemId>,
+            _cx: &mut ui::WindowContext,
+        ) -> Task<anyhow::Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn serialize(
+            &mut self,
+            _workspace: &mut Workspace,
+            _item_id: ItemId,
+            _closing: bool,
+            _cx: &mut ViewContext<Self>,
+        ) -> Option<Task<anyhow::Result<()>>> {
+            if let Some(serialize) = self.serialize.take() {
+                let result = serialize();
+                self.serialize = Some(serialize);
+                result
+            } else {
+                None
+            }
+        }
+
+        fn should_serialize(&self, _event: &Self::Event) -> bool {
+            false
         }
     }
 }

@@ -5,7 +5,7 @@ use rpc::{
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, Condition, DatabaseTransaction, EntityTrait,
-    ModelTrait, QueryFilter,
+    IntoActiveModel, ModelTrait, QueryFilter,
 };
 
 use crate::db::ProjectId;
@@ -56,12 +56,7 @@ impl Database {
             .await?;
         Ok(servers
             .into_iter()
-            .map(|(dev_server_project, project)| proto::DevServerProject {
-                id: dev_server_project.id.to_proto(),
-                project_id: project.map(|p| p.id.to_proto()),
-                dev_server_id: dev_server_project.dev_server_id.to_proto(),
-                path: dev_server_project.path,
-            })
+            .map(|(dev_server_project, project)| dev_server_project.to_proto(project))
             .collect())
     }
 
@@ -134,10 +129,42 @@ impl Database {
             let project = dev_server_project::Entity::insert(dev_server_project::ActiveModel {
                 id: ActiveValue::NotSet,
                 dev_server_id: ActiveValue::Set(dev_server_id),
-                path: ActiveValue::Set(path.to_string()),
+                paths: ActiveValue::Set(dev_server_project::JSONPaths(vec![path.to_string()])),
             })
             .exec_with_returning(&*tx)
             .await?;
+
+            let status = self
+                .dev_server_projects_update_internal(user_id, &tx)
+                .await?;
+
+            Ok((project, status))
+        })
+        .await
+    }
+
+    pub async fn update_dev_server_project(
+        &self,
+        id: DevServerProjectId,
+        paths: &Vec<String>,
+        user_id: UserId,
+    ) -> crate::Result<(dev_server_project::Model, proto::DevServerProjectsUpdate)> {
+        self.transaction(move |tx| async move {
+            let paths = paths.clone();
+            let Some((project, Some(dev_server))) = dev_server_project::Entity::find_by_id(id)
+                .find_also_related(dev_server::Entity)
+                .one(&*tx)
+                .await?
+            else {
+                return Err(anyhow!("no such dev server project"))?;
+            };
+
+            if dev_server.user_id != user_id {
+                return Err(anyhow!("not your dev server"))?;
+            }
+            let mut project = project.into_active_model();
+            project.paths = ActiveValue::Set(dev_server_project::JSONPaths(paths));
+            let project = project.update(&*tx).await?;
 
             let status = self
                 .dev_server_projects_update_internal(user_id, &tx)
@@ -258,7 +285,6 @@ impl Database {
         dev_server_id: DevServerId,
         connection: ConnectionId,
     ) -> crate::Result<Vec<ResharedProject>> {
-        // todo!() project_transaction? (maybe we can make the lock per-dev-server instead of per-project?)
         self.transaction(|tx| async move {
             let mut ret = Vec::new();
             for reshared_project in reshared_projects {
@@ -322,7 +348,6 @@ impl Database {
         user_id: UserId,
         connection_id: ConnectionId,
     ) -> crate::Result<Vec<RejoinedProject>> {
-        // todo!() project_transaction? (maybe we can make the lock per-dev-server instead of per-project?)
         self.transaction(|tx| async move {
             let mut ret = Vec::new();
             for rejoined_project in rejoined_projects {

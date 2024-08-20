@@ -159,16 +159,29 @@ impl Render for InlineCompletionButton {
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
                 let this = cx.view().clone();
+                let fs = self.fs.clone();
 
                 return div().child(
                     PopoverMenu::new("supermaven")
                         .menu(move |cx| match &status {
                             SupermavenButtonStatus::NeedsActivation(activate_url) => {
                                 Some(ContextMenu::build(cx, |menu, _| {
+                                    let fs = fs.clone();
                                     let activate_url = activate_url.clone();
                                     menu.entry("Sign In", None, move |cx| {
                                         cx.open_url(activate_url.as_str())
                                     })
+                                    .entry(
+                                        "Use Copilot",
+                                        None,
+                                        move |cx| {
+                                            set_completion_provider(
+                                                fs.clone(),
+                                                cx,
+                                                InlineCompletionProvider::Copilot,
+                                            )
+                                        },
+                                    )
                                 }))
                             }
                             SupermavenButtonStatus::Ready => Some(
@@ -208,11 +221,21 @@ impl InlineCompletionButton {
     pub fn build_copilot_start_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let fs = self.fs.clone();
         ContextMenu::build(cx, |menu, _| {
-            menu.entry("Sign In", None, initiate_sign_in).entry(
-                "Disable Copilot",
-                None,
-                move |cx| hide_copilot(fs.clone(), cx),
-            )
+            menu.entry("Sign In", None, initiate_sign_in)
+                .entry("Disable Copilot", None, {
+                    let fs = fs.clone();
+                    move |cx| hide_copilot(fs.clone(), cx)
+                })
+                .entry("Use Supermaven", None, {
+                    let fs = fs.clone();
+                    move |cx| {
+                        set_completion_provider(
+                            fs.clone(),
+                            cx,
+                            InlineCompletionProvider::Supermaven,
+                        )
+                    }
+                })
         })
     }
 
@@ -286,7 +309,7 @@ impl InlineCompletionButton {
             self.build_language_settings_menu(menu, cx)
                 .separator()
                 .link(
-                    "Copilot Settings",
+                    "Go to Copilot Settings",
                     OpenBrowser {
                         url: COPILOT_SETTINGS_URL.to_string(),
                     }
@@ -298,7 +321,9 @@ impl InlineCompletionButton {
 
     fn build_supermaven_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         ContextMenu::build(cx, |menu, cx| {
-            self.build_language_settings_menu(menu, cx).separator()
+            self.build_language_settings_menu(menu, cx)
+                .separator()
+                .action("Sign Out", supermaven::SignOut.boxed_clone())
         })
     }
 
@@ -418,8 +443,20 @@ async fn configure_disabled_globs(
 fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let show_inline_completions =
         all_language_settings(None, cx).inline_completions_enabled(None, None);
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
+    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.defaults.show_inline_completions = Some(!show_inline_completions)
+    });
+}
+
+fn set_completion_provider(
+    fs: Arc<dyn Fs>,
+    cx: &mut AppContext,
+    provider: InlineCompletionProvider,
+) {
+    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
+        file.features
+            .get_or_insert(Default::default())
+            .inline_completion_provider = Some(provider);
     });
 }
 
@@ -430,7 +467,7 @@ fn toggle_inline_completions_for_language(
 ) {
     let show_inline_completions =
         all_language_settings(None, cx).inline_completions_enabled(Some(&language), None);
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
+    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages
             .entry(language.name())
             .or_default()
@@ -439,7 +476,7 @@ fn toggle_inline_completions_for_language(
 }
 
 fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
+    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.features
             .get_or_insert(Default::default())
             .inline_completion_provider = Some(InlineCompletionProvider::None);

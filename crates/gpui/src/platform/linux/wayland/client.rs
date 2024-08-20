@@ -11,6 +11,7 @@ use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
 
+use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
@@ -394,6 +395,7 @@ impl WaylandClient {
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
+        #[allow(clippy::mutable_key_type)]
         let mut in_progress_outputs = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
@@ -748,6 +750,10 @@ impl LinuxClient for WaylandClient {
             .map(|window| window.handle())
     }
 
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        None
+    }
+
     fn compositor_name(&self) -> &'static str {
         "Wayland"
     }
@@ -873,6 +879,7 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientStatePtr {
         let Some(window) = get_window(&mut state, &surface.id()) else {
             return;
         };
+        #[allow(clippy::mutable_key_type)]
         let outputs = state.outputs.clone();
         drop(state);
 
@@ -1119,7 +1126,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.keyboard_focused_window = None;
                 state.enter_token.take();
+                // Prevent keyboard events from repeating after opening e.g. a file chooser and closing it quickly
+                state.repeat.current_id += 1;
                 state.clipboard.set_offer(None);
+                state.clipboard.set_primary_offer(None);
 
                 if let Some(window) = keyboard_focused_window {
                     if let Some(ref mut compose) = state.compose_state {
@@ -1792,13 +1802,13 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
 
                             let paths: SmallVec<[_; 2]> = file_list
                                 .lines()
-                                .map(|path| PathBuf::from(path.replace("file://", "")))
+                                .filter_map(|path| Url::parse(path).log_err())
+                                .filter_map(|url| url.to_file_path().log_err())
                                 .collect();
                             let position = Point::new(x.into(), y.into());
 
                             // Prevent dropping text from other programs.
                             if paths.is_empty() {
-                                data_offer.finish();
                                 data_offer.destroy();
                                 return;
                             }

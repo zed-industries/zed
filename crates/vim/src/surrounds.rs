@@ -272,7 +272,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                                     match chars_and_offset.peek() {
                                         Some((next_ch, _)) => {
                                             // If the next position is already a space or line break,
-                                            // we don't need to splice another space even under arround
+                                            // we don't need to splice another space even under around
                                             if surround && !next_ch.is_whitespace() {
                                                 open_str.push_str(" ");
                                             } else if !surround && next_ch.to_string() == " " {
@@ -556,7 +556,7 @@ mod test {
     async fn test_add_surrounds(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
-        // test add surrounds with arround
+        // test add surrounds with around
         cx.set_state(
             indoc! {"
             The quˇick brown
@@ -573,7 +573,7 @@ mod test {
             Mode::Normal,
         );
 
-        // test add surrounds not with arround
+        // test add surrounds not with around
         cx.set_state(
             indoc! {"
             The quˇick brown
@@ -712,7 +712,7 @@ mod test {
             )])
         });
 
-        // test add surrounds with arround
+        // test add surrounds with around
         cx.set_state(
             indoc! {"
             The quˇick brown
@@ -729,7 +729,7 @@ mod test {
             Mode::Normal,
         );
 
-        // test add surrounds not with arround
+        // test add surrounds not with around
         cx.set_state(
             indoc! {"
             The quˇick brown
@@ -907,7 +907,7 @@ mod test {
             Mode::Normal,
         );
 
-        // test multi cursor delete surrounds with arround
+        // test multi cursor delete surrounds with around
         cx.set_state(
             indoc! {"
             Tˇhe [ quick ] brown
@@ -1035,7 +1035,7 @@ mod test {
             Mode::Normal,
         );
 
-        // test multi cursor change surrount with not arround
+        // test multi cursor change surrount with not around
         cx.set_state(
             indoc! {"
             Thˇe { quick } brown

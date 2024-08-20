@@ -8,10 +8,10 @@ use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 6);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 6);
 
 wasmtime::component::bindgen!({
     async: true,
+    trappable_imports: true,
     path: "../extension_api/wit/since_v0.0.6",
     with: {
          "worktree": ExtensionWorktree,
@@ -23,7 +23,7 @@ wasmtime::component::bindgen!({
 });
 
 mod settings {
-    include!("../../../../extension_api/wit/since_v0.0.6/settings.rs");
+    include!(concat!(env!("OUT_DIR"), "/since_v0.0.6/settings.rs"));
 }
 
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;

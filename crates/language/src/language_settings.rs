@@ -3,15 +3,20 @@
 use crate::{File, Language, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
+use core::slice;
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
 use schemars::{
-    schema::{InstanceType, ObjectValidation, Schema, SchemaObject},
+    schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
 };
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsLocation, SettingsSources};
+use serde::{
+    de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
+    Deserialize, Deserializer, Serialize,
+};
+use serde_json::Value;
+use settings::{add_references_to_properties, Settings, SettingsLocation, SettingsSources};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
@@ -89,7 +94,7 @@ pub struct LanguageSettings {
     /// when saving it.
     pub ensure_final_newline_on_save: bool,
     /// How to perform a buffer format.
-    pub formatter: Formatter,
+    pub formatter: SelectedFormatter,
     /// Zed's Prettier integration settings.
     pub prettier: PrettierSettings,
     /// Whether to use language servers to provide code intelligence.
@@ -274,7 +279,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: auto
     #[serde(default)]
-    pub formatter: Option<Formatter>,
+    pub formatter: Option<SelectedFormatter>,
     /// Zed's Prettier integration settings.
     /// Allows to enable/disable formatting with Prettier
     /// and configure default Prettier, used when no project-level Prettier installation is found.
@@ -381,24 +386,115 @@ pub enum SoftWrap {
 }
 
 /// Controls the behavior of formatting files when they are saved.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormatOnSave {
     /// Files should be formatted on save.
     On,
     /// Files should not be formatted on save.
     Off,
-    /// Files should be formatted using the current language server.
-    LanguageServer,
-    /// The external program to use to format the files on save.
-    External {
-        /// The external program to run.
-        command: Arc<str>,
-        /// The arguments to pass to the program.
-        arguments: Arc<[String]>,
-    },
-    /// Files should be formatted using code actions executed by language servers.
-    CodeActions(HashMap<String, bool>),
+    List(FormatterList),
+}
+
+impl JsonSchema for FormatOnSave {
+    fn schema_name() -> String {
+        "OnSaveFormatter".into()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> Schema {
+        let mut schema = SchemaObject::default();
+        let formatter_schema = Formatter::json_schema(generator);
+        schema.instance_type = Some(
+            vec![
+                InstanceType::Object,
+                InstanceType::String,
+                InstanceType::Array,
+            ]
+            .into(),
+        );
+
+        let mut valid_raw_values = SchemaObject::default();
+        valid_raw_values.enum_values = Some(vec![
+            Value::String("on".into()),
+            Value::String("off".into()),
+            Value::String("prettier".into()),
+            Value::String("language_server".into()),
+        ]);
+        let mut nested_values = SchemaObject::default();
+
+        nested_values.array().items = Some(formatter_schema.clone().into());
+
+        schema.subschemas().any_of = Some(vec![
+            nested_values.into(),
+            valid_raw_values.into(),
+            formatter_schema,
+        ]);
+        schema.into()
+    }
+}
+
+impl Serialize for FormatOnSave {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::On => serializer.serialize_str("on"),
+            Self::Off => serializer.serialize_str("off"),
+            Self::List(list) => list.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FormatOnSave {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FormatDeserializer;
+
+        impl<'d> Visitor<'d> for FormatDeserializer {
+            type Value = FormatOnSave;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a valid on-save formatter kind")
+            }
+            fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v == "on" {
+                    Ok(Self::Value::On)
+                } else if v == "off" {
+                    Ok(Self::Value::Off)
+                } else if v == "language_server" {
+                    Ok(Self::Value::List(FormatterList(
+                        Formatter::LanguageServer { name: None }.into(),
+                    )))
+                } else {
+                    let ret: Result<FormatterList, _> =
+                        Deserialize::deserialize(v.into_deserializer());
+                    ret.map(Self::Value::List)
+                }
+            }
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'d>,
+            {
+                let ret: Result<FormatterList, _> =
+                    Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
+                ret.map(Self::Value::List)
+            }
+            fn visit_seq<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'d>,
+            {
+                let ret: Result<FormatterList, _> =
+                    Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
+                ret.map(Self::Value::List)
+            }
+        }
+        deserializer.deserialize_any(FormatDeserializer)
+    }
 }
 
 /// Controls how whitespace should be displayedin the editor.
@@ -421,15 +517,131 @@ pub enum ShowWhitespaceSetting {
 }
 
 /// Controls which formatter should be used when formatting code.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Formatter {
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum SelectedFormatter {
     /// Format files using Zed's Prettier integration (if applicable),
     /// or falling back to formatting via language server.
     #[default]
     Auto,
+    List(FormatterList),
+}
+
+impl JsonSchema for SelectedFormatter {
+    fn schema_name() -> String {
+        "Formatter".into()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> Schema {
+        let mut schema = SchemaObject::default();
+        let formatter_schema = Formatter::json_schema(generator);
+        schema.instance_type = Some(
+            vec![
+                InstanceType::Object,
+                InstanceType::String,
+                InstanceType::Array,
+            ]
+            .into(),
+        );
+
+        let mut valid_raw_values = SchemaObject::default();
+        valid_raw_values.enum_values = Some(vec![
+            Value::String("auto".into()),
+            Value::String("prettier".into()),
+            Value::String("language_server".into()),
+        ]);
+        let mut nested_values = SchemaObject::default();
+
+        nested_values.array().items = Some(formatter_schema.clone().into());
+
+        schema.subschemas().any_of = Some(vec![
+            nested_values.into(),
+            valid_raw_values.into(),
+            formatter_schema,
+        ]);
+        schema.into()
+    }
+}
+
+impl Serialize for SelectedFormatter {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            SelectedFormatter::Auto => serializer.serialize_str("auto"),
+            SelectedFormatter::List(list) => list.serialize(serializer),
+        }
+    }
+}
+impl<'de> Deserialize<'de> for SelectedFormatter {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FormatDeserializer;
+
+        impl<'d> Visitor<'d> for FormatDeserializer {
+            type Value = SelectedFormatter;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a valid formatter kind")
+            }
+            fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v == "auto" {
+                    Ok(Self::Value::Auto)
+                } else if v == "language_server" {
+                    Ok(Self::Value::List(FormatterList(
+                        Formatter::LanguageServer { name: None }.into(),
+                    )))
+                } else {
+                    let ret: Result<FormatterList, _> =
+                        Deserialize::deserialize(v.into_deserializer());
+                    ret.map(SelectedFormatter::List)
+                }
+            }
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'d>,
+            {
+                let ret: Result<FormatterList, _> =
+                    Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
+                ret.map(SelectedFormatter::List)
+            }
+            fn visit_seq<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'d>,
+            {
+                let ret: Result<FormatterList, _> =
+                    Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
+                ret.map(SelectedFormatter::List)
+            }
+        }
+        deserializer.deserialize_any(FormatDeserializer)
+    }
+}
+/// Controls which formatter should be used when formatting code.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case", transparent)]
+pub struct FormatterList(pub SingleOrVec<Formatter>);
+
+impl AsRef<[Formatter]> for FormatterList {
+    fn as_ref(&self) -> &[Formatter] {
+        match &self.0 {
+            SingleOrVec::Single(single) => slice::from_ref(single),
+            SingleOrVec::Vec(v) => &v,
+        }
+    }
+}
+
+/// Controls which formatter should be used when formatting code. If there are multiple formatters, they are executed in the order of declaration.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Formatter {
     /// Format code using the current language server.
-    LanguageServer,
+    LanguageServer { name: Option<String> },
     /// Format code using Zed's Prettier integration.
     Prettier,
     /// Format code using an external command.
@@ -797,16 +1009,10 @@ impl settings::Settings for AllLanguageSettings {
             .definitions
             .extend([("Languages".into(), languages_object_schema.into())]);
 
-        root_schema
-            .schema
-            .object
-            .as_mut()
-            .unwrap()
-            .properties
-            .extend([(
-                "languages".to_owned(),
-                Schema::new_ref("#/definitions/Languages".into()),
-            )]);
+        add_references_to_properties(
+            &mut root_schema,
+            &[("languages", "#/definitions/Languages")],
+        );
 
         root_schema
     }
@@ -897,6 +1103,41 @@ pub struct PrettierSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_formatter_deserialization() {
+        let raw_auto = "{\"formatter\": \"auto\"}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw_auto).unwrap();
+        assert_eq!(settings.formatter, Some(SelectedFormatter::Auto));
+        let raw = "{\"formatter\": \"language_server\"}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(SelectedFormatter::List(FormatterList(
+                Formatter::LanguageServer { name: None }.into()
+            )))
+        );
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}]}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(SelectedFormatter::List(FormatterList(
+                vec![Formatter::LanguageServer { name: None }].into()
+            )))
+        );
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"prettier\"]}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(SelectedFormatter::List(FormatterList(
+                vec![
+                    Formatter::LanguageServer { name: None },
+                    Formatter::Prettier
+                ]
+                .into()
+            )))
+        );
+    }
 
     #[test]
     pub fn test_resolve_language_servers() {

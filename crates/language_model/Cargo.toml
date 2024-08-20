@@ -1,0 +1,66 @@
+[package]
+name = "language_model"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/language_model.rs"
+doctest = false
+
+[features]
+test-support = [
+    "editor/test-support",
+    "language/test-support",
+    "project/test-support",
+    "text/test-support",
+]
+
+[dependencies]
+anthropic = { workspace = true, features = ["schemars"] }
+anyhow.workspace = true
+client.workspace = true
+collections.workspace = true
+copilot = { workspace = true, features = ["schemars"] }
+editor.workspace = true
+feature_flags.workspace = true
+futures.workspace = true
+google_ai = { workspace = true, features = ["schemars"] }
+gpui.workspace = true
+http_client.workspace = true
+inline_completion_button.workspace = true
+log.workspace = true
+menu.workspace = true
+ollama = { workspace = true, features = ["schemars"] }
+open_ai = { workspace = true, features = ["schemars"] }
+parking_lot.workspace = true
+proto = { workspace = true, features = ["test-support"] }
+project.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+smol.workspace = true
+strum.workspace = true
+theme.workspace = true
+tiktoken-rs.workspace = true
+ui.workspace = true
+util.workspace = true
+base64.workspace = true
+image.workspace = true
+
+
+[dev-dependencies]
+ctor.workspace = true
+editor = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
+language = { workspace = true, features = ["test-support"] }
+log.workspace = true
+project = { workspace = true, features = ["test-support"] }
+rand.workspace = true
+text = { workspace = true, features = ["test-support"] }
+unindent.workspace = true

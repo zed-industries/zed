@@ -1,52 +1,114 @@
-use crate::prelude::*;
+use gpui::{AnchorCorner, ClickEvent, CursorStyle, MouseButton, View};
 
-/// !!don't use this yet – it's not functional!!
-///
-/// pub crate until this is functional
-///
-/// just a placeholder for now for filling out the settings menu stories.
-#[derive(Debug, Clone, IntoElement)]
-pub(crate) struct DropdownMenu {
-    pub id: ElementId,
-    current_item: Option<SharedString>,
-    // items: Vec<SharedString>,
+use crate::{prelude::*, ContextMenu, PopoverMenu};
+
+#[derive(IntoElement)]
+pub struct DropdownMenu {
+    id: ElementId,
+    label: SharedString,
+    menu: View<ContextMenu>,
     full_width: bool,
     disabled: bool,
 }
 
 impl DropdownMenu {
-    pub fn new(id: impl Into<ElementId>, _cx: &WindowContext) -> Self {
+    pub fn new(
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+        menu: View<ContextMenu>,
+    ) -> Self {
         Self {
             id: id.into(),
-            current_item: None,
-            // items: Vec::new(),
+            label: label.into(),
+            menu,
             full_width: false,
             disabled: false,
         }
-    }
-
-    pub fn current_item(mut self, current_item: Option<SharedString>) -> Self {
-        self.current_item = current_item;
-        self
     }
 
     pub fn full_width(mut self, full_width: bool) -> Self {
         self.full_width = full_width;
         self
     }
+}
 
-    pub fn disabled(mut self, disabled: bool) -> Self {
+impl Disableable for DropdownMenu {
+    fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 }
 
 impl RenderOnce for DropdownMenu {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        PopoverMenu::new(self.id)
+            .full_width(self.full_width)
+            .menu(move |_cx| Some(self.menu.clone()))
+            .trigger(DropdownMenuTrigger::new(self.label).full_width(self.full_width))
+            .attach(AnchorCorner::BottomLeft)
+    }
+}
+
+#[derive(IntoElement)]
+struct DropdownMenuTrigger {
+    label: SharedString,
+    full_width: bool,
+    selected: bool,
+    disabled: bool,
+    cursor_style: CursorStyle,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+}
+
+impl DropdownMenuTrigger {
+    pub fn new(label: impl Into<SharedString>) -> Self {
+        Self {
+            label: label.into(),
+            full_width: false,
+            selected: false,
+            disabled: false,
+            cursor_style: CursorStyle::default(),
+            on_click: None,
+        }
+    }
+
+    pub fn full_width(mut self, full_width: bool) -> Self {
+        self.full_width = full_width;
+        self
+    }
+}
+
+impl Disableable for DropdownMenuTrigger {
+    fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+}
+
+impl Selectable for DropdownMenuTrigger {
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+}
+
+impl Clickable for DropdownMenuTrigger {
+    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+        self.on_click = Some(Box::new(handler));
+        self
+    }
+
+    fn cursor_style(mut self, cursor_style: CursorStyle) -> Self {
+        self.cursor_style = cursor_style;
+        self
+    }
+}
+
+impl RenderOnce for DropdownMenuTrigger {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let disabled = self.disabled;
 
         h_flex()
-            .id(self.id)
+            .id("dropdown-menu-trigger")
             .justify_between()
             .rounded_md()
             .bg(cx.theme().colors().editor_background)
@@ -55,23 +117,25 @@ impl RenderOnce for DropdownMenu {
             .py_0p5()
             .gap_2()
             .min_w_20()
-            .when_else(
-                self.full_width,
-                |full_width| full_width.w_full(),
-                |auto_width| auto_width.flex_none().w_auto(),
-            )
-            .when_else(
-                disabled,
-                |disabled| disabled.cursor_not_allowed(),
-                |enabled| enabled.cursor_pointer(),
-            )
-            .child(
-                Label::new(self.current_item.unwrap_or("".into())).color(if disabled {
-                    Color::Disabled
+            .map(|el| {
+                if self.full_width {
+                    el.w_full()
                 } else {
-                    Color::Default
-                }),
-            )
+                    el.flex_none().w_auto()
+                }
+            })
+            .map(|el| {
+                if disabled {
+                    el.cursor_not_allowed()
+                } else {
+                    el.cursor_pointer()
+                }
+            })
+            .child(Label::new(self.label).color(if disabled {
+                Color::Disabled
+            } else {
+                Color::Default
+            }))
             .child(
                 Icon::new(IconName::ChevronUpDown)
                     .size(IconSize::XSmall)
@@ -81,5 +145,12 @@ impl RenderOnce for DropdownMenu {
                         Color::Muted
                     }),
             )
+            .when_some(self.on_click.filter(|_| !disabled), |el, on_click| {
+                el.on_mouse_down(MouseButton::Left, |_, cx| cx.prevent_default())
+                    .on_click(move |event, cx| {
+                        cx.stop_propagation();
+                        (on_click)(event, cx)
+                    })
+            })
     }
 }

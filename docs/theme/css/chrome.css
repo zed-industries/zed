@@ -14,15 +14,15 @@ a > .hljs {
 }
 
 /*
-    body-container is necessary because mobile browsers don't seem to like
-    overflow-x on the body tag when there is a <meta name="viewport"> tag.
+  body-container is necessary because mobile browsers don't seem to like
+  overflow-x on the body tag when there is a <meta name="viewport"> tag.
 */
 #body-container {
   /*
-        This is used when the sidebar pushes the body content off the side of
-        the screen on small screens. Without it, dragging on mobile Safari
-        will want to reposition the viewport in a weird way.
-    */
+      This is used when the sidebar pushes the body content off the side of
+      the screen on small screens. Without it, dragging on mobile Safari
+      will want to reposition the viewport in a weird way.
+  */
   overflow-x: clip;
 }
 
@@ -488,15 +488,22 @@ ul#searchresults span.teaser em {
 }
 .js .sidebar .sidebar-resize-handle {
   cursor: col-resize;
-  width: calc(var(--sidebar-resize-indicator-width) - var(--sidebar-resize-indicator-space));
+  width: calc(
+    var(--sidebar-resize-indicator-width) -
+      var(--sidebar-resize-indicator-space)
+  );
 }
 /* sidebar-hidden */
 #sidebar-toggle-anchor:not(:checked) ~ .sidebar {
-  transform: translateX(calc(0px - var(--sidebar-width) - var(--sidebar-resize-indicator-width)));
+  transform: translateX(
+    calc(0px - var(--sidebar-width) - var(--sidebar-resize-indicator-width))
+  );
   z-index: -1;
 }
 [dir="rtl"] #sidebar-toggle-anchor:not(:checked) ~ .sidebar {
-  transform: translateX(calc(var(--sidebar-width) + var(--sidebar-resize-indicator-width)));
+  transform: translateX(
+    calc(var(--sidebar-width) + var(--sidebar-resize-indicator-width))
+  );
 }
 .sidebar::-webkit-scrollbar {
   background: var(--sidebar-bg);
@@ -507,10 +514,14 @@ ul#searchresults span.teaser em {
 
 /* sidebar-visible */
 #sidebar-toggle-anchor:checked ~ .page-wrapper {
-  transform: translateX(calc(var(--sidebar-width) + var(--sidebar-resize-indicator-width)));
+  transform: translateX(
+    calc(var(--sidebar-width) + var(--sidebar-resize-indicator-width))
+  );
 }
 [dir="rtl"] #sidebar-toggle-anchor:checked ~ .page-wrapper {
-  transform: translateX(calc(0px - var(--sidebar-width) - var(--sidebar-resize-indicator-width)));
+  transform: translateX(
+    calc(0px - var(--sidebar-width) - var(--sidebar-resize-indicator-width))
+  );
 }
 @media only screen and (min-width: 620px) {
   #sidebar-toggle-anchor:checked ~ .page-wrapper {
@@ -549,7 +560,7 @@ ul#searchresults span.teaser em {
 
 .chapter li a.active {
   color: var(--sidebar-active);
-  background-color: rgba(8, 76, 207, 0.1);
+  background-color: var(--sidebar-active-bg);
 }
 
 .chapter li > a.toggle {

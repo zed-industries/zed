@@ -1,7 +1,7 @@
 id = "php"
 name = "PHP"
 description = "PHP support."
-version = "0.0.6"
+version = "0.1.3"
 schema_version = 1
 authors = ["Piotr Osiewicz <piotr@zed.dev>"]
 repository = "https://github.com/zed-industries/zed"
@@ -10,6 +10,10 @@ repository = "https://github.com/zed-industries/zed"
 name = "Intelephense"
 language = "PHP"
 language_ids = { PHP = "php"}
+
+[language_servers.phpactor]
+name = "Phpactor"
+language = "PHP"
 
 [grammars.php]
 repository = "https://github.com/tree-sitter/tree-sitter-php"

@@ -1,0 +1,28 @@
+[package]
+name = "http_client"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[features]
+test-support = []
+
+[lib]
+path = "src/http_client.rs"
+doctest = true
+
+[dependencies]
+http = "1.0.0"
+anyhow.workspace = true
+derive_more.workspace = true
+futures.workspace = true
+isahc.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+futures-lite.workspace = true
+url.workspace = true

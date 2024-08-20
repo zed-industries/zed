@@ -113,6 +113,7 @@ pub fn expand_macro_recursively(
                     cx.new_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), true, cx)),
                 ),
                 None,
+                true,
                 cx,
             );
         })
