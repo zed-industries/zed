@@ -2041,6 +2041,7 @@ impl OutlinePanel {
         self.excerpts.clear();
         self.cached_entries_with_depth = Vec::new();
         self.search_matches.clear();
+        self.pinned = false;
     }
 
     fn location_for_editor_selection(
