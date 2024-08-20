@@ -103,5 +103,6 @@ Usage: `/workflow`
 
 ## Extensibility
 
-A Zed extension can expose custom slash commands in its API; this means that you too can have your own slash commands.
-Click [here](../extensions/slash-commands.md) to find out how to define them.
+Additional slash commands can be provided by extensions.
+
+See [Extension: Slash Commands](../extensions/slash-commands.md) to learn how to create your own.
