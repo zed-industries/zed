@@ -70,9 +70,7 @@ Default prompts will show at the top of the prompt list, and will be included wi
 
 You can manually add the default prompt using the `/default` command.
 
-***Advanced Note:***
-
-- Remember, commands are only evaluated when the context is created, so a command like `/now` won't continuously update, or `/file` commands won't keep their contents up to date.
+> **Note:** Remember, commands are only evaluated when the context is created, so a command like `/now` won't continuously update, or `/file` commands won't keep their contents up to date.
 
 ## Commands in Prompts
 
