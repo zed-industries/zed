@@ -2023,21 +2023,23 @@ impl Pane {
                             if let Some((project_entry_id, build_item)) =
                                 load_path_task.await.notify_async_err(&mut cx)
                             {
-                                _ = workspace.update(&mut cx, |workspace, cx| {
-                                    if let Some(split_direction) = split_direction {
-                                        to_pane =
-                                            workspace.split_pane(to_pane, split_direction, cx);
-                                    }
-                                    to_pane.update(cx, |pane, cx| {
-                                        pane.open_item(
-                                            project_entry_id,
-                                            true,
-                                            false,
-                                            cx,
-                                            build_item,
-                                        )
+                                workspace
+                                    .update(&mut cx, |workspace, cx| {
+                                        if let Some(split_direction) = split_direction {
+                                            to_pane =
+                                                workspace.split_pane(to_pane, split_direction, cx);
+                                        }
+                                        to_pane.update(cx, |pane, cx| {
+                                            pane.open_item(
+                                                project_entry_id,
+                                                true,
+                                                false,
+                                                cx,
+                                                build_item,
+                                            )
+                                        })
                                     })
-                                });
+                                    .log_err();
                             }
                         })
                         .detach();
