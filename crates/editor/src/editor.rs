@@ -125,7 +125,6 @@ use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
-use std::any::Any;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -462,6 +461,12 @@ struct MultiBufferOffset(usize);
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 struct BufferOffset(usize);
 
+pub trait Addon: 'static {
+    fn extend_key_context(&self, _: &mut KeyContext, _: &Editor, _: &ViewContext<Editor>) {}
+
+    fn to_any(&self) -> &dyn std::any::Any;
+}
+
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
 /// See the [module level documentation](self) for more information.
@@ -533,7 +538,6 @@ pub struct Editor {
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
     workspace: Option<(WeakView<Workspace>, Option<WorkspaceId>)>,
-    keymap_context_layers: BTreeMap<TypeId, KeyContext>,
     input_enabled: bool,
     use_modal_editing: bool,
     read_only: bool,
@@ -580,7 +584,7 @@ pub struct Editor {
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
-    addons: HashMap<TypeId, Box<dyn Any>>,
+    addons: HashMap<TypeId, Box<dyn Addon>>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
 }
 
@@ -1875,7 +1879,6 @@ impl Editor {
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
             workspace: None,
-            keymap_context_layers: Default::default(),
             input_enabled: true,
             use_modal_editing: mode == EditorMode::Full,
             read_only: false,
@@ -1961,13 +1964,13 @@ impl Editor {
         this
     }
 
-    pub fn mouse_menu_is_focused(&self, cx: &mut WindowContext) -> bool {
+    pub fn mouse_menu_is_focused(&self, cx: &WindowContext) -> bool {
         self.mouse_context_menu
             .as_ref()
             .is_some_and(|menu| menu.context_menu.focus_handle(cx).is_focused(cx))
     }
 
-    fn key_context(&self, cx: &AppContext) -> KeyContext {
+    fn key_context(&self, cx: &ViewContext<Self>) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
         let mode = match self.mode {
@@ -1998,8 +2001,8 @@ impl Editor {
             }
         }
 
-        for layer in self.keymap_context_layers.values() {
-            key_context.extend(layer);
+        for addon in self.addons.values() {
+            addon.extend_key_context(&mut key_context, self, cx)
         }
 
         if let Some(extension) = self
@@ -2239,21 +2242,6 @@ impl Editor {
             self.display_map
                 .update(cx, |map, _| map.clip_at_line_ends = clip);
         }
-    }
-
-    pub fn set_keymap_context_layer<Tag: 'static>(
-        &mut self,
-        context: KeyContext,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.keymap_context_layers
-            .insert(TypeId::of::<Tag>(), context);
-        cx.notify();
-    }
-
-    pub fn remove_keymap_context_layer<Tag: 'static>(&mut self, cx: &mut ViewContext<Self>) {
-        self.keymap_context_layers.remove(&TypeId::of::<Tag>());
-        cx.notify();
     }
 
     pub fn set_input_enabled(&mut self, input_enabled: bool) {
@@ -11949,20 +11937,20 @@ impl Editor {
         })
     }
 
-    pub fn register_addon<T: 'static>(&mut self, instance: T) {
+    pub fn register_addon<T: Addon>(&mut self, instance: T) {
         self.addons
             .insert(std::any::TypeId::of::<T>(), Box::new(instance));
     }
 
-    pub fn unregister_addon<T: 'static>(&mut self) {
+    pub fn unregister_addon<T: Addon>(&mut self) {
         self.addons.remove(&std::any::TypeId::of::<T>());
     }
 
-    pub fn addon<T: 'static>(&self) -> Option<&T> {
+    pub fn addon<T: Addon>(&self) -> Option<&T> {
         let type_id = std::any::TypeId::of::<T>();
         self.addons
             .get(&type_id)
-            .and_then(|item| item.downcast_ref::<T>())
+            .and_then(|item| item.to_any().downcast_ref::<T>())
     }
 }
 

@@ -114,11 +114,12 @@ pub fn init(cx: &mut AppContext) {
         workspace.register_action(|workspace, _: &SearchSubmit, cx| {
             let Some(vim) = workspace
                 .active_item_as::<Editor>(cx)
-                .and_then(|editor| editor.read(cx).addon::<View<Vim>>().cloned())
+                .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned())
             else {
                 return;
             };
-            vim.update(cx, |_, cx| cx.defer(|vim, cx| vim.search_submit(cx)))
+            vim.view
+                .update(cx, |_, cx| cx.defer(|vim, cx| vim.search_submit(cx)))
         });
     })
     .detach();
@@ -132,6 +133,32 @@ pub(crate) fn listener<A: Action>(
 ) {
     let subscription = editor.register_action(cx.listener(f));
     cx.on_release(|_, _, _| drop(subscription)).detach();
+}
+
+#[derive(Clone)]
+pub(crate) struct VimAddon {
+    pub(crate) view: View<Vim>,
+}
+
+impl editor::Addon for VimAddon {
+    fn extend_key_context(
+        &self,
+        key_context: &mut KeyContext,
+        editor: &Editor,
+        cx: &ViewContext<Editor>,
+    ) {
+        // Disable the vim bindings when the rename/inline assist editors are focused.
+        if editor.focus_handle(cx).contains_focused(cx)
+            && !(editor.is_focused(cx) || editor.mouse_menu_is_focused(cx))
+        {
+            return;
+        }
+        self.view.read(cx).keymap_context_layer(key_context)
+    }
+
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// The state pertaining to Vim mode.
@@ -238,7 +265,7 @@ impl Vim {
     fn activate(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         let vim = Vim::new(cx);
 
-        editor.register_addon(vim.clone());
+        editor.register_addon(VimAddon { view: vim.clone() });
 
         vim.update(cx, |_, cx| {
             crate::listener(editor, cx, |vim, action: &SwitchMode, cx| {
@@ -284,8 +311,7 @@ impl Vim {
         editor.set_input_enabled(true);
         editor.set_autoindent(true);
         editor.selections.line_mode = false;
-        editor.remove_keymap_context_layer::<Vim>(cx);
-        editor.unregister_addon::<View<Vim>>();
+        editor.unregister_addon::<VimAddon>();
     }
 
     pub fn editor(&self) -> Option<View<Editor>> {
@@ -532,9 +558,7 @@ impl Vim {
         }
     }
 
-    pub fn keymap_context_layer(&self) -> KeyContext {
-        let mut context = KeyContext::new_with_defaults();
-
+    pub fn keymap_context_layer(&self, context: &mut KeyContext) {
         let mut mode = match self.mode {
             Mode::Normal => "normal",
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
@@ -566,8 +590,6 @@ impl Vim {
         }
         context.set("vim_mode", mode);
         context.set("vim_operator", operator_id);
-
-        context
     }
 
     fn focused(&mut self, cx: &mut ViewContext<Self>) {
@@ -980,12 +1002,6 @@ impl Vim {
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
-            if editor.is_focused(cx) || editor.mouse_menu_is_focused(cx) {
-                editor.set_keymap_context_layer::<Self>(vim.keymap_context_layer(), cx);
-                // disable vim mode if a sub-editor (inline assist, rename, etc.) is focused
-            } else if editor.focus_handle(cx).contains_focused(cx) {
-                editor.remove_keymap_context_layer::<Self>(cx);
-            }
         });
         cx.notify()
     }

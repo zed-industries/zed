@@ -119,14 +119,15 @@ impl VimTestContext {
     }
 
     pub fn mode(&mut self) -> Mode {
-        self.update_editor(|editor, cx| editor.addon::<View<Vim>>().unwrap().read(cx).mode)
+        self.update_editor(|editor, cx| editor.addon::<VimAddon>().unwrap().view.read(cx).mode)
     }
 
     pub fn active_operator(&mut self) -> Option<Operator> {
         self.update_editor(|editor, cx| {
             editor
-                .addon::<View<Vim>>()
+                .addon::<VimAddon>()
                 .unwrap()
+                .view
                 .read(cx)
                 .operator_stack
                 .last()
@@ -136,10 +137,10 @@ impl VimTestContext {
 
     pub fn set_state(&mut self, text: &str, mode: Mode) {
         self.cx.set_state(text);
-        let vim = self.update_editor(|editor, _cx| editor.addon::<View<Vim>>().cloned().unwrap());
+        let vim = self.update_editor(|editor, _cx| editor.addon::<VimAddon>().cloned().unwrap());
 
         self.update(|cx| {
-            vim.update(cx, |vim, cx| {
+            vim.view.update(cx, |vim, cx| {
                 vim.switch_mode(mode, true, cx);
             });
         });

@@ -3,7 +3,7 @@ use gpui::{div, Element, Render, Subscription, View, ViewContext, WeakView};
 use itertools::Itertools;
 use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
-use crate::Vim;
+use crate::{Vim, VimAddon};
 
 /// The ModeIndicator displays the current mode in the status bar.
 pub struct ModeIndicator {
@@ -97,8 +97,8 @@ impl StatusItemView for ModeIndicator {
     ) {
         let Some(vim) = active_pane_item
             .and_then(|item| item.downcast::<Editor>())
-            .and_then(|editor| editor.read(cx).addon::<View<Vim>>())
-            .cloned()
+            .and_then(|editor| editor.read(cx).addon::<VimAddon>())
+            .map(|addon| addon.view.clone())
         else {
             self.vim.take();
             self.vim_subscription.take();
