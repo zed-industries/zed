@@ -284,15 +284,15 @@ pub struct ThemeSettingsContent {
     #[serde(rename = "unstable.ui_density", default)]
     pub ui_density: Option<UiDensity>,
 
+    /// How much to fade out unused code.
+    #[serde(default)]
+    pub unnecessary_code_fade: Option<f32>,
+
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
     /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
     pub theme_overrides: Option<ThemeStyleContent>,
-
-    // How much to fade out unused code.
-    #[serde(rename = "unnecessary_code_fade", default)]
-    pub unnecessary_code_fade: Option<f32>,
 }
 
 fn default_font_features() -> Option<FontFeatures> {
