@@ -137,7 +137,7 @@ Zed has the following internal prompt templates:
 - `edit_workflow.hbs`: Used for generating the edit workflow prompt.
 - `step_resolution.hbs`: Used for generating the step resolution prompt.
 
-At this point it is unknown if we will expand templates further to be user-createable.
+At this point it is unknown if we will expand templates further to be user-creatable.
 
 ### Overriding Templates
 

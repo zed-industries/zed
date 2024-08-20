@@ -113,4 +113,4 @@ Usage: `/workflow`
 
 The Zed team plans for assistant commands to be extensible, but this isn't quite ready yet. Stay tuned!
 
-Zed is open source, and all the slash commands are defined in the [assistant crate](https://github.com/zed-industries/zed/tree/main/crates/assistant/src/slash_command). If you are interested in creating your own slash commands a good place to start is by learnign from the existing commands.
+Zed is open source, and all the slash commands are defined in the [assistant crate](https://github.com/zed-industries/zed/tree/main/crates/assistant/src/slash_command). If you are interested in creating your own slash commands a good place to start is by learning from the existing commands.
