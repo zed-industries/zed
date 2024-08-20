@@ -1142,6 +1142,8 @@ impl CompletionsMenu {
                             &None
                         };
 
+                        let mut icon_color = None;
+
                         let highlights = gpui::combine_highlights(
                             mat.ranges().map(|range| (range, FontWeight::BOLD.into())),
                             styled_runs_for_code_label(&completion.label, &style.syntax).map(
@@ -1149,6 +1151,7 @@ impl CompletionsMenu {
                                     // Ignore font weight for syntax highlighting, as we'll use it
                                     // for fuzzy matches.
                                     highlight.font_weight = None;
+                                    icon_color = highlight.color.clone();
 
                                     if completion.lsp_completion.deprecated.unwrap_or(false) {
                                         highlight.strikethrough = Some(StrikethroughStyle {
@@ -1201,7 +1204,10 @@ impl CompletionsMenu {
                                         task.detach_and_log_err(cx)
                                     }
                                 }))
-                                .start_slot(Icon::new(icon))
+                                .start_slot(
+                                    Icon::new(icon)
+                                        .color(ui::Color::Custom(icon_color.unwrap_or_default())),
+                                )
                                 .child(h_flex().overflow_hidden().child(completion_label))
                                 .end_slot::<Label>(documentation_label),
                         )
