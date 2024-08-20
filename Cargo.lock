@@ -9058,9 +9058,9 @@ dependencies = [
 
 [[package]]
 name = "runtimelib"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c3d817764e3971867351e6103955b17d808f5330e9ef63aaaaab55bf8c664c1"
+checksum = "a7d76d28b882a7b889ebb04e79bc2b160b3061821ea596ff0f4a838fc7a76db0"
 dependencies = [
  "anyhow",
  "async-dispatcher",
@@ -13839,7 +13839,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.150.0"
+version = "0.151.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -13988,7 +13988,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]

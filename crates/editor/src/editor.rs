@@ -266,6 +266,22 @@ pub enum Direction {
     Next,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Navigated {
+    Yes,
+    No,
+}
+
+impl Navigated {
+    pub fn from_bool(yes: bool) -> Navigated {
+        if yes {
+            Navigated::Yes
+        } else {
+            Navigated::No
+        }
+    }
+}
+
 pub fn init_settings(cx: &mut AppContext) {
     EditorSettings::register(cx);
 }
@@ -1561,6 +1577,7 @@ pub(crate) struct NavigationData {
     scroll_top_row: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GotoDefinitionKind {
     Symbol,
     Declaration,
@@ -4843,7 +4860,7 @@ impl Editor {
 
                             let range = Anchor {
                                 buffer_id,
-                                excerpt_id: excerpt_id,
+                                excerpt_id,
                                 text_anchor: start,
                             }..Anchor {
                                 buffer_id,
@@ -9020,15 +9037,28 @@ impl Editor {
         &mut self,
         _: &GoToDefinition,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<bool>> {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx)
+    ) -> Task<Result<Navigated>> {
+        let definition = self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
+        let references = self.find_all_references(&FindAllReferences, cx);
+        cx.background_executor().spawn(async move {
+            if definition.await? == Navigated::Yes {
+                return Ok(Navigated::Yes);
+            }
+            if let Some(references) = references {
+                if references.await? == Navigated::Yes {
+                    return Ok(Navigated::Yes);
+                }
+            }
+
+            Ok(Navigated::No)
+        })
     }
 
     pub fn go_to_declaration(
         &mut self,
         _: &GoToDeclaration,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Navigated>> {
         self.go_to_definition_of_kind(GotoDefinitionKind::Declaration, false, cx)
     }
 
@@ -9036,7 +9066,7 @@ impl Editor {
         &mut self,
         _: &GoToDeclaration,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Navigated>> {
         self.go_to_definition_of_kind(GotoDefinitionKind::Declaration, true, cx)
     }
 
@@ -9044,7 +9074,7 @@ impl Editor {
         &mut self,
         _: &GoToImplementation,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Navigated>> {
         self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, false, cx)
     }
 
@@ -9052,7 +9082,7 @@ impl Editor {
         &mut self,
         _: &GoToImplementationSplit,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Navigated>> {
         self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, true, cx)
     }
 
@@ -9060,7 +9090,7 @@ impl Editor {
         &mut self,
         _: &GoToTypeDefinition,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Navigated>> {
         self.go_to_definition_of_kind(GotoDefinitionKind::Type, false, cx)
     }
 
@@ -9068,7 +9098,7 @@ impl Editor {
         &mut self,
         _: &GoToDefinitionSplit,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Navigated>> {
         self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, true, cx)
     }
 
@@ -9076,7 +9106,7 @@ impl Editor {
         &mut self,
         _: &GoToTypeDefinitionSplit,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Navigated>> {
         self.go_to_definition_of_kind(GotoDefinitionKind::Type, true, cx)
     }
 
@@ -9085,16 +9115,16 @@ impl Editor {
         kind: GotoDefinitionKind,
         split: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Navigated>> {
         let Some(workspace) = self.workspace() else {
-            return Task::ready(Ok(false));
+            return Task::ready(Ok(Navigated::No));
         };
         let buffer = self.buffer.read(cx);
         let head = self.selections.newest::<usize>(cx).head();
         let (buffer, head) = if let Some(text_anchor) = buffer.text_anchor_for_position(head, cx) {
             text_anchor
         } else {
-            return Task::ready(Ok(false));
+            return Task::ready(Ok(Navigated::No));
         };
 
         let project = workspace.read(cx).project().clone();
@@ -9153,7 +9183,7 @@ impl Editor {
         mut definitions: Vec<HoverLink>,
         split: bool,
         cx: &mut ViewContext<Editor>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Navigated>> {
         // If there is one definition, just open it directly
         if definitions.len() == 1 {
             let definition = definitions.pop().unwrap();
@@ -9169,77 +9199,61 @@ impl Editor {
             };
             cx.spawn(|editor, mut cx| async move {
                 let target = target_task.await.context("target resolution task")?;
-                if let Some(target) = target {
-                    editor.update(&mut cx, |editor, cx| {
-                        let Some(workspace) = editor.workspace() else {
-                            return false;
-                        };
-                        let pane = workspace.read(cx).active_pane().clone();
+                let Some(target) = target else {
+                    return Ok(Navigated::No);
+                };
+                editor.update(&mut cx, |editor, cx| {
+                    let Some(workspace) = editor.workspace() else {
+                        return Navigated::No;
+                    };
+                    let pane = workspace.read(cx).active_pane().clone();
 
-                        let range = target.range.to_offset(target.buffer.read(cx));
-                        let range = editor.range_for_match(&range);
+                    let range = target.range.to_offset(target.buffer.read(cx));
+                    let range = editor.range_for_match(&range);
 
-                        /// If select range has more than one line, we
-                        /// just point the cursor to range.start.
-                        fn check_multiline_range(
-                            buffer: &Buffer,
-                            range: Range<usize>,
-                        ) -> Range<usize> {
-                            if buffer.offset_to_point(range.start).row
-                                == buffer.offset_to_point(range.end).row
-                            {
-                                range
-                            } else {
-                                range.start..range.start
-                            }
-                        }
+                    if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
+                        let buffer = target.buffer.read(cx);
+                        let range = check_multiline_range(buffer, range);
+                        editor.change_selections(Some(Autoscroll::focused()), cx, |s| {
+                            s.select_ranges([range]);
+                        });
+                    } else {
+                        cx.window_context().defer(move |cx| {
+                            let target_editor: View<Self> =
+                                workspace.update(cx, |workspace, cx| {
+                                    let pane = if split {
+                                        workspace.adjacent_pane(cx)
+                                    } else {
+                                        workspace.active_pane().clone()
+                                    };
 
-                        if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
-                            let buffer = target.buffer.read(cx);
-                            let range = check_multiline_range(buffer, range);
-                            editor.change_selections(Some(Autoscroll::focused()), cx, |s| {
-                                s.select_ranges([range]);
-                            });
-                        } else {
-                            cx.window_context().defer(move |cx| {
-                                let target_editor: View<Self> =
-                                    workspace.update(cx, |workspace, cx| {
-                                        let pane = if split {
-                                            workspace.adjacent_pane(cx)
-                                        } else {
-                                            workspace.active_pane().clone()
-                                        };
-
-                                        workspace.open_project_item(
-                                            pane,
-                                            target.buffer.clone(),
-                                            true,
-                                            true,
-                                            cx,
-                                        )
-                                    });
-                                target_editor.update(cx, |target_editor, cx| {
-                                    // When selecting a definition in a different buffer, disable the nav history
-                                    // to avoid creating a history entry at the previous cursor location.
-                                    pane.update(cx, |pane, _| pane.disable_history());
-                                    let buffer = target.buffer.read(cx);
-                                    let range = check_multiline_range(buffer, range);
-                                    target_editor.change_selections(
-                                        Some(Autoscroll::focused()),
+                                    workspace.open_project_item(
+                                        pane,
+                                        target.buffer.clone(),
+                                        true,
+                                        true,
                                         cx,
-                                        |s| {
-                                            s.select_ranges([range]);
-                                        },
-                                    );
-                                    pane.update(cx, |pane, _| pane.enable_history());
+                                    )
                                 });
+                            target_editor.update(cx, |target_editor, cx| {
+                                // When selecting a definition in a different buffer, disable the nav history
+                                // to avoid creating a history entry at the previous cursor location.
+                                pane.update(cx, |pane, _| pane.disable_history());
+                                let buffer = target.buffer.read(cx);
+                                let range = check_multiline_range(buffer, range);
+                                target_editor.change_selections(
+                                    Some(Autoscroll::focused()),
+                                    cx,
+                                    |s| {
+                                        s.select_ranges([range]);
+                                    },
+                                );
+                                pane.update(cx, |pane, _| pane.enable_history());
                             });
-                        }
-                        true
-                    })
-                } else {
-                    Ok(false)
-                }
+                        });
+                    }
+                    Navigated::Yes
+                })
             })
         } else if !definitions.is_empty() {
             let replica_id = self.replica_id(cx);
@@ -9289,7 +9303,7 @@ impl Editor {
                     .context("location tasks")?;
 
                 let Some(workspace) = workspace else {
-                    return Ok(false);
+                    return Ok(Navigated::No);
                 };
                 let opened = workspace
                     .update(&mut cx, |workspace, cx| {
@@ -9299,10 +9313,10 @@ impl Editor {
                     })
                     .ok();
 
-                anyhow::Ok(opened.is_some())
+                anyhow::Ok(Navigated::from_bool(opened.is_some()))
             })
         } else {
-            Task::ready(Ok(false))
+            Task::ready(Ok(Navigated::No))
         }
     }
 
@@ -9361,7 +9375,7 @@ impl Editor {
         &mut self,
         _: &FindAllReferences,
         cx: &mut ViewContext<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Navigated>>> {
         let multi_buffer = self.buffer.read(cx);
         let selection = self.selections.newest::<usize>(cx);
         let head = selection.head();
@@ -9416,7 +9430,7 @@ impl Editor {
 
             let locations = references.await?;
             if locations.is_empty() {
-                return anyhow::Ok(());
+                return anyhow::Ok(Navigated::No);
             }
 
             workspace.update(&mut cx, |workspace, cx| {
@@ -9436,6 +9450,7 @@ impl Editor {
                 Self::open_locations_in_multibuffer(
                     workspace, locations, replica_id, title, false, cx,
                 );
+                Navigated::Yes
             })
         }))
     }
@@ -13275,5 +13290,15 @@ fn hunk_status(hunk: &DiffHunk<MultiBufferRow>) -> DiffHunkStatus {
         DiffHunkStatus::Removed
     } else {
         DiffHunkStatus::Modified
+    }
+}
+
+/// If select range has more than one line, we
+/// just point the cursor to range.start.
+fn check_multiline_range(buffer: &Buffer, range: Range<usize>) -> Range<usize> {
+    if buffer.offset_to_point(range.start).row == buffer.offset_to_point(range.end).row {
+        range
+    } else {
+        range.start..range.start
     }
 }

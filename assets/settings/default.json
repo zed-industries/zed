@@ -395,9 +395,9 @@
     // The default model to use when creating new contexts.
     "default_model": {
       // The provider to use.
-      "provider": "openai",
+      "provider": "zed.dev",
       // The model to use.
-      "model": "gpt-4o"
+      "model": "claude-3-5-sonnet"
     }
   },
   // The settings for slash commands.
