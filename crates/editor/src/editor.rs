@@ -1577,6 +1577,7 @@ pub(crate) struct NavigationData {
     scroll_top_row: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GotoDefinitionKind {
     Symbol,
     Declaration,
@@ -9039,7 +9040,7 @@ impl Editor {
     ) -> Task<Result<Navigated>> {
         let definition = self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
         let references = self.find_all_references(&FindAllReferences, cx);
-        cx.spawn(|editor, mut cx| async move {
+        cx.background_executor().spawn(async move {
             if definition.await? == Navigated::Yes {
                 return Ok(Navigated::Yes);
             }
@@ -9049,7 +9050,7 @@ impl Editor {
                 }
             }
 
-            Ok(Navigated::No);
+            Ok(Navigated::No)
         })
     }
 
