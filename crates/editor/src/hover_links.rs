@@ -2,7 +2,7 @@ use crate::{
     hover_popover::{self, InlayHover},
     scroll::ScrollAmount,
     Anchor, Editor, EditorSnapshot, FindAllReferences, GoToDefinition, GoToTypeDefinition, InlayId,
-    PointForPosition, SelectPhase,
+    Navigated, PointForPosition, SelectPhase,
 };
 use gpui::{px, AppContext, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
 use language::{Bias, ToOffset};
@@ -157,10 +157,10 @@ impl Editor {
     ) {
         let reveal_task = self.cmd_click_reveal_task(point, modifiers, cx);
         cx.spawn(|editor, mut cx| async move {
-            let definition_revealed = reveal_task.await.log_err().unwrap_or(false);
+            let definition_revealed = reveal_task.await.log_err().unwrap_or(Navigated::No);
             let find_references = editor
                 .update(&mut cx, |editor, cx| {
-                    if definition_revealed {
+                    if definition_revealed == Navigated::Yes {
                         return None;
                     }
                     editor.find_all_references(&FindAllReferences, cx)
@@ -194,7 +194,7 @@ impl Editor {
         point: PointForPosition,
         modifiers: Modifiers,
         cx: &mut ViewContext<Editor>,
-    ) -> Task<anyhow::Result<bool>> {
+    ) -> Task<anyhow::Result<Navigated>> {
         if let Some(hovered_link_state) = self.hovered_link_state.take() {
             self.hide_hovered_link(cx);
             if !hovered_link_state.links.is_empty() {
@@ -211,7 +211,7 @@ impl Editor {
                     .read(cx)
                     .text_anchor_for_position(current_position, cx)
                 else {
-                    return Task::ready(Ok(false));
+                    return Task::ready(Ok(Navigated::No));
                 };
                 let links = hovered_link_state
                     .links
@@ -247,7 +247,7 @@ impl Editor {
                 self.go_to_definition(&GoToDefinition, cx)
             }
         } else {
-            Task::ready(Ok(false))
+            Task::ready(Ok(Navigated::No))
         }
     }
 }

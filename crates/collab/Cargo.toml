@@ -37,6 +37,7 @@ futures.workspace = true
 google_ai.workspace = true
 hex.workspace = true
 http_client.workspace = true
+jsonwebtoken.workspace = true
 live_kit_server.workspace = true
 log.workspace = true
 nanoid.workspace = true
@@ -57,10 +58,12 @@ serde_derive.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
+strum.workspace = true
 subtle.workspace = true
 rustc-demangle.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
+thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 toml.workspace = true
@@ -88,6 +91,7 @@ fs = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
 git_hosting_providers.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+hyper.workspace = true
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }

@@ -17,8 +17,10 @@ Vim mode has several "core Zed" key bindings, that will help you make the most o
 ```
 # Language server
 g d     Go to definition
-g D     Go to type definition
-g cmd-d Go to implementation
+g D     Go to declaration
+g y     Go to type definition
+g I     Go to implementation
+
 c d     Rename (change definition)
 g A     Go to All references to the current word
 
@@ -114,7 +116,7 @@ For vim-specific shortcuts, you may find the following template a good place to 
 ]
 ```
 
-If you would like to emulate vim's `map` (`nmap` etc.) commands you can bind to the [`workspace::SendKeystrokes`](/docs/key-bindings#remapping-keys) action in the correct context.
+If you would like to emulate vim's `map` (`nmap` etc.) commands you can bind to the [`workspace::SendKeystrokes`](./key-bindings.md#remapping-keys) action in the correct context.
 
 You can see the bindings that are enabled by default in vim mode [here](https://github.com/zed-industries/zed/blob/main/assets/keymaps/vim.json).
 
@@ -133,7 +135,7 @@ Vim mode adds several contexts to the `Editor`:
 If you're using Vim mode on Linux or Windows, you may find that it has overridden keybindings
 that you can't live without. You can restore them to their defaults by copying these into your keymap:
 
-```
+```json
 {
   "context": "Editor && !menu",
   "bindings": {
@@ -288,15 +290,17 @@ If you want to navigate between the editor and docks (terminal, project panel, A
 Subword motion is not enabled by default. To enable it, add these bindings to your keymap.
 
 ```json
+[
   {
-    "context": "VimControl && !menu",
+    "context": "VimControl && !menu && vim_mode != operator",
     "bindings": {
       "w": "vim::NextSubwordStart",
       "b": "vim::PreviousSubwordStart",
       "e": "vim::NextSubwordEnd",
       "g e": "vim::PreviousSubwordEnd"
     }
-  },
+  }
+]
 ```
 
 Surrounding the selection in visual mode is also not enabled by default (`shift-s` normally behaves like `c`). To enable it, add the following to your keymap.

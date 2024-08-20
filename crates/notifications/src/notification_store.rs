@@ -69,9 +69,6 @@ pub struct NotificationSummary {
 struct Count(usize);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-struct UnreadCount(usize);
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct NotificationId(u64);
 
 impl NotificationStore {
@@ -488,12 +485,6 @@ impl<'a> sum_tree::Dimension<'a, NotificationSummary> for NotificationId {
 impl<'a> sum_tree::Dimension<'a, NotificationSummary> for Count {
     fn add_summary(&mut self, summary: &NotificationSummary, _: &()) {
         self.0 += summary.count;
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, NotificationSummary> for UnreadCount {
-    fn add_summary(&mut self, summary: &NotificationSummary, _: &()) {
-        self.0 += summary.unread_count;
     }
 }
 

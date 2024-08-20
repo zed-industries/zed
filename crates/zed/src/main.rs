@@ -7,6 +7,7 @@ mod reliability;
 mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
+use assistant::PromptBuilder;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, DevServerToken, UserStore};
@@ -18,7 +19,8 @@ use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
 use gpui::{
-    App, AppContext, AsyncAppContext, Context, Global, Task, UpdateGlobal as _, VisualContext,
+    Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, Task,
+    UpdateGlobal as _, VisualContext,
 };
 use image_viewer;
 use language::LanguageRegistry;
@@ -42,10 +44,13 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
-use util::{maybe, parse_env_output, with_clone, ResultExt, TryFutureExt};
+use util::{maybe, parse_env_output, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
-use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
+use workspace::{
+    notifications::{simple_message_notification::MessageNotification, NotificationId},
+    AppState, WorkspaceSettings, WorkspaceStore,
+};
 use zed::{
     app_menus, build_window_options, handle_cli_connection, handle_keymap_file_changes,
     initialize_workspace, open_paths_with_positions, OpenListener, OpenRequest,
@@ -161,7 +166,7 @@ fn init_headless(
 }
 
 // init_common is called for both headless and normal mode.
-fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
+fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) -> Arc<PromptBuilder> {
     SystemAppearance::init(cx);
     theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
     command_palette::init(cx);
@@ -174,10 +179,20 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
         cx,
     );
     supermaven::init(app_state.client.clone(), cx);
-    language_model::init(app_state.client.clone(), app_state.fs.clone(), cx);
+    language_model::init(
+        app_state.user_store.clone(),
+        app_state.client.clone(),
+        app_state.fs.clone(),
+        cx,
+    );
     snippet_provider::init(cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
-    assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
+    let prompt_builder = assistant::init(
+        app_state.fs.clone(),
+        app_state.client.clone(),
+        stdout_is_a_pty(),
+        cx,
+    );
     repl::init(
         app_state.fs.clone(),
         app_state.client.telemetry().clone(),
@@ -191,9 +206,14 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) {
         ThemeRegistry::global(cx),
         cx,
     );
+    prompt_builder
 }
 
-fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
+fn init_ui(
+    app_state: Arc<AppState>,
+    prompt_builder: Arc<PromptBuilder>,
+    cx: &mut AppContext,
+) -> Result<()> {
     match cx.try_global::<AppMode>() {
         Some(AppMode::Headless(_)) => {
             return Err(anyhow!(
@@ -246,6 +266,7 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     welcome::init(cx);
     settings_ui::init(cx);
     extensions_ui::init(cx);
+    performance::init(cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -284,7 +305,7 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
     watch_file_types(fs.clone(), cx);
 
     cx.set_menus(app_menus());
-    initialize_workspace(app_state.clone(), cx);
+    initialize_workspace(app_state.clone(), prompt_builder, cx);
 
     cx.activate(true);
 
@@ -295,6 +316,7 @@ fn init_ui(app_state: Arc<AppState>, cx: &mut AppContext) -> Result<()> {
 }
 
 fn main() {
+    let start_time = std::time::Instant::now();
     menu::init();
     zed_actions::init();
 
@@ -306,7 +328,9 @@ fn main() {
     init_logger();
 
     log::info!("========== starting zed ==========");
-    let app = App::new().with_assets(Assets);
+    let app = App::new()
+        .with_assets(Assets)
+        .measure_time_to_first_window_draw(start_time);
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()
@@ -381,7 +405,10 @@ fn main() {
         })
     };
 
-    app.on_open_urls(with_clone!(open_listener, move |urls| open_listener.open_urls(urls)));
+    app.on_open_urls({
+        let open_listener = open_listener.clone();
+        move |urls| open_listener.open_urls(urls)
+    });
     app.on_reopen(move |cx| {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {
@@ -411,8 +438,8 @@ fn main() {
         OpenListener::set_global(cx, open_listener.clone());
 
         settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, cx);
-        handle_keymap_file_changes(user_keymap_file_rx, cx);
+        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
+        handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
 
         client::init_settings(cx);
         let client = Client::production(cx);
@@ -459,7 +486,7 @@ fn main() {
 
         auto_update::init(client.http_client(), cx);
         reliability::init(client.http_client(), installation_id, cx);
-        init_common(app_state.clone(), cx);
+        let prompt_builder = init_common(app_state.clone(), cx);
 
         let args = Args::parse();
         let urls: Vec<_> = args
@@ -479,7 +506,7 @@ fn main() {
             .and_then(|urls| OpenRequest::parse(urls, cx).log_err())
         {
             Some(request) => {
-                handle_open_request(request, app_state.clone(), cx);
+                handle_open_request(request, app_state.clone(), prompt_builder.clone(), cx);
             }
             None => {
                 if let Some(dev_server_token) = args.dev_server_token {
@@ -495,7 +522,7 @@ fn main() {
                     })
                     .detach();
                 } else {
-                    init_ui(app_state.clone(), cx).unwrap();
+                    init_ui(app_state.clone(), prompt_builder.clone(), cx).unwrap();
                     cx.spawn({
                         let app_state = app_state.clone();
                         |mut cx| async move {
@@ -510,11 +537,12 @@ fn main() {
         }
 
         let app_state = app_state.clone();
+        let prompt_builder = prompt_builder.clone();
         cx.spawn(move |cx| async move {
             while let Some(urls) = open_rx.next().await {
                 cx.update(|cx| {
                     if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
-                        handle_open_request(request, app_state.clone(), cx);
+                        handle_open_request(request, app_state.clone(), prompt_builder.clone(), cx);
                     }
                 })
                 .ok();
@@ -524,15 +552,70 @@ fn main() {
     });
 }
 
-fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut AppContext) {
+fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
+    struct KeymapParseErrorNotification;
+    let id = NotificationId::unique::<KeymapParseErrorNotification>();
+
+    for workspace in workspace::local_workspace_windows(cx) {
+        workspace
+            .update(cx, |workspace, cx| match &error {
+                Some(error) => {
+                    workspace.show_notification(id.clone(), cx, |cx| {
+                        cx.new_view(|_| {
+                            MessageNotification::new(format!("Invalid keymap file\n{error}"))
+                                .with_click_message("Open keymap file")
+                                .on_click(|cx| {
+                                    cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
+                                    cx.emit(DismissEvent);
+                                })
+                        })
+                    });
+                }
+                None => workspace.dismiss_notification(&id, cx),
+            })
+            .log_err();
+    }
+}
+
+fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
+    struct SettingsParseErrorNotification;
+    let id = NotificationId::unique::<SettingsParseErrorNotification>();
+
+    for workspace in workspace::local_workspace_windows(cx) {
+        workspace
+            .update(cx, |workspace, cx| match &error {
+                Some(error) => {
+                    workspace.show_notification(id.clone(), cx, |cx| {
+                        cx.new_view(|_| {
+                            MessageNotification::new(format!("Invalid settings file\n{error}"))
+                                .with_click_message("Open settings file")
+                                .on_click(|cx| {
+                                    cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
+                                    cx.emit(DismissEvent);
+                                })
+                        })
+                    });
+                }
+                None => workspace.dismiss_notification(&id, cx),
+            })
+            .log_err();
+    }
+}
+
+fn handle_open_request(
+    request: OpenRequest,
+    app_state: Arc<AppState>,
+    prompt_builder: Arc<PromptBuilder>,
+    cx: &mut AppContext,
+) {
     if let Some(connection) = request.cli_connection {
         let app_state = app_state.clone();
-        cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
+        cx.spawn(move |cx| handle_cli_connection(connection, app_state, prompt_builder, cx))
             .detach();
         return;
     }
 
-    if let Err(e) = init_ui(app_state.clone(), cx) {
+    if let Err(e) = init_ui(app_state.clone(), prompt_builder, cx) {
         fail_to_open_window(e, cx);
         return;
     };

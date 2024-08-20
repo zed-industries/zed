@@ -5,7 +5,7 @@ use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
 use collections::HashMap;
 use editor::{Anchor, ClipboardSelection};
-use gpui::{Action, ClipboardItem, KeyContext};
+use gpui::{Action, ClipboardEntry, ClipboardItem, KeyContext};
 use language::{CursorShape, Selection, TransactionId};
 use serde::{Deserialize, Serialize};
 use ui::SharedString;
@@ -129,20 +129,24 @@ pub struct Register {
 
 impl From<Register> for ClipboardItem {
     fn from(register: Register) -> Self {
-        let item = ClipboardItem::new(register.text.into());
         if let Some(clipboard_selections) = register.clipboard_selections {
-            item.with_metadata(clipboard_selections)
+            ClipboardItem::new_string_with_json_metadata(register.text.into(), clipboard_selections)
         } else {
-            item
+            ClipboardItem::new_string(register.text.into())
         }
     }
 }
 
 impl From<ClipboardItem> for Register {
-    fn from(value: ClipboardItem) -> Self {
-        Register {
-            text: value.text().to_owned().into(),
-            clipboard_selections: value.metadata::<Vec<ClipboardSelection>>(),
+    fn from(item: ClipboardItem) -> Self {
+        // For now, we don't store metadata for multiple entries.
+        match item.entries().first() {
+            Some(ClipboardEntry::String(value)) if item.entries().len() == 1 => Register {
+                text: value.text().to_owned().into(),
+                clipboard_selections: value.metadata_json::<Vec<ClipboardSelection>>(),
+            },
+            // For now, registers can't store images. This could change in the future.
+            _ => Register::default(),
         }
     }
 }

@@ -398,6 +398,14 @@ fn show_hover(
 
                         Some(start..end)
                     })
+                    .or_else(|| {
+                        let snapshot = &snapshot.buffer_snapshot;
+                        let offset_range = snapshot.range_for_syntax_ancestor(anchor..anchor)?;
+                        Some(
+                            snapshot.anchor_before(offset_range.start)
+                                ..snapshot.anchor_after(offset_range.end),
+                        )
+                    })
                     .unwrap_or_else(|| anchor..anchor);
 
                 let blocks = hover_result.contents;
@@ -725,6 +733,8 @@ impl DiagnosticPopover {
             .id("diagnostic")
             .block()
             .max_h(max_size.height)
+            .overflow_y_scroll()
+            .max_w(max_size.width)
             .elevation_2_borderless(cx)
             // Don't draw the background color if the theme
             // allows transparent surfaces.
