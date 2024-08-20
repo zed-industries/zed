@@ -469,8 +469,8 @@ impl OutlinePanel {
         };
 
         self.toggle_expanded(entry, cx);
-        match entry {
-            PanelEntry::FoldedDirs(..) | PanelEntry::Fs(FsEntry::Directory(..)) => {}
+        let scroll_target = match entry {
+            PanelEntry::FoldedDirs(..) | PanelEntry::Fs(FsEntry::Directory(..)) => None,
             PanelEntry::Fs(FsEntry::ExternalFile(buffer_id, _)) => {
                 let scroll_target = multi_buffer_snapshot.excerpts().find_map(
                     |(excerpt_id, buffer_snapshot, excerpt_range)| {
@@ -482,18 +482,7 @@ impl OutlinePanel {
                         }
                     },
                 );
-                if let Some(anchor) = scroll_target {
-                    self.selected_entry = Some(entry.clone());
-                    active_editor.update(cx, |editor, cx| {
-                        editor.set_scroll_anchor(
-                            ScrollAnchor {
-                                offset: offset_from_top,
-                                anchor,
-                            },
-                            cx,
-                        );
-                    })
-                }
+                Some(offset_from_top).zip(scroll_target)
             }
             PanelEntry::Fs(FsEntry::File(_, file_entry, ..)) => {
                 let scroll_target = self
@@ -513,18 +502,7 @@ impl OutlinePanel {
                         multi_buffer_snapshot
                             .anchor_in_excerpt(*excerpt_id, excerpt_range.context.start)
                     });
-                if let Some(anchor) = scroll_target {
-                    self.selected_entry = Some(entry.clone());
-                    active_editor.update(cx, |editor, cx| {
-                        editor.set_scroll_anchor(
-                            ScrollAnchor {
-                                offset: offset_from_top,
-                                anchor,
-                            },
-                            cx,
-                        );
-                    })
-                }
+                Some(offset_from_top).zip(scroll_target)
             }
             PanelEntry::Outline(OutlineEntry::Outline(_, excerpt_id, outline)) => {
                 let scroll_target = multi_buffer_snapshot
@@ -532,47 +510,35 @@ impl OutlinePanel {
                     .or_else(|| {
                         multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, outline.range.end)
                     });
-                if let Some(anchor) = scroll_target {
-                    self.selected_entry = Some(entry.clone());
-                    active_editor.update(cx, |editor, cx| {
-                        editor.set_scroll_anchor(
-                            ScrollAnchor {
-                                offset: Point::default(),
-                                anchor,
-                            },
-                            cx,
-                        );
-                    })
-                }
+                Some(Point::default()).zip(scroll_target)
             }
             PanelEntry::Outline(OutlineEntry::Excerpt(_, excerpt_id, excerpt_range)) => {
                 let scroll_target = multi_buffer_snapshot
                     .anchor_in_excerpt(*excerpt_id, excerpt_range.context.start);
-                if let Some(anchor) = scroll_target {
-                    self.selected_entry = Some(entry.clone());
-                    active_editor.update(cx, |editor, cx| {
-                        editor.set_scroll_anchor(
-                            ScrollAnchor {
-                                offset: Point::default(),
-                                anchor,
-                            },
-                            cx,
-                        );
-                    })
+                Some(Point::default()).zip(scroll_target)
+            }
+            PanelEntry::Search(match_range) => Some((Point::default(), match_range.start)),
+        };
+
+        if let Some((offset, anchor)) = scroll_target {
+            self.selected_entry = Some(entry.clone());
+            active_editor.update(cx, |editor, cx| {
+                editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, cx);
+            });
+
+            if let PanelEntry::Search(_) = entry {
+                if let Some(active_project_search) =
+                    self.active_project_search(Some(&active_editor), cx)
+                {
+                    self.workspace.update(cx, |workspace, cx| {
+                        workspace.activate_item(&active_project_search, true, true, cx)
+                    });
                 }
-            }
-            PanelEntry::Search(match_range) => {
-                self.selected_entry = Some(entry.clone());
-                active_editor.update(cx, |editor, cx| {
-                    editor.set_scroll_anchor(
-                        ScrollAnchor {
-                            offset: Point::default(),
-                            anchor: match_range.start,
-                        },
-                        cx,
-                    );
-                })
-            }
+            } else {
+                self.workspace.update(cx, |workspace, cx| {
+                    workspace.activate_item(&active_editor, true, true, cx)
+                });
+            };
         }
     }
 
@@ -2893,16 +2859,7 @@ impl OutlinePanel {
     fn update_search_matches(&mut self, cx: &mut ViewContext<OutlinePanel>) {
         let active_editor = self.active_editor();
         let project_search_matches = self
-            .workspace
-            .read(cx)
-            .active_pane()
-            .read(cx)
-            .items()
-            .filter_map(|item| item.downcast::<ProjectSearchView>())
-            .find(|project_search| {
-                let project_search_editor = project_search.boxed_clone().act_as::<Editor>(cx);
-                project_search_editor.is_some() && active_editor == project_search_editor
-            })
+            .active_project_search(active_editor.as_ref(), cx)
             .map(|project_search| project_search.read(cx).get_matches(cx))
             .unwrap_or_default();
         let buffer_search_matches = active_editor
@@ -2931,6 +2888,24 @@ impl OutlinePanel {
         if update_cached_entries {
             self.update_cached_entries(Some(UPDATE_DEBOUNCE), cx);
         }
+    }
+
+    fn active_project_search(
+        &mut self,
+        for_editor: Option<&View<Editor>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<View<ProjectSearchView>> {
+        let for_editor = for_editor?;
+        self.workspace
+            .read(cx)
+            .active_pane()
+            .read(cx)
+            .items()
+            .filter_map(|item| item.downcast::<ProjectSearchView>())
+            .find(|project_search| {
+                let project_search_editor = project_search.boxed_clone().act_as::<Editor>(cx);
+                Some(for_editor) == project_search_editor.as_ref()
+            })
     }
 
     #[allow(clippy::too_many_arguments)]
