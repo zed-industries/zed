@@ -188,10 +188,8 @@ fn show_menu<M: ManagedView>(
     let previous_focus_handle = cx.focused();
 
     cx.subscribe(&new_menu, move |modal, _: &DismissEvent, cx| {
-        if modal.focus_handle(cx).contains_focused(cx) || true {
-            dbg!("A");
+        if modal.focus_handle(cx).contains_focused(cx) {
             if let Some(previous_focus_handle) = previous_focus_handle.as_ref() {
-                dbg!("B");
                 cx.focus(previous_focus_handle);
             }
         }
@@ -359,9 +357,12 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 // want a click on the toggle to re-open it.
                 cx.on_mouse_event(move |_: &MouseDownEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble && child_hitbox.is_hovered(cx) {
-                        menu_handle.borrow_mut().take();
+                        if let Some(menu) = menu_handle.borrow().as_ref() {
+                            menu.update(cx, |_, cx| {
+                                cx.emit(DismissEvent);
+                            });
+                        }
                         cx.stop_propagation();
-                        cx.refresh();
                     }
                 })
             }
