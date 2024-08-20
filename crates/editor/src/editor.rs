@@ -1201,7 +1201,7 @@ impl CompletionsMenu {
                                         task.detach_and_log_err(cx)
                                     }
                                 }))
-                                .child(Icon::new(icon))
+                                .start_slot(Icon::new(icon))
                                 .child(h_flex().overflow_hidden().child(completion_label))
                                 .end_slot::<Label>(documentation_label),
                         )
