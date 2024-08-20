@@ -2542,7 +2542,7 @@ impl OutlinePanel {
                                     folded_dirs_entry =
                                         Some((folded_depth, folded_worktree_id, folded_dirs))
                                 } else {
-                                    if parent_expanded || query.is_some() {
+                                    if !is_singleton && (parent_expanded || query.is_some()) {
                                         let new_folded_dirs =
                                             PanelEntry::FoldedDirs(folded_worktree_id, folded_dirs);
                                         outline_panel.push_entry(
@@ -2578,7 +2578,7 @@ impl OutlinePanel {
                                             .all(|entry| entry.path.as_ref() != *parent_path)
                                     })
                                     .map_or(true, |&(_, _, parent_expanded, _)| parent_expanded);
-                                if parent_expanded || query.is_some() {
+                                if !is_singleton && (parent_expanded || query.is_some()) {
                                     outline_panel.push_entry(
                                         &mut entries,
                                         &mut match_candidates,
@@ -2605,7 +2605,7 @@ impl OutlinePanel {
                                             .all(|entry| entry.path.as_ref() != *parent_path)
                                     })
                                     .map_or(true, |&(_, _, parent_expanded, _)| parent_expanded);
-                                if parent_expanded || query.is_some() {
+                                if !is_singleton && (parent_expanded || query.is_some()) {
                                     outline_panel.push_entry(
                                         &mut entries,
                                         &mut match_candidates,
@@ -2653,15 +2653,17 @@ impl OutlinePanel {
                     }
 
                     match outline_panel.mode {
-                        ItemsDisplayMode::Search => outline_panel.add_search_entries(
-                            entry,
-                            depth,
-                            track_matches,
-                            is_singleton,
-                            &mut entries,
-                            &mut match_candidates,
-                            cx,
-                        ),
+                        ItemsDisplayMode::Search => {
+                            outline_panel.add_search_entries(
+                                entry,
+                                depth,
+                                track_matches,
+                                is_singleton,
+                                &mut entries,
+                                &mut match_candidates,
+                                cx,
+                            );
+                        }
                         ItemsDisplayMode::Outline => {
                             let excerpts_to_consider =
                                 if is_singleton || query.is_some() || (should_add && is_expanded) {
@@ -2679,7 +2681,6 @@ impl OutlinePanel {
                                 };
                             if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider {
                                 outline_panel.add_excerpt_entries(
-                                    entry,
                                     buffer_id,
                                     entry_excerpts,
                                     depth,
@@ -2692,6 +2693,21 @@ impl OutlinePanel {
                                 );
                             }
                         }
+                    }
+
+                    if is_singleton
+                        && !entries.iter().any(|item| {
+                            matches!(item.entry, PanelEntry::Outline(_) | PanelEntry::Search(_))
+                        })
+                    {
+                        outline_panel.push_entry(
+                            &mut entries,
+                            &mut match_candidates,
+                            track_matches,
+                            PanelEntry::Fs(entry.clone()),
+                            0,
+                            cx,
+                        );
                     }
                 }
 
@@ -2929,7 +2945,6 @@ impl OutlinePanel {
     #[allow(clippy::too_many_arguments)]
     fn add_excerpt_entries(
         &self,
-        entry: &FsEntry,
         buffer_id: BufferId,
         entries_to_add: &[ExcerptId],
         parent_depth: usize,
@@ -2983,16 +2998,6 @@ impl OutlinePanel {
                             outline.clone(),
                         )),
                         outline_base_depth + outline.depth,
-                        cx,
-                    );
-                }
-                if is_singleton && entries.is_empty() {
-                    self.push_entry(
-                        entries,
-                        match_candidates,
-                        track_matches,
-                        PanelEntry::Fs(entry.clone()),
-                        0,
                         cx,
                     );
                 }
