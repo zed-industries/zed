@@ -16,6 +16,7 @@ To configure different providers, run `assistant: show configuration` in the com
 [^1]: This provider does not support [`/workflow`](./commands#workflow-not-generally-available) command.
 
 To further customize providers, you can use `settings.json` to do that as follows:
+
 - [Configuring endpoints](#custom-endpoint)
 - [Configuring timeouts](#provider-timeout)
 - [Configuring default model](#default-model)
@@ -85,7 +86,7 @@ You can add custom models to the OpenAI provider, by adding the following to you
       "available_models": [
         {
           "name": "custom-model",
-          "max_tokens": 128000,
+          "max_tokens": 128000
         }
       ]
     }
@@ -149,7 +150,7 @@ You can add custom models to the OpenAI provider, by adding the following to you
       "available_models": [
         {
           "name": "custom-model",
-          "max_tokens": 128000,
+          "max_tokens": 128000
         }
       ]
     }
@@ -174,7 +175,7 @@ Custom models will be listed in the model dropdown in the assistant panel.
     "version": "2",
     "button": true,
     "default_width": 480,
-    "dock": "right",
+    "dock": "right"
   }
 }
 ```
@@ -206,7 +207,7 @@ You can customize the timeout that's used for LLM requests, by adding the follow
   "language_models": {
     "some-provider": {
       "low_speed_timeout_in_seconds": 10
-    },
+    }
   }
 }
 ```
