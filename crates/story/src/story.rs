@@ -117,17 +117,15 @@ impl RenderOnce for StoryContainer {
 pub struct Story {}
 
 impl Story {
-    pub fn container() -> Div {
-        div().size_full().overflow_hidden().child(
-            div()
-                .id("story_container")
-                .overflow_y_scroll()
-                .w_full()
-                .min_h_full()
-                .flex()
-                .flex_col()
-                .bg(story_color().background),
-        )
+    pub fn container() -> gpui::Stateful<Div> {
+        div()
+            .id("story_container")
+            .overflow_y_scroll()
+            .w_full()
+            .min_h_full()
+            .flex()
+            .flex_col()
+            .bg(story_color().background)
     }
 
     // TODO: Move all stories to container2, then rename

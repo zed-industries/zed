@@ -208,14 +208,15 @@ impl<M> Default for PopoverMenuElementState<M> {
     }
 }
 
-pub struct PopoverMenuFrameState {
+pub struct PopoverMenuFrameState<M: ManagedView> {
     child_layout_id: Option<LayoutId>,
     child_element: Option<AnyElement>,
     menu_element: Option<AnyElement>,
+    menu_handle: Rc<RefCell<Option<View<M>>>>,
 }
 
 impl<M: ManagedView> Element for PopoverMenu<M> {
-    type RequestLayoutState = PopoverMenuFrameState;
+    type RequestLayoutState = PopoverMenuFrameState<M>;
     type PrepaintState = Option<HitboxId>;
 
     fn id(&self) -> Option<ElementId> {
@@ -280,6 +281,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                             child_element,
                             child_layout_id,
                             menu_element,
+                            menu_handle: element_state.menu.clone(),
                         },
                     ),
                     element_state,
@@ -333,11 +335,14 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             menu.paint(cx);
 
             if let Some(child_hitbox) = *child_hitbox {
+                let menu_handle = request_layout.menu_handle.clone();
                 // Mouse-downing outside the menu dismisses it, so we don't
                 // want a click on the toggle to re-open it.
                 cx.on_mouse_event(move |_: &MouseDownEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble && child_hitbox.is_hovered(cx) {
-                        cx.stop_propagation()
+                        menu_handle.borrow_mut().take();
+                        cx.stop_propagation();
+                        cx.refresh();
                     }
                 })
             }

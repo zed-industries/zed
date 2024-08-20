@@ -5,6 +5,7 @@ use super::{
 };
 use anyhow::Result;
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LineEnding, LspAdapterDelegate};
 use semantic_index::SemanticIndex;
@@ -16,6 +17,12 @@ use std::{
 use ui::{prelude::*, IconName};
 use util::ResultExt;
 use workspace::Workspace;
+
+pub(crate) struct SearchSlashCommandFeatureFlag;
+
+impl FeatureFlag for SearchSlashCommandFeatureFlag {
+    const NAME: &'static str = "search-slash-command";
+}
 
 pub(crate) struct SearchSlashCommand;
 
@@ -42,17 +49,17 @@ impl SlashCommand for SearchSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -60,13 +67,13 @@ impl SlashCommand for SearchSlashCommand {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
-        let Some(argument) = argument else {
+        if arguments.is_empty() {
             return Task::ready(Err(anyhow::anyhow!("missing search query")));
         };
 
         let mut limit = None;
         let mut query = String::new();
-        for part in argument.split(' ') {
+        for part in arguments {
             if let Some(parameter) = part.strip_prefix("--") {
                 if let Ok(count) = parameter.parse::<usize>() {
                     limit = Some(count);

@@ -1,17 +1,15 @@
-use std::sync::Arc;
-
 use pretty_assertions::assert_eq;
+use rpc::LanguageModelProvider;
 
 use crate::llm::db::LlmDatabase;
-use crate::test_both_llm_dbs;
+use crate::test_llm_db;
 
-test_both_llm_dbs!(
+test_llm_db!(
     test_initialize_providers,
-    test_initialize_providers_postgres,
-    test_initialize_providers_sqlite
+    test_initialize_providers_postgres
 );
 
-async fn test_initialize_providers(db: &Arc<LlmDatabase>) {
+async fn test_initialize_providers(db: &mut LlmDatabase) {
     let initial_providers = db.list_providers().await.unwrap();
     assert_eq!(initial_providers, vec![]);
 
@@ -22,9 +20,13 @@ async fn test_initialize_providers(db: &Arc<LlmDatabase>) {
 
     let providers = db.list_providers().await.unwrap();
 
-    let provider_names = providers
-        .into_iter()
-        .map(|provider| provider.name)
-        .collect::<Vec<_>>();
-    assert_eq!(provider_names, vec!["anthropic".to_string()]);
+    assert_eq!(
+        providers,
+        &[
+            LanguageModelProvider::Anthropic,
+            LanguageModelProvider::Google,
+            LanguageModelProvider::OpenAi,
+            LanguageModelProvider::Zed
+        ]
+    )
 }

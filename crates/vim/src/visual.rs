@@ -927,7 +927,7 @@ mod test {
                     the lazy dog"});
         assert_eq!(
             cx.read_from_clipboard()
-                .map(|item| item.text().clone())
+                .map(|item| item.text().unwrap().to_string())
                 .unwrap(),
             "The q"
         );

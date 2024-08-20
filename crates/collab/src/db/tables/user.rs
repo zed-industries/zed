@@ -1,4 +1,5 @@
 use crate::db::UserId;
+use chrono::NaiveDateTime;
 use sea_orm::entity::prelude::*;
 use serde::Serialize;
 
@@ -10,6 +11,7 @@ pub struct Model {
     pub id: UserId,
     pub github_login: String,
     pub github_user_id: Option<i32>,
+    pub github_user_created_at: Option<NaiveDateTime>,
     pub email_address: Option<String>,
     pub admin: bool,
     pub invite_code: Option<String>,
@@ -17,7 +19,8 @@ pub struct Model {
     pub inviter_id: Option<UserId>,
     pub connected_once: bool,
     pub metrics_id: Uuid,
-    pub created_at: DateTime,
+    pub created_at: NaiveDateTime,
+    pub accepted_tos_at: Option<NaiveDateTime>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

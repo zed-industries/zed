@@ -3,5 +3,10 @@
     "label": "clippy",
     "command": "./script/clippy",
     "args": []
+  },
+  {
+    "label": "cargo run --profile release-fast",
+    "command": "cargo",
+    "args": ["run", "--profile", "release-fast"]
   }
 ]

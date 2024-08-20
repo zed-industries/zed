@@ -3,6 +3,7 @@ use crate::{
         ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings, TabContentParams,
         WeakItemHandle,
     },
+    notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
     CloseWindow, CopyPath, CopyRelativePath, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
@@ -166,16 +167,28 @@ impl DeploySearch {
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
 pub enum Event {
-    AddItem { item: Box<dyn ItemHandle> },
-    ActivateItem { local: bool },
+    AddItem {
+        item: Box<dyn ItemHandle>,
+    },
+    ActivateItem {
+        local: bool,
+    },
     Remove,
-    RemoveItem { idx: usize },
-    RemovedItem { item_id: EntityId },
+    RemoveItem {
+        idx: usize,
+    },
+    RemovedItem {
+        item_id: EntityId,
+    },
     Split(SplitDirection),
     ChangeItemTitle,
     Focus,
     ZoomIn,
     ZoomOut,
+    UserSavedItem {
+        item: Box<dyn WeakItemHandle>,
+        save_intent: SaveIntent,
+    },
 }
 
 impl fmt::Debug for Event {
@@ -203,6 +216,11 @@ impl fmt::Debug for Event {
             Event::Focus => f.write_str("Focus"),
             Event::ZoomIn => f.write_str("ZoomIn"),
             Event::ZoomOut => f.write_str("ZoomOut"),
+            Event::UserSavedItem { item, save_intent } => f
+                .debug_struct("UserSavedItem")
+                .field("item", &item.id())
+                .field("save_intent", save_intent)
+                .finish(),
         }
     }
 }
@@ -903,7 +921,22 @@ impl Pane {
         cx: &AppContext,
     ) -> Option<Box<dyn ItemHandle>> {
         self.items.iter().find_map(|item| {
-            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
+            if item.is_singleton(cx) && (item.project_entry_ids(cx).as_slice() == [entry_id]) {
+                Some(item.boxed_clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn item_for_path(
+        &self,
+        project_path: ProjectPath,
+        cx: &AppContext,
+    ) -> Option<Box<dyn ItemHandle>> {
+        self.items.iter().find_map(move |item| {
+            if item.is_singleton(cx) && (item.project_path(cx).as_slice() == [project_path.clone()])
+            {
                 Some(item.boxed_clone())
             } else {
                 None
@@ -1468,8 +1501,13 @@ impl Pane {
                         })?;
                         match answer {
                             Ok(0) => {}
-                            Ok(1) => return Ok(true), // Don't save this file
-                            _ => return Ok(false),    // Cancel
+                            Ok(1) => {
+                                // Don't save this file
+                                pane.update(cx, |_, cx| item.discarded(project, cx))
+                                    .log_err();
+                                return Ok(true);
+                            }
+                            _ => return Ok(false), // Cancel
                         }
                     } else {
                         return Ok(false);
@@ -1494,7 +1532,13 @@ impl Pane {
             }
         }
 
-        Ok(true)
+        pane.update(cx, |_, cx| {
+            cx.emit(Event::UserSavedItem {
+                item: item.downgrade_item(),
+                save_intent,
+            });
+            true
+        })
     }
 
     fn can_autosave_item(item: &dyn ItemHandle, cx: &AppContext) -> bool {
@@ -1609,7 +1653,7 @@ impl Pane {
             .and_then(|entry| entry.project_path(cx))
             .map(|p| p.path.to_string_lossy().to_string())
         {
-            cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
+            cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
         }
     }
 
@@ -1819,7 +1863,7 @@ impl Pane {
                                     "Copy Path",
                                     Some(Box::new(CopyPath)),
                                     cx.handler_for(&pane, move |_, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new(
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
                                             abs_path.to_string_lossy().to_string(),
                                         ));
                                     }),
@@ -2066,13 +2110,32 @@ impl Pane {
                         .read(cx)
                         .path_for_entry(project_entry_id, cx)
                     {
-                        if let Some(split_direction) = split_direction {
-                            to_pane = workspace.split_pane(to_pane, split_direction, cx);
-                        }
-                        workspace
-                            .open_path(path, Some(to_pane.downgrade()), true, cx)
-                            .detach_and_log_err(cx);
-                    }
+                        let load_path_task = workspace.load_path(path, cx);
+                        cx.spawn(|workspace, mut cx| async move {
+                            if let Some((project_entry_id, build_item)) =
+                                load_path_task.await.notify_async_err(&mut cx)
+                            {
+                                workspace
+                                    .update(&mut cx, |workspace, cx| {
+                                        if let Some(split_direction) = split_direction {
+                                            to_pane =
+                                                workspace.split_pane(to_pane, split_direction, cx);
+                                        }
+                                        to_pane.update(cx, |pane, cx| {
+                                            pane.open_item(
+                                                project_entry_id,
+                                                true,
+                                                false,
+                                                cx,
+                                                build_item,
+                                            )
+                                        })
+                                    })
+                                    .log_err();
+                            }
+                        })
+                        .detach();
+                    };
                 });
             })
             .log_err();
@@ -2143,7 +2206,14 @@ impl Pane {
                         })
                         .ok()
                     {
-                        let _opened_items: Vec<_> = open_task.await;
+                        let opened_items: Vec<_> = open_task.await;
+                        _ = workspace.update(&mut cx, |workspace, cx| {
+                            for item in opened_items.into_iter().flatten() {
+                                if let Err(e) = item {
+                                    workspace.show_error(&e, cx);
+                                }
+                            }
+                        });
                     }
                 })
                 .detach();

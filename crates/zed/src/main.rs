@@ -187,7 +187,12 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) -> Arc<PromptBuild
     );
     snippet_provider::init(cx);
     inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
-    let prompt_builder = assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
+    let prompt_builder = assistant::init(
+        app_state.fs.clone(),
+        app_state.client.clone(),
+        stdout_is_a_pty(),
+        cx,
+    );
     repl::init(
         app_state.fs.clone(),
         app_state.client.telemetry().clone(),
@@ -261,6 +266,7 @@ fn init_ui(
     welcome::init(cx);
     settings_ui::init(cx);
     extensions_ui::init(cx);
+    performance::init(cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -310,6 +316,7 @@ fn init_ui(
 }
 
 fn main() {
+    let start_time = std::time::Instant::now();
     menu::init();
     zed_actions::init();
 
@@ -321,7 +328,9 @@ fn main() {
     init_logger();
 
     log::info!("========== starting zed ==========");
-    let app = App::new().with_assets(Assets);
+    let app = App::new()
+        .with_assets(Assets)
+        .measure_time_to_first_window_draw(start_time);
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()

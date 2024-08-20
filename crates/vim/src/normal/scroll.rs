@@ -92,6 +92,9 @@ fn scroll_editor(
             let mut head = selection.head();
             let top = top_anchor.to_display_point(map);
 
+            let vertical_scroll_margin =
+                (vertical_scroll_margin as u32).min(visible_line_count as u32 / 2);
+
             if preserve_cursor_position {
                 let old_top = old_top_anchor.to_display_point(map);
                 let new_row = if old_top.row() == top.row() {
@@ -108,10 +111,13 @@ fn scroll_editor(
             let min_row = if top.row().0 == 0 {
                 DisplayRow(0)
             } else {
-                DisplayRow(top.row().0 + vertical_scroll_margin as u32)
+                DisplayRow(top.row().0 + vertical_scroll_margin)
             };
             let max_row = DisplayRow(
-                top.row().0 + visible_line_count as u32 - vertical_scroll_margin as u32 - 1,
+                top.row().0
+                    + (visible_line_count as u32)
+                        .saturating_sub(vertical_scroll_margin)
+                        .saturating_sub(1),
             );
 
             let new_head = if head.row() < min_row {
