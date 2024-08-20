@@ -6,7 +6,7 @@ To open the assistant panel, toggle the right dock by using the `workspace: togg
 
 > **Note**: A custom [key binding](./key-bindings.md) can be set to toggle the right dock.
 
-Once you have [configured a provider](assistant/configuration.md#providers), you can interact with the provider's language models in a context editor.
+Once you have [configured a provider](/assistant/configuration.md#providers), you can interact with the provider's language models in a context editor.
 
 ![](https://private-user-images.githubusercontent.com/1714999/359287532-abd8f918-e65f-44ce-a853-1e90f852e206.png?jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3MjQxMDk2OTIsIm5iZiI6MTcyNDEwOTM5MiwicGF0aCI6Ii8xNzE0OTk5LzM1OTI4NzUzMi1hYmQ4ZjkxOC1lNjVmLTQ0Y2UtYTg1My0xZTkwZjg1MmUyMDYucG5nP1gtQW16LUFsZ29yaXRobT1BV1M0LUhNQUMtU0hBMjU2JlgtQW16LUNyZWRlbnRpYWw9QUtJQVZDT0RZTFNBNTNQUUs0WkElMkYyMDI0MDgxOSUyRnVzLWVhc3QtMSUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNDA4MTlUMjMxNjMyWiZYLUFtei1FeHBpcmVzPTMwMCZYLUFtei1TaWduYXR1cmU9MDhlMjZhMjI0NjM3M2JiZmEzMWU5ZWIwYWRjZjhkNTI3NTkyM2JlNmNjODcyMjg3YjkxNjIxNmI5ZTk1ZWRjZCZYLUFtei1TaWduZWRIZWFkZXJzPWhvc3QmYWN0b3JfaWQ9MCZrZXlfaWQ9MCZyZXBvX2lkPTAifQ.NiiQkF65VvBKCJs_zNxmjpyvKGK6Hw1aIWA3Xc87XRs)
 
