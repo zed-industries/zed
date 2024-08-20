@@ -15,3 +15,7 @@ This section covers various aspects of the Assistant:
 - [Using Commands](./commands.md): Explore slash commands that enhance the Assistant's capabilities and future extensibility.
 
 - [Prompting & Prompt Library](./prompting.md): Learn how to write and save prompts, how to use the Prompt Library, and how to edit prompt templates.
+
+- [Context Servers](./context_servers.md): Learn how to add custom slash commands implemented in external codebases with the Context Server Protocol.
+
+  - [Model Context Protocol](./model_context_protocol.md): Read the full specification of the Model Context Protocol that Context Servers follow to interface with the Assistant.
