@@ -7,7 +7,6 @@ use anyhow::{anyhow, bail, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
-use feature_flags::FeatureFlag;
 use gpui::{AppContext, BackgroundExecutor, Model, Task, WeakView};
 use indexed_docs::{
     DocsDotRsProvider, IndexedDocsRegistry, IndexedDocsStore, LocalRustdocProvider, PackageName,
@@ -18,12 +17,6 @@ use project::{Project, ProjectPath};
 use ui::prelude::*;
 use util::{maybe, ResultExt};
 use workspace::Workspace;
-
-pub(crate) struct DocsSlashCommandFeatureFlag;
-
-impl FeatureFlag for DocsSlashCommandFeatureFlag {
-    const NAME: &'static str = "docs-slash-command";
-}
 
 pub(crate) struct DocsSlashCommand;
 
@@ -168,30 +161,28 @@ impl SlashCommand for DocsSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        query: String,
+        arguments: &[String],
         _cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         self.ensure_rust_doc_providers_are_registered(workspace, cx);
 
         let indexed_docs_registry = IndexedDocsRegistry::global(cx);
-        let args = DocsSlashCommandArgs::parse(&query);
+        let args = DocsSlashCommandArgs::parse(arguments);
         let store = args
             .provider()
             .ok_or_else(|| anyhow!("no docs provider specified"))
             .and_then(|provider| IndexedDocsStore::try_global(provider, cx));
         cx.background_executor().spawn(async move {
-            fn build_completions(
-                provider: ProviderId,
-                items: Vec<String>,
-            ) -> Vec<ArgumentCompletion> {
+            fn build_completions(items: Vec<String>) -> Vec<ArgumentCompletion> {
                 items
                     .into_iter()
                     .map(|item| ArgumentCompletion {
-                        label: item.clone(),
-                        new_text: format!("{provider} {item}"),
-                        run_command: true,
+                        label: item.clone().into(),
+                        new_text: item.to_string(),
+                        after_completion: assistant_slash_command::AfterCompletion::Run,
+                        replace_previous_arguments: false,
                     })
                     .collect()
             }
@@ -201,18 +192,20 @@ impl SlashCommand for DocsSlashCommand {
                     let providers = indexed_docs_registry.list_providers();
                     if providers.is_empty() {
                         return Ok(vec![ArgumentCompletion {
-                            label: "No available docs providers.".to_string(),
+                            label: "No available docs providers.".into(),
                             new_text: String::new(),
-                            run_command: false,
+                            after_completion: false.into(),
+                            replace_previous_arguments: false,
                         }]);
                     }
 
                     Ok(providers
                         .into_iter()
                         .map(|provider| ArgumentCompletion {
-                            label: provider.to_string(),
+                            label: provider.to_string().into(),
                             new_text: provider.to_string(),
-                            run_command: false,
+                            after_completion: false.into(),
+                            replace_previous_arguments: false,
                         })
                         .collect())
                 }
@@ -229,17 +222,45 @@ impl SlashCommand for DocsSlashCommand {
                         drop(store.clone().index(package.as_str().into()));
                     }
 
-                    let items = store.search(package).await;
-                    Ok(build_completions(provider, items))
+                    let suggested_packages = store.clone().suggest_packages().await?;
+                    let search_results = store.search(package).await;
+
+                    let mut items = build_completions(search_results);
+                    let workspace_crate_completions = suggested_packages
+                        .into_iter()
+                        .filter(|package_name| {
+                            !items
+                                .iter()
+                                .any(|item| item.label.text() == package_name.as_ref())
+                        })
+                        .map(|package_name| ArgumentCompletion {
+                            label: format!("{package_name} (unindexed)").into(),
+                            new_text: format!("{package_name}"),
+                            after_completion: true.into(),
+                            replace_previous_arguments: false,
+                        })
+                        .collect::<Vec<_>>();
+                    items.extend(workspace_crate_completions);
+
+                    if items.is_empty() {
+                        return Ok(vec![ArgumentCompletion {
+                            label: format!(
+                                "Enter a {package_term} name.",
+                                package_term = package_term(&provider)
+                            )
+                            .into(),
+                            new_text: provider.to_string(),
+                            after_completion: false.into(),
+                            replace_previous_arguments: false,
+                        }]);
+                    }
+
+                    Ok(items)
                 }
-                DocsSlashCommandArgs::SearchItemDocs {
-                    provider,
-                    item_path,
-                    ..
-                } => {
+                DocsSlashCommandArgs::SearchItemDocs { item_path, .. } => {
                     let store = store?;
                     let items = store.search(item_path).await;
-                    Ok(build_completions(provider, items))
+                    Ok(build_completions(items))
                 }
             }
         })
@@ -247,16 +268,16 @@ impl SlashCommand for DocsSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let Some(argument) = argument else {
-            return Task::ready(Err(anyhow!("missing argument")));
+        if arguments.is_empty() {
+            return Task::ready(Err(anyhow!("missing an argument")));
         };
 
-        let args = DocsSlashCommandArgs::parse(argument);
+        let args = DocsSlashCommandArgs::parse(arguments);
         let executor = cx.background_executor().clone();
         let task = cx.background_executor().spawn({
             let store = args
@@ -275,6 +296,13 @@ impl SlashCommand for DocsSlashCommand {
                         ..
                     } => (provider, item_path),
                 };
+
+                if key.trim().is_empty() {
+                    bail!(
+                        "no {package_term} name provided",
+                        package_term = package_term(&provider)
+                    );
+                }
 
                 let store = store?;
 
@@ -349,12 +377,18 @@ pub(crate) enum DocsSlashCommandArgs {
 }
 
 impl DocsSlashCommandArgs {
-    pub fn parse(argument: &str) -> Self {
-        let Some((provider, argument)) = argument.split_once(' ') else {
+    pub fn parse(arguments: &[String]) -> Self {
+        let Some(provider) = arguments
+            .get(0)
+            .cloned()
+            .filter(|arg| !arg.trim().is_empty())
+        else {
             return Self::NoProvider;
         };
-
         let provider = ProviderId(provider.into());
+        let Some(argument) = arguments.get(1) else {
+            return Self::NoProvider;
+        };
 
         if let Some((package, rest)) = argument.split_once(is_item_path_delimiter) {
             if rest.trim().is_empty() {
@@ -398,6 +432,15 @@ impl DocsSlashCommandArgs {
     }
 }
 
+/// Returns the term used to refer to a package.
+fn package_term(provider: &ProviderId) -> &'static str {
+    if provider == &DocsDotRsProvider::id() || provider == &LocalRustdocProvider::id() {
+        return "crate";
+    }
+
+    "package"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,16 +448,16 @@ mod tests {
     #[test]
     fn test_parse_docs_slash_command_args() {
         assert_eq!(
-            DocsSlashCommandArgs::parse(""),
+            DocsSlashCommandArgs::parse(&["".to_string()]),
             DocsSlashCommandArgs::NoProvider
         );
         assert_eq!(
-            DocsSlashCommandArgs::parse("rustdoc"),
+            DocsSlashCommandArgs::parse(&["rustdoc".to_string()]),
             DocsSlashCommandArgs::NoProvider
         );
 
         assert_eq!(
-            DocsSlashCommandArgs::parse("rustdoc "),
+            DocsSlashCommandArgs::parse(&["rustdoc".to_string(), "".to_string()]),
             DocsSlashCommandArgs::SearchPackageDocs {
                 provider: ProviderId("rustdoc".into()),
                 package: "".into(),
@@ -422,7 +465,7 @@ mod tests {
             }
         );
         assert_eq!(
-            DocsSlashCommandArgs::parse("gleam "),
+            DocsSlashCommandArgs::parse(&["gleam".to_string(), "".to_string()]),
             DocsSlashCommandArgs::SearchPackageDocs {
                 provider: ProviderId("gleam".into()),
                 package: "".into(),
@@ -431,7 +474,7 @@ mod tests {
         );
 
         assert_eq!(
-            DocsSlashCommandArgs::parse("rustdoc gpui"),
+            DocsSlashCommandArgs::parse(&["rustdoc".to_string(), "gpui".to_string()]),
             DocsSlashCommandArgs::SearchPackageDocs {
                 provider: ProviderId("rustdoc".into()),
                 package: "gpui".into(),
@@ -439,7 +482,7 @@ mod tests {
             }
         );
         assert_eq!(
-            DocsSlashCommandArgs::parse("gleam gleam_stdlib"),
+            DocsSlashCommandArgs::parse(&["gleam".to_string(), "gleam_stdlib".to_string()]),
             DocsSlashCommandArgs::SearchPackageDocs {
                 provider: ProviderId("gleam".into()),
                 package: "gleam_stdlib".into(),
@@ -449,7 +492,7 @@ mod tests {
 
         // Adding an item path delimiter indicates we can start indexing.
         assert_eq!(
-            DocsSlashCommandArgs::parse("rustdoc gpui:"),
+            DocsSlashCommandArgs::parse(&["rustdoc".to_string(), "gpui:".to_string()]),
             DocsSlashCommandArgs::SearchPackageDocs {
                 provider: ProviderId("rustdoc".into()),
                 package: "gpui".into(),
@@ -457,7 +500,7 @@ mod tests {
             }
         );
         assert_eq!(
-            DocsSlashCommandArgs::parse("gleam gleam_stdlib/"),
+            DocsSlashCommandArgs::parse(&["gleam".to_string(), "gleam_stdlib/".to_string()]),
             DocsSlashCommandArgs::SearchPackageDocs {
                 provider: ProviderId("gleam".into()),
                 package: "gleam_stdlib".into(),
@@ -466,7 +509,10 @@ mod tests {
         );
 
         assert_eq!(
-            DocsSlashCommandArgs::parse("rustdoc gpui::foo::bar::Baz"),
+            DocsSlashCommandArgs::parse(&[
+                "rustdoc".to_string(),
+                "gpui::foo::bar::Baz".to_string()
+            ]),
             DocsSlashCommandArgs::SearchItemDocs {
                 provider: ProviderId("rustdoc".into()),
                 package: "gpui".into(),
@@ -474,7 +520,10 @@ mod tests {
             }
         );
         assert_eq!(
-            DocsSlashCommandArgs::parse("gleam gleam_stdlib/gleam/int"),
+            DocsSlashCommandArgs::parse(&[
+                "gleam".to_string(),
+                "gleam_stdlib/gleam/int".to_string()
+            ]),
             DocsSlashCommandArgs::SearchItemDocs {
                 provider: ProviderId("gleam".into()),
                 package: "gleam_stdlib".into(),

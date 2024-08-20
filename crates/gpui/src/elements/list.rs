@@ -158,12 +158,6 @@ struct ListItemSummary {
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct Count(usize);
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-struct RenderedCount(usize);
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-struct UnrenderedCount(usize);
-
 #[derive(Clone, Debug, Default)]
 struct Height(Pixels);
 
@@ -901,18 +895,6 @@ impl sum_tree::Summary for ListItemSummary {
 impl<'a> sum_tree::Dimension<'a, ListItemSummary> for Count {
     fn add_summary(&mut self, summary: &'a ListItemSummary, _: &()) {
         self.0 += summary.count;
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, ListItemSummary> for RenderedCount {
-    fn add_summary(&mut self, summary: &'a ListItemSummary, _: &()) {
-        self.0 += summary.rendered_count;
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, ListItemSummary> for UnrenderedCount {
-    fn add_summary(&mut self, summary: &'a ListItemSummary, _: &()) {
-        self.0 += summary.unrendered_count;
     }
 }
 

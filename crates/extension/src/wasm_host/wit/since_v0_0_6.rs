@@ -23,7 +23,7 @@ wasmtime::component::bindgen!({
 });
 
 mod settings {
-    include!("../../../../extension_api/wit/since_v0.0.6/settings.rs");
+    include!(concat!(env!("OUT_DIR"), "/since_v0.0.6/settings.rs"));
 }
 
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;

@@ -70,7 +70,7 @@ pub use language_registry::{
     PendingLanguageServer, QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::LanguageServerId;
-pub use outline::{render_item, Outline, OutlineItem};
+pub use outline::*;
 pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
 pub use text::{AnchorRangeExt, LineEnding};
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
@@ -1558,6 +1558,22 @@ impl CodeLabel {
         if let Some(highlight) = highlight {
             self.runs.push((start_ix..end_ix, highlight));
         }
+    }
+
+    pub fn text(&self) -> &str {
+        self.text.as_str()
+    }
+}
+
+impl From<String> for CodeLabel {
+    fn from(value: String) -> Self {
+        Self::plain(value, None)
+    }
+}
+
+impl From<&str> for CodeLabel {
+    fn from(value: &str) -> Self {
+        Self::plain(value.to_string(), None)
     }
 }
 

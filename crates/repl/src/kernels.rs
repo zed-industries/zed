@@ -55,6 +55,12 @@ impl KernelSpecification {
             cmd.envs(env);
         }
 
+        #[cfg(windows)]
+        {
+            use smol::process::windows::CommandExt;
+            cmd.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+        }
+
         Ok(cmd)
     }
 }
@@ -255,7 +261,7 @@ impl RunningKernel {
             messages_rx.push(control_reply_rx);
             messages_rx.push(shell_reply_rx);
 
-            let _iopub_task = cx.background_executor().spawn({
+            let iopub_task = cx.background_executor().spawn({
                 async move {
                     while let Ok(message) = iopub_socket.read().await {
                         iopub.send(message).await?;
@@ -268,7 +274,7 @@ impl RunningKernel {
                 futures::channel::mpsc::channel(100);
             let (mut shell_request_tx, mut shell_request_rx) = futures::channel::mpsc::channel(100);
 
-            let _routing_task = cx.background_executor().spawn({
+            let routing_task = cx.background_executor().spawn({
                 async move {
                     while let Some(message) = request_rx.next().await {
                         match message.content {
@@ -286,7 +292,7 @@ impl RunningKernel {
                 }
             });
 
-            let _shell_task = cx.background_executor().spawn({
+            let shell_task = cx.background_executor().spawn({
                 async move {
                     while let Some(message) = shell_request_rx.next().await {
                         shell_socket.send(message).await.ok();
@@ -297,7 +303,7 @@ impl RunningKernel {
                 }
             });
 
-            let _control_task = cx.background_executor().spawn({
+            let control_task = cx.background_executor().spawn({
                 async move {
                     while let Some(message) = control_request_rx.next().await {
                         control_socket.send(message).await.ok();
@@ -313,10 +319,10 @@ impl RunningKernel {
                     process,
                     request_tx,
                     working_directory,
-                    _shell_task,
-                    _iopub_task,
-                    _control_task,
-                    _routing_task,
+                    _shell_task: shell_task,
+                    _iopub_task: iopub_task,
+                    _control_task: control_task,
+                    _routing_task: routing_task,
                     connection_path,
                     execution_state: ExecutionState::Busy,
                     kernel_info: None,
@@ -395,11 +401,17 @@ pub async fn kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<KernelSpecific
     }
 
     // Search for kernels inside the base python environment
-    let command = Command::new("python")
-        .arg("-c")
-        .arg("import sys; print(sys.prefix)")
-        .output()
-        .await;
+    let mut command = Command::new("python");
+    command.arg("-c");
+    command.arg("import sys; print(sys.prefix)");
+
+    #[cfg(windows)]
+    {
+        use smol::process::windows::CommandExt;
+        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+    }
+
+    let command = command.output().await;
 
     if let Ok(command) = command {
         if command.status.success() {

@@ -656,13 +656,17 @@ impl Terminal {
                 cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ClipboardStore(_, data) => {
-                cx.write_to_clipboard(ClipboardItem::new(data.to_string()))
+                cx.write_to_clipboard(ClipboardItem::new_string(data.to_string()))
             }
-            AlacTermEvent::ClipboardLoad(_, format) => self.write_to_pty(format(
-                &cx.read_from_clipboard()
-                    .map(|ci| ci.text().to_string())
-                    .unwrap_or_else(|| "".to_string()),
-            )),
+            AlacTermEvent::ClipboardLoad(_, format) => {
+                self.write_to_pty(
+                    match &cx.read_from_clipboard().and_then(|item| item.text()) {
+                        // The terminal only supports pasting strings, not images.
+                        Some(text) => format(text),
+                        _ => format(""),
+                    },
+                )
+            }
             AlacTermEvent::PtyWrite(out) => self.write_to_pty(out.clone()),
             AlacTermEvent::TextAreaSizeRequest(format) => {
                 self.write_to_pty(format(self.last_content.size.into()))
@@ -767,7 +771,7 @@ impl Terminal {
 
                 #[cfg(target_os = "linux")]
                 if let Some(selection_text) = term.selection_to_string() {
-                    cx.write_to_primary(ClipboardItem::new(selection_text));
+                    cx.write_to_primary(ClipboardItem::new_string(selection_text));
                 }
 
                 if let Some((_, head)) = selection {
@@ -788,7 +792,7 @@ impl Terminal {
 
                     #[cfg(target_os = "linux")]
                     if let Some(selection_text) = term.selection_to_string() {
-                        cx.write_to_primary(ClipboardItem::new(selection_text));
+                        cx.write_to_primary(ClipboardItem::new_string(selection_text));
                     }
 
                     self.selection_head = Some(point);
@@ -798,7 +802,7 @@ impl Terminal {
 
             InternalEvent::Copy => {
                 if let Some(txt) = term.selection_to_string() {
-                    cx.write_to_clipboard(ClipboardItem::new(txt))
+                    cx.write_to_clipboard(ClipboardItem::new_string(txt))
                 }
             }
             InternalEvent::ScrollToAlacPoint(point) => {
@@ -1342,7 +1346,7 @@ impl Terminal {
                 #[cfg(target_os = "linux")]
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
-                        let text = item.text().to_string();
+                        let text = item.text().unwrap_or_default().to_string();
                         self.input(text);
                     }
                 }

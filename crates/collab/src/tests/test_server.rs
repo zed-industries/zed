@@ -666,6 +666,8 @@ impl TestServer {
                 openai_api_key: None,
                 google_ai_api_key: None,
                 anthropic_api_key: None,
+                anthropic_staff_api_key: None,
+                llm_closed_beta_model_name: None,
                 clickhouse_url: None,
                 clickhouse_user: None,
                 clickhouse_password: None,

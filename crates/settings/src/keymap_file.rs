@@ -36,9 +36,6 @@ impl JsonSchema for KeymapAction {
     }
 }
 
-#[derive(Deserialize)]
-struct ActionWithData(Box<str>, Value);
-
 impl KeymapFile {
     pub fn load_asset(asset_path: &str, cx: &mut AppContext) -> Result<()> {
         let content = asset_str::<SettingsAssets>(asset_path);

@@ -19,6 +19,7 @@ use fs::Fs;
 use futures::{
     channel::mpsc,
     future::{BoxFuture, LocalBoxFuture},
+    join,
     stream::{self, BoxStream},
     SinkExt, Stream, StreamExt,
 };
@@ -58,6 +59,13 @@ pub fn init(
     cx: &mut AppContext,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
+    cx.observe_new_views(|_, cx| {
+        let workspace = cx.view().clone();
+        InlineAssistant::update_global(cx, |inline_assistant, cx| {
+            inline_assistant.register_workspace(&workspace, cx)
+        })
+    })
+    .detach();
 }
 
 const PROMPT_HISTORY_MAX_LEN: usize = 20;
@@ -68,13 +76,31 @@ pub struct InlineAssistant {
     assists: HashMap<InlineAssistId, InlineAssist>,
     assists_by_editor: HashMap<WeakView<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
-    assist_observations:
-        HashMap<InlineAssistId, (async_watch::Sender<()>, async_watch::Receiver<()>)>,
+    assist_observations: HashMap<
+        InlineAssistId,
+        (
+            async_watch::Sender<AssistStatus>,
+            async_watch::Receiver<AssistStatus>,
+        ),
+    >,
     confirmed_assists: HashMap<InlineAssistId, Model<Codegen>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Option<Arc<Telemetry>>,
     fs: Arc<dyn Fs>,
+}
+
+pub enum AssistStatus {
+    Idle,
+    Started,
+    Stopped,
+    Finished,
+}
+
+impl AssistStatus {
+    pub fn is_done(&self) -> bool {
+        matches!(self, Self::Stopped | Self::Finished)
+    }
 }
 
 impl Global for InlineAssistant {}
@@ -97,6 +123,29 @@ impl InlineAssistant {
             prompt_builder,
             telemetry: Some(telemetry),
             fs,
+        }
+    }
+
+    pub fn register_workspace(&mut self, workspace: &View<Workspace>, cx: &mut WindowContext) {
+        cx.subscribe(workspace, |_, event, cx| {
+            Self::update_global(cx, |this, cx| this.handle_workspace_event(event, cx));
+        })
+        .detach();
+    }
+
+    fn handle_workspace_event(&mut self, event: &workspace::Event, cx: &mut WindowContext) {
+        // When the user manually saves an editor, automatically accepts all finished transformations.
+        if let workspace::Event::UserSavedItem { item, .. } = event {
+            if let Some(editor) = item.upgrade().and_then(|item| item.act_as::<Editor>(cx)) {
+                if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
+                    for assist_id in editor_assists.assist_ids.clone() {
+                        let assist = &self.assists[&assist_id];
+                        if let CodegenStatus::Done = &assist.codegen.read(cx).status {
+                            self.finish_assist(assist_id, false, cx)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -498,16 +547,42 @@ impl InlineAssistant {
         if editor.selections.count() == 1 {
             let selection = editor.selections.newest::<usize>(cx);
             let buffer = editor.buffer().read(cx).snapshot(cx);
+            let mut closest_assist_fallback = None;
             for assist_id in &editor_assists.assist_ids {
                 let assist = &self.assists[assist_id];
                 let assist_range = assist.range.to_offset(&buffer);
-                if assist.decorations.is_some()
-                    && assist_range.contains(&selection.start)
-                    && assist_range.contains(&selection.end)
-                {
-                    self.focus_assist(*assist_id, cx);
-                    return;
+                if assist.decorations.is_some() {
+                    if assist_range.contains(&selection.start)
+                        && assist_range.contains(&selection.end)
+                    {
+                        self.focus_assist(*assist_id, cx);
+                        return;
+                    } else {
+                        let distance_from_selection = assist_range
+                            .start
+                            .abs_diff(selection.start)
+                            .min(assist_range.start.abs_diff(selection.end))
+                            + assist_range
+                                .end
+                                .abs_diff(selection.start)
+                                .min(assist_range.end.abs_diff(selection.end));
+                        match closest_assist_fallback {
+                            Some((_, old_distance)) => {
+                                if distance_from_selection < old_distance {
+                                    closest_assist_fallback =
+                                        Some((assist_id, distance_from_selection));
+                                }
+                            }
+                            None => {
+                                closest_assist_fallback = Some((assist_id, distance_from_selection))
+                            }
+                        }
+                    }
                 }
+            }
+
+            if let Some((&assist_id, _)) = closest_assist_fallback {
+                self.focus_assist(assist_id, cx);
             }
         }
 
@@ -558,14 +633,6 @@ impl InlineAssistant {
         };
 
         match event {
-            EditorEvent::Saved => {
-                for assist_id in editor_assists.assist_ids.clone() {
-                    let assist = &self.assists[&assist_id];
-                    if let CodegenStatus::Done = &assist.codegen.read(cx).status {
-                        self.finish_assist(assist_id, false, cx)
-                    }
-                }
-            }
             EditorEvent::Edited { transaction_id } => {
                 let buffer = editor.read(cx).buffer().read(cx);
                 let edited_ranges =
@@ -876,7 +943,7 @@ impl InlineAssistant {
             .log_err();
 
         if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
-            tx.send(()).ok();
+            tx.send(AssistStatus::Started).ok();
         }
     }
 
@@ -890,7 +957,7 @@ impl InlineAssistant {
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
 
         if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
-            tx.send(()).ok();
+            tx.send(AssistStatus::Stopped).ok();
         }
     }
 
@@ -1055,6 +1122,7 @@ impl InlineAssistant {
                     editor.set_show_gutter(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
                     editor.set_read_only(true);
+                    editor.set_show_inline_completions(false);
                     editor.highlight_rows::<DeletedLines>(
                         Anchor::min()..=Anchor::max(),
                         Some(cx.theme().status().deleted_background),
@@ -1091,11 +1159,14 @@ impl InlineAssistant {
         })
     }
 
-    pub fn observe_assist(&mut self, assist_id: InlineAssistId) -> async_watch::Receiver<()> {
+    pub fn observe_assist(
+        &mut self,
+        assist_id: InlineAssistId,
+    ) -> async_watch::Receiver<AssistStatus> {
         if let Some((_, rx)) = self.assist_observations.get(&assist_id) {
             rx.clone()
         } else {
-            let (tx, rx) = async_watch::channel(());
+            let (tx, rx) = async_watch::channel(AssistStatus::Idle);
             self.assist_observations.insert(assist_id, (tx, rx.clone()));
             rx
         }
@@ -1228,12 +1299,6 @@ fn build_assist_editor_renderer(editor: &View<PromptEditor>) -> RenderBlock {
     })
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum InitialInsertion {
-    NewlineBefore,
-    NewlineAfter,
-}
-
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct InlineAssistId(usize);
 
@@ -1277,10 +1342,16 @@ struct PromptEditor {
     _codegen_subscription: Subscription,
     editor_subscriptions: Vec<Subscription>,
     pending_token_count: Task<Result<()>>,
-    token_count: Option<usize>,
+    token_counts: Option<TokenCounts>,
     _token_count_subscriptions: Vec<Subscription>,
     workspace: Option<WeakView<Workspace>>,
     show_rate_limit_notice: bool,
+}
+
+#[derive(Copy, Clone)]
+pub struct TokenCounts {
+    total: usize,
+    assistant_panel: usize,
 }
 
 impl EventEmitter<PromptEditorEvent> for PromptEditor {}
@@ -1528,7 +1599,7 @@ impl PromptEditor {
             codegen,
             fs,
             pending_token_count: Task::ready(Ok(())),
-            token_count: None,
+            token_counts: None,
             _token_count_subscriptions: token_count_subscriptions,
             workspace,
             show_rate_limit_notice: false,
@@ -1618,7 +1689,7 @@ impl PromptEditor {
                 .await?;
 
             this.update(&mut cx, |this, cx| {
-                this.token_count = Some(token_count);
+                this.token_counts = Some(token_count);
                 cx.notify();
             })
         })
@@ -1759,13 +1830,13 @@ impl PromptEditor {
 
     fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let model = LanguageModelRegistry::read_global(cx).active_model()?;
-        let token_count = self.token_count?;
+        let token_counts = self.token_counts?;
         let max_token_count = model.max_token_count();
 
-        let remaining_tokens = max_token_count as isize - token_count as isize;
+        let remaining_tokens = max_token_count as isize - token_counts.total as isize;
         let token_count_color = if remaining_tokens <= 0 {
             Color::Error
-        } else if token_count as f32 / max_token_count as f32 >= 0.8 {
+        } else if token_counts.total as f32 / max_token_count as f32 >= 0.8 {
             Color::Warning
         } else {
             Color::Muted
@@ -1775,7 +1846,7 @@ impl PromptEditor {
             .id("token_count")
             .gap_0p5()
             .child(
-                Label::new(humanize_token_count(token_count))
+                Label::new(humanize_token_count(token_counts.total))
                     .size(LabelSize::Small)
                     .color(token_count_color),
             )
@@ -1787,11 +1858,14 @@ impl PromptEditor {
             );
         if let Some(workspace) = self.workspace.clone() {
             token_count = token_count
-                .tooltip(|cx| {
+                .tooltip(move |cx| {
                     Tooltip::with_meta(
-                        "Tokens Used by Inline Assistant",
+                        format!(
+                            "Tokens Used ({} from the Assistant Panel)",
+                            humanize_token_count(token_counts.assistant_panel)
+                        ),
                         None,
-                        "Click to Open Assistant Panel",
+                        "Click to open the Assistant Panel",
                         cx,
                     )
                 })
@@ -1808,7 +1882,7 @@ impl PromptEditor {
         } else {
             token_count = token_count
                 .cursor_default()
-                .tooltip(|cx| Tooltip::text("Tokens Used by Inline Assistant", cx));
+                .tooltip(|cx| Tooltip::text("Tokens used", cx));
         }
 
         Some(token_count)
@@ -2026,7 +2100,7 @@ impl InlineAssist {
                             if assist.decorations.is_none() {
                                 this.finish_assist(assist_id, false, cx);
                             } else if let Some(tx) = this.assist_observations.get(&assist_id) {
-                                tx.0.send(()).ok();
+                                tx.0.send(AssistStatus::Finished).ok();
                             }
                         }
                     })
@@ -2057,7 +2131,7 @@ impl InlineAssist {
         }
     }
 
-    pub fn count_tokens(&self, cx: &WindowContext) -> BoxFuture<'static, Result<usize>> {
+    pub fn count_tokens(&self, cx: &WindowContext) -> BoxFuture<'static, Result<TokenCounts>> {
         let Some(user_prompt) = self.user_prompt(cx) else {
             return future::ready(Err(anyhow!("no user prompt"))).boxed();
         };
@@ -2194,11 +2268,25 @@ impl Codegen {
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &AppContext,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<TokenCounts>> {
         if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-            let request = self.build_request(user_prompt, assistant_panel_context, edit_range, cx);
+            let request =
+                self.build_request(user_prompt, assistant_panel_context.clone(), edit_range, cx);
             match request {
-                Ok(request) => model.count_tokens(request, cx),
+                Ok(request) => {
+                    let total_count = model.count_tokens(request.clone(), cx);
+                    let assistant_panel_count = assistant_panel_context
+                        .map(|context| model.count_tokens(context, cx))
+                        .unwrap_or_else(|| future::ready(Ok(0)).boxed());
+
+                    async move {
+                        Ok(TokenCounts {
+                            total: total_count.await?,
+                            assistant_panel: assistant_panel_count.await?,
+                        })
+                    }
+                    .boxed()
+                }
                 Err(error) => futures::future::ready(Err(error)).boxed(),
             }
         } else {
@@ -2290,6 +2378,7 @@ impl Codegen {
         } else {
             return Err(anyhow::anyhow!("invalid transformation range"));
         };
+
         let prompt = self
             .builder
             .generate_content_prompt(user_prompt, language_name, buffer, range)
@@ -2302,7 +2391,8 @@ impl Codegen {
 
         messages.push(LanguageModelRequestMessage {
             role: Role::User,
-            content: prompt,
+            content: vec![prompt.into()],
+            cache: false,
         });
 
         Ok(LanguageModelRequest {
@@ -2349,12 +2439,12 @@ impl Codegen {
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
         let mut edit_start = edit_range.start.to_offset(&snapshot);
-        self.generation = cx.spawn(|this, mut cx| {
+        self.generation = cx.spawn(|codegen, mut cx| {
             async move {
                 let chunks = stream.await;
                 let generate = async {
                     let (mut diff_tx, mut diff_rx) = mpsc::channel(1);
-                    let diff: Task<anyhow::Result<()>> =
+                    let line_based_stream_diff: Task<anyhow::Result<()>> =
                         cx.background_executor().spawn(async move {
                             let mut response_latency = None;
                             let request_start = Instant::now();
@@ -2470,10 +2560,10 @@ impl Codegen {
                         });
 
                     while let Some((char_ops, line_diff)) = diff_rx.next().await {
-                        this.update(&mut cx, |this, cx| {
-                            this.last_equal_ranges.clear();
+                        codegen.update(&mut cx, |codegen, cx| {
+                            codegen.last_equal_ranges.clear();
 
-                            let transaction = this.buffer.update(cx, |buffer, cx| {
+                            let transaction = codegen.buffer.update(cx, |buffer, cx| {
                                 // Avoid grouping assistant edits with user edits.
                                 buffer.finalize_last_transaction(cx);
 
@@ -2498,23 +2588,24 @@ impl Codegen {
                                                 let edit_range = snapshot.anchor_after(edit_start)
                                                     ..snapshot.anchor_before(edit_end);
                                                 edit_start = edit_end;
-                                                this.last_equal_ranges.push(edit_range);
+                                                codegen.last_equal_ranges.push(edit_range);
                                                 None
                                             }
                                         }),
                                     None,
                                     cx,
                                 );
-                                this.edit_position = Some(snapshot.anchor_after(edit_start));
+                                codegen.edit_position = Some(snapshot.anchor_after(edit_start));
 
                                 buffer.end_transaction(cx)
                             });
 
                             if let Some(transaction) = transaction {
-                                if let Some(first_transaction) = this.transformation_transaction_id
+                                if let Some(first_transaction) =
+                                    codegen.transformation_transaction_id
                                 {
                                     // Group all assistant edits into the first transaction.
-                                    this.buffer.update(cx, |buffer, cx| {
+                                    codegen.buffer.update(cx, |buffer, cx| {
                                         buffer.merge_transactions(
                                             transaction,
                                             first_transaction,
@@ -2522,36 +2613,45 @@ impl Codegen {
                                         )
                                     });
                                 } else {
-                                    this.transformation_transaction_id = Some(transaction);
-                                    this.buffer.update(cx, |buffer, cx| {
+                                    codegen.transformation_transaction_id = Some(transaction);
+                                    codegen.buffer.update(cx, |buffer, cx| {
                                         buffer.finalize_last_transaction(cx)
                                     });
                                 }
                             }
 
-                            this.update_diff(edit_range.clone(), line_diff, cx);
+                            codegen.reapply_line_based_diff(edit_range.clone(), line_diff, cx);
 
                             cx.notify();
                         })?;
                     }
 
-                    diff.await?;
+                    // Streaming stopped and we have the new text in the buffer, and a line-based diff applied for the whole new buffer.
+                    // That diff is not what a regular diff is and might look unexpected, ergo apply a regular diff.
+                    // It's fine to apply even if the rest of the line diffing fails, as no more hunks are coming through `diff_rx`.
+                    let batch_diff_task = codegen.update(&mut cx, |codegen, cx| {
+                        codegen.reapply_batch_diff(edit_range.clone(), cx)
+                    })?;
+                    let (line_based_stream_diff, ()) =
+                        join!(line_based_stream_diff, batch_diff_task);
+                    line_based_stream_diff?;
 
                     anyhow::Ok(())
                 };
 
                 let result = generate.await;
-                this.update(&mut cx, |this, cx| {
-                    this.last_equal_ranges.clear();
-                    if let Err(error) = result {
-                        this.status = CodegenStatus::Error(error);
-                    } else {
-                        this.status = CodegenStatus::Done;
-                    }
-                    cx.emit(CodegenEvent::Finished);
-                    cx.notify();
-                })
-                .ok();
+                codegen
+                    .update(&mut cx, |this, cx| {
+                        this.last_equal_ranges.clear();
+                        if let Err(error) = result {
+                            this.status = CodegenStatus::Error(error);
+                        } else {
+                            this.status = CodegenStatus::Done;
+                        }
+                        cx.emit(CodegenEvent::Finished);
+                        cx.notify();
+                    })
+                    .ok();
             }
         });
         cx.notify();
@@ -2583,7 +2683,7 @@ impl Codegen {
         });
     }
 
-    fn update_diff(
+    fn reapply_line_based_diff(
         &mut self,
         edit_range: Range<Anchor>,
         line_operations: Vec<LineOperation>,
@@ -2641,6 +2741,99 @@ impl Codegen {
 
             cx.notify();
         }
+    }
+
+    fn reapply_batch_diff(
+        &mut self,
+        edit_range: Range<Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<()> {
+        let old_snapshot = self.snapshot.clone();
+        let old_range = edit_range.to_point(&old_snapshot);
+        let new_snapshot = self.buffer.read(cx).snapshot(cx);
+        let new_range = edit_range.to_point(&new_snapshot);
+
+        cx.spawn(|codegen, mut cx| async move {
+            let (deleted_row_ranges, inserted_row_ranges) = cx
+                .background_executor()
+                .spawn(async move {
+                    let old_text = old_snapshot
+                        .text_for_range(
+                            Point::new(old_range.start.row, 0)
+                                ..Point::new(
+                                    old_range.end.row,
+                                    old_snapshot.line_len(MultiBufferRow(old_range.end.row)),
+                                ),
+                        )
+                        .collect::<String>();
+                    let new_text = new_snapshot
+                        .text_for_range(
+                            Point::new(new_range.start.row, 0)
+                                ..Point::new(
+                                    new_range.end.row,
+                                    new_snapshot.line_len(MultiBufferRow(new_range.end.row)),
+                                ),
+                        )
+                        .collect::<String>();
+
+                    let mut old_row = old_range.start.row;
+                    let mut new_row = new_range.start.row;
+                    let batch_diff =
+                        similar::TextDiff::from_lines(old_text.as_str(), new_text.as_str());
+
+                    let mut deleted_row_ranges: Vec<(Anchor, RangeInclusive<u32>)> = Vec::new();
+                    let mut inserted_row_ranges = Vec::new();
+                    for change in batch_diff.iter_all_changes() {
+                        let line_count = change.value().lines().count() as u32;
+                        match change.tag() {
+                            similar::ChangeTag::Equal => {
+                                old_row += line_count;
+                                new_row += line_count;
+                            }
+                            similar::ChangeTag::Delete => {
+                                let old_end_row = old_row + line_count - 1;
+                                let new_row = new_snapshot.anchor_before(Point::new(new_row, 0));
+
+                                if let Some((_, last_deleted_row_range)) =
+                                    deleted_row_ranges.last_mut()
+                                {
+                                    if *last_deleted_row_range.end() + 1 == old_row {
+                                        *last_deleted_row_range =
+                                            *last_deleted_row_range.start()..=old_end_row;
+                                    } else {
+                                        deleted_row_ranges.push((new_row, old_row..=old_end_row));
+                                    }
+                                } else {
+                                    deleted_row_ranges.push((new_row, old_row..=old_end_row));
+                                }
+
+                                old_row += line_count;
+                            }
+                            similar::ChangeTag::Insert => {
+                                let new_end_row = new_row + line_count - 1;
+                                let start = new_snapshot.anchor_before(Point::new(new_row, 0));
+                                let end = new_snapshot.anchor_before(Point::new(
+                                    new_end_row,
+                                    new_snapshot.line_len(MultiBufferRow(new_end_row)),
+                                ));
+                                inserted_row_ranges.push(start..=end);
+                                new_row += line_count;
+                            }
+                        }
+                    }
+
+                    (deleted_row_ranges, inserted_row_ranges)
+                })
+                .await;
+
+            codegen
+                .update(&mut cx, |codegen, cx| {
+                    codegen.diff.deleted_row_ranges = deleted_row_ranges;
+                    codegen.diff.inserted_row_ranges = inserted_row_ranges;
+                    cx.notify();
+                })
+                .ok();
+        })
     }
 }
 

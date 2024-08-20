@@ -586,7 +586,7 @@ impl Vim {
             } else {
                 self.workspace_state.last_yank = cx
                     .read_from_clipboard()
-                    .map(|item| item.text().to_owned().into());
+                    .and_then(|item| item.text().map(|string| string.into()))
             }
 
             self.workspace_state.registers.insert('"', content.clone());
@@ -663,7 +663,7 @@ impl Vim {
     fn system_clipboard_is_newer(&self, cx: &mut AppContext) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
             if let Some(last_state) = &self.workspace_state.last_yank {
-                last_state != item.text()
+                Some(last_state.as_ref()) != item.text().as_deref()
             } else {
                 true
             }

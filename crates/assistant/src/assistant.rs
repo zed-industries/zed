@@ -9,8 +9,11 @@ mod model_selector;
 mod prompt_library;
 mod prompts;
 mod slash_command;
+pub(crate) mod slash_command_picker;
+pub mod slash_command_settings;
 mod streaming_diff;
 mod terminal_inline_assistant;
+mod workflow;
 
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
@@ -18,9 +21,11 @@ use assistant_slash_command::SlashCommandRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
+use context_servers::ContextServerRegistry;
 pub use context_store::*;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
+use gpui::Context as _;
 use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
@@ -29,17 +34,21 @@ use language_model::{
 };
 pub(crate) use model_selector::*;
 pub use prompts::PromptBuilder;
+use prompts::PromptLoadingParams;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
-    active_command, default_command, diagnostics_command, docs_command, fetch_command,
+    context_server_command, default_command, diagnostics_command, docs_command, fetch_command,
     file_command, now_command, project_command, prompt_command, search_command, symbols_command,
-    tabs_command, term_command, workflow_command,
+    tab_command, terminal_command, workflow_command,
 };
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
 use util::ResultExt;
+pub use workflow::*;
+
+use crate::slash_command_settings::SlashCommandSettings;
 
 actions!(
     assistant,
@@ -51,16 +60,14 @@ actions!(
         InsertIntoEditor,
         ToggleFocus,
         InsertActivePrompt,
-        ShowConfiguration,
         DeployHistory,
         DeployPromptLibrary,
         ConfirmCommand,
         ToggleModelSelector,
-        DebugWorkflowSteps
     ]
 );
 
-const DEFAULT_CONTEXT_LINES: usize = 20;
+const DEFAULT_CONTEXT_LINES: usize = 50;
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct InlineAssist {
@@ -97,6 +104,7 @@ pub enum MessageStatus {
     Pending,
     Done,
     Error(SharedString),
+    Canceled,
 }
 
 impl MessageStatus {
@@ -107,6 +115,7 @@ impl MessageStatus {
             Some(proto::context_message_status::Variant::Error(error)) => {
                 MessageStatus::Error(error.message.into())
             }
+            Some(proto::context_message_status::Variant::Canceled(_)) => MessageStatus::Canceled,
             None => MessageStatus::Pending,
         }
     }
@@ -128,6 +137,11 @@ impl MessageStatus {
                     proto::context_message_status::Error {
                         message: message.to_string(),
                     },
+                )),
+            },
+            MessageStatus::Canceled => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Canceled(
+                    proto::context_message_status::Canceled {},
                 )),
             },
         }
@@ -167,9 +181,15 @@ impl Assistant {
     }
 }
 
-pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) -> Arc<PromptBuilder> {
+pub fn init(
+    fs: Arc<dyn Fs>,
+    client: Arc<Client>,
+    stdout_is_a_pty: bool,
+    cx: &mut AppContext,
+) -> Arc<PromptBuilder> {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
+    SlashCommandSettings::register(cx);
 
     // TODO: remove this when 0.148.0 is released.
     if AssistantSettings::get_global(cx).using_outdated_settings_version {
@@ -201,11 +221,18 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) -> Arc<Pr
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);
     assistant_panel::init(cx);
+    context_servers::init(cx);
 
-    let prompt_builder = prompts::PromptBuilder::new(Some((fs.clone(), cx)))
-        .log_err()
-        .map(Arc::new)
-        .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
+    let prompt_builder = prompts::PromptBuilder::new(Some(PromptLoadingParams {
+        fs: fs.clone(),
+        repo_path: stdout_is_a_pty
+            .then(|| std::env::current_dir().log_err())
+            .flatten(),
+        cx,
+    }))
+    .log_err()
+    .map(Arc::new)
+    .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
     register_slash_commands(Some(prompt_builder.clone()), cx);
     inline_assistant::init(
         fs.clone(),
@@ -237,7 +264,67 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, cx: &mut AppContext) -> Arc<Pr
     })
     .detach();
 
+    register_context_server_handlers(cx);
+
     prompt_builder
+}
+
+fn register_context_server_handlers(cx: &mut AppContext) {
+    cx.subscribe(
+        &context_servers::manager::ContextServerManager::global(cx),
+        |manager, event, cx| match event {
+            context_servers::manager::Event::ServerStarted { server_id } => {
+                cx.update_model(
+                    &manager,
+                    |manager: &mut context_servers::manager::ContextServerManager, cx| {
+                        let slash_command_registry = SlashCommandRegistry::global(cx);
+                        let context_server_registry = ContextServerRegistry::global(cx);
+                        if let Some(server) = manager.get_server(server_id) {
+                            cx.spawn(|_, _| async move {
+                                let Some(protocol) = server.client.read().clone() else {
+                                    return;
+                                };
+
+                                if let Some(prompts) = protocol.list_prompts().await.log_err() {
+                                    for prompt in prompts
+                                        .into_iter()
+                                        .filter(context_server_command::acceptable_prompt)
+                                    {
+                                        log::info!(
+                                            "registering context server command: {:?}",
+                                            prompt.name
+                                        );
+                                        context_server_registry.register_command(
+                                            server.id.clone(),
+                                            prompt.name.as_str(),
+                                        );
+                                        slash_command_registry.register_command(
+                                            context_server_command::ContextServerSlashCommand::new(
+                                                &server, prompt,
+                                            ),
+                                            true,
+                                        );
+                                    }
+                                }
+                            })
+                            .detach();
+                        }
+                    },
+                );
+            }
+            context_servers::manager::Event::ServerStopped { server_id } => {
+                let slash_command_registry = SlashCommandRegistry::global(cx);
+                let context_server_registry = ContextServerRegistry::global(cx);
+                if let Some(commands) = context_server_registry.get_commands(server_id) {
+                    for command_name in commands {
+                        slash_command_registry.unregister_command_by_name(&command_name);
+                        context_server_registry.unregister_command(&server_id, &command_name);
+                    }
+                }
+            }
+        },
+    )
+    .detach();
 }
 
 fn init_language_model_settings(cx: &mut AppContext) {
@@ -271,15 +358,15 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
 fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
     slash_command_registry.register_command(file_command::FileSlashCommand, true);
-    slash_command_registry.register_command(active_command::ActiveSlashCommand, true);
     slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
-    slash_command_registry.register_command(tabs_command::TabsSlashCommand, true);
+    slash_command_registry.register_command(tab_command::TabSlashCommand, true);
     slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
-    slash_command_registry.register_command(default_command::DefaultSlashCommand, true);
-    slash_command_registry.register_command(term_command::TermSlashCommand, true);
-    slash_command_registry.register_command(now_command::NowSlashCommand, true);
+    slash_command_registry.register_command(default_command::DefaultSlashCommand, false);
+    slash_command_registry.register_command(terminal_command::TerminalSlashCommand, true);
+    slash_command_registry.register_command(now_command::NowSlashCommand, false);
     slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
+
     if let Some(prompt_builder) = prompt_builder {
         slash_command_registry.register_command(
             workflow_command::WorkflowSlashCommand::new(prompt_builder),
@@ -288,15 +375,10 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     }
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 
-    cx.observe_flag::<docs_command::DocsSlashCommandFeatureFlag, _>({
-        let slash_command_registry = slash_command_registry.clone();
-        move |is_enabled, _cx| {
-            if is_enabled {
-                slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
-            }
-        }
-    })
-    .detach();
+    update_slash_commands_from_settings(cx);
+    cx.observe_global::<SettingsStore>(update_slash_commands_from_settings)
+        .detach();
+
     cx.observe_flag::<search_command::SearchSlashCommandFeatureFlag, _>({
         let slash_command_registry = slash_command_registry.clone();
         move |is_enabled, _cx| {
@@ -306,6 +388,23 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
         }
     })
     .detach();
+}
+
+fn update_slash_commands_from_settings(cx: &mut AppContext) {
+    let slash_command_registry = SlashCommandRegistry::global(cx);
+    let settings = SlashCommandSettings::get_global(cx);
+
+    if settings.docs.enabled {
+        slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
+    } else {
+        slash_command_registry.unregister_command(docs_command::DocsSlashCommand);
+    }
+
+    if settings.project.enabled {
+        slash_command_registry.register_command(project_command::ProjectSlashCommand, true);
+    } else {
+        slash_command_registry.unregister_command(project_command::ProjectSlashCommand);
+    }
 }
 
 pub fn humanize_token_count(count: usize) -> String {

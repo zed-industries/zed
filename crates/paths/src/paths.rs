@@ -170,6 +170,12 @@ pub fn contexts_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path within the contexts directory where images from contexts are stored.
+pub fn context_images_dir() -> &'static PathBuf {
+    static CONTEXT_IMAGES_DIR: OnceLock<PathBuf> = OnceLock::new();
+    CONTEXT_IMAGES_DIR.get_or_init(|| contexts_dir().join("images"))
+}
+
 /// Returns the path to the contexts directory.
 ///
 /// This is where the prompts for use with the Assistant are stored.
@@ -187,15 +193,28 @@ pub fn prompts_dir() -> &'static PathBuf {
 /// Returns the path to the prompt templates directory.
 ///
 /// This is where the prompt templates for core features can be overridden with templates.
-pub fn prompt_templates_dir() -> &'static PathBuf {
-    static PROMPT_TEMPLATES_DIR: OnceLock<PathBuf> = OnceLock::new();
-    PROMPT_TEMPLATES_DIR.get_or_init(|| {
-        if cfg!(target_os = "macos") {
-            config_dir().join("prompts").join("templates")
-        } else {
-            support_dir().join("prompts").join("templates")
+///
+/// # Arguments
+///
+/// * `dev_mode` - If true, assumes the current working directory is the Zed repository.
+pub fn prompt_overrides_dir(repo_path: Option<&Path>) -> PathBuf {
+    if let Some(path) = repo_path {
+        let dev_path = path.join("assets").join("prompts");
+        if dev_path.exists() {
+            return dev_path;
         }
-    })
+    }
+
+    static PROMPT_TEMPLATES_DIR: OnceLock<PathBuf> = OnceLock::new();
+    PROMPT_TEMPLATES_DIR
+        .get_or_init(|| {
+            if cfg!(target_os = "macos") {
+                config_dir().join("prompt_overrides")
+            } else {
+                support_dir().join("prompt_overrides")
+            }
+        })
+        .clone()
 }
 
 /// Returns the path to the semantic search's embeddings directory.

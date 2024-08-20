@@ -1,4 +1,6 @@
+use crate::db::UserId;
 use chrono::Duration;
+use futures::StreamExt as _;
 use rpc::LanguageModelProvider;
 use sea_orm::QuerySelect;
 use std::{iter, str::FromStr};
@@ -14,6 +16,15 @@ pub struct Usage {
     pub input_tokens_this_month: usize,
     pub output_tokens_this_month: usize,
     pub spending_this_month: usize,
+    pub lifetime_spending: usize,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ApplicationWideUsage {
+    pub provider: LanguageModelProvider,
+    pub model: String,
+    pub requests_this_minute: usize,
+    pub tokens_this_minute: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -61,9 +72,75 @@ impl LlmDatabase {
         Ok(())
     }
 
+    pub async fn get_application_wide_usages_by_model(
+        &self,
+        now: DateTimeUtc,
+    ) -> Result<Vec<ApplicationWideUsage>> {
+        self.transaction(|tx| async move {
+            let past_minute = now - Duration::minutes(1);
+            let requests_per_minute = self.usage_measure_ids[&UsageMeasure::RequestsPerMinute];
+            let tokens_per_minute = self.usage_measure_ids[&UsageMeasure::TokensPerMinute];
+
+            let mut results = Vec::new();
+            for ((provider, model_name), model) in self.models.iter() {
+                let mut usages = usage::Entity::find()
+                    .filter(
+                        usage::Column::Timestamp
+                            .gte(past_minute.naive_utc())
+                            .and(usage::Column::IsStaff.eq(false))
+                            .and(usage::Column::ModelId.eq(model.id))
+                            .and(
+                                usage::Column::MeasureId
+                                    .eq(requests_per_minute)
+                                    .or(usage::Column::MeasureId.eq(tokens_per_minute)),
+                            ),
+                    )
+                    .stream(&*tx)
+                    .await?;
+
+                let mut requests_this_minute = 0;
+                let mut tokens_this_minute = 0;
+                while let Some(usage) = usages.next().await {
+                    let usage = usage?;
+                    if usage.measure_id == requests_per_minute {
+                        requests_this_minute += Self::get_live_buckets(
+                            &usage,
+                            now.naive_utc(),
+                            UsageMeasure::RequestsPerMinute,
+                        )
+                        .0
+                        .iter()
+                        .copied()
+                        .sum::<i64>() as usize;
+                    } else if usage.measure_id == tokens_per_minute {
+                        tokens_this_minute += Self::get_live_buckets(
+                            &usage,
+                            now.naive_utc(),
+                            UsageMeasure::TokensPerMinute,
+                        )
+                        .0
+                        .iter()
+                        .copied()
+                        .sum::<i64>() as usize;
+                    }
+                }
+
+                results.push(ApplicationWideUsage {
+                    provider: *provider,
+                    model: model_name.clone(),
+                    requests_this_minute,
+                    tokens_this_minute,
+                })
+            }
+
+            Ok(results)
+        })
+        .await
+    }
+
     pub async fn get_usage(
         &self,
-        user_id: i32,
+        user_id: UserId,
         provider: LanguageModelProvider,
         model_name: &str,
         now: DateTimeUtc,
@@ -83,6 +160,18 @@ impl LlmDatabase {
                 .all(&*tx)
                 .await?;
 
+            let (lifetime_input_tokens, lifetime_output_tokens) = lifetime_usage::Entity::find()
+                .filter(
+                    lifetime_usage::Column::UserId
+                        .eq(user_id)
+                        .and(lifetime_usage::Column::ModelId.eq(model.id)),
+                )
+                .one(&*tx)
+                .await?
+                .map_or((0, 0), |usage| {
+                    (usage.input_tokens as usize, usage.output_tokens as usize)
+                });
+
             let requests_this_minute =
                 self.get_usage_for_measure(&usages, now, UsageMeasure::RequestsPerMinute)?;
             let tokens_this_minute =
@@ -95,6 +184,8 @@ impl LlmDatabase {
                 self.get_usage_for_measure(&usages, now, UsageMeasure::OutputTokensPerMonth)?;
             let spending_this_month =
                 calculate_spending(model, input_tokens_this_month, output_tokens_this_month);
+            let lifetime_spending =
+                calculate_spending(model, lifetime_input_tokens, lifetime_output_tokens);
 
             Ok(Usage {
                 requests_this_minute,
@@ -103,14 +194,17 @@ impl LlmDatabase {
                 input_tokens_this_month,
                 output_tokens_this_month,
                 spending_this_month,
+                lifetime_spending,
             })
         })
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_usage(
         &self,
-        user_id: i32,
+        user_id: UserId,
+        is_staff: bool,
         provider: LanguageModelProvider,
         model_name: &str,
         input_token_count: usize,
@@ -132,6 +226,7 @@ impl LlmDatabase {
             let requests_this_minute = self
                 .update_usage_for_measure(
                     user_id,
+                    is_staff,
                     model.id,
                     &usages,
                     UsageMeasure::RequestsPerMinute,
@@ -143,6 +238,7 @@ impl LlmDatabase {
             let tokens_this_minute = self
                 .update_usage_for_measure(
                     user_id,
+                    is_staff,
                     model.id,
                     &usages,
                     UsageMeasure::TokensPerMinute,
@@ -154,6 +250,7 @@ impl LlmDatabase {
             let tokens_this_day = self
                 .update_usage_for_measure(
                     user_id,
+                    is_staff,
                     model.id,
                     &usages,
                     UsageMeasure::TokensPerDay,
@@ -165,6 +262,7 @@ impl LlmDatabase {
             let input_tokens_this_month = self
                 .update_usage_for_measure(
                     user_id,
+                    is_staff,
                     model.id,
                     &usages,
                     UsageMeasure::InputTokensPerMonth,
@@ -176,6 +274,7 @@ impl LlmDatabase {
             let output_tokens_this_month = self
                 .update_usage_for_measure(
                     user_id,
+                    is_staff,
                     model.id,
                     &usages,
                     UsageMeasure::OutputTokensPerMonth,
@@ -187,6 +286,50 @@ impl LlmDatabase {
             let spending_this_month =
                 calculate_spending(model, input_tokens_this_month, output_tokens_this_month);
 
+            // Update lifetime usage
+            let lifetime_usage = lifetime_usage::Entity::find()
+                .filter(
+                    lifetime_usage::Column::UserId
+                        .eq(user_id)
+                        .and(lifetime_usage::Column::ModelId.eq(model.id)),
+                )
+                .one(&*tx)
+                .await?;
+
+            let lifetime_usage = match lifetime_usage {
+                Some(usage) => {
+                    lifetime_usage::Entity::update(lifetime_usage::ActiveModel {
+                        id: ActiveValue::unchanged(usage.id),
+                        input_tokens: ActiveValue::set(
+                            usage.input_tokens + input_token_count as i64,
+                        ),
+                        output_tokens: ActiveValue::set(
+                            usage.output_tokens + output_token_count as i64,
+                        ),
+                        ..Default::default()
+                    })
+                    .exec(&*tx)
+                    .await?
+                }
+                None => {
+                    lifetime_usage::ActiveModel {
+                        user_id: ActiveValue::set(user_id),
+                        model_id: ActiveValue::set(model.id),
+                        input_tokens: ActiveValue::set(input_token_count as i64),
+                        output_tokens: ActiveValue::set(output_token_count as i64),
+                        ..Default::default()
+                    }
+                    .insert(&*tx)
+                    .await?
+                }
+            };
+
+            let lifetime_spending = calculate_spending(
+                model,
+                lifetime_usage.input_tokens as usize,
+                lifetime_usage.output_tokens as usize,
+            );
+
             Ok(Usage {
                 requests_this_minute,
                 tokens_this_minute,
@@ -194,6 +337,7 @@ impl LlmDatabase {
                 input_tokens_this_month,
                 output_tokens_this_month,
                 spending_this_month,
+                lifetime_spending,
             })
         })
         .await
@@ -205,7 +349,11 @@ impl LlmDatabase {
             let day_since = now - Duration::days(5);
 
             let users_in_recent_minutes = usage::Entity::find()
-                .filter(usage::Column::Timestamp.gte(minute_since.naive_utc()))
+                .filter(
+                    usage::Column::Timestamp
+                        .gte(minute_since.naive_utc())
+                        .and(usage::Column::IsStaff.eq(false)),
+                )
                 .select_only()
                 .column(usage::Column::UserId)
                 .group_by(usage::Column::UserId)
@@ -213,7 +361,11 @@ impl LlmDatabase {
                 .await? as usize;
 
             let users_in_recent_days = usage::Entity::find()
-                .filter(usage::Column::Timestamp.gte(day_since.naive_utc()))
+                .filter(
+                    usage::Column::Timestamp
+                        .gte(day_since.naive_utc())
+                        .and(usage::Column::IsStaff.eq(false)),
+                )
                 .select_only()
                 .column(usage::Column::UserId)
                 .group_by(usage::Column::UserId)
@@ -231,7 +383,8 @@ impl LlmDatabase {
     #[allow(clippy::too_many_arguments)]
     async fn update_usage_for_measure(
         &self,
-        user_id: i32,
+        user_id: UserId,
+        is_staff: bool,
         model_id: ModelId,
         usages: &[usage::Model],
         usage_measure: UsageMeasure,
@@ -267,6 +420,7 @@ impl LlmDatabase {
 
         let mut model = usage::ActiveModel {
             user_id: ActiveValue::set(user_id),
+            is_staff: ActiveValue::set(is_staff),
             model_id: ActiveValue::set(model_id),
             measure_id: ActiveValue::set(measure_id),
             timestamp: ActiveValue::set(timestamp),

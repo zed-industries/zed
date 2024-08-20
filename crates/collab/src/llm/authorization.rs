@@ -12,11 +12,12 @@ pub fn authorize_access_to_language_model(
     model: &str,
 ) -> Result<()> {
     authorize_access_for_country(config, country_code, provider)?;
-    authorize_access_to_model(claims, provider, model)?;
+    authorize_access_to_model(config, claims, provider, model)?;
     Ok(())
 }
 
 fn authorize_access_to_model(
+    config: &Config,
     claims: &LlmTokenClaims,
     provider: LanguageModelProvider,
     model: &str,
@@ -25,15 +26,25 @@ fn authorize_access_to_model(
         return Ok(());
     }
 
-    match (provider, model) {
-        (LanguageModelProvider::Anthropic, model) if model.starts_with("claude-3.5-sonnet") => {
-            Ok(())
+    match provider {
+        LanguageModelProvider::Anthropic => {
+            if model == "claude-3-5-sonnet" {
+                return Ok(());
+            }
+
+            if claims.has_llm_closed_beta_feature_flag
+                && Some(model) == config.llm_closed_beta_model_name.as_deref()
+            {
+                return Ok(());
+            }
         }
-        _ => Err(Error::http(
-            StatusCode::FORBIDDEN,
-            format!("access to model {model:?} is not included in your plan"),
-        ))?,
+        _ => {}
     }
+
+    Err(Error::http(
+        StatusCode::FORBIDDEN,
+        format!("access to model {model:?} is not included in your plan"),
+    ))
 }
 
 fn authorize_access_for_country(
@@ -240,14 +251,14 @@ mod tests {
             (
                 Plan::ZedPro,
                 LanguageModelProvider::Anthropic,
-                "claude-3.5-sonnet",
+                "claude-3-5-sonnet",
                 true,
             ),
             // Free plan should have access to claude-3.5-sonnet
             (
                 Plan::Free,
                 LanguageModelProvider::Anthropic,
-                "claude-3.5-sonnet",
+                "claude-3-5-sonnet",
                 true,
             ),
             // Pro plan should NOT have access to other Anthropic models
@@ -303,7 +314,7 @@ mod tests {
 
         // Staff should have access to all models
         let test_cases = vec![
-            (LanguageModelProvider::Anthropic, "claude-3.5-sonnet"),
+            (LanguageModelProvider::Anthropic, "claude-3-5-sonnet"),
             (LanguageModelProvider::Anthropic, "claude-2"),
             (LanguageModelProvider::Anthropic, "claude-123-agi"),
             (LanguageModelProvider::OpenAi, "gpt-4"),
