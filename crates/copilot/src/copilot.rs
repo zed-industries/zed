@@ -1262,7 +1262,7 @@ mod tests {
             false
         }
 
-        fn abs_path(&self) -> PathBuf {
+        fn abs_path(&self, _: &AppContext) -> PathBuf {
             self.abs_path.clone()
         }
     }

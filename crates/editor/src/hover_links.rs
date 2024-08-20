@@ -9,8 +9,8 @@ use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
 use project::{
-    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, Item, LocationLink,
-    ProjectPath, ResolveState,
+    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink,
+    ResolveState,
 };
 use std::ops::Range;
 use theme::ActiveTheme as _;
