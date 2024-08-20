@@ -33,12 +33,12 @@
 # Assistant
 
 - [Assistant](./assistant/assistant.md)
-  - [Providers & Configuration](./assistant/configuration.md)
+  - [Configuration](./assistant/configuration.md)
   - [Assistant Panel](./assistant/assistant-panel.md)
-  - [Introducing Contexts](./assistant/contexts.md)
+  - [Contexts](./assistant/contexts.md)
   - [Inline Assistant](./assistant/inline-assistant.md)
-  - [Using Commands](./assistant/commands.md)
-  - [Prompting](./assistant/prompting.md)
+  - [Commands](./assistant/commands.md)
+  - [Prompts](./assistant/prompting.md)
 
 # Extensions
 
