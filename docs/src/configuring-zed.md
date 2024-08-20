@@ -1902,6 +1902,27 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 },
 ```
 
+## Unnecessary Code Fade
+
+- Description: How much to fade out unused code.
+- Setting: `unnecessary_code_fade`
+- Default: `0.3`
+
+**Options**
+
+Float values between `0.0` and `0.9`, where:
+
+- `0.0` means no fading (unused code looks the same as used code)
+- `0.9` means maximum fading (unused code is very faint but still visible)
+
+**Example**
+
+```json
+{
+  "unnecessary_code_fade": 0.5
+}
+```
+
 ## An example configuration:
 
 ```json

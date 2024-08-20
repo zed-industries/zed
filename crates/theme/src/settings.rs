@@ -91,6 +91,7 @@ pub struct ThemeSettings {
     pub active_theme: Arc<Theme>,
     pub theme_overrides: Option<ThemeStyleContent>,
     pub ui_density: UiDensity,
+    pub unnecessary_code_fade: f32,
 }
 
 impl ThemeSettings {
@@ -282,6 +283,10 @@ pub struct ThemeSettingsContent {
     // Controls the density of the UI.
     #[serde(rename = "unstable.ui_density", default)]
     pub ui_density: Option<UiDensity>,
+
+    /// How much to fade out unused code.
+    #[serde(default)]
+    pub unnecessary_code_fade: Option<f32>,
 
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
@@ -550,6 +555,7 @@ impl settings::Settings for ThemeSettings {
                 .unwrap(),
             theme_overrides: None,
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
+            unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
         };
 
         for value in sources.user.into_iter().chain(sources.release_channel) {
@@ -602,6 +608,10 @@ impl settings::Settings for ThemeSettings {
                 value.buffer_font_size.map(Into::into),
             );
             merge(&mut this.buffer_line_height, value.buffer_line_height);
+
+            // Clamp the `unnecessary_code_fade` to ensure text can't disappear entirely.
+            merge(&mut this.unnecessary_code_fade, value.unnecessary_code_fade);
+            this.unnecessary_code_fade = this.unnecessary_code_fade.clamp(0.0, 0.9);
         }
 
         Ok(this)
