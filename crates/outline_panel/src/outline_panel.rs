@@ -1524,8 +1524,6 @@ impl OutlinePanel {
                 ..match_offset_range.end - entire_row_offset_range.start,
         ];
 
-        // TODO kb isn't this a long operation that needs to be run in the background?
-        // TODO kb blinks during buffer search input
         let theme = cx.theme().syntax();
         let mut offset = entire_row_offset_range.start;
         let mut text = String::new();
@@ -2428,7 +2426,7 @@ impl OutlinePanel {
             outline_panel
                 .update(&mut cx, |outline_panel, cx| {
                     outline_panel.cached_entries_with_depth = new_cached_entries;
-                    if dbg!(outline_panel.selected_entry.is_invalidated()) {
+                    if outline_panel.selected_entry.is_invalidated() {
                         if let Some(new_selected_entry) =
                             outline_panel.active_editor().and_then(|active_editor| {
                                 outline_panel.location_for_editor_selection(&active_editor, cx)
@@ -2905,6 +2903,7 @@ impl OutlinePanel {
             self.mode = ItemsDisplayMode::Search;
         }
         if update_cached_entries {
+            self.selected_entry.invalidate();
             self.update_cached_entries(Some(UPDATE_DEBOUNCE), cx);
         }
     }
