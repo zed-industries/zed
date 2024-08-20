@@ -1063,7 +1063,6 @@ impl OutlinePanel {
         self.update_cached_entries(None, cx);
     }
 
-    // TODO kb toggling directories with search results does not hide them
     fn toggle_expanded(&mut self, entry: &PanelEntry, cx: &mut ViewContext<Self>) {
         match entry {
             PanelEntry::Fs(FsEntry::Directory(worktree_id, dir_entry)) => {
@@ -2690,15 +2689,17 @@ impl OutlinePanel {
 
                     match outline_panel.mode {
                         ItemsDisplayMode::Search => {
-                            outline_panel.add_search_entries(
-                                entry,
-                                depth,
-                                track_matches,
-                                is_singleton,
-                                &mut entries,
-                                &mut match_candidates,
-                                cx,
-                            );
+                            if is_singleton || query.is_some() || (should_add && is_expanded) {
+                                outline_panel.add_search_entries(
+                                    entry,
+                                    depth,
+                                    track_matches,
+                                    is_singleton,
+                                    &mut entries,
+                                    &mut match_candidates,
+                                    cx,
+                                );
+                            }
                         }
                         ItemsDisplayMode::Outline => {
                             let excerpts_to_consider =
