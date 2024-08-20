@@ -6,7 +6,7 @@ use language::SelectionGoal;
 actions!(vim, [NormalBefore]);
 
 pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    editor.register_action(cx.listener(Vim::normal_before));
+    crate::listener(editor, cx, Vim::normal_before);
 }
 
 impl Vim {

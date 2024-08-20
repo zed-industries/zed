@@ -3,11 +3,11 @@ use std::{fmt::Display, ops::Range, sync::Arc};
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
-use crate::{UseSystemClipboard, Vim, VimSettings};
+use crate::{UseSystemClipboard, VimSettings};
 use collections::HashMap;
 use editor::{Anchor, ClipboardSelection, Editor};
-use gpui::{Action, ClipboardItem, KeyContext};
-use language::{CursorShape, Point, Selection, TransactionId};
+use gpui::{Action, ClipboardEntry, ClipboardItem, Global};
+use language::Point;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use ui::{SharedString, ViewContext};
@@ -157,8 +157,6 @@ pub struct VimGlobals {
     pub last_yank: Option<SharedString>,
     pub registers: HashMap<char, Register>,
     pub recordings: HashMap<char, Vec<ReplayableAction>>,
-
-    pub instances: HashMap<EntityId, View<Vim>>,
 }
 impl Global for VimGlobals {}
 
@@ -212,7 +210,7 @@ impl VimGlobals {
             } else {
                 self.last_yank = cx
                     .read_from_clipboard()
-                    .map(|item| item.text().to_owned().into());
+                    .and_then(|item| item.text().map(|string| string.into()));
             }
 
             self.registers.insert('"', content.clone());
@@ -289,7 +287,7 @@ impl VimGlobals {
     fn system_clipboard_is_newer(&self, cx: &ViewContext<Editor>) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
             if let Some(last_state) = &self.last_yank {
-                last_state != item.text()
+                Some(last_state.as_ref()) != item.text().as_deref()
             } else {
                 true
             }

@@ -8,7 +8,6 @@ use crate::{
 };
 use editor::Editor;
 use gpui::{actions, Action, ViewContext, WindowContext};
-use ui::BorrowAppContext;
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -46,34 +45,28 @@ fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
 }
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    cx.observe_keystrokes(|event, cx| {
-        if let Some(action) = event.action.as_ref().map(|action| action.boxed_clone()) {
-            Vim::observe_action(action.boxed_clone(), cx);
-        }
-    });
-
-    editor.register_action(cx.listener(|vim, _: &EndRepeat, cx| {
+    crate::listener(editor, cx, |vim, _: &EndRepeat, cx| {
         Vim::globals(cx).dot_replaying = false;
         vim.switch_mode(Mode::Normal, false, cx)
-    }));
+    });
 
-    editor.register_action(cx.listener(|vim, _: &Repeat, cx| vim.repeat(false, cx)));
+    crate::listener(editor, cx, |vim, _: &Repeat, cx| vim.repeat(false, cx));
 
-    editor.register_action(cx.listener(|vim, _: &ToggleRecord, cx| {
+    crate::listener(editor, cx, |vim, _: &ToggleRecord, cx| {
         let globals = Vim::globals(cx);
         if let Some(char) = globals.recording_register.take() {
             globals.last_recorded_register = Some(char)
         } else {
             vim.push_operator(Operator::RecordRegister, cx);
         }
-    }));
+    });
 
-    editor.register_action(cx.listener(|vim, _: &ReplayLastRecording, cx| {
+    crate::listener(editor, cx, |vim, _: &ReplayLastRecording, cx| {
         let Some(register) = Vim::globals(cx).last_recorded_register else {
             return;
         };
         vim.replay_register(register, cx)
-    }));
+    });
 }
 
 pub struct ReplayerState {
@@ -193,35 +186,12 @@ impl Vim {
     }
 
     pub(crate) fn repeat(&mut self, from_insert_mode: bool, cx: &mut ViewContext<Self>) {
-        let Some((mut actions, selection)) = cx.update_global(|globals: &mut VimGlobals, cx| {
+        let count = self.take_count(cx);
+        let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();
             if actions.is_empty() {
                 return None;
             }
-
-            let count = self.take_count(cx);
-
-            let selection = globals.recorded_selection.clone();
-            match selection {
-                RecordedSelection::SingleLine { .. } | RecordedSelection::Visual { .. } => {
-                    globals.recorded_count = None;
-                    self.switch_mode(Mode::Visual, false, cx)
-                }
-                RecordedSelection::VisualLine { .. } => {
-                    globals.recorded_count = None;
-                    self.switch_mode(Mode::VisualLine, false, cx)
-                }
-                RecordedSelection::VisualBlock { .. } => {
-                    globals.recorded_count = None;
-                    self.switch_mode(Mode::VisualBlock, false, cx)
-                }
-                RecordedSelection::None => {
-                    if let Some(count) = count {
-                        globals.recorded_count = Some(count);
-                    }
-                }
-            }
-
             if globals.replayer.is_none() {
                 if let Some(recording_register) = globals.recording_register {
                     globals
@@ -232,10 +202,35 @@ impl Vim {
                 }
             }
 
-            Some((actions, selection))
+            let mut mode = None;
+            let selection = globals.recorded_selection.clone();
+            match selection {
+                RecordedSelection::SingleLine { .. } | RecordedSelection::Visual { .. } => {
+                    globals.recorded_count = None;
+                    mode = Some(Mode::Visual);
+                }
+                RecordedSelection::VisualLine { .. } => {
+                    globals.recorded_count = None;
+                    mode = Some(Mode::VisualLine)
+                }
+                RecordedSelection::VisualBlock { .. } => {
+                    globals.recorded_count = None;
+                    mode = Some(Mode::VisualBlock)
+                }
+                RecordedSelection::None => {
+                    if let Some(count) = count {
+                        globals.recorded_count = Some(count);
+                    }
+                }
+            }
+
+            Some((actions, selection, mode))
         }) else {
             return;
         };
+        if let Some(mode) = mode {
+            self.switch_mode(mode, false, cx)
+        }
 
         match selection {
             RecordedSelection::SingleLine { cols } => {

@@ -24,18 +24,18 @@ struct Decrement {
 impl_actions!(vim, [Increment, Decrement]);
 
 pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    editor.register_action(cx.listener(|vim, action: &Increment, cx| {
+    crate::listener(editor, cx, |vim, action: &Increment, cx| {
         vim.record_current_action(cx);
         let count = vim.take_count(cx).unwrap_or(1);
         let step = if action.step { 1 } else { 0 };
         vim.increment(count as i32, step, cx)
-    }));
-    editor.register_action(cx.listener(|vim, action: &Decrement, cx| {
+    });
+    crate::listener(editor, cx, |vim, action: &Decrement, cx| {
         vim.record_current_action(cx);
         let count = vim.take_count(cx).unwrap_or(1);
         let step = if action.step { -1 } else { 0 };
         vim.increment(count as i32 * -1, step, cx)
-    }));
+    });
 }
 
 impl Vim {

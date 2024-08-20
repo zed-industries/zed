@@ -66,16 +66,16 @@ impl Clone for WithRange {
 }
 
 pub fn register(editor: &mut Editor, cx: &ViewContext<Vim>) {
-    editor.register_action(cx.listener(|vim, _: &VisualCommand, cx| {
+    crate::listener(editor, cx, |vim, _: &VisualCommand, cx| {
         let Some(workspace) = vim.workspace(cx) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
             command_palette::CommandPalette::toggle(workspace, "'<,'>", cx);
         })
-    }));
+    });
 
-    editor.register_action(cx.listener(|vim, _: &CountCommand, cx| {
+    crate::listener(editor, cx, |vim, _: &CountCommand, cx| {
         let Some(workspace) = vim.workspace(cx) else {
             return;
         };
@@ -87,9 +87,9 @@ pub fn register(editor: &mut Editor, cx: &ViewContext<Vim>) {
                 cx,
             );
         })
-    }));
+    });
 
-    editor.register_action(cx.listener(|vim, action: &GoToLine, cx| {
+    crate::listener(editor, cx, |vim, action: &GoToLine, cx| {
         vim.switch_mode(Mode::Normal, false, cx);
         let result = vim.update_editor(cx, |vim, editor, cx| {
             action.range.head().buffer_row(vim, editor, cx)
@@ -108,9 +108,9 @@ pub fn register(editor: &mut Editor, cx: &ViewContext<Vim>) {
             Some(Ok(result)) => result,
         };
         vim.move_cursor(Motion::StartOfDocument, Some(buffer_row.0 as usize + 1), cx);
-    }));
+    });
 
-    editor.register_action(cx.listener(|vim, action: &WithRange, cx| {
+    crate::listener(editor, cx, |vim, action: &WithRange, cx| {
         if action.is_count {
             for _ in 0..action.range.as_count() {
                 cx.dispatch_action(action.action.boxed_clone())
@@ -148,7 +148,7 @@ pub fn register(editor: &mut Editor, cx: &ViewContext<Vim>) {
                 })
             });
         });
-    }));
+    });
 }
 
 #[derive(Debug, Default)]

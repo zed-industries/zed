@@ -12,19 +12,19 @@ use std::sync::Arc;
 actions!(vim, [ToggleReplace, UndoReplace]);
 
 pub fn register(editor: &mut Editor, cx: &ViewContext<Vim>) {
-    editor.register_action(cx.listener(|vim, _: &ToggleReplace, cx| {
+    crate::listener(editor, cx, |vim, _: &ToggleReplace, cx| {
         vim.replacements = vec![];
         vim.start_recording(cx);
         vim.switch_mode(Mode::Replace, false, cx);
-    }));
+    });
 
-    editor.register_action(cx.listener(|vim, _: &UndoReplace, cx| {
+    crate::listener(editor, cx, |vim, _: &UndoReplace, cx| {
         if vim.mode != Mode::Replace {
             return;
         }
         let count = vim.take_count(cx);
         vim.undo_replace(count, cx)
-    }));
+    });
 }
 impl Vim {
     pub(crate) fn multi_replace(&mut self, text: Arc<str>, cx: &mut ViewContext<Self>) {

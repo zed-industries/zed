@@ -7,20 +7,20 @@ use crate::{motion::Motion, Mode, Vim};
 actions!(vim, [Substitute, SubstituteLine]);
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    editor.register_action(cx.listener(|vim, _: &Substitute, cx| {
+    crate::listener(editor, cx, |vim, _: &Substitute, cx| {
         vim.start_recording(cx);
         let count = vim.take_count(cx);
         vim.substitute(count, vim.mode == Mode::VisualLine, cx);
-    }));
+    });
 
-    editor.register_action(cx.listener(|vim, _: &SubstituteLine, cx| {
+    crate::listener(editor, cx, |vim, _: &SubstituteLine, cx| {
         vim.start_recording(cx);
         if matches!(vim.mode, Mode::VisualBlock | Mode::Visual) {
             vim.switch_mode(Mode::VisualLine, false, cx)
         }
         let count = vim.take_count(cx);
         vim.substitute(count, true, cx)
-    }));
+    });
 }
 
 impl Vim {

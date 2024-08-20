@@ -14,19 +14,19 @@ actions!(
 );
 
 pub fn register(editor: &mut Editor, cx: &ViewContext<Vim>) {
-    editor.register_action(cx.listener(|vim, _: &LineDown, cx| {
+    crate::listener(editor, cx, |vim, _: &LineDown, cx| {
         vim.scroll(false, cx, |c| ScrollAmount::Line(c.unwrap_or(1.)))
-    }));
-    editor.register_action(cx.listener(|vim, _: &LineUp, cx| {
+    });
+    crate::listener(editor, cx, |vim, _: &LineUp, cx| {
         vim.scroll(false, cx, |c| ScrollAmount::Line(-c.unwrap_or(1.)))
-    }));
-    editor.register_action(cx.listener(|vim, _: &PageDown, cx| {
+    });
+    crate::listener(editor, cx, |vim, _: &PageDown, cx| {
         vim.scroll(false, cx, |c| ScrollAmount::Page(c.unwrap_or(1.)))
-    }));
-    editor.register_action(cx.listener(|vim, _: &PageUp, cx| {
+    });
+    crate::listener(editor, cx, |vim, _: &PageUp, cx| {
         vim.scroll(false, cx, |c| ScrollAmount::Page(-c.unwrap_or(1.)))
-    }));
-    editor.register_action(cx.listener(|vim, _: &ScrollDown, cx| {
+    });
+    crate::listener(editor, cx, |vim, _: &ScrollDown, cx| {
         vim.scroll(true, cx, |c| {
             if let Some(c) = c {
                 ScrollAmount::Line(c)
@@ -34,8 +34,8 @@ pub fn register(editor: &mut Editor, cx: &ViewContext<Vim>) {
                 ScrollAmount::Page(0.5)
             }
         })
-    }));
-    editor.register_action(cx.listener(|vim, _: &ScrollUp, cx| {
+    });
+    crate::listener(editor, cx, |vim, _: &ScrollUp, cx| {
         vim.scroll(true, cx, |c| {
             if let Some(c) = c {
                 ScrollAmount::Line(-c)
@@ -43,7 +43,7 @@ pub fn register(editor: &mut Editor, cx: &ViewContext<Vim>) {
                 ScrollAmount::Page(-0.5)
             }
         })
-    }));
+    });
 }
 
 impl Vim {

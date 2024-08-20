@@ -63,34 +63,47 @@ actions!(
 );
 
 pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    editor.register_action(cx.listener(|vim, &Word { ignore_punctuation }: &Word, cx| {
-        vim.object(Object::Word { ignore_punctuation }, cx)
-    }));
-    editor.register_action(cx.listener(|vim, _: &Tag, cx| vim.object(Object::Tag, cx)));
-    editor.register_action(cx.listener(|vim, _: &Sentence, cx| vim.object(Object::Sentence, cx)));
-    editor.register_action(cx.listener(|vim, _: &Paragraph, cx| vim.object(Object::Paragraph, cx)));
-    editor.register_action(cx.listener(|vim, _: &Quotes, cx| vim.object(Object::Quotes, cx)));
-    editor
-        .register_action(cx.listener(|vim, _: &BackQuotes, cx| vim.object(Object::BackQuotes, cx)));
-    editor.register_action(
-        cx.listener(|vim, _: &DoubleQuotes, cx| vim.object(Object::DoubleQuotes, cx)),
+    crate::listener(
+        editor,
+        cx,
+        |vim, &Word { ignore_punctuation }: &Word, cx| {
+            vim.object(Object::Word { ignore_punctuation }, cx)
+        },
     );
-    editor.register_action(
-        cx.listener(|vim, _: &Parentheses, cx| vim.object(Object::Parentheses, cx)),
-    );
-    editor.register_action(
-        cx.listener(|vim, _: &SquareBrackets, cx| vim.object(Object::SquareBrackets, cx)),
-    );
-    editor.register_action(
-        cx.listener(|vim, _: &CurlyBrackets, cx| vim.object(Object::CurlyBrackets, cx)),
-    );
-    editor.register_action(
-        cx.listener(|vim, _: &AngleBrackets, cx| vim.object(Object::AngleBrackets, cx)),
-    );
-    editor.register_action(
-        cx.listener(|vim, _: &VerticalBars, cx| vim.object(Object::VerticalBars, cx)),
-    );
-    editor.register_action(cx.listener(|vim, _: &Argument, cx| vim.object(Object::Argument, cx)));
+    crate::listener(editor, cx, |vim, _: &Tag, cx| vim.object(Object::Tag, cx));
+    crate::listener(editor, cx, |vim, _: &Sentence, cx| {
+        vim.object(Object::Sentence, cx)
+    });
+    crate::listener(editor, cx, |vim, _: &Paragraph, cx| {
+        vim.object(Object::Paragraph, cx)
+    });
+    crate::listener(editor, cx, |vim, _: &Quotes, cx| {
+        vim.object(Object::Quotes, cx)
+    });
+    crate::listener(editor, cx, |vim, _: &BackQuotes, cx| {
+        vim.object(Object::BackQuotes, cx)
+    });
+    crate::listener(editor, cx, |vim, _: &DoubleQuotes, cx| {
+        vim.object(Object::DoubleQuotes, cx)
+    });
+    crate::listener(editor, cx, |vim, _: &Parentheses, cx| {
+        vim.object(Object::Parentheses, cx)
+    });
+    crate::listener(editor, cx, |vim, _: &SquareBrackets, cx| {
+        vim.object(Object::SquareBrackets, cx)
+    });
+    crate::listener(editor, cx, |vim, _: &CurlyBrackets, cx| {
+        vim.object(Object::CurlyBrackets, cx)
+    });
+    crate::listener(editor, cx, |vim, _: &AngleBrackets, cx| {
+        vim.object(Object::AngleBrackets, cx)
+    });
+    crate::listener(editor, cx, |vim, _: &VerticalBars, cx| {
+        vim.object(Object::VerticalBars, cx)
+    });
+    crate::listener(editor, cx, |vim, _: &Argument, cx| {
+        vim.object(Object::Argument, cx)
+    });
 }
 
 impl Vim {

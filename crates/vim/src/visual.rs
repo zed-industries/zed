@@ -40,36 +40,36 @@ actions!(
 );
 
 pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    editor.register_action(
-        cx.listener(|vim, _: &ToggleVisual, cx| vim.toggle_mode(Mode::Visual, cx)),
-    );
-    editor.register_action(
-        cx.listener(|vim, _: &ToggleVisualLine, cx| vim.toggle_mode(Mode::VisualLine, cx)),
-    );
-    editor.register_action(
-        cx.listener(|vim, _: &ToggleVisualBlock, cx| vim.toggle_mode(Mode::VisualBlock, cx)),
-    );
-    editor.register_action(cx.listener(Vim::other_end));
-    editor.register_action(cx.listener(|vim, _: &VisualDelete, cx| {
+    crate::listener(editor, cx, |vim, _: &ToggleVisual, cx| {
+        vim.toggle_mode(Mode::Visual, cx)
+    });
+    crate::listener(editor, cx, |vim, _: &ToggleVisualLine, cx| {
+        vim.toggle_mode(Mode::VisualLine, cx)
+    });
+    crate::listener(editor, cx, |vim, _: &ToggleVisualBlock, cx| {
+        vim.toggle_mode(Mode::VisualBlock, cx)
+    });
+    crate::listener(editor, cx, Vim::other_end);
+    crate::listener(editor, cx, |vim, _: &VisualDelete, cx| {
         vim.record_current_action(cx);
         vim.visual_delete(false, cx);
-    }));
-    editor.register_action(cx.listener(|vim, _: &VisualDeleteLine, cx| {
+    });
+    crate::listener(editor, cx, |vim, _: &VisualDeleteLine, cx| {
         vim.record_current_action(cx);
         vim.visual_delete(true, cx);
-    }));
-    editor.register_action(cx.listener(|vim, _: &VisualYank, cx| vim.visual_yank(cx)));
+    });
+    crate::listener(editor, cx, |vim, _: &VisualYank, cx| vim.visual_yank(cx));
 
-    editor.register_action(cx.listener(Vim::select_next));
-    editor.register_action(cx.listener(Vim::select_previous));
-    editor.register_action(cx.listener(|vim, _: &SelectNextMatch, cx| {
+    crate::listener(editor, cx, Vim::select_next);
+    crate::listener(editor, cx, Vim::select_previous);
+    crate::listener(editor, cx, |vim, _: &SelectNextMatch, cx| {
         vim.select_match(Direction::Next, cx);
-    }));
-    editor.register_action(cx.listener(|vim, _: &SelectPreviousMatch, cx| {
+    });
+    crate::listener(editor, cx, |vim, _: &SelectPreviousMatch, cx| {
         vim.select_match(Direction::Prev, cx);
-    }));
+    });
 
-    editor.register_action(cx.listener(|vim, _: &RestoreVisualSelection, cx| {
+    crate::listener(editor, cx, |vim, _: &RestoreVisualSelection, cx| {
         let Some((stored_mode, reversed)) = vim.stored_visual_mode.take() else {
             return;
         };
@@ -107,7 +107,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             })
         });
         vim.switch_mode(stored_mode, true, cx)
-    }));
+    });
 }
 
 impl Vim {

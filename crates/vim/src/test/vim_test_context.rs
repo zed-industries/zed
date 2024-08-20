@@ -119,23 +119,30 @@ impl VimTestContext {
     }
 
     pub fn mode(&mut self) -> Mode {
-        self.cx.read(|cx| cx.global::<Vim>().state().mode)
+        self.update_editor(|editor, cx| editor.addon::<View<Vim>>().unwrap().read(cx).mode)
     }
 
     pub fn active_operator(&mut self) -> Option<Operator> {
-        self.cx
-            .read(|cx| cx.global::<Vim>().state().operator_stack.last().cloned())
+        self.update_editor(|editor, cx| {
+            editor
+                .addon::<View<Vim>>()
+                .unwrap()
+                .read(cx)
+                .operator_stack
+                .last()
+                .cloned()
+        })
     }
 
     pub fn set_state(&mut self, text: &str, mode: Mode) {
-        let window = self.window;
         self.cx.set_state(text);
-        self.update_window(window, |_, cx| {
-            Vim::update(cx, |vim, cx| {
+        let vim = self.update_editor(|editor, _cx| editor.addon::<View<Vim>>().cloned().unwrap());
+
+        self.update(|cx| {
+            vim.update(cx, |vim, cx| {
                 vim.switch_mode(mode, true, cx);
-            })
-        })
-        .unwrap();
+            });
+        });
         self.cx.cx.cx.run_until_parked();
     }
 

@@ -32,6 +32,7 @@ use insert::NormalBefore;
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
+use normal::search::SearchSubmit;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
@@ -92,6 +93,13 @@ pub fn init(cx: &mut AppContext) {
     VimSettings::register(cx);
     cx.set_global(VimGlobals::default());
 
+    cx.observe_keystrokes(|event, cx| {
+        if let Some(action) = event.action.as_ref().map(|action| action.boxed_clone()) {
+            Vim::observe_action(action.boxed_clone(), cx);
+        }
+    })
+    .detach();
+
     cx.observe_new_views(|editor: &mut Editor, cx| register(editor, cx))
         .detach();
 
@@ -112,7 +120,15 @@ pub fn init(cx: &mut AppContext) {
             });
         });
 
-        // todo! SearchSubmit
+        workspace.register_action(|workspace, _: &SearchSubmit, cx| {
+            let Some(vim) = workspace
+                .active_item_as::<Editor>(cx)
+                .and_then(|editor| editor.read(cx).addon::<View<Vim>>().cloned())
+            else {
+                return;
+            };
+            vim.update(cx, |_, cx| cx.defer(|vim, cx| vim.search_submit(cx)))
+        });
     })
     .detach();
 
@@ -143,6 +159,14 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
+pub(crate) fn listener<A: Action>(
+    editor: &mut Editor,
+    cx: &ViewContext<Vim>,
+    f: impl Fn(&mut Vim, &A, &mut ViewContext<Vim>) + 'static,
+) {
+    editor.register_action(cx.listener(f)).detach()
+}
+
 fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
     dbg!("hello!");
     if !editor.use_modal_editing() {
@@ -151,28 +175,33 @@ fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
     dbg!("hello!");
 
     let vim = Vim::new(cx);
-    let editor_id = cx.entity_id();
-    Vim::globals(cx).instances.insert(editor_id, vim.clone());
-    vim.update(cx, |vim, cx| {
+
+    editor.register_addon(vim.clone());
+
+    vim.update(cx, |_, cx| {
         let listener = cx.listener(Vim::observe_keystrokes);
         cx.observe_keystrokes(listener).detach();
-        editor.register_action(
-            cx.listener(|vim, action: &SwitchMode, cx| vim.switch_mode(action.0, false, cx)),
-        );
 
-        editor.register_action(
-            cx.listener(|vim, action: &PushOperator, cx| vim.push_operator(action.0.clone(), cx)),
-        );
-        editor.register_action(cx.listener(|vim, _: &ClearOperators, cx| vim.clear_operator(cx)));
-        editor.register_action(cx.listener(|vim, n: &Number, cx| {
+        crate::listener(editor, cx, |vim, action: &SwitchMode, cx| {
+            vim.switch_mode(action.0, false, cx)
+        });
+
+        crate::listener(editor, cx, |vim, action: &PushOperator, cx| {
+            vim.push_operator(action.0.clone(), cx)
+        });
+
+        crate::listener(editor, cx, |vim, _: &ClearOperators, cx| {
+            vim.clear_operator(cx)
+        });
+        crate::listener(editor, cx, |vim, n: &Number, cx| {
             vim.push_count_digit(n.0, cx);
-        }));
-        editor.register_action(
-            cx.listener(|vim, _: &Tab, cx| vim.active_editor_input_ignored(" ".into(), cx)),
-        );
-        editor.register_action(
-            cx.listener(|vim, _: &Enter, cx| vim.active_editor_input_ignored("\n".into(), cx)),
-        );
+        });
+        crate::listener(editor, cx, |vim, _: &Tab, cx| {
+            vim.active_editor_input_ignored(" ".into(), cx)
+        });
+        crate::listener(editor, cx, |vim, _: &Enter, cx| {
+            vim.active_editor_input_ignored("\n".into(), cx)
+        });
 
         normal::register(editor, cx);
         insert::register(editor, cx);
@@ -217,7 +246,7 @@ pub(crate) struct Vim {
     pub search: SearchState,
 
     editor: WeakView<Editor>,
-    subscription: Subscription,
+    _subscription: Subscription,
 }
 
 // Hack: Vim intercepts events dispatched to a window and updates the view in response.
@@ -274,7 +303,7 @@ impl Vim {
                 search: SearchState::default(),
 
                 editor: editor.downgrade(),
-                subscription,
+                _subscription: subscription,
             }
         })
     }
@@ -972,9 +1001,7 @@ impl Vim {
     }
 
     fn sync_vim_settings(&mut self, cx: &mut ViewContext<Self>) {
-        dbg!("sync");
         self.update_editor(cx, |vim, editor, cx| {
-            dbg!("for real");
             editor.set_cursor_shape(vim.cursor_shape(), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
             editor.set_collapse_matches(true);
@@ -988,6 +1015,7 @@ impl Vim {
                 editor.remove_keymap_context_layer::<Self>(cx);
             }
         });
+        cx.notify()
     }
 
     fn unhook_vim_settings(&mut self, cx: &mut ViewContext<Self>) {

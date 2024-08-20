@@ -5,13 +5,13 @@ use language::SelectionGoal;
 use ui::ViewContext;
 
 #[derive(PartialEq, Eq)]
-pub(super) enum IndentDirection {
+pub(crate) enum IndentDirection {
     In,
     Out,
 }
 
 impl Vim {
-    pub fn indent_motion(
+    pub(crate) fn indent_motion(
         &mut self,
         motion: Motion,
         times: Option<usize>,
@@ -45,7 +45,7 @@ impl Vim {
         });
     }
 
-    pub fn indent_object(
+    pub(crate) fn indent_object(
         &mut self,
         object: Object,
         around: bool,

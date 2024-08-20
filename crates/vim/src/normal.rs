@@ -66,56 +66,32 @@ actions!(
 );
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    editor
-        .register_action(cx.listener(Vim::insert_after))
-        .detach();
-    editor
-        .register_action(cx.listener(Vim::insert_before))
-        .detach();
-    editor
-        .register_action(cx.listener(Vim::insert_first_non_whitespace))
-        .detach();
-    editor
-        .register_action(cx.listener(Vim::insert_end_of_line))
-        .detach();
-    editor
-        .register_action(cx.listener(Vim::insert_line_above))
-        .detach();
-    editor
-        .register_action(cx.listener(Vim::insert_line_below))
-        .detach();
-    editor
-        .register_action(cx.listener(Vim::insert_at_previous))
-        .detach();
-    editor
-        .register_action(cx.listener(Vim::change_case))
-        .detach();
-    editor
-        .register_action(cx.listener(Vim::convert_to_upper_case))
-        .detach();
-    editor
-        .register_action(cx.listener(Vim::convert_to_lower_case))
-        .detach();
-    editor.register_action(cx.listener(Vim::yank_line)).detach();
-    editor
-        .register_action(cx.listener(Vim::yank_to_end_of_line))
-        .detach();
-    editor
-        .register_action(cx.listener(Vim::toggle_comments))
-        .detach();
-    editor.register_action(cx.listener(Vim::paste)).detach();
+    crate::listener(editor, cx, Vim::insert_after);
+    crate::listener(editor, cx, Vim::insert_before);
+    crate::listener(editor, cx, Vim::insert_first_non_whitespace);
+    crate::listener(editor, cx, Vim::insert_end_of_line);
+    crate::listener(editor, cx, Vim::insert_line_above);
+    crate::listener(editor, cx, Vim::insert_line_below);
+    crate::listener(editor, cx, Vim::insert_at_previous);
+    crate::listener(editor, cx, Vim::change_case);
+    crate::listener(editor, cx, Vim::convert_to_upper_case);
+    crate::listener(editor, cx, Vim::convert_to_lower_case);
+    crate::listener(editor, cx, Vim::yank_line);
+    crate::listener(editor, cx, Vim::yank_to_end_of_line);
+    crate::listener(editor, cx, Vim::toggle_comments);
+    crate::listener(editor, cx, Vim::paste);
 
-    editor.register_action(cx.listener(|vim, _: &DeleteLeft, cx| {
+    crate::listener(editor, cx, |vim, _: &DeleteLeft, cx| {
         vim.record_current_action(cx);
         let times = vim.take_count(cx);
         vim.delete_motion(Motion::Left, times, cx);
-    }));
-    editor.register_action(cx.listener(|vim, _: &DeleteRight, cx| {
+    });
+    crate::listener(editor, cx, |vim, _: &DeleteRight, cx| {
         vim.record_current_action(cx);
         let times = vim.take_count(cx);
         vim.delete_motion(Motion::Right, times, cx);
-    }));
-    editor.register_action(cx.listener(|vim, _: &ChangeToEndOfLine, cx| {
+    });
+    crate::listener(editor, cx, |vim, _: &ChangeToEndOfLine, cx| {
         vim.start_recording(cx);
         let times = vim.take_count(cx);
         vim.change_motion(
@@ -125,8 +101,8 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             times,
             cx,
         );
-    }));
-    editor.register_action(cx.listener(|vim, _: &DeleteToEndOfLine, cx| {
+    });
+    crate::listener(editor, cx, |vim, _: &DeleteToEndOfLine, cx| {
         vim.record_current_action(cx);
         let times = vim.take_count(cx);
         vim.delete_motion(
@@ -136,8 +112,8 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             times,
             cx,
         );
-    }));
-    editor.register_action(cx.listener(|vim, _: &JoinLines, cx| {
+    });
+    crate::listener(editor, cx, |vim, _: &JoinLines, cx| {
         vim.record_current_action(cx);
         let mut times = vim.take_count(cx).unwrap_or(1);
         if vim.mode.is_visual() {
@@ -157,9 +133,9 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         if vim.mode.is_visual() {
             vim.switch_mode(Mode::Normal, false, cx)
         }
-    }));
+    });
 
-    editor.register_action(cx.listener(|vim, _: &Indent, cx| {
+    crate::listener(editor, cx, |vim, _: &Indent, cx| {
         vim.record_current_action(cx);
         let count = vim.take_count(cx).unwrap_or(1);
         vim.update_editor(cx, |_, editor, cx| {
@@ -174,9 +150,9 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         if vim.mode.is_visual() {
             vim.switch_mode(Mode::Normal, false, cx)
         }
-    }));
+    });
 
-    editor.register_action(cx.listener(|vim, _: &Outdent, cx| {
+    crate::listener(editor, cx, |vim, _: &Outdent, cx| {
         vim.record_current_action(cx);
         let count = vim.take_count(cx).unwrap_or(1);
         vim.update_editor(cx, |_, editor, cx| {
@@ -191,24 +167,24 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         if vim.mode.is_visual() {
             vim.switch_mode(Mode::Normal, false, cx)
         }
-    }));
+    });
 
-    editor.register_action(cx.listener(|vim, _: &Undo, cx| {
+    crate::listener(editor, cx, |vim, _: &Undo, cx| {
         let times = vim.take_count(cx);
         vim.update_editor(cx, |_, editor, cx| {
             for _ in 0..times.unwrap_or(1) {
                 editor.undo(&editor::actions::Undo, cx);
             }
         });
-    }));
-    editor.register_action(cx.listener(|vim, _: &Redo, cx| {
+    });
+    crate::listener(editor, cx, |vim, _: &Redo, cx| {
         let times = vim.take_count(cx);
         vim.update_editor(cx, |_, editor, cx| {
             for _ in 0..times.unwrap_or(1) {
                 editor.redo(&editor::actions::Redo, cx);
             }
         });
-    }));
+    });
 
     repeat::register(editor, cx);
     scroll::register(editor, cx);

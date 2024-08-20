@@ -61,16 +61,14 @@ impl_actions!(
 );
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    editor.register_action(cx.listener(Vim::move_to_next));
-    editor.register_action(cx.listener(Vim::move_to_prev));
-    editor.register_action(cx.listener(Vim::move_to_next_match));
-    editor.register_action(cx.listener(Vim::move_to_prev_match));
-    editor.register_action(cx.listener(Vim::search));
-    editor.register_action(cx.listener(Vim::search_deploy));
-    editor.register_action(cx.listener(Vim::find_command));
-    editor.register_action(cx.listener(Vim::replace_command));
-
-    editor.register_action(cx.listener(Vim::search_submit));
+    crate::listener(editor, cx, Vim::move_to_next);
+    crate::listener(editor, cx, Vim::move_to_prev);
+    crate::listener(editor, cx, Vim::move_to_next_match);
+    crate::listener(editor, cx, Vim::move_to_prev_match);
+    crate::listener(editor, cx, Vim::search);
+    crate::listener(editor, cx, Vim::search_deploy);
+    crate::listener(editor, cx, Vim::find_command);
+    crate::listener(editor, cx, Vim::replace_command);
 }
 
 impl Vim {
@@ -133,7 +131,7 @@ impl Vim {
         cx.propagate();
     }
 
-    fn search_submit(&mut self, _: &SearchSubmit, cx: &mut ViewContext<Self>) {
+    pub fn search_submit(&mut self, cx: &mut ViewContext<Self>) {
         self.store_visual_marks(cx);
         let Some(pane) = self.pane(cx) else { return };
         let result = pane.update(cx, |pane, cx| {
