@@ -1064,7 +1064,6 @@ impl OutlinePanel {
     }
 
     // TODO kb toggling directories with search results does not hide them
-    // TODO kb odd dir entries are shown when searching in singleton buffers
     fn toggle_expanded(&mut self, entry: &PanelEntry, cx: &mut ViewContext<Self>) {
         match entry {
             PanelEntry::Fs(FsEntry::Directory(worktree_id, dir_entry)) => {
@@ -2733,6 +2732,7 @@ impl OutlinePanel {
                     }
 
                     if is_singleton
+                        && matches!(entry, FsEntry::File(..) | FsEntry::ExternalFile(..))
                         && !entries.iter().any(|item| {
                             matches!(item.entry, PanelEntry::Outline(..) | PanelEntry::Search(..))
                         })
