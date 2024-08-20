@@ -1,12 +1,11 @@
-
 # Configuring the Assistant
 
 ## Settings
 
-| key           | type   | default | description                     |
-|---------------|--------|---------|----------------------------------|
-| version       | string | "2"     | The version of the assistant.    |
-| default_model | object | {}      | The default model to use.        |
+| key           | type   | default | description                   |
+| ------------- | ------ | ------- | ----------------------------- |
+| version       | string | "2"     | The version of the assistant. |
+| default_model | object | {}      | The default model to use.     |
 
 ### Configuring the default model
 
@@ -26,13 +25,13 @@ The `default_model` object can contain the following keys:
 
 ## Common Panel Settings
 
-| key            | type    | default | description                                                                       |
-|----------------|---------|---------|-----------------------------------------------------------------------------------|
-| enabled        | boolean | true    | Disabling this will completely disable the assistant                              |
-| button         | boolean | true    | Show the assistant icon                                                           |
+| key            | type    | default | description                                                                           |
+| -------------- | ------- | ------- | ------------------------------------------------------------------------------------- |
+| enabled        | boolean | true    | Disabling this will completely disable the assistant                                  |
+| button         | boolean | true    | Show the assistant icon                                                               |
 | dock           | string  | "right" | The default dock position for the assistant panel. Can be ["left", "right", "bottom"] |
-| default_height | string  | null    | The pixel height of the assistant panel when docked to the bottom                 |
-| default_width  | string  | null    | The pixel width of the assistant panel when docked to the left or right           |
+| default_height | string  | null    | The pixel height of the assistant panel when docked to the bottom                     |
+| default_width  | string  | null    | The pixel width of the assistant panel when docked to the left or right               |
 
 ## Example Configuration
 
@@ -56,6 +55,7 @@ The `default_model` object can contain the following keys:
 ## Providers {#providers}
 
 The following providers are supported:
+
 - Zed AI (Configured by default when signed in)
 - [Anthropic](#anthropic)
 - [GitHub Copilot Chat](#github-copilot-chat)

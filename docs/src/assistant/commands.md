@@ -15,6 +15,7 @@ Slash commands enhance the assistant's capabilities. Begin by typing a `/` at th
 - `/terminal`: Inserts a select number of lines of output from the terminal
 
 ### Other Commands:
+
 - `/search`: Performs semantic search for content in your project based on natural language
   - Not generally available yet, but some users may have access to it.
 - `/workflow`: Opts into the edit workflow for a specific context

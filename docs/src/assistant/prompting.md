@@ -44,6 +44,7 @@ Having a series of prompts specifically tailored to prompt engineering can also 
 The process of writing and refining prompts commonly called "prompt engineering".
 
 More on prompt engineering:
+
 - [Anthropic: Prompt Engineering](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/overview)
 - [OpenAI: Prompt Engineering](https://platform.openai.com/docs/guides/prompt-engineering)
 
@@ -64,7 +65,7 @@ Each of the above prompts can be individually expanded, and since Zed's assistan
 
 You can add prompts to the default prompt by clicking the icon in the top right (the "sparkle" icon) of the prompt editor. This will add the prompt to the default prompt.
 
-*Changes to the default prompt will not affect existing contexts. You can remove the default prompt and manually re-add it with `/default` to update an existing context.*
+_Changes to the default prompt will not affect existing contexts. You can remove the default prompt and manually re-add it with `/default` to update an existing context._
 
 Default prompts will show at the top of the prompt list, and will be included with every new context.
 
@@ -118,9 +119,9 @@ Title: Zed-Flavored Rust
 /prompt Rust - Workspace deps (bias towards reusing deps from the workspace)
 ```
 
-*The (text) above are comments and are not part of the prompt.*
+_The (text) above are comments and are not part of the prompt._
 
-> **Note:** While you technically *can* nest a prompt within itself, we wouldn't recommend it (in the strongest of terms.) Use at your own risk!
+> **Note:** While you technically _can_ nest a prompt within itself, we wouldn't recommend it (in the strongest of terms.) Use at your own risk!
 
 By using nested prompts, you can create modular and reusable prompt components that can be combined in various ways to suit different scenarios.
 
@@ -216,7 +217,7 @@ The following templates can be overridden:
 
 4. `step_resolution.hbs`: Used for generating the step resolution prompt.
 
-> **Note:**  Be sure you want to override these, as you'll miss out on iteration on our built-in features. This should be primarily used when developing Zed.
+> **Note:** Be sure you want to override these, as you'll miss out on iteration on our built-in features. This should be primarily used when developing Zed.
 
 You can customize these templates to better suit your needs while maintaining the core structure and variables used by Zed. Zed will automatically reload your prompt overrides when they change on disk.
 
