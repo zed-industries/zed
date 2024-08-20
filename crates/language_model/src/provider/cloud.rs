@@ -8,7 +8,7 @@ use anthropic::AnthropicError;
 use anyhow::{anyhow, Result};
 use client::{Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME};
 use collections::BTreeMap;
-use feature_flags::{FeatureFlagAppExt, ZedPro};
+use feature_flags::{FeatureFlagAppExt, LlmClosedBeta, ZedPro};
 use futures::{
     future::BoxFuture, stream::BoxStream, AsyncBufReadExt, FutureExt, Stream, StreamExt,
     TryStreamExt as _,
@@ -26,7 +26,10 @@ use smol::{
     io::{AsyncReadExt, BufReader},
     lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard},
 };
-use std::{future, sync::Arc};
+use std::{
+    future,
+    sync::{Arc, LazyLock},
+};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
@@ -36,6 +39,18 @@ use super::anthropic::count_anthropic_tokens;
 
 pub const PROVIDER_ID: &str = "zed.dev";
 pub const PROVIDER_NAME: &str = "Zed";
+
+const ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: Option<&str> =
+    option_env!("ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON");
+
+fn zed_cloud_provider_additional_models() -> &'static [AvailableModel] {
+    static ADDITIONAL_MODELS: LazyLock<Vec<AvailableModel>> = LazyLock::new(|| {
+        ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON
+            .map(|json| serde_json::from_str(json).unwrap())
+            .unwrap_or(Vec::new())
+    });
+    ADDITIONAL_MODELS.as_slice()
+}
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
@@ -52,12 +67,20 @@ pub enum AvailableProvider {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
-    provider: AvailableProvider,
-    name: String,
-    max_tokens: usize,
-    tool_override: Option<String>,
-    cache_configuration: Option<LanguageModelCacheConfiguration>,
-    max_output_tokens: Option<u32>,
+    /// The provider of the language model.
+    pub provider: AvailableProvider,
+    /// The model's name in the provider's API. e.g. claude-3-5-sonnet-20240620
+    pub name: String,
+    /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+    pub display_name: Option<String>,
+    /// The size of the context window, indicating the maximum number of tokens the model can process.
+    pub max_tokens: usize,
+    /// The maximum number of output tokens allowed by the model.
+    pub max_output_tokens: Option<u32>,
+    /// Override this model with a different Anthropic model for tool calls.
+    pub tool_override: Option<String>,
+    /// Indicates whether this custom model supports caching.
+    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
 }
 
 pub struct CloudLanguageModelProvider {
@@ -192,45 +215,53 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             for model in ZedModel::iter() {
                 models.insert(model.id().to_string(), CloudModel::Zed(model));
             }
-
-            // Override with available models from settings
-            for model in &AllLanguageModelSettings::get_global(cx)
-                .zed_dot_dev
-                .available_models
-            {
-                let model = match model.provider {
-                    AvailableProvider::Anthropic => {
-                        CloudModel::Anthropic(anthropic::Model::Custom {
-                            name: model.name.clone(),
-                            max_tokens: model.max_tokens,
-                            tool_override: model.tool_override.clone(),
-                            cache_configuration: model.cache_configuration.as_ref().map(|config| {
-                                anthropic::AnthropicModelCacheConfiguration {
-                                    max_cache_anchors: config.max_cache_anchors,
-                                    should_speculate: config.should_speculate,
-                                    min_total_token: config.min_total_token,
-                                }
-                            }),
-                            max_output_tokens: model.max_output_tokens,
-                        })
-                    }
-                    AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
-                        name: model.name.clone(),
-                        max_tokens: model.max_tokens,
-                        max_output_tokens: model.max_output_tokens,
-                    }),
-                    AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
-                        name: model.name.clone(),
-                        max_tokens: model.max_tokens,
-                    }),
-                };
-                models.insert(model.id().to_string(), model.clone());
-            }
         } else {
             models.insert(
                 anthropic::Model::Claude3_5Sonnet.id().to_string(),
                 CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet),
             );
+        }
+
+        let llm_closed_beta_models = if cx.has_flag::<LlmClosedBeta>() {
+            zed_cloud_provider_additional_models()
+        } else {
+            &[]
+        };
+
+        // Override with available models from settings
+        for model in AllLanguageModelSettings::get_global(cx)
+            .zed_dot_dev
+            .available_models
+            .iter()
+            .chain(llm_closed_beta_models)
+            .cloned()
+        {
+            let model = match model.provider {
+                AvailableProvider::Anthropic => CloudModel::Anthropic(anthropic::Model::Custom {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    tool_override: model.tool_override.clone(),
+                    cache_configuration: model.cache_configuration.as_ref().map(|config| {
+                        anthropic::AnthropicModelCacheConfiguration {
+                            max_cache_anchors: config.max_cache_anchors,
+                            should_speculate: config.should_speculate,
+                            min_total_token: config.min_total_token,
+                        }
+                    }),
+                    max_output_tokens: model.max_output_tokens,
+                }),
+                AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
+                }),
+                AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                }),
+            };
+            models.insert(model.id().to_string(), model.clone());
         }
 
         models
@@ -388,6 +419,10 @@ impl LanguageModel for CloudLanguageModel {
 
     fn name(&self) -> LanguageModelName {
         LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn icon(&self) -> Option<IconName> {
+        self.model.icon()
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {

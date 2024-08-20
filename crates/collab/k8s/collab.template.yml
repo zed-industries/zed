@@ -139,6 +139,11 @@ spec:
                 secretKeyRef:
                   name: anthropic
                   key: staff_api_key
+            - name: LLM_CLOSED_BETA_MODEL_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: llm-closed-beta
+                  key: model_name
             - name: GOOGLE_AI_API_KEY
               valueFrom:
                 secretKeyRef:

@@ -19,7 +19,7 @@ use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName};
+use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::ResultExt;
 
 const PROVIDER_ID: &str = "anthropic";
@@ -29,15 +29,22 @@ const PROVIDER_NAME: &str = "Anthropic";
 pub struct AnthropicSettings {
     pub api_url: String,
     pub low_speed_timeout: Option<Duration>,
+    /// Extend Zed's list of Anthropic models.
     pub available_models: Vec<AvailableModel>,
     pub needs_setting_migration: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
+    /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-20240620
     pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    pub display_name: Option<String>,
+    /// The model's context window size.
     pub max_tokens: usize,
+    /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
     pub tool_override: Option<String>,
+    /// Configuration of Anthropic's caching API.
     pub cache_configuration: Option<LanguageModelCacheConfiguration>,
     pub max_output_tokens: Option<u32>,
 }
@@ -47,8 +54,11 @@ pub struct AnthropicLanguageModelProvider {
     state: gpui::Model<State>,
 }
 
+const ANTHROPIC_API_KEY_VAR: &'static str = "ANTHROPIC_API_KEY";
+
 pub struct State {
     api_key: Option<String>,
+    api_key_from_env: bool,
     _subscription: Subscription,
 }
 
@@ -60,6 +70,7 @@ impl State {
             delete_credentials.await.ok();
             this.update(&mut cx, |this, cx| {
                 this.api_key = None;
+                this.api_key_from_env = false;
                 cx.notify();
             })
         })
@@ -98,18 +109,20 @@ impl State {
                 .clone();
 
             cx.spawn(|this, mut cx| async move {
-                let api_key = if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
-                    api_key
+                let (api_key, from_env) = if let Ok(api_key) = std::env::var(ANTHROPIC_API_KEY_VAR)
+                {
+                    (api_key, true)
                 } else {
                     let (_, api_key) = cx
                         .update(|cx| cx.read_credentials(&api_url))?
                         .await?
                         .ok_or_else(|| anyhow!("credentials not found"))?;
-                    String::from_utf8(api_key)?
+                    (String::from_utf8(api_key)?, false)
                 };
 
                 this.update(&mut cx, |this, cx| {
                     this.api_key = Some(api_key);
+                    this.api_key_from_env = from_env;
                     cx.notify();
                 })
             })
@@ -121,6 +134,7 @@ impl AnthropicLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let state = cx.new_model(|cx| State {
             api_key: None,
+            api_key_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
@@ -171,6 +185,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                 model.name.clone(),
                 anthropic::Model::Custom {
                     name: model.name.clone(),
+                    display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                     tool_override: model.tool_override.clone(),
                     cache_configuration: model.cache_configuration.as_ref().map(|config| {
@@ -529,6 +544,8 @@ impl Render for ConfigurationView {
             "Paste your Anthropic API key below and hit enter to use the assistant:",
         ];
 
+        let env_var_set = self.state.read(cx).api_key_from_env;
+
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials...")).into_any()
         } else if self.should_render_editor(cx) {
@@ -550,7 +567,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        "You can also assign the ANTHROPIC_API_KEY environment variable and restart Zed.",
+                        "You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed.",
                     )
                     .size(LabelSize::Small),
                 )
@@ -563,13 +580,21 @@ impl Render for ConfigurationView {
                     h_flex()
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new("API key configured.")),
+                        .child(Label::new(if env_var_set {
+                            format!("API key set in {ANTHROPIC_API_KEY_VAR} environment variable.")
+                        } else {
+                            "API key configured.".to_string()
+                        })),
                 )
                 .child(
                     Button::new("reset-key", "Reset key")
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
+                        .disabled(env_var_set)
+                        .when(env_var_set, |this| {
+                            this.tooltip(|cx| Tooltip::text(format!("To reset your API key, unset the {ANTHROPIC_API_KEY_VAR} environment variable."), cx))
+                        })
                         .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx))),
                 )
                 .into_any()

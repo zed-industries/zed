@@ -251,7 +251,12 @@ impl PlatformWindow for TestWindow {
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn draw(&self, _scene: &crate::Scene) {}
+    fn draw(
+        &self,
+        _scene: &crate::Scene,
+        _on_complete: Option<futures::channel::oneshot::Sender<()>>,
+    ) {
+    }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.0.lock().sprite_atlas.clone()
@@ -275,6 +280,10 @@ impl PlatformWindow for TestWindow {
     }
 
     fn gpu_specs(&self) -> Option<GPUSpecs> {
+        None
+    }
+
+    fn fps(&self) -> Option<f32> {
         None
     }
 }

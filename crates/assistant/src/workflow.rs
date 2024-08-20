@@ -23,6 +23,8 @@ use workspace::Workspace;
 
 pub use step_view::WorkflowStepView;
 
+const IMPORTS_SYMBOL: &str = "#imports";
+
 pub struct WorkflowStep {
     context: WeakModel<Context>,
     context_buffer_range: Range<Anchor>,
@@ -467,7 +469,7 @@ pub mod tool {
     use super::*;
     use anyhow::Context as _;
     use gpui::AsyncAppContext;
-    use language::ParseStatus;
+    use language::{Outline, OutlineItem, ParseStatus};
     use language_model::LanguageModelTool;
     use project::ProjectPath;
     use schemars::JsonSchema;
@@ -562,10 +564,7 @@ pub mod tool {
                     symbol,
                     description,
                 } => {
-                    let (symbol_path, symbol) = outline
-                        .find_most_similar(&symbol)
-                        .with_context(|| format!("symbol not found: {:?}", symbol))?;
-                    let symbol = symbol.to_point(&snapshot);
+                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
                     let start = symbol
                         .annotation_range
                         .map_or(symbol.range.start, |range| range.start);
@@ -588,10 +587,7 @@ pub mod tool {
                     symbol,
                     description,
                 } => {
-                    let (symbol_path, symbol) = outline
-                        .find_most_similar(&symbol)
-                        .with_context(|| format!("symbol not found: {:?}", symbol))?;
-                    let symbol = symbol.to_point(&snapshot);
+                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
                     let position = snapshot.anchor_before(
                         symbol
                             .annotation_range
@@ -609,10 +605,7 @@ pub mod tool {
                     symbol,
                     description,
                 } => {
-                    let (symbol_path, symbol) = outline
-                        .find_most_similar(&symbol)
-                        .with_context(|| format!("symbol not found: {:?}", symbol))?;
-                    let symbol = symbol.to_point(&snapshot);
+                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
                     let position = snapshot.anchor_after(symbol.range.end);
                     WorkflowSuggestion::InsertSiblingAfter {
                         position,
@@ -625,10 +618,8 @@ pub mod tool {
                     description,
                 } => {
                     if let Some(symbol) = symbol {
-                        let (symbol_path, symbol) = outline
-                            .find_most_similar(&symbol)
-                            .with_context(|| format!("symbol not found: {:?}", symbol))?;
-                        let symbol = symbol.to_point(&snapshot);
+                        let (symbol_path, symbol) =
+                            Self::resolve_symbol(&snapshot, &outline, &symbol)?;
 
                         let position = snapshot.anchor_after(
                             symbol
@@ -653,10 +644,8 @@ pub mod tool {
                     description,
                 } => {
                     if let Some(symbol) = symbol {
-                        let (symbol_path, symbol) = outline
-                            .find_most_similar(&symbol)
-                            .with_context(|| format!("symbol not found: {:?}", symbol))?;
-                        let symbol = symbol.to_point(&snapshot);
+                        let (symbol_path, symbol) =
+                            Self::resolve_symbol(&snapshot, &outline, &symbol)?;
 
                         let position = snapshot.anchor_before(
                             symbol
@@ -677,10 +666,7 @@ pub mod tool {
                     }
                 }
                 WorkflowSuggestionToolKind::Delete { symbol } => {
-                    let (symbol_path, symbol) = outline
-                        .find_most_similar(&symbol)
-                        .with_context(|| format!("symbol not found: {:?}", symbol))?;
-                    let symbol = symbol.to_point(&snapshot);
+                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
                     let start = symbol
                         .annotation_range
                         .map_or(symbol.range.start, |range| range.start);
@@ -696,6 +682,60 @@ pub mod tool {
 
             Ok((buffer, suggestion))
         }
+
+        fn resolve_symbol(
+            snapshot: &BufferSnapshot,
+            outline: &Outline<Anchor>,
+            symbol: &str,
+        ) -> Result<(SymbolPath, OutlineItem<Point>)> {
+            if symbol == IMPORTS_SYMBOL {
+                let target_row = find_first_non_comment_line(snapshot);
+                Ok((
+                    SymbolPath(IMPORTS_SYMBOL.to_string()),
+                    OutlineItem {
+                        range: Point::new(target_row, 0)..Point::new(target_row + 1, 0),
+                        ..Default::default()
+                    },
+                ))
+            } else {
+                let (symbol_path, symbol) = outline
+                    .find_most_similar(symbol)
+                    .with_context(|| format!("symbol not found: {symbol}"))?;
+                Ok((symbol_path, symbol.to_point(snapshot)))
+            }
+        }
+    }
+
+    fn find_first_non_comment_line(snapshot: &BufferSnapshot) -> u32 {
+        let Some(language) = snapshot.language() else {
+            return 0;
+        };
+
+        let scope = language.default_scope();
+        let comment_prefixes = scope.line_comment_prefixes();
+
+        let mut chunks = snapshot.as_rope().chunks();
+        let mut target_row = 0;
+        loop {
+            let starts_with_comment = chunks
+                .peek()
+                .map(|chunk| {
+                    comment_prefixes
+                        .iter()
+                        .any(|s| chunk.starts_with(s.as_ref().trim_end()))
+                })
+                .unwrap_or(false);
+
+            if !starts_with_comment {
+                break;
+            }
+
+            target_row += 1;
+            if !chunks.next_line() {
+                break;
+            }
+        }
+        target_row
     }
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

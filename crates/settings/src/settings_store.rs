@@ -3,7 +3,6 @@ use collections::{btree_map, hash_map, BTreeMap, HashMap};
 use fs::Fs;
 use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global, Task, UpdateGlobal};
-use lazy_static::lazy_static;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
 use smallvec::SmallVec;
@@ -13,8 +12,10 @@ use std::{
     ops::Range,
     path::Path,
     str,
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
+use tree_sitter::Query;
+use tree_sitter_json::language;
 use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
 
 use crate::SettingsJsonSchemaParams;
@@ -944,13 +945,10 @@ fn replace_value_in_json_text(
     tab_size: usize,
     new_value: &serde_json::Value,
 ) -> (Range<usize>, String) {
-    lazy_static! {
-        static ref PAIR_QUERY: tree_sitter::Query = tree_sitter::Query::new(
-            &tree_sitter_json::language(),
-            "(pair key: (string) @key value: (_) @value)",
-        )
-        .unwrap();
-    }
+    static PAIR_QUERY: LazyLock<Query> = LazyLock::new(|| {
+        Query::new(&language(), "(pair key: (string) @key value: (_) @value)")
+            .expect("Failed to create PAIR_QUERY")
+    });
 
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_json::language()).unwrap();

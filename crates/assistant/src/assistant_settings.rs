@@ -543,8 +543,8 @@ mod tests {
             assert_eq!(
                 AssistantSettings::get_global(cx).default_model,
                 LanguageModelSelection {
-                    provider: "openai".into(),
-                    model: "gpt-4o".into(),
+                    provider: "zed.dev".into(),
+                    model: "claude-3-5-sonnet".into(),
                 }
             );
         });

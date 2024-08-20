@@ -13,7 +13,7 @@ Consider renaming `zed: Open Local Settings` to `zed: Open Project Settings`.
 TBD: Add settings documentation about how settings are merged as overlays. E.g. project>local>default. Note how settings that are maps are merged, but settings that are arrays are replaced and must include the defaults.
 -->
 
-Your settings file can be opened with `cmd-,` (on macOS) or `ctrl-,` (on Linux). By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
+Your settings file can be opened with <kbd>cmd-,|ctrl-,</kbd>. By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
 
 This configuration is merged with any local configuration inside your projects. You can open the project settings by running `zed: Open Local Settings` from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
 
@@ -1900,6 +1900,27 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   // Share your project when you are the first to join a channel
   "share_on_join": false
 },
+```
+
+## Unnecessary Code Fade
+
+- Description: How much to fade out unused code.
+- Setting: `unnecessary_code_fade`
+- Default: `0.3`
+
+**Options**
+
+Float values between `0.0` and `0.9`, where:
+
+- `0.0` means no fading (unused code looks the same as used code)
+- `0.9` means maximum fading (unused code is very faint but still visible)
+
+**Example**
+
+```json
+{
+  "unnecessary_code_fade": 0.5
+}
 ```
 
 ## An example configuration:

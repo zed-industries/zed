@@ -4918,7 +4918,10 @@ async fn get_llm_api_token(
     let db = session.db().await;
 
     let flags = db.get_user_flags(session.user_id()).await?;
-    if !session.is_staff() && !flags.iter().any(|flag| flag == "language-models") {
+    let has_language_models_feature_flag = flags.iter().any(|flag| flag == "language-models");
+    let has_llm_closed_beta_feature_flag = flags.iter().any(|flag| flag == "llm-closed-beta");
+
+    if !session.is_staff() && !has_language_models_feature_flag {
         Err(anyhow!("permission denied"))?
     }
 
@@ -4943,6 +4946,7 @@ async fn get_llm_api_token(
         user.id,
         user.github_login.clone(),
         session.is_staff(),
+        has_llm_closed_beta_feature_flag,
         session.current_plan(db).await?,
         &session.app_state.config,
     )?;

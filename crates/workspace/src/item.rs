@@ -184,6 +184,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
 
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
+    fn discarded(&self, _project: Model<Project>, _cx: &mut ViewContext<Self>) {}
     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
         false
@@ -373,6 +374,7 @@ pub trait ItemHandle: 'static + Send {
     fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
+    fn project_paths(&self, cx: &AppContext) -> SmallVec<[ProjectPath; 3]>;
     fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]>;
     fn for_each_project_item(
         &self,
@@ -393,6 +395,7 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut ViewContext<Workspace>,
     );
     fn deactivated(&self, cx: &mut WindowContext);
+    fn discarded(&self, project: Model<Project>, cx: &mut WindowContext);
     fn workspace_deactivated(&self, cx: &mut WindowContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut WindowContext) -> bool;
     fn item_id(&self) -> EntityId;
@@ -525,6 +528,16 @@ impl<T: Item> ItemHandle for View<T> {
         let mut result = SmallVec::new();
         self.read(cx).for_each_project_item(cx, &mut |_, item| {
             if let Some(id) = item.entry_id(cx) {
+                result.push(id);
+            }
+        });
+        result
+    }
+
+    fn project_paths(&self, cx: &AppContext) -> SmallVec<[ProjectPath; 3]> {
+        let mut result = SmallVec::new();
+        self.read(cx).for_each_project_item(cx, &mut |_, item| {
+            if let Some(id) = item.project_path(cx) {
                 result.push(id);
             }
         });
@@ -722,6 +735,10 @@ impl<T: Item> ItemHandle for View<T> {
         cx.defer(|workspace, cx| {
             workspace.serialize_workspace(cx);
         });
+    }
+
+    fn discarded(&self, project: Model<Project>, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| this.discarded(project, cx));
     }
 
     fn deactivated(&self, cx: &mut WindowContext) {

@@ -1,7 +1,7 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
     point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
-    Hsla, MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite,
+    FpsCounter, Hsla, MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite,
     PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
 };
 use anyhow::{anyhow, Result};
@@ -14,6 +14,7 @@ use cocoa::{
 use collections::HashMap;
 use core_foundation::base::TCFType;
 use foreign_types::ForeignType;
+use futures::channel::oneshot;
 use media::core_video::CVMetalTextureCache;
 use metal::{CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
@@ -105,6 +106,7 @@ pub(crate) struct MetalRenderer {
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     sprite_atlas: Arc<MetalAtlas>,
     core_video_texture_cache: CVMetalTextureCache,
+    fps_counter: Arc<FpsCounter>,
 }
 
 impl MetalRenderer {
@@ -250,6 +252,7 @@ impl MetalRenderer {
             instance_buffer_pool,
             sprite_atlas,
             core_video_texture_cache,
+            fps_counter: FpsCounter::new(),
         }
     }
 
@@ -292,7 +295,8 @@ impl MetalRenderer {
         // nothing to do
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    pub fn draw(&mut self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
+        let on_complete = Arc::new(Mutex::new(on_complete));
         let layer = self.layer.clone();
         let viewport_size = layer.drawable_size();
         let viewport_size: Size<DevicePixels> = size(
@@ -319,13 +323,24 @@ impl MetalRenderer {
                 Ok(command_buffer) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
-                    let block = ConcreteBlock::new(move |_| {
-                        if let Some(instance_buffer) = instance_buffer.take() {
-                            instance_buffer_pool.lock().release(instance_buffer);
-                        }
-                    });
-                    let block = block.copy();
-                    command_buffer.add_completed_handler(&block);
+                    let device = self.device.clone();
+                    let fps_counter = self.fps_counter.clone();
+                    let completed_handler =
+                        ConcreteBlock::new(move |_: &metal::CommandBufferRef| {
+                            let mut cpu_timestamp = 0;
+                            let mut gpu_timestamp = 0;
+                            device.sample_timestamps(&mut cpu_timestamp, &mut gpu_timestamp);
+
+                            fps_counter.increment(gpu_timestamp);
+                            if let Some(on_complete) = on_complete.lock().take() {
+                                on_complete.send(()).ok();
+                            }
+                            if let Some(instance_buffer) = instance_buffer.take() {
+                                instance_buffer_pool.lock().release(instance_buffer);
+                            }
+                        });
+                    let completed_handler = completed_handler.copy();
+                    command_buffer.add_completed_handler(&completed_handler);
 
                     if self.presents_with_transaction {
                         command_buffer.commit();
@@ -1116,6 +1131,10 @@ impl MetalRenderer {
             *instance_offset = next_offset;
         }
         true
+    }
+
+    pub fn fps(&self) -> f32 {
+        self.fps_counter.fps()
     }
 }
 

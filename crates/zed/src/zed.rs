@@ -1018,8 +1018,6 @@ fn open_settings_file(
 
 #[cfg(test)]
 mod tests {
-    use crate::stdout_is_a_pty;
-
     use super::*;
     use anyhow::anyhow;
     use assets::Assets;
@@ -3487,12 +3485,8 @@ mod tests {
                 app_state.fs.clone(),
                 cx,
             );
-            let prompt_builder = assistant::init(
-                app_state.fs.clone(),
-                app_state.client.clone(),
-                stdout_is_a_pty(),
-                cx,
-            );
+            let prompt_builder =
+                assistant::init(app_state.fs.clone(), app_state.client.clone(), false, cx);
             repl::init(
                 app_state.fs.clone(),
                 app_state.client.telemetry().clone(),

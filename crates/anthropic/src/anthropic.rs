@@ -1,14 +1,17 @@
 mod supported_countries;
 
 use anyhow::{anyhow, Context, Result};
+use chrono::{DateTime, Utc};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
+use isahc::http::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use std::{pin::Pin, str::FromStr};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
+use util::ResultExt as _;
 
 pub use supported_countries::*;
 
@@ -38,6 +41,8 @@ pub enum Model {
     Custom {
         name: String,
         max_tokens: usize,
+        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        display_name: Option<String>,
         /// Override this model with a different Anthropic model for tool calls.
         tool_override: Option<String>,
         /// Indicates whether this custom model supports caching.
@@ -77,7 +82,9 @@ impl Model {
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
-            Self::Custom { name, .. } => name,
+            Self::Custom {
+                name, display_name, ..
+            } => display_name.as_ref().unwrap_or(name),
         }
     }
 
@@ -191,6 +198,66 @@ pub async fn stream_completion(
     request: Request,
     low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<Event, AnthropicError>>, AnthropicError> {
+    stream_completion_with_rate_limit_info(client, api_url, api_key, request, low_speed_timeout)
+        .await
+        .map(|output| output.0)
+}
+
+/// https://docs.anthropic.com/en/api/rate-limits#response-headers
+#[derive(Debug)]
+pub struct RateLimitInfo {
+    pub requests_limit: usize,
+    pub requests_remaining: usize,
+    pub requests_reset: DateTime<Utc>,
+    pub tokens_limit: usize,
+    pub tokens_remaining: usize,
+    pub tokens_reset: DateTime<Utc>,
+}
+
+impl RateLimitInfo {
+    fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+        let tokens_limit = get_header("anthropic-ratelimit-tokens-limit", headers)?.parse()?;
+        let requests_limit = get_header("anthropic-ratelimit-requests-limit", headers)?.parse()?;
+        let tokens_remaining =
+            get_header("anthropic-ratelimit-tokens-remaining", headers)?.parse()?;
+        let requests_remaining =
+            get_header("anthropic-ratelimit-requests-remaining", headers)?.parse()?;
+        let requests_reset = get_header("anthropic-ratelimit-requests-reset", headers)?;
+        let tokens_reset = get_header("anthropic-ratelimit-tokens-reset", headers)?;
+        let requests_reset = DateTime::parse_from_rfc3339(requests_reset)?.to_utc();
+        let tokens_reset = DateTime::parse_from_rfc3339(tokens_reset)?.to_utc();
+
+        Ok(Self {
+            requests_limit,
+            tokens_limit,
+            requests_remaining,
+            tokens_remaining,
+            requests_reset,
+            tokens_reset,
+        })
+    }
+}
+
+fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> Result<&'a str, anyhow::Error> {
+    Ok(headers
+        .get(key)
+        .ok_or_else(|| anyhow!("missing header `{key}`"))?
+        .to_str()?)
+}
+
+pub async fn stream_completion_with_rate_limit_info(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+    low_speed_timeout: Option<Duration>,
+) -> Result<
+    (
+        BoxStream<'static, Result<Event, AnthropicError>>,
+        Option<RateLimitInfo>,
+    ),
+    AnthropicError,
+> {
     let request = StreamingRequest {
         base: request,
         stream: true,
@@ -220,8 +287,9 @@ pub async fn stream_completion(
         .await
         .context("failed to send request to Anthropic")?;
     if response.status().is_success() {
+        let rate_limits = RateLimitInfo::from_headers(response.headers());
         let reader = BufReader::new(response.into_body());
-        Ok(reader
+        let stream = reader
             .lines()
             .filter_map(|line| async move {
                 match line {
@@ -235,7 +303,8 @@ pub async fn stream_completion(
                     Err(error) => Some(Err(AnthropicError::Other(anyhow!(error)))),
                 }
             })
-            .boxed())
+            .boxed();
+        Ok((stream, rate_limits.log_err()))
     } else {
         let mut body = Vec::new();
         response

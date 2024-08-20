@@ -16,6 +16,7 @@ mod blade;
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
+mod fps;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -51,6 +52,7 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
+pub use fps::*;
 pub use keystroke::*;
 
 #[cfg(target_os = "linux")]
@@ -354,7 +356,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
-    fn draw(&self, scene: &Scene);
+    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
@@ -379,6 +381,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GPUSpecs>;
+    fn fps(&self) -> Option<f32>;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
@@ -937,11 +940,11 @@ pub enum CursorStyle {
     ResizeUpRightDownLeft,
 
     /// A cursor indicating that the item/column can be resized horizontally.
-    /// corresponds to the CSS curosr value `col-resize`
+    /// corresponds to the CSS cursor value `col-resize`
     ResizeColumn,
 
     /// A cursor indicating that the item/row can be resized vertically.
-    /// corresponds to the CSS curosr value `row-resize`
+    /// corresponds to the CSS cursor value `row-resize`
     ResizeRow,
 
     /// A text input cursor for vertical layout
