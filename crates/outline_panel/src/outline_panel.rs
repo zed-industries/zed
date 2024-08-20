@@ -2052,7 +2052,6 @@ impl OutlinePanel {
         new_active_editor: View<Editor>,
         cx: &mut ViewContext<Self>,
     ) {
-        let new_selected_entry = self.location_for_editor_selection(&new_active_editor, cx);
         self.clear_previous(cx);
         let buffer_search_subscription = cx.subscribe(
             &new_active_editor,
@@ -2061,6 +2060,8 @@ impl OutlinePanel {
                 outline_panel.autoscroll(cx);
             },
         );
+        // TODO kb this never gets to be Some() after replacement
+        let new_selected_entry = self.location_for_editor_selection(&new_active_editor, cx);
         self.active_item = Some(ActiveItem {
             _buffer_search_subscription: buffer_search_subscription,
             _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, cx),
@@ -2091,6 +2092,7 @@ impl OutlinePanel {
         self.outline_fetch_tasks.clear();
         self.excerpts.clear();
         self.cached_entries_with_depth = Vec::new();
+        self.search_matches.clear();
     }
 
     fn location_for_editor_selection(
