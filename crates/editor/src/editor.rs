@@ -12535,6 +12535,7 @@ impl Render for Editor {
                 font_fallbacks: settings.ui_font.fallbacks.clone(),
                 font_size: rems(0.875).into(),
                 font_weight: settings.ui_font.weight,
+                font_width: settings.ui_font.width,
                 line_height: relative(settings.buffer_line_height.value()),
                 ..Default::default()
             },
@@ -12545,6 +12546,7 @@ impl Render for Editor {
                 font_fallbacks: settings.buffer_font.fallbacks.clone(),
                 font_size: settings.buffer_font_size(cx).into(),
                 font_weight: settings.buffer_font.weight,
+                font_width: settings.buffer_font.width,
                 line_height: relative(settings.buffer_line_height.value()),
                 ..Default::default()
             },
@@ -12955,6 +12957,7 @@ pub fn diagnostic_block_renderer(
         text_style.font_style = theme_settings.buffer_font.style;
         text_style.font_features = theme_settings.buffer_font.features.clone();
         text_style.font_weight = theme_settings.buffer_font.weight;
+        text_style.font_width = theme_settings.buffer_font.width;
 
         let multi_line_diagnostic = diagnostic.message.contains('\n');
 

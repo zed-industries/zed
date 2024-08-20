@@ -634,6 +634,7 @@ impl Element for TerminalElement {
                     .clone();
 
                 let font_weight = terminal_settings.font_weight.unwrap_or_default();
+                let font_width = terminal_settings.font_width.unwrap_or_default();
 
                 let line_height = terminal_settings.line_height.value();
                 let font_size = terminal_settings.font_size;
@@ -647,6 +648,7 @@ impl Element for TerminalElement {
                     color: Some(theme.colors().link_text_hover),
                     font_weight: Some(font_weight),
                     font_style: None,
+                    font_width: None,
                     background_color: None,
                     underline: Some(UnderlineStyle {
                         thickness: px(1.0),
@@ -661,6 +663,7 @@ impl Element for TerminalElement {
                     font_family,
                     font_features,
                     font_weight,
+                    font_width,
                     font_fallbacks,
                     font_size: font_size.into(),
                     font_style: FontStyle::Normal,

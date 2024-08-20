@@ -30,6 +30,7 @@ pub fn text_style(cx: &mut WindowContext) -> TextStyle {
     let font_family = settings.buffer_font.family;
     let font_features = settings.buffer_font.features;
     let font_weight = settings.buffer_font.weight;
+    let font_width = settings.buffer_font.width;
     let font_fallbacks = settings.buffer_font.fallbacks;
 
     let theme = cx.theme();
@@ -38,6 +39,7 @@ pub fn text_style(cx: &mut WindowContext) -> TextStyle {
         font_family,
         font_features,
         font_weight,
+        font_width,
         font_fallbacks,
         font_size: theme::get_buffer_font_size(cx).into(),
         font_style: FontStyle::Normal,

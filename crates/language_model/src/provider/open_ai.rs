@@ -3,8 +3,8 @@ use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::{
-    AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
-    View, WhiteSpace,
+    AnyView, AppContext, AsyncAppContext, FontStyle, FontWidth, ModelContext, Subscription, Task,
+    TextStyle, View, WhiteSpace,
 };
 use http_client::HttpClient;
 use open_ai::{
@@ -448,6 +448,7 @@ impl ConfigurationView {
             font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
+            font_width: FontWidth::default(),
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
             background_color: None,

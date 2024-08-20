@@ -1,4 +1,4 @@
-use gpui::{StyleRefinement, WindowContext};
+use gpui::{FontWidth, StyleRefinement, WindowContext};
 
 use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 
@@ -98,6 +98,11 @@ impl LabelCommon for Label {
 
     fn weight(mut self, weight: gpui::FontWeight) -> Self {
         self.base = self.base.weight(weight);
+        self
+    }
+
+    fn width(mut self, width: FontWidth) -> Self {
+        self.base = self.base.width(width);
         self
     }
 

@@ -126,6 +126,7 @@ impl Render for TextField {
             font_features: settings.buffer_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.buffer_font.weight,
+            font_width: settings.buffer_font.width,
             font_style: FontStyle::Normal,
             line_height: relative(1.2),
             color: style.text_color,

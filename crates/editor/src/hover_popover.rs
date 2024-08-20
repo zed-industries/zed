@@ -522,6 +522,7 @@ async fn parse_blocks(
             let mut base_style = cx.text_style();
             base_style.refine(&TextStyleRefinement {
                 font_family: Some(buffer_font_family.clone()),
+                font_width: Some(settings.buffer_font.width),
                 color: Some(cx.theme().colors().editor_foreground),
                 ..Default::default()
             });

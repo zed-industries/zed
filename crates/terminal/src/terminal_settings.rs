@@ -1,6 +1,7 @@
 use collections::HashMap;
 use gpui::{
-    px, AbsoluteLength, AppContext, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString,
+    px, AbsoluteLength, AppContext, FontFallbacks, FontFeatures, FontWeight, FontWidth, Pixels,
+    SharedString,
 };
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde_derive::{Deserialize, Serialize};
@@ -30,6 +31,7 @@ pub struct TerminalSettings {
     pub font_fallbacks: Option<FontFallbacks>,
     pub font_features: Option<FontFeatures>,
     pub font_weight: Option<FontWeight>,
+    pub font_width: Option<FontWidth>,
     pub line_height: TerminalLineHeight,
     pub env: HashMap<String, String>,
     pub blinking: TerminalBlink,
@@ -123,6 +125,8 @@ pub struct TerminalSettingsContent {
     pub font_features: Option<FontFeatures>,
     /// Sets the terminal's font weight in CSS weight units 0-900.
     pub font_weight: Option<f32>,
+    /// Sets the terminal's font width in stretch from 0.5 to 2.0.
+    pub font_width: Option<f32>,
     /// Any key-value pairs added to this list will be added to the terminal's
     /// environment. Use `:` to separate multiple values.
     ///

@@ -910,6 +910,7 @@ impl PromptLibrary {
                                                             .size()
                                                             .into(),
                                                         font_weight: settings.ui_font.weight,
+                                                        font_width: settings.ui_font.width,
                                                         line_height: relative(
                                                             settings.buffer_line_height.value(),
                                                         ),

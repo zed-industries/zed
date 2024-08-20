@@ -1,4 +1,4 @@
-use gpui::{relative, AnyElement, FontWeight, StyleRefinement, Styled};
+use gpui::{relative, AnyElement, FontWeight, FontWidth, StyleRefinement, Styled};
 use settings::Settings;
 use smallvec::SmallVec;
 use theme::ThemeSettings;
@@ -30,6 +30,9 @@ pub trait LabelCommon {
     /// Sets the font weight of the label.
     fn weight(self, weight: FontWeight) -> Self;
 
+    /// Sets the font width of the label.
+    fn width(self, width: FontWidth) -> Self;
+
     /// Sets the line height style of the label using a [`LineHeightStyle`].
     fn line_height_style(self, line_height_style: LineHeightStyle) -> Self;
 
@@ -51,6 +54,7 @@ pub struct LabelLike {
     pub(super) base: Div,
     size: LabelSize,
     weight: Option<FontWeight>,
+    width: Option<FontWidth>,
     line_height_style: LineHeightStyle,
     pub(crate) color: Color,
     strikethrough: bool,
@@ -65,6 +69,7 @@ impl LabelLike {
             base: div(),
             size: LabelSize::Default,
             weight: None,
+            width: None,
             line_height_style: LineHeightStyle::default(),
             color: Color::Default,
             strikethrough: false,
@@ -94,6 +99,11 @@ impl LabelCommon for LabelLike {
 
     fn weight(mut self, weight: FontWeight) -> Self {
         self.weight = Some(weight);
+        self
+    }
+
+    fn width(mut self, width: FontWidth) -> Self {
+        self.width = Some(width);
         self
     }
 
@@ -161,6 +171,7 @@ impl RenderOnce for LabelLike {
             .when(self.italic, |this| this.italic())
             .text_color(color)
             .font_weight(self.weight.unwrap_or(settings.ui_font.weight))
+            .font_width(self.width.unwrap_or(settings.ui_font.width))
             .children(self.children)
     }
 }

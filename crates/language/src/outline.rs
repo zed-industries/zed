@@ -216,6 +216,7 @@ pub fn render_item<T>(
         font_fallbacks: settings.buffer_font.fallbacks.clone(),
         font_size: settings.buffer_font_size(cx).into(),
         font_weight: settings.buffer_font.weight,
+        font_width: settings.buffer_font.width,
         line_height: relative(1.),
         ..Default::default()
     };

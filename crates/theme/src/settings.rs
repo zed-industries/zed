@@ -3,8 +3,8 @@ use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    Subscription, ViewContext, WindowContext,
+    px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, FontWidth, Global,
+    Pixels, Subscription, ViewContext, WindowContext,
 };
 use refineable::Refineable;
 use schemars::{
@@ -254,6 +254,9 @@ pub struct ThemeSettingsContent {
     /// The weight of the UI font in CSS units from 100 to 900.
     #[serde(default)]
     pub ui_font_weight: Option<f32>,
+    /// The width of the UI font, from 0.5 to 2.0.
+    #[serde(default)]
+    pub ui_font_width: Option<f32>,
     /// The name of a font to use for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_family: Option<String>,
@@ -266,6 +269,9 @@ pub struct ThemeSettingsContent {
     /// The weight of the editor font in CSS units from 100 to 900.
     #[serde(default)]
     pub buffer_font_weight: Option<f32>,
+    /// The width of the editor font from 0.5 to 2.0.
+    #[serde(default)]
+    pub buffer_font_width: Option<f32>,
     /// The buffer's line height.
     #[serde(default)]
     pub buffer_line_height: Option<BufferLineHeight>,
@@ -530,6 +536,7 @@ impl settings::Settings for ThemeSettings {
                     .map(|fallbacks| FontFallbacks::from_fonts(fallbacks.clone())),
                 weight: defaults.ui_font_weight.map(FontWeight).unwrap(),
                 style: Default::default(),
+                width: Default::default(),
             },
             buffer_font: Font {
                 family: defaults.buffer_font_family.as_ref().unwrap().clone().into(),
@@ -540,6 +547,7 @@ impl settings::Settings for ThemeSettings {
                     .map(|fallbacks| FontFallbacks::from_fonts(fallbacks.clone())),
                 weight: defaults.buffer_font_weight.map(FontWeight).unwrap(),
                 style: FontStyle::default(),
+                width: Default::default(),
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
@@ -569,6 +577,9 @@ impl settings::Settings for ThemeSettings {
             if let Some(value) = value.buffer_font_weight {
                 this.buffer_font.weight = FontWeight(value);
             }
+            if let Some(value) = value.buffer_font_width {
+                this.buffer_font.width = FontWidth(value);
+            }
 
             if let Some(value) = value.ui_font_family.clone() {
                 this.ui_font.family = value.into();
@@ -581,6 +592,9 @@ impl settings::Settings for ThemeSettings {
             }
             if let Some(value) = value.ui_font_weight {
                 this.ui_font.weight = FontWeight(value);
+            }
+            if let Some(value) = value.ui_font_width {
+                this.ui_font.width = FontWidth(value);
             }
 
             if let Some(value) = &value.theme {

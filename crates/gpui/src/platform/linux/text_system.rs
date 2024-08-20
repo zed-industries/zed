@@ -513,7 +513,7 @@ fn font_into_properties(font: &crate::Font) -> font_kit::properties::Properties 
             crate::FontStyle::Oblique => font_kit::properties::Style::Oblique,
         },
         weight: font_kit::properties::Weight(font.weight.0),
-        stretch: Default::default(),
+        stretch: font.width.into(),
     }
 }
 

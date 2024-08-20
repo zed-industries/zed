@@ -535,6 +535,7 @@ impl Render for MessageEditor {
             font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: TextSize::Small.rems(cx).into(),
             font_weight: settings.ui_font.weight,
+            font_width: settings.ui_font.width,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
             ..Default::default()

@@ -64,6 +64,7 @@ impl Render for Breadcrumbs {
                 text_style.font_features = font.features;
                 text_style.font_style = font.style;
                 text_style.font_weight = font.weight;
+                text_style.font_width = font.width;
             }
             text_style.color = Color::Muted.color(cx);
 

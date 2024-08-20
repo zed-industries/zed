@@ -1,9 +1,9 @@
-use crate::TextStyleRefinement;
 use crate::{
     self as gpui, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle, DefiniteLength,
     Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
     SharedString, StyleRefinement, WhiteSpace,
 };
+use crate::{FontWidth, TextStyleRefinement};
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
     overflow_style_methods, padding_style_methods, position_style_methods,
@@ -325,6 +325,14 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Set the font width of this element, this value cascades to its child elements.
+    fn font_width(mut self, width: FontWidth) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_width = Some(width);
+        self
+    }
+
     /// Set the background color of this element, this value cascades to its child elements.
     fn text_bg(mut self, bg: impl Into<Hsla>) -> Self {
         self.text_style()
@@ -509,6 +517,7 @@ pub trait Styled: Sized {
             fallbacks,
             weight,
             style,
+            width,
         } = font;
 
         let text_style = self.text_style().get_or_insert_with(Default::default);
@@ -516,6 +525,7 @@ pub trait Styled: Sized {
         text_style.font_features = Some(features);
         text_style.font_weight = Some(weight);
         text_style.font_style = Some(style);
+        text_style.font_width = Some(width);
         text_style.font_fallbacks = fallbacks;
 
         self

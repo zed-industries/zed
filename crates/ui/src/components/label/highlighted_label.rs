@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use gpui::{FontWeight, HighlightStyle, StyledText};
+use gpui::{FontWeight, FontWidth, HighlightStyle, StyledText};
 
 use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 
@@ -31,6 +31,11 @@ impl LabelCommon for HighlightedLabel {
 
     fn weight(mut self, weight: FontWeight) -> Self {
         self.base = self.base.weight(weight);
+        self
+    }
+
+    fn width(mut self, width: FontWidth) -> Self {
+        self.base = self.base.width(width);
         self
     }
 

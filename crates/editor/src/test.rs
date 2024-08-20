@@ -5,7 +5,9 @@ use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
 };
-use gpui::{Context, Font, FontFeatures, FontStyle, FontWeight, Model, Pixels, ViewContext};
+use gpui::{
+    Context, Font, FontFeatures, FontStyle, FontWeight, FontWidth, Model, Pixels, ViewContext,
+};
 use project::Project;
 use util::test::{marked_text_offsets, marked_text_ranges};
 
@@ -29,6 +31,7 @@ pub fn marked_display_snapshot(
         features: FontFeatures::default(),
         fallbacks: None,
         weight: FontWeight::default(),
+        width: FontWidth::default(),
         style: FontStyle::default(),
     };
     let font_size: Pixels = 14usize.into();

@@ -629,6 +629,52 @@ impl Display for FontStyle {
     }
 }
 
+/// The font width, from 0.5 to 2.0.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Deserialize, Serialize, JsonSchema)]
+pub struct FontWidth(pub f32);
+
+impl Default for FontWidth {
+    #[inline]
+    fn default() -> Self {
+        Self::NORMAL
+    }
+}
+
+impl Hash for FontWidth {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u32(u32::from_be_bytes(self.0.to_be_bytes()));
+    }
+}
+
+impl Eq for FontWidth {}
+
+impl FontWidth {
+    /// Ultra-condensed width (50%), the narrowest possible.
+    pub const ULTRA_CONDENSED: FontWidth = FontWidth(0.5);
+    /// Extra-condensed width (62.5%).
+    pub const EXTRA_CONDENSED: FontWidth = FontWidth(0.625);
+    /// Condensed width (75%).
+    pub const CONDENSED: FontWidth = FontWidth(0.75);
+    /// Semi-condensed width (87.5%).
+    pub const SEMI_CONDENSED: FontWidth = FontWidth(0.875);
+    /// Normal width (100%).
+    pub const NORMAL: FontWidth = FontWidth(1.0);
+    /// Semi-expanded width (112.5%).
+    pub const SEMI_EXPANDED: FontWidth = FontWidth(1.125);
+    /// Expanded width (125%).
+    pub const EXPANDED: FontWidth = FontWidth(1.25);
+    /// Extra-expanded width (150%).
+    pub const EXTRA_EXPANDED: FontWidth = FontWidth(1.5);
+    /// Ultra-expanded width (200%), the widest possible.
+    pub const ULTRA_EXPANDED: FontWidth = FontWidth(2.0);
+}
+
+impl From<FontWidth> for font_kit::properties::Stretch {
+    fn from(value: FontWidth) -> Self {
+        Self(value.0)
+    }
+}
+
 /// A styled run of text, for use in [`TextLayout`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextRun {
@@ -692,6 +738,9 @@ pub struct Font {
 
     /// The font style.
     pub style: FontStyle,
+
+    /// The font width.
+    pub width: FontWidth,
 }
 
 /// Get a [`Font`] for a given name.
@@ -702,6 +751,7 @@ pub fn font(family: impl Into<SharedString>) -> Font {
         weight: FontWeight::default(),
         style: FontStyle::default(),
         fallbacks: None,
+        width: FontWidth::default(),
     }
 }
 

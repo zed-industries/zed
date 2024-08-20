@@ -117,6 +117,7 @@ impl BufferSearchBar {
             font_fallbacks: settings.buffer_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.buffer_font.weight,
+            font_width: settings.buffer_font.width,
             line_height: relative(1.3),
             ..Default::default()
         };

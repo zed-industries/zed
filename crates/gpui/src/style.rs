@@ -7,7 +7,7 @@ use std::{
 use crate::{
     black, phi, point, quad, rems, size, AbsoluteLength, Bounds, ContentMask, Corners,
     CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
-    FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
+    FontFallbacks, FontFeatures, FontStyle, FontWeight, FontWidth, Hsla, Length, Pixels, Point,
     PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
 };
 use collections::HashSet;
@@ -310,6 +310,9 @@ pub struct TextStyle {
     /// The font style, e.g. italic
     pub font_style: FontStyle,
 
+    /// The font width, e.g. expanded
+    pub font_width: FontWidth,
+
     /// The background color of the text
     pub background_color: Option<Hsla>,
 
@@ -341,6 +344,7 @@ impl Default for TextStyle {
             line_height: phi(),
             font_weight: FontWeight::default(),
             font_style: FontStyle::default(),
+            font_width: FontWidth::default(),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -358,6 +362,9 @@ impl TextStyle {
         }
         if let Some(style) = style.font_style {
             self.font_style = style;
+        }
+        if let Some(width) = style.font_width {
+            self.font_width = width;
         }
 
         if let Some(color) = style.color {
@@ -391,6 +398,7 @@ impl TextStyle {
             fallbacks: self.font_fallbacks.clone(),
             weight: self.font_weight,
             style: self.font_style,
+            width: self.font_width,
         }
     }
 
@@ -409,6 +417,7 @@ impl TextStyle {
                 fallbacks: self.font_fallbacks.clone(),
                 weight: self.font_weight,
                 style: self.font_style,
+                width: self.font_width,
             },
             color: self.color,
             background_color: self.background_color,
@@ -431,6 +440,9 @@ pub struct HighlightStyle {
     /// The font style, e.g. italic
     pub font_style: Option<FontStyle>,
 
+    /// The font width, e.g. expanded
+    pub font_width: Option<FontWidth>,
+
     /// The background color of the text
     pub background_color: Option<Hsla>,
 
@@ -451,6 +463,7 @@ impl Hash for HighlightStyle {
         self.color.hash(state);
         self.font_weight.hash(state);
         self.font_style.hash(state);
+        self.font_width.hash(state);
         self.background_color.hash(state);
         self.underline.hash(state);
         self.strikethrough.hash(state);
@@ -760,6 +773,7 @@ impl From<&TextStyle> for HighlightStyle {
             color: Some(other.color),
             font_weight: Some(other.font_weight),
             font_style: Some(other.font_style),
+            font_width: Some(other.font_width),
             background_color: other.background_color,
             underline: other.underline,
             strikethrough: other.strikethrough,
