@@ -26,9 +26,17 @@ To configure Zed to use a Context Server, add the command required to start the 
 
 A Context Server is a server listening for JSON-RPC requests over stdin/stdout. The server must follow the Model Context Protocol (defined below) in order to declare its capabilities such that Zed can make use of them.
 
+### Implementing a Context Server
+
+Context Servers are JSON-RPC servers communicating over stdio. Context Servers must comply with the [Model Context Protocol (MCP)](./model_context_protocol).
+
+See [python-context-server](https://github.com/zed-industries/python-context-server) for a minimal working example.
+
+Currently, Zed's client only implements a subset of the protocol required to support custom prompt insertions and manipulations. This is likely to be expanded in the future.
+
 ### Should you write a Context Server?
 
-[Extensions](./extensions.md) are also capable of adding slash commands to the Assistant.
+[Extensions](../extensions.md) are also capable of [adding slash commands to the Assistant](../extensions/slash-commands.md).
 
 If your slash commands are already implemented in a language other than Rust, wrapping them in a Context Server implementation will likely be the fastest way to plug them into Zed.
 
@@ -37,9 +45,3 @@ An Extension should be preferred when:
 - Your slash commands are implemented in WebAssembly-compatible Rust
 - You want Zed to manage distribution of your slash commands
 - You want to publish your slash commands
-
-### Implementing a Context Server
-
-Context Servers must comply with the [Model Context Protocol (MCP)](./model_context_protocol). See [python-context-server](https://github.com/zed-industries/python-context-server) for a minimal working example.
-
-Currently, Zed's client only implements the subset of the protocol required to support custom prompt insertions and manipulations, although this is likely to be extended in the future.
