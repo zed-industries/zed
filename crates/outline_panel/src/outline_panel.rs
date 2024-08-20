@@ -26,8 +26,8 @@ use gpui::{
     AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EventEmitter,
     FocusHandle, FocusableView, InteractiveElement, IntoElement, KeyContext, Model, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful, Styled,
-    Subscription, Task, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
-    VisualContext, WeakView, WindowContext,
+    Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -1521,9 +1521,6 @@ impl OutlinePanel {
         depth: usize,
         cx: &mut ViewContext<Self>,
     ) -> Stateful<Div> {
-        let Some(match_text) = self.text_for_match(match_range, cx) else {
-            return div().id("empty-search-match");
-        };
         let Some(active_editor) = self.active_editor() else {
             return div().id("empty-search-match");
         };
@@ -1536,17 +1533,17 @@ impl OutlinePanel {
         );
         let entire_row_range =
             (entire_row_range_start..entire_row_range_end).to_anchors(&multi_buffer_snapshot);
-        let is_active = match &self.selected_entry {
-            Some(PanelEntry::Search(selected_range)) => match_range == selected_range,
-            _ => false,
-        };
+        let entire_row_offset_range = entire_row_range.to_offset(&multi_buffer_snapshot);
+        let match_offset_range = match_range.to_offset(&multi_buffer_snapshot);
+        let highlight_indices = vec![
+            match_offset_range.start - entire_row_offset_range.start
+                ..match_offset_range.end - entire_row_offset_range.start,
+        ];
 
-        // TODO kb new label seems to include `\n`? Generally need to select lines better and trim/align them.
+        // TODO kb Need to select lines better and trim/align them, show line numbers too?
         // TODO kb isn't this a long operation that needs to be run in the background?
-        // TODO kb panics if I open project search, then switch back to a buffer and open a buffer search, then switch back to project search
         // TODO kb blinks during buffer search input
         let theme = cx.theme().syntax();
-        let entire_row_offset_range = entire_row_range.to_offset(&multi_buffer_snapshot);
         let mut offset = entire_row_offset_range.start;
         let mut text = String::new();
         let mut highlight_ranges = Vec::new();
@@ -1574,10 +1571,6 @@ impl OutlinePanel {
             }
         }
 
-        let highlight_indices = text
-            .find(&match_text)
-            .map(|match_start| (match_start..match_start + match_text.len()));
-
         let label_element = language::render_item(
             &OutlineItem {
                 depth,
@@ -1593,6 +1586,10 @@ impl OutlinePanel {
         )
         .into_any_element();
 
+        let is_active = match &self.selected_entry {
+            Some(PanelEntry::Search(selected_range)) => match_range == selected_range,
+            _ => false,
+        };
         self.entry_element(
             PanelEntry::Search(match_range.clone()),
             ElementId::from(SharedString::from(format!("search-{match_range:?}"))),
@@ -2841,10 +2838,18 @@ impl OutlinePanel {
         cx: &mut WindowContext,
     ) -> Option<String> {
         let active_editor = self.active_editor()?;
-        let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
-        active_editor.update(cx, |active_editor, cx| {
-            active_editor.text_for_range(match_range.to_offset(&multi_buffer_snapshot), cx)
-        })
+        let text = active_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .text_for_range(match_range.clone())
+            .collect::<String>();
+        if text.is_empty() {
+            None
+        } else {
+            Some(text)
+        }
     }
 
     fn dir_names_string(
@@ -2887,17 +2892,13 @@ impl OutlinePanel {
     }
 
     fn update_search_matches(&mut self, cx: &mut ViewContext<OutlinePanel>) {
-        let project_search_matches = self
-            .workspace
-            .read(cx)
-            .active_pane()
-            .read(cx)
-            .items()
-            .find_map(|item| item.downcast::<ProjectSearchView>())
+        let active_editor = self.active_editor();
+        let project_search_matches = active_editor
+            .as_ref()
+            .and_then(|editor| editor.boxed_clone().act_as::<ProjectSearchView>(cx))
             .map(|project_search| project_search.read(cx).get_matches(cx))
             .unwrap_or_default();
-        let buffer_search_matches = self
-            .active_editor()
+        let buffer_search_matches = active_editor
             .map(|active_editor| active_editor.update(cx, |editor, cx| editor.get_matches(cx)))
             .unwrap_or_default();
 
