@@ -23,7 +23,6 @@
         <link rel="stylesheet" href="{{ path_to_root }}css/variables.css">
         <link rel="stylesheet" href="{{ path_to_root }}css/general.css">
         <link rel="stylesheet" href="{{ path_to_root }}css/chrome.css">
-        <link rel="stylesheet" href="{{ path_to_root }}plugins.css">
         {{#if print_enable}}
         <link rel="stylesheet" href="{{ path_to_root }}css/print.css" media="print">
         {{/if}}
@@ -252,10 +251,9 @@
         <script src="{{ path_to_root }}highlight.js"></script>
         <script src="{{ path_to_root }}book.js"></script>
 
-         <!-- Custom JS scripts -->
+        <!-- Custom JS scripts -->
         {{#each additional_js}}
         <script src="{{ ../path_to_root }}{{this}}"></script>
-        <script src="{{ path_to_root }}plugins.js"></script>
         {{/each}}
 
         {{#if is_print}}
