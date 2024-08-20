@@ -372,7 +372,7 @@ impl Pane {
             can_split: true,
             should_display_tab_bar: Rc::new(|cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
-                if !pane.has_focus(cx) {
+                if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
                     return (None, None);
                 }
                 // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
@@ -420,7 +420,7 @@ impl Pane {
                                     .icon_size(IconSize::Small)
                                     .tooltip(|cx| Tooltip::text("Split Pane", cx)),
                             )
-                            //.anchor(AnchorCorner::TopRight)
+                            .anchor(AnchorCorner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |menu, _| {
@@ -544,7 +544,7 @@ impl Pane {
         }
     }
 
-    fn context_menu_focused(&self, cx: &mut ViewContext<Self>) -> bool {
+    pub fn context_menu_focused(&self, cx: &mut ViewContext<Self>) -> bool {
         self.new_item_context_menu_handle.is_focused(cx)
             || self.split_item_context_menu_handle.is_focused(cx)
     }

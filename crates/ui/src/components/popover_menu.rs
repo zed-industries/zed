@@ -56,12 +56,14 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
             }
         }
     }
+
     pub fn is_deployed(&self) -> bool {
         self.0
             .borrow()
             .as_ref()
             .map_or(false, |state| state.menu.borrow().as_ref().is_some())
     }
+
     pub fn is_focused(&self, cx: &mut WindowContext) -> bool {
         self.0.borrow().as_ref().map_or(false, |state| {
             state
@@ -186,8 +188,10 @@ fn show_menu<M: ManagedView>(
     let previous_focus_handle = cx.focused();
 
     cx.subscribe(&new_menu, move |modal, _: &DismissEvent, cx| {
-        if modal.focus_handle(cx).contains_focused(cx) {
+        if modal.focus_handle(cx).contains_focused(cx) || true {
+            dbg!("A");
             if let Some(previous_focus_handle) = previous_focus_handle.as_ref() {
+                dbg!("B");
                 cx.focus(previous_focus_handle);
             }
         }

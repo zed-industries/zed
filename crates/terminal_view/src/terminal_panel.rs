@@ -5,9 +5,10 @@ use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AnchorCorner, AnyView, AppContext, AsyncWindowContext, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement, Pixels, Render,
-    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, Action, AnchorCorner, AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity,
+    EventEmitter, ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement,
+    Pixels, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use itertools::Itertools;
 use project::{terminals::TerminalKind, Fs, ProjectEntryId};
@@ -173,7 +174,7 @@ impl TerminalPanel {
         let additional_buttons = self.additional_tab_bar_buttons.clone();
         self.pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                if !pane.has_focus(cx) {
+                if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
                     return (None, None);
                 }
                 let focus_handle = pane.focus_handle(cx);
@@ -191,26 +192,29 @@ impl TerminalPanel {
                             .with_handle(pane.new_item_context_menu_handle.clone())
                             .menu(move |cx| {
                                 let focus_handle = focus_handle.clone();
-                                ContextMenu::build(cx, |menu, _| {
-                                    menu.action(
-                                        "New Terminal",
-                                        workspace::NewTerminal.boxed_clone(),
-                                    )
-                                    .entry(
-                                        "Spawn task",
-                                        Some(tasks_ui::Spawn::modal().boxed_clone()),
-                                        move |cx| {
-                                            // We want the focus to go back to terminal panel once task modal is dismissed,
-                                            // hence we focus that first. Otherwise, we'd end up without a focused element, as
-                                            // context menu will be gone the moment we spawn the modal.
-                                            cx.focus(&focus_handle);
-                                            cx.dispatch_action(
-                                                tasks_ui::Spawn::modal().boxed_clone(),
-                                            );
-                                        },
-                                    )
-                                })
-                                .into()
+                                let h = focus_handle.clone();
+                                let menu = ContextMenu::build(cx, |menu, _| {
+                                    menu.context(focus_handle.clone())
+                                        .action(
+                                            "New Terminal",
+                                            workspace::NewTerminal.boxed_clone(),
+                                        )
+                                        .entry(
+                                            "Spawn task",
+                                            Some(tasks_ui::Spawn::modal().boxed_clone()),
+                                            move |cx| {
+                                                // We want the focus to go back to terminal panel once task modal is dismissed,
+                                                // hence we focus that first. Otherwise, we'd end up without a focused element, as
+                                                // context menu will be gone the moment we spawn the modal.
+                                                cx.focus(&focus_handle);
+                                                cx.dispatch_action(
+                                                    tasks_ui::Spawn::modal().boxed_clone(),
+                                                );
+                                            },
+                                        )
+                                });
+
+                                Some(menu)
                             }),
                     )
                     .child({
