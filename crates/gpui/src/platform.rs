@@ -940,11 +940,11 @@ pub enum CursorStyle {
     ResizeUpRightDownLeft,
 
     /// A cursor indicating that the item/column can be resized horizontally.
-    /// corresponds to the CSS curosr value `col-resize`
+    /// corresponds to the CSS cursor value `col-resize`
     ResizeColumn,
 
     /// A cursor indicating that the item/row can be resized vertically.
-    /// corresponds to the CSS curosr value `row-resize`
+    /// corresponds to the CSS cursor value `row-resize`
     ResizeRow,
 
     /// A text input cursor for vertical layout
