@@ -106,7 +106,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, _: &ToggleVimMode, cx| {
             let fs = workspace.app_state().fs.clone();
-            let currently_enabled = VimModeSetting::get_global(cx).0;
+            let currently_enabled = Vim::enabled(cx);
             update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
                 *setting = Some(!currently_enabled)
             })
@@ -139,7 +139,7 @@ pub fn init(cx: &mut AppContext) {
         filter.hide_namespace(Vim::NAMESPACE);
     });
     cx.observe_global::<SettingsStore>(|cx| {
-        let enabled = VimModeSetting::get_global(cx).0;
+        let enabled = Vim::enabled(cx);
         if enabled {
             CommandPaletteFilter::update_global(cx, |filter, _| {
                 filter.show_namespace(Vim::NAMESPACE);
@@ -161,19 +161,38 @@ pub fn init(cx: &mut AppContext) {
 
 pub(crate) fn listener<A: Action>(
     editor: &mut Editor,
-    cx: &ViewContext<Vim>,
+    cx: &mut ViewContext<Vim>,
     f: impl Fn(&mut Vim, &A, &mut ViewContext<Vim>) + 'static,
 ) {
-    editor.register_action(cx.listener(f)).detach()
+    let subscription = editor.register_action(cx.listener(f));
+    cx.on_release(|_, _, _| drop(subscription)).detach();
 }
 
 fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-    dbg!("hello!");
     if !editor.use_modal_editing() {
         return;
     }
-    dbg!("hello!");
 
+    let mut was_enabled = Vim::enabled(cx);
+    cx.observe_global::<SettingsStore>(move |editor, cx| {
+        let enabled = Vim::enabled(cx);
+        if was_enabled == enabled {
+            return;
+        }
+        was_enabled = enabled;
+        if enabled {
+            activate(editor, cx)
+        } else {
+            deactivate(editor, cx)
+        }
+    })
+    .detach();
+    if was_enabled {
+        activate(editor, cx)
+    }
+}
+
+fn activate(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
     let vim = Vim::new(cx);
 
     editor.register_addon(vim.clone());
@@ -197,10 +216,10 @@ fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
             vim.push_count_digit(n.0, cx);
         });
         crate::listener(editor, cx, |vim, _: &Tab, cx| {
-            vim.active_editor_input_ignored(" ".into(), cx)
+            vim.input_ignored(" ".into(), cx)
         });
         crate::listener(editor, cx, |vim, _: &Enter, cx| {
-            vim.active_editor_input_ignored("\n".into(), cx)
+            vim.input_ignored("\n".into(), cx)
         });
 
         normal::register(editor, cx);
@@ -212,12 +231,22 @@ fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         visual::register(editor, cx);
         change_list::register(editor, cx);
 
-        dbg!("wu");
         cx.defer(|vim, cx| {
-            dbg!("wa");
+            dbg!("activating!");
             vim.activate_editor(cx);
         })
     })
+}
+
+fn deactivate(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+    editor.set_cursor_shape(CursorShape::Bar, cx);
+    editor.set_clip_at_line_ends(false, cx);
+    editor.set_collapse_matches(false);
+    editor.set_input_enabled(true);
+    editor.set_autoindent(true);
+    editor.selections.line_mode = false;
+    editor.remove_keymap_context_layer::<Vim>(cx);
+    editor.unregister_addon::<View<Vim>>();
 }
 
 /// The state pertaining to Vim mode.
@@ -270,19 +299,6 @@ impl Vim {
                 vim.handle_editor_event(event, cx)
             });
 
-            let mut enabled = VimModeSetting::get_global(cx).0;
-            cx.observe_global::<SettingsStore>(move |vim, cx| {
-                if VimModeSetting::get_global(cx).0 != enabled {
-                    enabled = VimModeSetting::get_global(cx).0;
-                    if enabled {
-                        vim.activate_editor(cx)
-                    } else {
-                        vim.unhook_vim_settings(cx)
-                    }
-                }
-            })
-            .detach();
-
             Vim {
                 mode: Mode::Normal,
                 last_mode: Mode::Normal,
@@ -332,6 +348,10 @@ impl Vim {
         cx.update_global(f)
     }
 
+    pub fn enabled(cx: &mut AppContext) -> bool {
+        VimModeSetting::get_global(cx).0
+    }
+
     /// Called whenever an keystroke is typed so vim can observe all actions
     /// and keystrokes accordingly.
     fn observe_keystrokes(&mut self, keystroke_event: &KeystrokeEvent, cx: &mut ViewContext<Self>) {
@@ -360,7 +380,7 @@ impl Vim {
                 self.local_selections_changed(cx);
             }
             EditorEvent::InputIgnored { text } => {
-                self.active_editor_input_ignored(text.clone(), cx);
+                self.input_ignored(text.clone(), cx);
                 self.observe_insertion(text, None, cx)
             }
             EditorEvent::InputHandled {
@@ -601,7 +621,6 @@ impl Vim {
         let Some(editor) = self.editor() else {
             return;
         };
-        dbg!("Activatgin!");
         let editor = editor.read(cx);
         let editor_mode = editor.mode();
         let newest_selection_empty = editor.selections.newest::<usize>(cx).is_empty();
@@ -884,7 +903,7 @@ impl Vim {
         }
     }
 
-    fn active_editor_input_ignored(&mut self, text: Arc<str>, cx: &mut ViewContext<Self>) {
+    fn input_ignored(&mut self, text: Arc<str>, cx: &mut ViewContext<Self>) {
         if text.is_empty() {
             return;
         }
@@ -1016,20 +1035,6 @@ impl Vim {
             }
         });
         cx.notify()
-    }
-
-    fn unhook_vim_settings(&mut self, cx: &mut ViewContext<Self>) {
-        self.update_editor(cx, |_, editor, cx| {
-            if editor.mode() == EditorMode::Full {
-                editor.set_cursor_shape(CursorShape::Bar, cx);
-                editor.set_clip_at_line_ends(false, cx);
-                editor.set_collapse_matches(false);
-                editor.set_input_enabled(true);
-                editor.set_autoindent(true);
-                editor.selections.line_mode = false;
-            }
-            editor.remove_keymap_context_layer::<Self>(cx)
-        });
     }
 }
 

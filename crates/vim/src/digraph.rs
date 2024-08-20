@@ -49,7 +49,7 @@ impl Vim {
         if self.editor_input_enabled() {
             self.update_editor(cx, |_, editor, cx| editor.insert(&text, cx));
         } else {
-            self.active_editor_input_ignored(text, cx);
+            self.input_ignored(text, cx);
         }
     }
 }

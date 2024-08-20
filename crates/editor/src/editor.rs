@@ -11954,6 +11954,10 @@ impl Editor {
             .insert(std::any::TypeId::of::<T>(), Box::new(instance));
     }
 
+    pub fn unregister_addon<T: 'static>(&mut self) {
+        self.addons.remove(&std::any::TypeId::of::<T>());
+    }
+
     pub fn addon<T: 'static>(&self) -> Option<&T> {
         let type_id = std::any::TypeId::of::<T>();
         self.addons

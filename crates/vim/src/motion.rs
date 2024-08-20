@@ -246,7 +246,7 @@ actions!(
     ]
 );
 
-pub fn register(editor: &mut Editor, cx: &ViewContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     crate::listener(editor, cx, |vim, _: &Left, cx| vim.motion(Motion::Left, cx));
     crate::listener(editor, cx, |vim, _: &Backspace, cx| {
         vim.motion(Motion::Backspace, cx)

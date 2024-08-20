@@ -13,7 +13,7 @@ actions!(
     [LineUp, LineDown, ScrollUp, ScrollDown, PageUp, PageDown]
 );
 
-pub fn register(editor: &mut Editor, cx: &ViewContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     crate::listener(editor, cx, |vim, _: &LineDown, cx| {
         vim.scroll(false, cx, |c| ScrollAmount::Line(c.unwrap_or(1.)))
     });

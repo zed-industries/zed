@@ -65,7 +65,7 @@ impl Clone for WithRange {
     }
 }
 
-pub fn register(editor: &mut Editor, cx: &ViewContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     crate::listener(editor, cx, |vim, _: &VisualCommand, cx| {
         let Some(workspace) = vim.workspace(cx) else {
             return;
