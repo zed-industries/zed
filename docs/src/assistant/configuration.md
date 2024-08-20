@@ -7,7 +7,7 @@ The following providers are supported:
 - [Zed AI (Configured by default when signed in)](#zed-ai)
 - [Anthropic](#anthropic)
 - [GitHub Copilot Chat](#github-copilot-chat) [^1]
-- [Google Gemini](#google-gemini) [^1]
+- [Google AI](#google-ai) [^1]
 - [Ollama](#ollama)
 - [OpenAI](#openai)
 
@@ -35,6 +35,8 @@ You can use Claude 3.5 Sonnet via [Zed AI](#zed-ai) for free. To use other Anthr
 4. Enter your Anthropic API key
 
 Even if you pay for Claude Pro, you will still have to [pay for additional credits](https://console.anthropic.com/settings/plans) to use it via the API.
+
+Zed will also use the `ANTHROPIC_API_KEY` environment variable if it's defined.
 
 #### Anthropic Custom Models {#anthropic-custom-models}
 
@@ -69,15 +71,21 @@ Custom models will be listed in the model dropdown in the assistant panel.
 
 You can use GitHub Copilot chat with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
-### Google Gemini {#google-gemini}
+### Google AI {#google-ai}
 
 You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
-You can obtain an API key [here](https://aistudio.google.com/app/apikey).
+1. Create an API key [here](https://aistudio.google.com/app/apikey).
+2. Open the configuration view (`assistant: show configuration`) and navigate to the OpenAI section
+3. Enter your Google AI API key
 
-#### Google Gemini Custom Models {#google-custom-models}
+The Google AI API key will be saved in your keychain.
 
-You can add custom models to the OpenAI provider, by adding the following to your Zed `settings.json`:
+Zed will also use the `GOOGLE_AI_API_KEY` environment variable if it's defined.
+
+#### Google AI custom models {#google-ai-custom-models}
+
+You can add custom models to the GoogleAI provider, by adding the following to your Zed `settings.json`:
 
 ```json
 {
@@ -182,7 +190,7 @@ Custom models will be listed in the model dropdown in the assistant panel.
 
 #### Custom endpoints {#custom-endpoint}
 
-You can use a custom API endpoint for different providers, as long as it's compatible with the API structure.
+You can use a custom API endpoint for different providers, as long as it's compatible with the providers API structure.
 
 To do so, add the following to your Zed `settings.json`:
 
@@ -216,8 +224,8 @@ Where `some-provider` can be any of the following values: `anthropic`, `copilot_
 
 #### Configuring the default model {#default-model}
 
-The default model can be changed by clicking on the model dropdown (top-right) in the assistant panel.
-Picking a model will save it as the default model. You can still change the default model manually, by editing the `default_model` object in the settings. The `default_model` object can contain the following keys:
+The default model can be set via the model dropdown in the assistant panel's top-right corner. Selecting a model saves it as the default.
+You can also manually edit the `default_model` object in your settings:
 
 ```json
 {
@@ -235,7 +243,7 @@ Picking a model will save it as the default model. You can still change the defa
 
 | key            | type    | default | description                                                                           |
 | -------------- | ------- | ------- | ------------------------------------------------------------------------------------- |
-| enabled        | boolean | true    | Disabling this will completely disable the assistant                                  |
+| enabled        | boolean | true    | Setting this to `false` will completely disable the assistant                         |
 | button         | boolean | true    | Show the assistant icon                                                               |
 | dock           | string  | "right" | The default dock position for the assistant panel. Can be ["left", "right", "bottom"] |
 | default_height | string  | null    | The pixel height of the assistant panel when docked to the bottom                     |
