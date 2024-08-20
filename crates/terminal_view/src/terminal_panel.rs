@@ -69,7 +69,6 @@ pub struct TerminalPanel {
     deferred_tasks: HashMap<TaskId, Task<()>>,
     enabled: bool,
     additional_tab_bar_buttons: Vec<AnyView>,
-    pane_menu: View<ContextMenu>,
 }
 
 impl TerminalPanel {
@@ -145,6 +144,7 @@ impl TerminalPanel {
         let project = workspace.project().read(cx);
         let enabled = project.is_local() || project.supports_remote_terminal(cx);
         let this = Self {
+            pane,
             fs: workspace.app_state().fs.clone(),
             workspace: workspace.weak_handle(),
             pending_serialization: Task::ready(None),
@@ -155,24 +155,6 @@ impl TerminalPanel {
             _subscriptions: subscriptions,
             enabled,
             additional_tab_bar_buttons: Vec::new(),
-            pane_menu: {
-                let focus_handle = pane.focus_handle(cx);
-                ContextMenu::build(cx, |menu, _| {
-                    menu.action("New Terminal", workspace::NewTerminal.boxed_clone())
-                        .entry(
-                            "Spawn task",
-                            Some(tasks_ui::Spawn::modal().boxed_clone()),
-                            move |cx| {
-                                // We want the focus to go back to terminal panel once task modal is dismissed,
-                                // hence we focus that first. Otherwise, we'd end up without a focused element, as
-                                // context menu will be gone the moment we spawn the modal.
-                                cx.focus(&focus_handle);
-                                cx.dispatch_action(tasks_ui::Spawn::modal().boxed_clone());
-                            },
-                        )
-                })
-            },
-            pane,
         };
         this.apply_tab_bar_buttons(cx);
         this
@@ -189,13 +171,12 @@ impl TerminalPanel {
 
     fn apply_tab_bar_buttons(&self, cx: &mut ViewContext<Self>) {
         let additional_buttons = self.additional_tab_bar_buttons.clone();
-        let menu = self.pane_menu.clone();
         self.pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 if !pane.has_focus(cx) {
                     return (None, None);
                 }
-                let menu = menu.clone();
+                let focus_handle = pane.focus_handle(cx);
                 let right_children = h_flex()
                     .gap_2()
                     .children(additional_buttons.clone())
@@ -208,7 +189,29 @@ impl TerminalPanel {
                             )
                             .anchor(AnchorCorner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
-                            .menu(move |_| Some(menu.clone())),
+                            .menu(move |cx| {
+                                let focus_handle = focus_handle.clone();
+                                ContextMenu::build(cx, |menu, _| {
+                                    menu.action(
+                                        "New Terminal",
+                                        workspace::NewTerminal.boxed_clone(),
+                                    )
+                                    .entry(
+                                        "Spawn task",
+                                        Some(tasks_ui::Spawn::modal().boxed_clone()),
+                                        move |cx| {
+                                            // We want the focus to go back to terminal panel once task modal is dismissed,
+                                            // hence we focus that first. Otherwise, we'd end up without a focused element, as
+                                            // context menu will be gone the moment we spawn the modal.
+                                            cx.focus(&focus_handle);
+                                            cx.dispatch_action(
+                                                tasks_ui::Spawn::modal().boxed_clone(),
+                                            );
+                                        },
+                                    )
+                                })
+                                .into()
+                            }),
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
