@@ -17,16 +17,14 @@ mod surrounds;
 mod visual;
 
 use anyhow::Result;
-// use change_list::push_to_change_list;
 use collections::HashMap;
-use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{
     movement::{self, FindRange},
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, FocusableView, KeyContext, KeystrokeEvent, Render,
-    Subscription, View, ViewContext, WeakView,
+    View, ViewContext, WeakView,
 };
 use insert::NormalBefore;
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -38,14 +36,14 @@ use serde::Deserialize;
 use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
-use std::{borrow::BorrowMut, ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc};
 use surrounds::SurroundsType;
-use ui::{BorrowAppContext, IntoElement, VisualContext};
+use ui::{IntoElement, VisualContext};
 use workspace::{self, Pane, Workspace};
 
 use crate::state::ReplayableAction;
 
-/// Whether or not to enable Vim mode (work in progress).
+/// Whether or not to enable Vim mode.
 ///
 /// Default: false
 pub struct VimModeSetting(pub bool);
@@ -91,16 +89,9 @@ impl_actions!(vim, [SwitchMode, PushOperator, Number, SelectRegister]);
 pub fn init(cx: &mut AppContext) {
     VimModeSetting::register(cx);
     VimSettings::register(cx);
-    cx.set_global(VimGlobals::default());
+    VimGlobals::register(cx);
 
-    cx.observe_keystrokes(|event, cx| {
-        if let Some(action) = event.action.as_ref().map(|action| action.boxed_clone()) {
-            Vim::observe_action(action.boxed_clone(), cx);
-        }
-    })
-    .detach();
-
-    cx.observe_new_views(|editor: &mut Editor, cx| register(editor, cx))
+    cx.observe_new_views(|editor: &mut Editor, cx| Vim::register(editor, cx))
         .detach();
 
     cx.observe_new_views(|workspace: &mut Workspace, _| {
@@ -131,34 +122,9 @@ pub fn init(cx: &mut AppContext) {
         });
     })
     .detach();
-
-    // Any time settings change, update vim mode to match. The Vim struct
-    // will be initialized as disabled by default, so we filter its commands
-    // out when starting up.
-    CommandPaletteFilter::update_global(cx, |filter, _| {
-        filter.hide_namespace(Vim::NAMESPACE);
-    });
-    cx.observe_global::<SettingsStore>(|cx| {
-        let enabled = Vim::enabled(cx);
-        if enabled {
-            CommandPaletteFilter::update_global(cx, |filter, _| {
-                filter.show_namespace(Vim::NAMESPACE);
-            });
-            CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
-                interceptor.set(Box::new(command::command_interceptor));
-            });
-        } else {
-            CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
-                interceptor.clear();
-            });
-            CommandPaletteFilter::update_global(cx, |filter, _| {
-                filter.hide_namespace(Vim::NAMESPACE);
-            });
-        }
-    })
-    .detach();
 }
 
+/// Register an action on the editor.
 pub(crate) fn listener<A: Action>(
     editor: &mut Editor,
     cx: &mut ViewContext<Vim>,
@@ -166,87 +132,6 @@ pub(crate) fn listener<A: Action>(
 ) {
     let subscription = editor.register_action(cx.listener(f));
     cx.on_release(|_, _, _| drop(subscription)).detach();
-}
-
-fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-    if !editor.use_modal_editing() {
-        return;
-    }
-
-    let mut was_enabled = Vim::enabled(cx);
-    cx.observe_global::<SettingsStore>(move |editor, cx| {
-        let enabled = Vim::enabled(cx);
-        if was_enabled == enabled {
-            return;
-        }
-        was_enabled = enabled;
-        if enabled {
-            activate(editor, cx)
-        } else {
-            deactivate(editor, cx)
-        }
-    })
-    .detach();
-    if was_enabled {
-        activate(editor, cx)
-    }
-}
-
-fn activate(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-    let vim = Vim::new(cx);
-
-    editor.register_addon(vim.clone());
-
-    vim.update(cx, |_, cx| {
-        let listener = cx.listener(Vim::observe_keystrokes);
-        cx.observe_keystrokes(listener).detach();
-
-        crate::listener(editor, cx, |vim, action: &SwitchMode, cx| {
-            vim.switch_mode(action.0, false, cx)
-        });
-
-        crate::listener(editor, cx, |vim, action: &PushOperator, cx| {
-            vim.push_operator(action.0.clone(), cx)
-        });
-
-        crate::listener(editor, cx, |vim, _: &ClearOperators, cx| {
-            vim.clear_operator(cx)
-        });
-        crate::listener(editor, cx, |vim, n: &Number, cx| {
-            vim.push_count_digit(n.0, cx);
-        });
-        crate::listener(editor, cx, |vim, _: &Tab, cx| {
-            vim.input_ignored(" ".into(), cx)
-        });
-        crate::listener(editor, cx, |vim, _: &Enter, cx| {
-            vim.input_ignored("\n".into(), cx)
-        });
-
-        normal::register(editor, cx);
-        insert::register(editor, cx);
-        motion::register(editor, cx);
-        command::register(editor, cx);
-        replace::register(editor, cx);
-        object::register(editor, cx);
-        visual::register(editor, cx);
-        change_list::register(editor, cx);
-
-        cx.defer(|vim, cx| {
-            dbg!("activating!");
-            vim.activate_editor(cx);
-        })
-    })
-}
-
-fn deactivate(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-    editor.set_cursor_shape(CursorShape::Bar, cx);
-    editor.set_clip_at_line_ends(false, cx);
-    editor.set_collapse_matches(false);
-    editor.set_input_enabled(true);
-    editor.set_autoindent(true);
-    editor.selections.line_mode = false;
-    editor.remove_keymap_context_layer::<Vim>(cx);
-    editor.unregister_addon::<View<Vim>>();
 }
 
 /// The state pertaining to Vim mode.
@@ -275,7 +160,6 @@ pub(crate) struct Vim {
     pub search: SearchState,
 
     editor: WeakView<Editor>,
-    _subscription: Subscription,
 }
 
 // Hack: Vim intercepts events dispatched to a window and updates the view in response.
@@ -295,9 +179,13 @@ impl Vim {
         let editor = cx.view().clone();
 
         cx.new_view(|cx: &mut ViewContext<Vim>| {
-            let subscription = cx.subscribe(&editor, |vim, _, event, cx| {
+            cx.subscribe(&editor, |vim, _, event, cx| {
                 vim.handle_editor_event(event, cx)
-            });
+            })
+            .detach();
+
+            let listener = cx.listener(Vim::observe_keystrokes);
+            cx.observe_keystrokes(listener).detach();
 
             Vim {
                 mode: Mode::Normal,
@@ -319,9 +207,85 @@ impl Vim {
                 search: SearchState::default(),
 
                 editor: editor.downgrade(),
-                _subscription: subscription,
             }
         })
+    }
+
+    fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+        if !editor.use_modal_editing() {
+            return;
+        }
+
+        let mut was_enabled = Vim::enabled(cx);
+        cx.observe_global::<SettingsStore>(move |editor, cx| {
+            let enabled = Vim::enabled(cx);
+            if was_enabled == enabled {
+                return;
+            }
+            was_enabled = enabled;
+            if enabled {
+                Self::activate(editor, cx)
+            } else {
+                Self::deactivate(editor, cx)
+            }
+        })
+        .detach();
+        if was_enabled {
+            Self::activate(editor, cx)
+        }
+    }
+
+    fn activate(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+        let vim = Vim::new(cx);
+
+        editor.register_addon(vim.clone());
+
+        vim.update(cx, |_, cx| {
+            crate::listener(editor, cx, |vim, action: &SwitchMode, cx| {
+                vim.switch_mode(action.0, false, cx)
+            });
+
+            crate::listener(editor, cx, |vim, action: &PushOperator, cx| {
+                vim.push_operator(action.0.clone(), cx)
+            });
+
+            crate::listener(editor, cx, |vim, _: &ClearOperators, cx| {
+                vim.clear_operator(cx)
+            });
+            crate::listener(editor, cx, |vim, n: &Number, cx| {
+                vim.push_count_digit(n.0, cx);
+            });
+            crate::listener(editor, cx, |vim, _: &Tab, cx| {
+                vim.input_ignored(" ".into(), cx)
+            });
+            crate::listener(editor, cx, |vim, _: &Enter, cx| {
+                vim.input_ignored("\n".into(), cx)
+            });
+
+            normal::register(editor, cx);
+            insert::register(editor, cx);
+            motion::register(editor, cx);
+            command::register(editor, cx);
+            replace::register(editor, cx);
+            object::register(editor, cx);
+            visual::register(editor, cx);
+            change_list::register(editor, cx);
+
+            cx.defer(|vim, cx| {
+                vim.focused(cx);
+            })
+        })
+    }
+
+    fn deactivate(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+        editor.set_cursor_shape(CursorShape::Bar, cx);
+        editor.set_clip_at_line_ends(false, cx);
+        editor.set_collapse_matches(false);
+        editor.set_input_enabled(true);
+        editor.set_autoindent(true);
+        editor.selections.line_mode = false;
+        editor.remove_keymap_context_layer::<Vim>(cx);
+        editor.unregister_addon::<View<Vim>>();
     }
 
     pub fn editor(&self) -> Option<View<Editor>> {
@@ -335,17 +299,6 @@ impl Vim {
     pub fn pane(&self, cx: &ViewContext<Self>) -> Option<View<Pane>> {
         self.workspace(cx)
             .and_then(|workspace| workspace.read(cx).pane_for(&self.editor()?))
-    }
-
-    pub fn globals(cx: &mut AppContext) -> &mut VimGlobals {
-        cx.global_mut::<VimGlobals>()
-    }
-
-    pub fn update_globals<C, R>(cx: &mut C, f: impl FnOnce(&mut VimGlobals, &mut C) -> R) -> R
-    where
-        C: BorrowMut<AppContext>,
-    {
-        cx.update_global(f)
     }
 
     pub fn enabled(cx: &mut AppContext) -> bool {
@@ -374,19 +327,19 @@ impl Vim {
 
     fn handle_editor_event(&mut self, event: &EditorEvent, cx: &mut ViewContext<Self>) {
         match event {
-            EditorEvent::Focused => self.activate_editor(cx),
+            EditorEvent::Focused => self.focused(cx),
             EditorEvent::Blurred => self.blurred(cx),
             EditorEvent::SelectionsChanged { local: true } => {
                 self.local_selections_changed(cx);
             }
             EditorEvent::InputIgnored { text } => {
                 self.input_ignored(text.clone(), cx);
-                self.observe_insertion(text, None, cx)
+                Vim::globals(cx).observe_insertion(text, None)
             }
             EditorEvent::InputHandled {
                 text,
                 utf16_range_to_replace: range_to_replace,
-            } => self.observe_insertion(text, range_to_replace.clone(), cx),
+            } => Vim::globals(cx).observe_insertion(text, range_to_replace.clone()),
             EditorEvent::TransactionBegun { transaction_id } => {
                 self.transaction_begun(*transaction_id, cx)
             }
@@ -617,7 +570,7 @@ impl Vim {
         context
     }
 
-    fn activate_editor(&mut self, cx: &mut ViewContext<Self>) {
+    fn focused(&mut self, cx: &mut ViewContext<Self>) {
         let Some(editor) = self.editor() else {
             return;
         };

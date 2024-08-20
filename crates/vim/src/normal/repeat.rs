@@ -1,4 +1,4 @@
-use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
+use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     insert::NormalBefore,
@@ -121,7 +121,7 @@ impl Replayer {
             ReplayableAction::Action(action) => {
                 if should_replay(&*action) {
                     cx.dispatch_action(action.boxed_clone());
-                    cx.defer(move |cx| Vim::observe_action(action.boxed_clone(), cx));
+                    cx.defer(move |cx| Vim::globals(cx).observe_action(action.boxed_clone()));
                 }
             }
             ReplayableAction::Insertion {
@@ -318,62 +318,6 @@ impl Vim {
             .get_or_insert_with(|| Replayer::new())
             .clone();
         replayer.replay(actions, cx);
-    }
-
-    pub(crate) fn observe_action(action: Box<dyn Action>, cx: &mut WindowContext) {
-        let globals = Vim::globals(cx);
-        if globals.dot_recording {
-            globals
-                .recorded_actions
-                .push(ReplayableAction::Action(action.boxed_clone()));
-
-            if globals.stop_recording_after_next_action {
-                globals.dot_recording = false;
-                globals.stop_recording_after_next_action = false;
-            }
-        }
-        if globals.replayer.is_none() {
-            if let Some(recording_register) = globals.recording_register {
-                globals
-                    .recordings
-                    .entry(recording_register)
-                    .or_default()
-                    .push(ReplayableAction::Action(action));
-            }
-        }
-    }
-
-    pub(crate) fn observe_insertion(
-        self: &mut Self,
-        text: &Arc<str>,
-        range_to_replace: Option<Range<isize>>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let globals = Vim::globals(cx);
-        if globals.ignore_current_insertion {
-            globals.ignore_current_insertion = false;
-            return;
-        }
-        if globals.dot_recording {
-            globals.recorded_actions.push(ReplayableAction::Insertion {
-                text: text.clone(),
-                utf16_range_to_replace: range_to_replace.clone(),
-            });
-            if globals.stop_recording_after_next_action {
-                globals.dot_recording = false;
-                globals.stop_recording_after_next_action = false;
-            }
-        }
-        if let Some(recording_register) = globals.recording_register {
-            globals
-                .recordings
-                .entry(recording_register)
-                .or_default()
-                .push(ReplayableAction::Insertion {
-                    text: text.clone(),
-                    utf16_range_to_replace: range_to_replace,
-                });
-        }
     }
 }
 

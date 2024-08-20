@@ -1,15 +1,18 @@
+use std::borrow::BorrowMut;
 use std::{fmt::Display, ops::Range, sync::Arc};
 
+use crate::command::command_interceptor;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
-use crate::{UseSystemClipboard, VimSettings};
+use crate::{UseSystemClipboard, Vim, VimSettings};
 use collections::HashMap;
+use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{Anchor, ClipboardSelection, Editor};
-use gpui::{Action, ClipboardEntry, ClipboardItem, Global};
+use gpui::{Action, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Global};
 use language::Point;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use ui::{SharedString, ViewContext};
 use workspace::searchable::Direction;
 
@@ -161,6 +164,38 @@ pub struct VimGlobals {
 impl Global for VimGlobals {}
 
 impl VimGlobals {
+    pub(crate) fn register(cx: &mut AppContext) {
+        cx.set_global(VimGlobals::default());
+
+        cx.observe_keystrokes(|event, cx| {
+            let Some(action) = event.action.as_ref().map(|action| action.boxed_clone()) else {
+                return;
+            };
+            Vim::globals(cx).observe_action(action.boxed_clone())
+        })
+        .detach();
+
+        cx.observe_global::<SettingsStore>(move |cx| {
+            if Vim::enabled(cx) {
+                CommandPaletteFilter::update_global(cx, |filter, _| {
+                    filter.show_namespace(Vim::NAMESPACE);
+                });
+                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
+                    interceptor.set(Box::new(command_interceptor));
+                });
+            } else {
+                *Vim::globals(cx) = VimGlobals::default();
+                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
+                    interceptor.clear();
+                });
+                CommandPaletteFilter::update_global(cx, |filter, _| {
+                    filter.hide_namespace(Vim::NAMESPACE);
+                });
+            }
+        })
+        .detach();
+    }
+
     pub(crate) fn write_registers(
         &mut self,
         content: Register,
@@ -292,6 +327,68 @@ impl VimGlobals {
                 true
             }
         })
+    }
+
+    pub fn observe_action(&mut self, action: Box<dyn Action>) {
+        if self.dot_recording {
+            self.recorded_actions
+                .push(ReplayableAction::Action(action.boxed_clone()));
+
+            if self.stop_recording_after_next_action {
+                self.dot_recording = false;
+                self.stop_recording_after_next_action = false;
+            }
+        }
+        if self.replayer.is_none() {
+            if let Some(recording_register) = self.recording_register {
+                self.recordings
+                    .entry(recording_register)
+                    .or_default()
+                    .push(ReplayableAction::Action(action));
+            }
+        }
+    }
+
+    pub fn observe_insertion(
+        self: &mut Self,
+        text: &Arc<str>,
+        range_to_replace: Option<Range<isize>>,
+    ) {
+        if self.ignore_current_insertion {
+            self.ignore_current_insertion = false;
+            return;
+        }
+        if self.dot_recording {
+            self.recorded_actions.push(ReplayableAction::Insertion {
+                text: text.clone(),
+                utf16_range_to_replace: range_to_replace.clone(),
+            });
+            if self.stop_recording_after_next_action {
+                self.dot_recording = false;
+                self.stop_recording_after_next_action = false;
+            }
+        }
+        if let Some(recording_register) = self.recording_register {
+            self.recordings.entry(recording_register).or_default().push(
+                ReplayableAction::Insertion {
+                    text: text.clone(),
+                    utf16_range_to_replace: range_to_replace,
+                },
+            );
+        }
+    }
+}
+
+impl Vim {
+    pub fn globals(cx: &mut AppContext) -> &mut VimGlobals {
+        cx.global_mut::<VimGlobals>()
+    }
+
+    pub fn update_globals<C, R>(cx: &mut C, f: impl FnOnce(&mut VimGlobals, &mut C) -> R) -> R
+    where
+        C: BorrowMut<AppContext>,
+    {
+        cx.update_global(f)
     }
 }
 
