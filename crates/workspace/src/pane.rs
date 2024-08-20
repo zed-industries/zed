@@ -13,9 +13,9 @@ use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
-    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, DismissEvent, Div, DragMoveEvent,
-    EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext,
-    Model, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
+    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId,
+    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
+    MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
     WindowContext,
 };
@@ -244,8 +244,6 @@ pub struct Pane {
     last_focus_handle_by_item: HashMap<EntityId, WeakFocusHandle>,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
-    pub new_item_menu: View<ContextMenu>,
-    split_item_menu: View<ContextMenu>,
     pub(crate) workspace: WeakView<Workspace>,
     project: Model<Project>,
     drag_split_direction: Option<SplitDirection>,
@@ -365,31 +363,6 @@ impl Pane {
                 next_timestamp,
             }))),
             toolbar: cx.new_view(|_| Toolbar::new()),
-            new_item_menu: {
-                let menu = ContextMenu::build(cx, |menu, _| {
-                    menu.action("New File", NewFile.boxed_clone())
-                        .action("Open File", ToggleFileFinder::default().boxed_clone())
-                        .separator()
-                        .action(
-                            "Search Project",
-                            DeploySearch {
-                                replace_enabled: false,
-                            }
-                            .boxed_clone(),
-                        )
-                        .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
-                        .separator()
-                        .action("New Terminal", NewTerminal.boxed_clone())
-                });
-                menu
-            },
-            split_item_menu: ContextMenu::build(cx, |menu, _| {
-                menu.action("Split Right", SplitRight.boxed_clone())
-                    .action("Split Left", SplitLeft.boxed_clone())
-                    .action("Split Up", SplitUp.boxed_clone())
-                    .action("Split Down", SplitDown.boxed_clone())
-            }),
-
             tab_bar_scroll_handle: ScrollHandle::new(),
             drag_split_direction: None,
             workspace,
@@ -402,8 +375,6 @@ impl Pane {
                 if !pane.has_focus(cx) {
                     return (None, None);
                 }
-                let new_item_menu = pane.new_item_menu.clone();
-                let split_item_menu = pane.split_item_menu.clone();
                 // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
                 // `end_slot`, but due to needing a view here that isn't possible.
                 let right_children = h_flex()
@@ -442,9 +413,6 @@ impl Pane {
                                 }))
                             }),
                     )
-                    // .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
-                    //     el.child(Self::render_menu_overlay(new_item_menu))
-                    // })
                     .child(
                         PopoverMenu::new("pane-tab-bar-split")
                             .trigger(
@@ -454,7 +422,15 @@ impl Pane {
                             )
                             //.anchor(AnchorCorner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
-                            .menu(move |_| Some(split_item_menu.clone())),
+                            .menu(move |cx| {
+                                ContextMenu::build(cx, |menu, _| {
+                                    menu.action("Split Right", SplitRight.boxed_clone())
+                                        .action("Split Left", SplitLeft.boxed_clone())
+                                        .action("Split Up", SplitUp.boxed_clone())
+                                        .action("Split Down", SplitDown.boxed_clone())
+                                })
+                                .into()
+                            }),
                     )
                     .child({
                         let zoomed = pane.is_zoomed();

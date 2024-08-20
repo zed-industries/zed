@@ -36,10 +36,10 @@ use fs::Fs;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
     AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    Context as _, DismissEvent, Empty, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render,
-    RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task,
-    Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
+    Context as _, Empty, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, FontWeight,
+    InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render, RenderImage,
+    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
+    UpdateGlobal, View, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -408,7 +408,7 @@ impl AssistantPanel {
                                     "Zoom In"
                                 };
                                 let focus_handle = _pane.focus_handle(cx);
-                                Some(ContextMenu::build(cx, move |menu, cx| {
+                                Some(ContextMenu::build(cx, move |menu, _| {
                                     menu.context(focus_handle.clone())
                                         .action("New Context", Box::new(NewFile))
                                         .action("History", Box::new(DeployHistory))

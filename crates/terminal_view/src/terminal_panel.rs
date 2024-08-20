@@ -5,10 +5,9 @@ use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AnchorCorner, AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity,
-    EventEmitter, ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement,
-    Pixels, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    actions, Action, AnchorCorner, AnyView, AppContext, AsyncWindowContext, Entity, EventEmitter,
+    ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement, Pixels, Render,
+    Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use project::{terminals::TerminalKind, Fs, ProjectEntryId};
@@ -21,8 +20,8 @@ use terminal::{
     Terminal,
 };
 use ui::{
-    h_flex, ButtonCommon, Clickable, ContextMenu, FluentBuilder, IconButton, IconSize, PopoverMenu,
-    PopoverMenuHandle, Selectable, Tooltip,
+    h_flex, ButtonCommon, Clickable, ContextMenu, IconButton, IconSize, PopoverMenu, Selectable,
+    Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
