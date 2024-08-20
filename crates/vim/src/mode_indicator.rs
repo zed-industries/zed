@@ -47,6 +47,7 @@ impl ModeIndicator {
             self.pending_keys = cx.pending_input_keystrokes().map(|keystrokes| {
                 keystrokes
                     .iter()
+                    .filter_map(|keystroke| keystroke.apply_modifiers())
                     .map(|keystroke| format!("{}", keystroke))
                     .join(" ")
             });

@@ -27,7 +27,7 @@ impl QuickActionBar {
             return None;
         }
 
-        let alt_click = gpui::Keystroke {
+        let alt_click = gpui::VirtualKeystroke {
             key: "click".into(),
             modifiers: Modifiers::alt(),
             ..Default::default()

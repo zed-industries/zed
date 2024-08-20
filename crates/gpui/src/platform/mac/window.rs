@@ -1,10 +1,11 @@
 use super::{ns_string, renderer, MacDisplay, NSRange, NSStringExt};
 use crate::{
     point, px, size, AnyWindowHandle, Bounds, DisplayLink, ExternalPaths, FileDropEvent,
-    ForegroundExecutor, ImeInput, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel, Size,
-    Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
+    ForegroundExecutor, ImeInput, KeyCode, KeyDownEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PromptLevel, Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -1462,7 +1463,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
             is_ime_handling_key,
             is_propagatable_ime_handling_key,
         ) = {
-            let key = event.keystroke.key.as_str();
+            let key = event.keystroke.code;
             let modifiers = event.keystroke.modifiers;
 
             let input_source: id = unsafe { msg_send![input_context, selectedKeyboardInputSource] };
@@ -1480,27 +1481,38 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 modifiers.control
                     || matches!(
                         key,
-                        "escape"
-                            | "enter"
-                            | "backspace"
-                            | "space"
-                            | "tab"
-                            | "left"
-                            | "right"
-                            | "up"
-                            | "down"
+                        Some(
+                            KeyCode::Escape
+                                | KeyCode::Enter
+                                | KeyCode::Backspace
+                                | KeyCode::Space
+                                | KeyCode::Tab
+                                | KeyCode::ArrowLeft
+                                | KeyCode::ArrowRight
+                                | KeyCode::ArrowUp
+                                | KeyCode::ArrowDown
+                        )
                     )
             } else if is_korean {
-                key == "backspace"
+                key == Some(KeyCode::Backspace)
             } else {
                 false
             };
 
             let is_propagatable_ime_handling_key = is_ime_handling_key
                 && if input_source_may_open_candidates_popup {
-                    modifiers.control || matches!(key, |"left"| "right" | "up" | "down")
+                    modifiers.control
+                        || matches!(
+                            key,
+                            Some(
+                                KeyCode::ArrowLeft
+                                    | KeyCode::ArrowRight
+                                    | KeyCode::ArrowUp
+                                    | KeyCode::ArrowDown
+                            )
+                        )
                 } else if is_korean {
-                    key == "backspace"
+                    key == Some(KeyCode::Backspace)
                 } else {
                     false
                 };
@@ -1717,8 +1729,7 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
 
     let keystroke = Keystroke {
         modifiers: Default::default(),
-        key: ".".into(),
-        ime_key: None,
+        code: Some(KeyCode::Period),
         ime_inputs: SmallVec::new(),
     };
     let event = PlatformInput::KeyDown(KeyDownEvent {

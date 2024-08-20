@@ -399,7 +399,7 @@ shlex = "1.3.0"
 signal-hook = "0.3.17"
 similar = "1.3"
 simplelog = "0.12.2"
-smallvec = { version = "1.6", features = ["union"] }
+smallvec = { version = "1.6", features = ["union", "serde"] }
 smol = "1.2"
 strsim = "0.11"
 strum = { version = "0.25.0", features = ["derive"] }

@@ -1,5 +1,5 @@
 use crate::{
-    platform::mac::NSStringExt, point, px, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    platform::mac::NSStringExt, point, px, KeyCode, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, NavigationDirection, Pixels, PlatformInput, ScrollDelta, ScrollWheelEvent,
     TouchPhase,
@@ -10,282 +10,153 @@ use cocoa::{
 };
 use std::borrow::Cow;
 
-const BACKSPACE_KEY: u16 = 0x7f;
-const SPACE_KEY: u16 = b' ' as u16;
-
-fn physical_key_from_scancode(scancode: u16, shift: bool) -> Option<&'static str> {
-    match (scancode, shift) {
-        (0x00, false) => Some("a"),
-        (0x00, true) => Some("A"),
-
-        (0x01, false) => Some("s"),
-        (0x01, true) => Some("S"),
-
-        (0x02, false) => Some("d"),
-        (0x02, true) => Some("D"),
-
-        (0x03, false) => Some("f"),
-        (0x03, true) => Some("F"),
-
-        (0x04, false) => Some("h"),
-        (0x04, true) => Some("H"),
-
-        (0x05, false) => Some("g"),
-        (0x05, true) => Some("G"),
-
-        (0x06, false) => Some("z"),
-        (0x06, true) => Some("Z"),
-
-        (0x07, false) => Some("x"),
-        (0x07, true) => Some("X"),
-
-        (0x08, false) => Some("c"),
-        (0x08, true) => Some("C"),
-
-        (0x09, false) => Some("v"),
-        (0x09, true) => Some("V"),
-
-        (0x0b, false) => Some("b"),
-        (0x0b, true) => Some("B"),
-
-        (0x0c, false) => Some("q"),
-        (0x0c, true) => Some("Q"),
-
-        (0x0d, false) => Some("w"),
-        (0x0d, true) => Some("W"),
-
-        (0x0e, false) => Some("e"),
-        (0x0e, true) => Some("E"),
-
-        (0x0f, false) => Some("r"),
-        (0x0f, true) => Some("R"),
-
-        (0x10, false) => Some("y"),
-        (0x10, true) => Some("Y"),
-
-        (0x11, false) => Some("t"),
-        (0x11, true) => Some("T"),
-
-        (0x12, false) => Some("1"),
-        (0x12, true) => Some("!"),
-
-        (0x13, false) => Some("2"),
-        (0x13, true) => Some("@"),
-
-        (0x14, false) => Some("3"),
-        (0x14, true) => Some("#"),
-
-        (0x15, false) => Some("4"),
-        (0x15, true) => Some("$"),
-
-        (0x16, false) => Some("6"),
-        (0x16, true) => Some("^"),
-
-        (0x17, false) => Some("5"),
-        (0x17, true) => Some("%"),
-
-        (0x18, false) => Some("="),
-        (0x18, true) => Some("+"),
-
-        (0x19, false) => Some("9"),
-        (0x19, true) => Some("("),
-
-        (0x1a, false) => Some("7"),
-        (0x1a, true) => Some("&"),
-
-        (0x1b, false) => Some("-"),
-        (0x1b, true) => Some("_"),
-
-        (0x1c, false) => Some("8"),
-        (0x1c, true) => Some("*"),
-
-        (0x1d, false) => Some("0"),
-        (0x1d, true) => Some(")"),
-
-        (0x1e, false) => Some("]"),
-        (0x1e, true) => Some("}"),
-
-        (0x1f, false) => Some("o"),
-        (0x1f, true) => Some("O"),
-
-        (0x20, false) => Some("u"),
-        (0x20, true) => Some("U"),
-
-        (0x21, false) => Some("["),
-        (0x21, true) => Some("{"),
-
-        (0x22, false) => Some("i"),
-        (0x22, true) => Some("I"),
-
-        (0x23, false) => Some("p"),
-        (0x23, true) => Some("P"),
-
-        (0x24, _) => Some("enter"),
-
-        (0x25, false) => Some("l"),
-        (0x25, true) => Some("L"),
-
-        (0x26, false) => Some("j"),
-        (0x26, true) => Some("J"),
-
-        (0x27, false) => Some("'"),
-        (0x27, true) => Some("\""),
-
-        (0x28, false) => Some("k"),
-        (0x28, true) => Some("K"),
-
-        (0x29, false) => Some(";"),
-        (0x29, true) => Some(":"),
-
-        (0x2a, false) => Some("\\"),
-        (0x2a, true) => Some("|"),
-
-        (0x2b, false) => Some(","),
-        (0x2b, true) => Some("<"),
-
-        (0x2c, false) => Some("/"),
-        (0x2c, true) => Some("?"),
-
-        (0x2d, false) => Some("n"),
-        (0x2d, true) => Some("N"),
-
-        (0x2e, false) => Some("m"),
-        (0x2e, true) => Some("M"),
-
-        (0x2f, false) => Some("."),
-        (0x2f, true) => Some(">"),
-
-        (0x30, _) => Some("tab"),
-
-        (0x31, _) => Some("space"),
-
-        (0x32, false) => Some("`"),
-        (0x32, true) => Some("~"),
-
-        (0x33, _) => Some("backspace"),
-
-        (0x35, _) => Some("escape"),
-
-        (0x40, _) => Some("f17"),
-
-        (0x41, false) => Some("."),
-        (0x41, true) => Some(">"),
-
-        (0x43, _) => Some("*"),
-
-        (0x45, _) => Some("+"),
-
-        (0x4b, _) => Some("/"),
-
-        (0x4c, _) => Some("enter"),
-
-        (0x4e, _) => Some("-"),
-
-        (0x4f, _) => Some("f18"),
-
-        (0x50, _) => Some("f19"),
-
-        (0x51, false) => Some("="),
-        (0x51, true) => Some("+"),
-
-        (0x52, false) => Some("0"),
-        (0x52, true) => Some(")"),
-
-        (0x53, false) => Some("1"),
-        (0x53, true) => Some("!"),
-
-        (0x54, false) => Some("2"),
-        (0x54, true) => Some("@"),
-
-        (0x55, false) => Some("3"),
-        (0x55, true) => Some("#"),
-
-        (0x56, false) => Some("4"),
-        (0x56, true) => Some("$"),
-
-        (0x57, false) => Some("5"),
-        (0x57, true) => Some("%"),
-
-        (0x58, false) => Some("6"),
-        (0x58, true) => Some("^"),
-
-        (0x59, false) => Some("7"),
-        (0x59, true) => Some("&"),
-
-        (0x5a, _) => Some("f20"),
-
-        (0x5b, false) => Some("8"),
-        (0x5b, true) => Some("*"),
-
-        (0x5c, false) => Some("9"),
-        (0x5c, true) => Some("("),
-
-        (0x5d, _) => Some("¥"),
-
-        (0x60, _) => Some("f5"),
-
-        (0x61, _) => Some("f6"),
-
-        (0x62, _) => Some("f7"),
-
-        (0x63, _) => Some("f3"),
-
-        (0x64, _) => Some("f8"),
-
-        (0x65, _) => Some("f9"),
-
-        (0x67, _) => Some("f11"),
-
-        (0x69, _) => Some("f13"),
-
-        (0x6a, _) => Some("f16"),
-
-        (0x6b, _) => Some("f14"),
-
-        (0x6d, _) => Some("f10"),
-
-        (0x6f, _) => Some("f12"),
-
-        (0x71, _) => Some("f15"),
-
-        (0x72, _) => Some("insert"),
-
-        (0x73, _) => Some("home"),
-
-        (0x74, _) => Some("pageup"),
-
-        (0x75, _) => Some("delete"),
-
-        (0x76, _) => Some("f4"),
-
-        (0x77, _) => Some("end"),
-
-        (0x78, _) => Some("f2"),
-
-        (0x79, _) => Some("pagedown"),
-
-        (0x7a, _) => Some("f1"),
-
-        (0x7b, _) => Some("left"),
-
-        (0x7c, _) => Some("right"),
-
-        (0x7d, _) => Some("down"),
-
-        (0x7e, _) => Some("up"),
-
-        (0xa, false) => Some("`"),
-        (0xa, true) => Some("~"),
-
-        _ => {
-            log::error!("Unknown scancode: 0x{:x}", scancode);
-            None
-        }
-    }
+fn scancode_to_physicalkey(scancode: u16) -> Option<KeyCode> {
+    Some(match scancode {
+        0x00 => KeyCode::KeyA,
+        0x01 => KeyCode::KeyS,
+        0x02 => KeyCode::KeyD,
+        0x03 => KeyCode::KeyF,
+        0x04 => KeyCode::KeyH,
+        0x05 => KeyCode::KeyG,
+        0x06 => KeyCode::KeyZ,
+        0x07 => KeyCode::KeyX,
+        0x08 => KeyCode::KeyC,
+        0x09 => KeyCode::KeyV,
+        // 0x0a => World 1,
+        0x0b => KeyCode::KeyB,
+        0x0c => KeyCode::KeyQ,
+        0x0d => KeyCode::KeyW,
+        0x0e => KeyCode::KeyE,
+        0x0f => KeyCode::KeyR,
+        0x10 => KeyCode::KeyY,
+        0x11 => KeyCode::KeyT,
+        0x12 => KeyCode::Digit1,
+        0x13 => KeyCode::Digit2,
+        0x14 => KeyCode::Digit3,
+        0x15 => KeyCode::Digit4,
+        0x16 => KeyCode::Digit6,
+        0x17 => KeyCode::Digit5,
+        0x18 => KeyCode::Equal,
+        0x19 => KeyCode::Digit9,
+        0x1a => KeyCode::Digit7,
+        0x1b => KeyCode::Minus,
+        0x1c => KeyCode::Digit8,
+        0x1d => KeyCode::Digit0,
+        0x1e => KeyCode::BracketRight,
+        0x1f => KeyCode::KeyO,
+        0x20 => KeyCode::KeyU,
+        0x21 => KeyCode::BracketLeft,
+        0x22 => KeyCode::KeyI,
+        0x23 => KeyCode::KeyP,
+        0x24 => KeyCode::Enter,
+        0x25 => KeyCode::KeyL,
+        0x26 => KeyCode::KeyJ,
+        0x27 => KeyCode::Quote,
+        0x28 => KeyCode::KeyK,
+        0x29 => KeyCode::Semicolon,
+        0x2a => KeyCode::Backslash,
+        0x2b => KeyCode::Comma,
+        0x2c => KeyCode::Slash,
+        0x2d => KeyCode::KeyN,
+        0x2e => KeyCode::KeyM,
+        0x2f => KeyCode::Period,
+        0x30 => KeyCode::Tab,
+        0x31 => KeyCode::Space,
+        0x32 => KeyCode::Backquote,
+        0x33 => KeyCode::Backspace,
+        // 0x34 => unknown,
+        0x35 => KeyCode::Escape,
+        0x36 => KeyCode::SuperRight,
+        0x37 => KeyCode::SuperLeft,
+        0x38 => KeyCode::ShiftLeft,
+        0x39 => KeyCode::CapsLock,
+        0x3a => KeyCode::AltLeft,
+        0x3b => KeyCode::ControlLeft,
+        0x3c => KeyCode::ShiftRight,
+        0x3d => KeyCode::AltRight,
+        0x3e => KeyCode::ControlRight,
+        0x3f => KeyCode::Fn,
+        0x40 => KeyCode::F17,
+        0x41 => KeyCode::NumpadDecimal,
+        // 0x42 -> unknown,
+        0x43 => KeyCode::NumpadMultiply,
+        // 0x44 => unknown,
+        0x45 => KeyCode::NumpadAdd,
+        // 0x46 => unknown,
+        0x47 => KeyCode::NumLock,
+        // 0x48 => KeyCode::NumpadClear,
+
+        // TODO: (Artur) for me, kVK_VolumeUp is 0x48
+        // macOS 10.11
+        // /System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/
+        // Versions/A/Headers/Events.h
+        0x49 => KeyCode::AudioVolumeUp,
+        0x4a => KeyCode::AudioVolumeDown,
+        0x4b => KeyCode::NumpadDivide,
+        0x4c => KeyCode::NumpadEnter,
+        // 0x4d => unknown,
+        0x4e => KeyCode::NumpadSubtract,
+        0x4f => KeyCode::F18,
+        0x50 => KeyCode::F19,
+        0x51 => KeyCode::NumpadEqual,
+        0x52 => KeyCode::Numpad0,
+        0x53 => KeyCode::Numpad1,
+        0x54 => KeyCode::Numpad2,
+        0x55 => KeyCode::Numpad3,
+        0x56 => KeyCode::Numpad4,
+        0x57 => KeyCode::Numpad5,
+        0x58 => KeyCode::Numpad6,
+        0x59 => KeyCode::Numpad7,
+        0x5a => KeyCode::F20,
+        0x5b => KeyCode::Numpad8,
+        0x5c => KeyCode::Numpad9,
+        0x5d => KeyCode::IntlYen,
+        // 0x5e => JIS Ro,
+        // 0x5f => unknown,
+        0x60 => KeyCode::F5,
+        0x61 => KeyCode::F6,
+        0x62 => KeyCode::F7,
+        0x63 => KeyCode::F3,
+        0x64 => KeyCode::F8,
+        0x65 => KeyCode::F9,
+        // 0x66 => JIS Eisuu (macOS),
+        0x67 => KeyCode::F11,
+        // 0x68 => JIS Kanna (macOS),
+        0x69 => KeyCode::F13,
+        0x6a => KeyCode::F16,
+        0x6b => KeyCode::F14,
+        // 0x6c => unknown,
+        0x6d => KeyCode::F10,
+        // 0x6e => unknown,
+        0x6f => KeyCode::F12,
+        // 0x70 => unknown,
+        0x71 => KeyCode::F15,
+        0x72 => KeyCode::Insert,
+        0x73 => KeyCode::Home,
+        0x74 => KeyCode::PageUp,
+        0x75 => KeyCode::Delete,
+        0x76 => KeyCode::F4,
+        0x77 => KeyCode::End,
+        0x78 => KeyCode::F2,
+        0x79 => KeyCode::PageDown,
+        0x7a => KeyCode::F1,
+        0x7b => KeyCode::ArrowLeft,
+        0x7c => KeyCode::ArrowRight,
+        0x7d => KeyCode::ArrowDown,
+        0x7e => KeyCode::ArrowUp,
+        // 0x7f =>  unknown,
+
+        // 0xA is the caret (^) an macOS's German QERTZ layout. This key is at the same location as
+        // backquote (`) on Windows' US layout.
+        0xa => KeyCode::Backquote,
+        _ => return None,
+    })
 }
 
 pub fn key_to_native(key: &str) -> Cow<str> {
     use cocoa::appkit::*;
+    const BACKSPACE_KEY: u16 = 0x7f;
+    const SPACE_KEY: u16 = b' ' as u16;
     let code = match key {
         "space" => SPACE_KEY,
         "backspace" => BACKSPACE_KEY,
@@ -310,6 +181,29 @@ pub fn key_to_native(key: &str) -> Cow<str> {
         "f10" => NSF10FunctionKey,
         "f11" => NSF11FunctionKey,
         "f12" => NSF12FunctionKey,
+        "f13" => NSF13FunctionKey,
+        "f14" => NSF14FunctionKey,
+        "f15" => NSF15FunctionKey,
+        "f16" => NSF16FunctionKey,
+        "f17" => NSF17FunctionKey,
+        "f18" => NSF18FunctionKey,
+        "f19" => NSF19FunctionKey,
+        "f20" => NSF20FunctionKey,
+        "f21" => NSF21FunctionKey,
+        "f22" => NSF22FunctionKey,
+        "f23" => NSF23FunctionKey,
+        "f24" => NSF24FunctionKey,
+        "f25" => NSF25FunctionKey,
+        "f26" => NSF26FunctionKey,
+        "f27" => NSF27FunctionKey,
+        "f28" => NSF28FunctionKey,
+        "f29" => NSF29FunctionKey,
+        "f30" => NSF30FunctionKey,
+        "f31" => NSF31FunctionKey,
+        "f32" => NSF32FunctionKey,
+        "f33" => NSF33FunctionKey,
+        "f34" => NSF34FunctionKey,
+        "f35" => NSF35FunctionKey,
         _ => return Cow::Borrowed(key),
     };
     Cow::Owned(String::from_utf16(&[code]).unwrap())
@@ -495,29 +389,18 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
 
     let scancode = native_event.keyCode();
 
-    let mut ime_key = native_event.characters().to_str().to_string();
+    let mut chars = native_event.characters().to_str().to_string();
 
     let mut modifiers = read_modifiers(native_event);
-    modifiers.function &= !ime_key.chars().next().map_or(false, |ch| {
+    modifiers.function &= !chars.chars().next().map_or(false, |ch| {
         matches!(ch as u16, NSUpArrowFunctionKey..=NSModeSwitchFunctionKey)
     });
 
-    let key = physical_key_from_scancode(scancode, false)
-        .unwrap_or_default()
-        .to_string();
+    let code = scancode_to_physicalkey(scancode);
 
-    let ime_key = if modifiers.shift && (modifiers.control || modifiers.platform) {
-        physical_key_from_scancode(scancode, true).map(str::to_string)
-    } else {
-        Some(ime_key)
-    }
-    .take_if(|ime_key| !ime_key.is_empty());
-
-    let keystroke = Keystroke {
+    Keystroke {
         modifiers,
-        key,
-        ime_key,
+        code,
         ime_inputs: Default::default(),
-    };
-    keystroke
+    }
 }

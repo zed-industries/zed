@@ -6,8 +6,8 @@ use crate::markdown_elements::{
 };
 use gpui::{
     div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
-    HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Modifiers, ParentElement,
-    SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
+    HighlightStyle, Hsla, InteractiveText, IntoElement, Modifiers, ParentElement, SharedString,
+    Styled, StyledText, TextStyle, VirtualKeystroke, WeakView, WindowContext,
 };
 use std::{
     ops::{Mul, Range},
@@ -192,12 +192,9 @@ fn render_markdown_list_item(
             )
             .hover(|s| s.cursor_pointer())
             .tooltip(|cx| {
-                let secondary_modifier = Keystroke {
-                    key: "".to_string(),
+                let secondary_modifier = VirtualKeystroke {
+                    key: "".into(),
                     modifiers: Modifiers::secondary_key(),
-                    ime_key: None,
-                    #[cfg(target_os = "macos")]
-                    ime_inputs: Default::default(),
                 };
                 Tooltip::text(
                     format!("{}-click to toggle the checkbox", secondary_modifier),

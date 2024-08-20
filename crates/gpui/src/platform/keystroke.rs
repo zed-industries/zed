@@ -1,7 +1,7 @@
 use anyhow::anyhow;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use std::{fmt::Write, ops::Range};
+use std::{borrow::Cow, fmt::Write, ops::Range};
 
 /// Instructions from the IME to the input handler
 #[allow(clippy::enum_variant_names)]
@@ -21,184 +21,196 @@ pub struct Keystroke {
     /// the state of the modifier keys at the time the keystroke was generated
     pub modifiers: Modifiers,
 
-    /// key is the character printed on the key that was pressed
-    /// e.g. for option-s, key is "s"
-    pub key: String,
-
-    /// ime_key is the character inserted by the IME engine when that key was pressed.
-    /// e.g. for option-s, ime_key is "ß"
-    pub ime_key: Option<String>,
+    /// physical key code
+    pub code: Option<KeyCode>,
 
     /// ime_inputs are the instructions from the IME for this keystroke.
-    #[cfg(target_os = "macos")]
     pub ime_inputs: SmallVec<[ImeInput; 1]>,
 }
 
 impl Keystroke {
-    /// When matching a key we cannot know whether the user intended to type
-    /// the ime_key or the key itself. On some non-US keyboards keys we use in our
-    /// bindings are behind option (for example `$` is typed `alt-ç` on a Czech keyboard),
-    /// and on some keyboards the IME handler converts a sequence of keys into a
-    /// specific character (for example `"` is typed as `" space` on a brazilian keyboard).
-    ///
-    /// This method assumes that `self` was typed and `target' is in the keymap, and checks
-    /// both possibilities for self against the target.
-    pub(crate) fn should_match(&self, target: &Keystroke) -> bool {
-        if let Some(ime_key) = self
-            .ime_key
-            .as_ref()
-            .filter(|ime_key| ime_key != &&self.key)
-        {
-            let ime_modifiers = Modifiers {
-                control: self.modifiers.control,
-                platform: self.modifiers.platform,
-                ..Default::default()
-            };
-
-            if &target.key == ime_key && target.modifiers == ime_modifiers {
-                return true;
-            }
-        }
-
-        target.modifiers == self.modifiers && target.key == self.key
-    }
-
     /// key syntax is:
-    /// [ctrl-][alt-][shift-][cmd-][fn-]key[->ime_key]
+    /// \[ctrl-\]\[alt-\]\[shift-\]\[cmd-\]\[fn-\]key\[->ime_key\]
+    ///
     /// ime_key syntax is only used for generating test events,
     /// when matching a key with an ime_key set will be matched without it.
     pub fn parse(source: &str) -> anyhow::Result<Self> {
-        let mut control = false;
-        let mut alt = false;
-        let mut shift = false;
-        let mut platform = false;
-        let mut function = false;
-        let mut key = None;
-        let mut ime_key = None;
-
-        let mut components = source.split('-').peekable();
-        while let Some(component) = components.next() {
-            match component {
-                "ctrl" => control = true,
-                "alt" => alt = true,
-                "shift" => shift = true,
-                "fn" => function = true,
-                "cmd" | "super" | "win" => platform = true,
-                _ => {
-                    if let Some(next) = components.peek() {
-                        if next.is_empty() && source.ends_with('-') {
-                            key = Some(String::from("-"));
-                            break;
-                        } else if next.len() > 1 && next.starts_with('>') {
-                            key = Some(String::from(component));
-                            ime_key = Some(String::from(&next[1..]));
-                            components.next();
-                        } else {
-                            return Err(anyhow!("Invalid keystroke `{}`", source));
-                        }
-                    } else {
-                        key = Some(String::from(component));
-                    }
-                }
-            }
+        let (modifiers, key, ime_key) = parse_keystroke_from_text(source)?;
+        let mut keystroke = VirtualKeystroke {
+            modifiers,
+            key: key.into(),
         }
-
-        //Allow for the user to specify a keystroke modifier as the key itself
-        //This sets the `key` to the modifier, and disables the modifier
-        if key.is_none() {
-            if shift {
-                key = Some("shift".to_string());
-                shift = false;
-            } else if control {
-                key = Some("control".to_string());
-                control = false;
-            } else if alt {
-                key = Some("alt".to_string());
-                alt = false;
-            } else if platform {
-                key = Some("platform".to_string());
-                platform = false;
-            } else if function {
-                key = Some("function".to_string());
-                function = false;
-            }
+        .with_simulated_ime();
+        if let Some(ime_key) = ime_key {
+            keystroke.ime_inputs = smallvec::smallvec![ImeInput::InsertText(None, ime_key)];
         }
-
-        let key = key.ok_or_else(|| anyhow!("Invalid keystroke `{}`", source))?;
-
-        Ok(Keystroke {
-            modifiers: Modifiers {
-                control,
-                alt,
-                shift,
-                platform,
-                function,
-            },
-            key,
-            ime_key,
-            #[cfg(target_os = "macos")]
-            ime_inputs: SmallVec::new(),
-        })
+        Ok(keystroke)
     }
 
     /// Returns true if this keystroke left
     /// the ime system in an incomplete state.
     pub fn is_ime_in_progress(&self) -> bool {
-        #[cfg(not(target_os = "macos"))]
-        {
-            self.ime_key.is_none()
-                && (is_printable_key(&self.key) || self.key.is_empty())
-                && !(self.modifiers.platform
-                    || self.modifiers.control
-                    || self.modifiers.function
-                    || self.modifiers.alt)
-        }
-        #[cfg(target_os = "macos")]
-        {
-            self.ime_inputs
-                .last()
-                .is_some_and(|last| matches!(last, ImeInput::SetMarkedText(..)))
+        self.ime_inputs
+            .last()
+            .is_some_and(|last| matches!(last, ImeInput::SetMarkedText(..)))
+    }
+}
+
+/// Represents a keystroke using a textual key instead of a physical key code.
+/// Primarily used for keymaps or simulating keystrokes.
+///
+/// This structure can represent multiple actual keystrokes. For example,
+/// if the modifiers are `Modifiers::none()` and the key is "*",
+/// it can correspond to both `shift-8` on a QWERTY layout and `*(asterisk)` on the numpad without shift.
+///
+/// This mapping logic is based on the US QWERTY keyboard layout
+/// and currently handles keys either unmodified or combined with the Shift modifier.
+///
+/// If the key value does not match predefined mapping logic,
+/// it can still be converted to a [Keystroke] with an empty `code`
+/// and the key value used in ime_inputs via `VirtualKeystroke::with_simulated_ime()`.
+#[derive(Clone, Debug, Eq, PartialEq, Default, Deserialize, Hash)]
+pub struct VirtualKeystroke {
+    /// Modifier keys considered pressed
+    pub modifiers: Modifiers,
+    /// Virtual key represented as a string.
+    pub key: Cow<'static, str>,
+}
+
+impl VirtualKeystroke {
+    /// When matching a key we cannot know whether the user intended to type
+    /// the modified key or the key itself. For example, if the user types `shift-4`, they could have intended to type "$",
+    /// or they could have intended to type "4" with the shift key held down.
+    ///
+    /// This method assumes that `typed` was typed and `self' is in the keymap, and checks
+    /// both possibilities for keystroke against the self.
+    pub(crate) fn should_match(&self, typed: &Keystroke) -> bool {
+        if let Some(ref typed) = typed.apply_modifiers() {
+            if typed == self {
+                return true;
+            }
+        } else {
+            return false;
+        };
+
+        if let Some(ref target) = self.unapply_modifiers() {
+            target.code == typed.code && target.modifiers == typed.modifiers
+        } else {
+            false
         }
     }
 
-    /// Returns a new keystroke with the ime_key filled.
+    /// key syntax is same as in [Keystroke::parse],
+    /// except that ime_key is not supported.
+    pub fn parse(source: &str) -> anyhow::Result<Self> {
+        let (modifiers, key, _) = parse_keystroke_from_text(source)?;
+        Ok(Self {
+            modifiers,
+            key: key.into(),
+        })
+    }
+
+    /// Returns a new keystroke with the ime_inputs filled.
     /// This is used for dispatch_keystroke where we want users to
     /// be able to simulate typing "space", etc.
-    pub fn with_simulated_ime(mut self) -> Self {
-        if self.ime_key.is_none()
-            && !self.modifiers.platform
-            && !self.modifiers.control
-            && !self.modifiers.function
-            && !self.modifiers.alt
-        {
-            self.ime_key = match self.key.as_str() {
-                "space" => Some(" ".into()),
-                "tab" => Some("\t".into()),
-                "enter" => Some("\n".into()),
-                key if !is_printable_key(key) => None,
-                key => {
-                    if self.modifiers.shift {
-                        Some(key.to_uppercase())
+    pub fn with_simulated_ime(self) -> Keystroke {
+        let mut keystroke = self.unapply_modifiers().unwrap_or(Keystroke {
+            modifiers: self.modifiers,
+            code: None,
+            ime_inputs: Default::default(),
+        });
+
+        let ime_key = match self.key.as_ref() {
+            "space" => " ".to_string(),
+            "tab" => "\t".to_string(),
+            "enter" => "\n".to_string(),
+            key if key.chars().count() == 1 => {
+                if self.modifiers.shift {
+                    key.to_uppercase()
+                } else {
+                    key.to_string()
+                }
+            }
+            _ => return keystroke,
+        };
+
+        keystroke.ime_inputs = smallvec::smallvec![ImeInput::InsertText(None, ime_key)];
+
+        keystroke
+    }
+}
+
+fn parse_keystroke_from_text(source: &str) -> anyhow::Result<(Modifiers, String, Option<String>)> {
+    let mut control = false;
+    let mut alt = false;
+    let mut shift = false;
+    let mut platform = false;
+    let mut function = false;
+    let mut key = None;
+    let mut ime_key = None;
+
+    let mut components = source.split('-').peekable();
+    while let Some(component) = components.next() {
+        match component {
+            "ctrl" => control = true,
+            "alt" => alt = true,
+            "shift" => shift = true,
+            "fn" => function = true,
+            "cmd" | "super" | "win" => platform = true,
+            _ => {
+                if let Some(next) = components.peek() {
+                    if next.is_empty() && source.ends_with('-') {
+                        key = Some(String::from("-"));
+                        break;
+                    } else if next.len() > 1 && next.starts_with('>') {
+                        key = Some(String::from(component));
+                        ime_key = Some(String::from(&next[1..]));
+                        components.next();
                     } else {
-                        Some(key.into())
+                        return Err(anyhow!("Invalid keystroke `{}`", source));
                     }
+                } else {
+                    key = Some(String::from(component));
                 }
             }
         }
-        self
     }
+
+    // Allow for the user to specify a keystroke modifier as the key itself
+    // This sets the `key` to the modifier, and disables the modifier
+    if key.is_none() {
+        if shift {
+            key = Some("shift".to_string());
+            shift = false;
+        } else if control {
+            key = Some("control".to_string());
+            control = false;
+        } else if alt {
+            key = Some("alt".to_string());
+            alt = false;
+        } else if platform {
+            key = Some("platform".to_string());
+            platform = false;
+        } else if function {
+            key = Some("function".to_string());
+            function = false;
+        }
+    }
+
+    let key = key.ok_or_else(|| anyhow!("Invalid keystroke `{}`", source))?;
+
+    let modifiers = Modifiers {
+        control,
+        alt,
+        shift,
+        platform,
+        function,
+    };
+
+    Ok((modifiers, key, ime_key))
 }
 
-fn is_printable_key(key: &str) -> bool {
-    match key {
-        "up" | "down" | "left" | "right" | "pageup" | "pagedown" | "home" | "end" | "delete"
-        | "escape" | "backspace" | "f1" | "f2" | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9"
-        | "f10" | "f11" | "f12" => false,
-        _ => true,
-    }
-}
-
-impl std::fmt::Display for Keystroke {
+impl std::fmt::Display for VirtualKeystroke {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.modifiers.control {
             f.write_char('^')?;
@@ -216,10 +228,7 @@ impl std::fmt::Display for Keystroke {
             #[cfg(target_os = "windows")]
             f.write_char('⊞')?;
         }
-        if self.modifiers.shift {
-            f.write_char('⇧')?;
-        }
-        let key = match self.key.as_str() {
+        let key = match self.key.as_ref() {
             "backspace" => '⌫',
             "up" => '↑',
             "down" => '↓',
@@ -233,12 +242,23 @@ impl std::fmt::Display for Keystroke {
             "platform" => '⌘',
             key => {
                 if key.len() == 1 {
-                    key.chars().next().unwrap().to_ascii_uppercase()
+                    let key = key.chars().next().unwrap();
+                    let uppercased = key.to_ascii_uppercase();
+                    if uppercased == key && self.modifiers.shift {
+                        f.write_char('⇧')?;
+                    }
+                    return f.write_char(uppercased);
                 } else {
+                    if self.modifiers.shift {
+                        f.write_char('⇧')?;
+                    }
                     return f.write_str(key);
                 }
             }
         };
+        if self.modifiers.shift {
+            f.write_char('⇧')?;
+        }
         f.write_char(key)
     }
 }
@@ -393,5 +413,918 @@ impl Modifiers {
             && (other.shift || !self.shift)
             && (other.platform || !self.platform)
             && (other.function || !self.function)
+    }
+
+    pub(crate) fn with_shift(&self) -> Self {
+        Self {
+            shift: true,
+            ..*self
+        }
+    }
+
+    pub(crate) fn without_shift(&self) -> Self {
+        Self {
+            shift: false,
+            ..*self
+        }
+    }
+}
+
+/// Code representing the location of a physical key
+///
+/// This mostly conforms to the UI Events Specification's [`KeyboardEvent.code`] with a few
+/// exceptions:
+/// - The keys that the specification calls "MetaLeft" and "MetaRight" are named "SuperLeft" and
+///   "SuperRight" here.
+/// - The key that the specification calls "Super" is reported as `Unidentified` here.
+///
+/// [`KeyboardEvent.code`]: https://w3c.github.io/uievents-code/#code-value-tables
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum KeyCode {
+    /// <kbd>`</kbd> on a US keyboard. This is also called a backtick or grave.
+    /// This is the <kbd>半角</kbd>/<kbd>全角</kbd>/<kbd>漢字</kbd>
+    /// (hankaku/zenkaku/kanji) key on Japanese keyboards
+    Backquote,
+    /// Used for both the US <kbd>\\</kbd> (on the 101-key layout) and also for the key
+    /// located between the <kbd>"</kbd> and <kbd>Enter</kbd> keys on row C of the 102-,
+    /// 104- and 106-key layouts.
+    /// Labeled <kbd>#</kbd> on a UK (102) keyboard.
+    Backslash,
+    /// <kbd>[</kbd> on a US keyboard.
+    BracketLeft,
+    /// <kbd>]</kbd> on a US keyboard.
+    BracketRight,
+    /// <kbd>,</kbd> on a US keyboard.
+    Comma,
+    /// <kbd>0</kbd> on a US keyboard.
+    Digit0,
+    /// <kbd>1</kbd> on a US keyboard.
+    Digit1,
+    /// <kbd>2</kbd> on a US keyboard.
+    Digit2,
+    /// <kbd>3</kbd> on a US keyboard.
+    Digit3,
+    /// <kbd>4</kbd> on a US keyboard.
+    Digit4,
+    /// <kbd>5</kbd> on a US keyboard.
+    Digit5,
+    /// <kbd>6</kbd> on a US keyboard.
+    Digit6,
+    /// <kbd>7</kbd> on a US keyboard.
+    Digit7,
+    /// <kbd>8</kbd> on a US keyboard.
+    Digit8,
+    /// <kbd>9</kbd> on a US keyboard.
+    Digit9,
+    /// <kbd>=</kbd> on a US keyboard.
+    Equal,
+    /// Located between the left <kbd>Shift</kbd> and <kbd>Z</kbd> keys.
+    /// Labeled <kbd>\\</kbd> on a UK keyboard.
+    IntlBackslash,
+    /// Located between the <kbd>/</kbd> and right <kbd>Shift</kbd> keys.
+    /// Labeled <kbd>\\</kbd> (ro) on a Japanese keyboard.
+    IntlRo,
+    /// Located between the <kbd>=</kbd> and <kbd>Backspace</kbd> keys.
+    /// Labeled <kbd>¥</kbd> (yen) on a Japanese keyboard. <kbd>\\</kbd> on a
+    /// Russian keyboard.
+    IntlYen,
+    /// <kbd>a</kbd> on a US keyboard.
+    /// Labeled <kbd>q</kbd> on an AZERTY (e.g., French) keyboard.
+    KeyA,
+    /// <kbd>b</kbd> on a US keyboard.
+    KeyB,
+    /// <kbd>c</kbd> on a US keyboard.
+    KeyC,
+    /// <kbd>d</kbd> on a US keyboard.
+    KeyD,
+    /// <kbd>e</kbd> on a US keyboard.
+    KeyE,
+    /// <kbd>f</kbd> on a US keyboard.
+    KeyF,
+    /// <kbd>g</kbd> on a US keyboard.
+    KeyG,
+    /// <kbd>h</kbd> on a US keyboard.
+    KeyH,
+    /// <kbd>i</kbd> on a US keyboard.
+    KeyI,
+    /// <kbd>j</kbd> on a US keyboard.
+    KeyJ,
+    /// <kbd>k</kbd> on a US keyboard.
+    KeyK,
+    /// <kbd>l</kbd> on a US keyboard.
+    KeyL,
+    /// <kbd>m</kbd> on a US keyboard.
+    KeyM,
+    /// <kbd>n</kbd> on a US keyboard.
+    KeyN,
+    /// <kbd>o</kbd> on a US keyboard.
+    KeyO,
+    /// <kbd>p</kbd> on a US keyboard.
+    KeyP,
+    /// <kbd>q</kbd> on a US keyboard.
+    /// Labeled <kbd>a</kbd> on an AZERTY (e.g., French) keyboard.
+    KeyQ,
+    /// <kbd>r</kbd> on a US keyboard.
+    KeyR,
+    /// <kbd>s</kbd> on a US keyboard.
+    KeyS,
+    /// <kbd>t</kbd> on a US keyboard.
+    KeyT,
+    /// <kbd>u</kbd> on a US keyboard.
+    KeyU,
+    /// <kbd>v</kbd> on a US keyboard.
+    KeyV,
+    /// <kbd>w</kbd> on a US keyboard.
+    /// Labeled <kbd>z</kbd> on an AZERTY (e.g., French) keyboard.
+    KeyW,
+    /// <kbd>x</kbd> on a US keyboard.
+    KeyX,
+    /// <kbd>y</kbd> on a US keyboard.
+    /// Labeled <kbd>z</kbd> on a QWERTZ (e.g., German) keyboard.
+    KeyY,
+    /// <kbd>z</kbd> on a US keyboard.
+    /// Labeled <kbd>w</kbd> on an AZERTY (e.g., French) keyboard, and <kbd>y</kbd> on a
+    /// QWERTZ (e.g., German) keyboard.
+    KeyZ,
+    /// <kbd>-</kbd> on a US keyboard.
+    Minus,
+    /// <kbd>.</kbd> on a US keyboard.
+    Period,
+    /// <kbd>'</kbd> on a US keyboard.
+    Quote,
+    /// <kbd>;</kbd> on a US keyboard.
+    Semicolon,
+    /// <kbd>/</kbd> on a US keyboard.
+    Slash,
+    /// <kbd>Alt</kbd>, <kbd>Option</kbd>, or <kbd>⌥</kbd>.
+    AltLeft,
+    /// <kbd>Alt</kbd>, <kbd>Option</kbd>, or <kbd>⌥</kbd>.
+    /// This is labeled <kbd>AltGr</kbd> on many keyboard layouts.
+    AltRight,
+    /// <kbd>Backspace</kbd> or <kbd>⌫</kbd>.
+    /// Labeled <kbd>Delete</kbd> on Apple keyboards.
+    Backspace,
+    /// <kbd>CapsLock</kbd> or <kbd>⇪</kbd>
+    CapsLock,
+    /// The application context menu key, which is typically found between the right
+    /// <kbd>Super</kbd> key and the right <kbd>Control</kbd> key.
+    ContextMenu,
+    /// <kbd>Control</kbd> or <kbd>⌃</kbd>
+    ControlLeft,
+    /// <kbd>Control</kbd> or <kbd>⌃</kbd>
+    ControlRight,
+    /// <kbd>Enter</kbd> or <kbd>↵</kbd>. Labeled <kbd>Return</kbd> on Apple keyboards.
+    Enter,
+    /// The Windows, <kbd>⌘</kbd>, <kbd>Command</kbd>, or other OS symbol key.
+    SuperLeft,
+    /// The Windows, <kbd>⌘</kbd>, <kbd>Command</kbd>, or other OS symbol key.
+    SuperRight,
+    /// <kbd>Shift</kbd> or <kbd>⇧</kbd>
+    ShiftLeft,
+    /// <kbd>Shift</kbd> or <kbd>⇧</kbd>
+    ShiftRight,
+    /// <kbd> </kbd> (space)
+    Space,
+    /// <kbd>Tab</kbd> or <kbd>⇥</kbd>
+    Tab,
+    /// Japanese: <kbd>変</kbd> (henkan)
+    Convert,
+    /// Japanese: <kbd>カタカナ</kbd>/<kbd>ひらがな</kbd>/<kbd>ローマ字</kbd>
+    /// (katakana/hiragana/romaji)
+    KanaMode,
+    /// Korean: HangulMode <kbd>한/영</kbd> (han/yeong)
+    ///
+    /// Japanese (Mac keyboard): <kbd>か</kbd> (kana)
+    Lang1,
+    /// Korean: Hanja <kbd>한</kbd> (hanja)
+    ///
+    /// Japanese (Mac keyboard): <kbd>英</kbd> (eisu)
+    Lang2,
+    /// Japanese (word-processing keyboard): Katakana
+    Lang3,
+    /// Japanese (word-processing keyboard): Hiragana
+    Lang4,
+    /// Japanese (word-processing keyboard): Zenkaku/Hankaku
+    Lang5,
+    /// Japanese: <kbd>無変換</kbd> (muhenkan)
+    NonConvert,
+    /// <kbd>⌦</kbd>. The forward delete key.
+    /// Note that on Apple keyboards, the key labelled <kbd>Delete</kbd> on the main part of
+    /// the keyboard is encoded as [`Backspace`].
+    ///
+    /// [`Backspace`]: Self::Backspace
+    Delete,
+    /// <kbd>Page Down</kbd>, <kbd>End</kbd>, or <kbd>↘</kbd>
+    End,
+    /// <kbd>Help</kbd>. Not present on standard PC keyboards.
+    Help,
+    /// <kbd>Home</kbd> or <kbd>↖</kbd>
+    Home,
+    /// <kbd>Insert</kbd> or <kbd>Ins</kbd>. Not present on Apple keyboards.
+    Insert,
+    /// <kbd>Page Down</kbd>, <kbd>PgDn</kbd>, or <kbd>⇟</kbd>
+    PageDown,
+    /// <kbd>Page Up</kbd>, <kbd>PgUp</kbd>, or <kbd>⇞</kbd>
+    PageUp,
+    /// <kbd>↓</kbd>
+    ArrowDown,
+    /// <kbd>←</kbd>
+    ArrowLeft,
+    /// <kbd>→</kbd>
+    ArrowRight,
+    /// <kbd>↑</kbd>
+    ArrowUp,
+    /// On the Mac, this is used for the numpad <kbd>Clear</kbd> key.
+    NumLock,
+    /// <kbd>0 Ins</kbd> on a keyboard. <kbd>0</kbd> on a phone or remote control
+    Numpad0,
+    /// <kbd>1 End</kbd> on a keyboard. <kbd>1</kbd> or <kbd>1 QZ</kbd> on a phone or remote
+    /// control
+    Numpad1,
+    /// <kbd>2 ↓</kbd> on a keyboard. <kbd>2 ABC</kbd> on a phone or remote control
+    Numpad2,
+    /// <kbd>3 PgDn</kbd> on a keyboard. <kbd>3 DEF</kbd> on a phone or remote control
+    Numpad3,
+    /// <kbd>4 ←</kbd> on a keyboard. <kbd>4 GHI</kbd> on a phone or remote control
+    Numpad4,
+    /// <kbd>5</kbd> on a keyboard. <kbd>5 JKL</kbd> on a phone or remote control
+    Numpad5,
+    /// <kbd>6 →</kbd> on a keyboard. <kbd>6 MNO</kbd> on a phone or remote control
+    Numpad6,
+    /// <kbd>7 Home</kbd> on a keyboard. <kbd>7 PQRS</kbd> or <kbd>7 PRS</kbd> on a phone
+    /// or remote control
+    Numpad7,
+    /// <kbd>8 ↑</kbd> on a keyboard. <kbd>8 TUV</kbd> on a phone or remote control
+    Numpad8,
+    /// <kbd>9 PgUp</kbd> on a keyboard. <kbd>9 WXYZ</kbd> or <kbd>9 WXY</kbd> on a phone
+    /// or remote control
+    Numpad9,
+    /// <kbd>+</kbd>
+    NumpadAdd,
+    /// Found on the Microsoft Natural Keyboard.
+    NumpadBackspace,
+    /// <kbd>C</kbd> or <kbd>A</kbd> (All Clear). Also for use with numpads that have a
+    /// <kbd>Clear</kbd> key that is separate from the <kbd>NumLock</kbd> key. On the Mac, the
+    /// numpad <kbd>Clear</kbd> key is encoded as [`NumLock`].
+    ///
+    /// [`NumLock`]: Self::NumLock
+    NumpadClear,
+    /// <kbd>C</kbd> (Clear Entry)
+    NumpadClearEntry,
+    /// <kbd>,</kbd> (thousands separator). For locales where the thousands separator
+    /// is a "." (e.g., Brazil), this key may generate a <kbd>.</kbd>.
+    NumpadComma,
+    /// <kbd>. Del</kbd>. For locales where the decimal separator is "," (e.g.,
+    /// Brazil), this key may generate a <kbd>,</kbd>.
+    NumpadDecimal,
+    /// <kbd>/</kbd>
+    NumpadDivide,
+    /// TODO: undocumented
+    NumpadEnter,
+    /// <kbd>=</kbd>
+    NumpadEqual,
+    /// <kbd>#</kbd> on a phone or remote control device. This key is typically found
+    /// below the <kbd>9</kbd> key and to the right of the <kbd>0</kbd> key.
+    NumpadHash,
+    /// <kbd>M</kbd> Add current entry to the value stored in memory.
+    NumpadMemoryAdd,
+    /// <kbd>M</kbd> Clear the value stored in memory.
+    NumpadMemoryClear,
+    /// <kbd>M</kbd> Replace the current entry with the value stored in memory.
+    NumpadMemoryRecall,
+    /// <kbd>M</kbd> Replace the value stored in memory with the current entry.
+    NumpadMemoryStore,
+    /// <kbd>M</kbd> Subtract current entry from the value stored in memory.
+    NumpadMemorySubtract,
+    /// <kbd>*</kbd> on a keyboard. For use with numpads that provide mathematical
+    /// operations (<kbd>+</kbd>, <kbd>-</kbd> <kbd>*</kbd> and <kbd>/</kbd>).
+    ///
+    /// Use `NumpadStar` for the <kbd>*</kbd> key on phones and remote controls.
+    NumpadMultiply,
+    /// <kbd>(</kbd> Found on the Microsoft Natural Keyboard.
+    NumpadParenLeft,
+    /// <kbd>)</kbd> Found on the Microsoft Natural Keyboard.
+    NumpadParenRight,
+    /// <kbd>*</kbd> on a phone or remote control device.
+    ///
+    /// This key is typically found below the <kbd>7</kbd> key and to the left of
+    /// the <kbd>0</kbd> key.
+    ///
+    /// Use <kbd>"NumpadMultiply"</kbd> for the <kbd>*</kbd> key on
+    /// numeric keypads.
+    NumpadStar,
+    /// <kbd>-</kbd>
+    NumpadSubtract,
+    /// <kbd>Esc</kbd> or <kbd>⎋</kbd>
+    Escape,
+    /// <kbd>Fn</kbd> This is typically a hardware key that does not generate a separate code.
+    Fn,
+    /// <kbd>FLock</kbd> or <kbd>FnLock</kbd>. Function Lock key. Found on the Microsoft
+    /// Natural Keyboard.
+    FnLock,
+    /// <kbd>PrtScr SysRq</kbd> or <kbd>Print Screen</kbd>
+    PrintScreen,
+    /// <kbd>Scroll Lock</kbd>
+    ScrollLock,
+    /// <kbd>Pause Break</kbd>
+    Pause,
+    /// Some laptops place this key to the left of the <kbd>↑</kbd> key.
+    ///
+    /// This also the "back" button (triangle) on Android.
+    BrowserBack,
+    /// TODO: undocumented
+    BrowserFavorites,
+    /// Some laptops place this key to the right of the <kbd>↑</kbd> key.
+    BrowserForward,
+    /// The "home" button on Android.
+    BrowserHome,
+    /// TODO: undocumented
+    BrowserRefresh,
+    /// TODO: undocumented
+    BrowserSearch,
+    /// TODO: undocumented
+    BrowserStop,
+    /// <kbd>Eject</kbd> or <kbd>⏏</kbd>. This key is placed in the function section on some Apple
+    /// keyboards.
+    Eject,
+    /// Sometimes labelled <kbd>My Computer</kbd> on the keyboard
+    LaunchApp1,
+    /// Sometimes labelled <kbd>Calculator</kbd> on the keyboard
+    LaunchApp2,
+    /// TODO: undocumented
+    LaunchMail,
+    /// TODO: undocumented
+    MediaPlayPause,
+    /// TODO: undocumented
+    MediaSelect,
+    /// TODO: undocumented
+    MediaStop,
+    /// TODO: undocumented
+    MediaTrackNext,
+    /// TODO: undocumented
+    MediaTrackPrevious,
+    /// This key is placed in the function section on some Apple keyboards, replacing the
+    /// <kbd>Eject</kbd> key.
+    Power,
+    /// TODO: undocumented
+    Sleep,
+    /// TODO: undocumented
+    AudioVolumeDown,
+    /// TODO: undocumented
+    AudioVolumeMute,
+    /// TODO: undocumented
+    AudioVolumeUp,
+    /// TODO: undocumented
+    WakeUp,
+    /// Legacy modifier key. Also called "Super" in certain places.
+    Meta,
+    /// Legacy modifier key.
+    Hyper,
+    /// Legacy modifier key.
+    Turbo,
+    /// Legacy modifier key.
+    Abort,
+    /// Legacy modifier key.
+    Resume,
+    /// Legacy modifier key.
+    Suspend,
+    /// Found on Sun’s USB keyboard.
+    Again,
+    /// Found on Sun’s USB keyboard.
+    Copy,
+    /// Found on Sun’s USB keyboard.
+    Cut,
+    /// Found on Sun’s USB keyboard.
+    Find,
+    /// Found on Sun’s USB keyboard.
+    Open,
+    /// Found on Sun’s USB keyboard.
+    Paste,
+    /// Found on Sun’s USB keyboard.
+    Props,
+    /// Found on Sun’s USB keyboard.
+    Select,
+    /// Found on Sun’s USB keyboard.
+    Undo,
+    /// Use for dedicated <kbd>ひらがな</kbd> key found on some Japanese word processing keyboards.
+    Hiragana,
+    /// Use for dedicated <kbd>カタカナ</kbd> key found on some Japanese word processing keyboards.
+    Katakana,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F1,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F2,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F3,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F4,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F5,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F6,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F7,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F8,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F9,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F10,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F11,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F12,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F13,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F14,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F15,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F16,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F17,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F18,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F19,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F20,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F21,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F22,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F23,
+    /// General-purpose function key.
+    /// Usually found at the top of the keyboard.
+    F24,
+    /// General-purpose function key.
+    F25,
+    /// General-purpose function key.
+    F26,
+    /// General-purpose function key.
+    F27,
+    /// General-purpose function key.
+    F28,
+    /// General-purpose function key.
+    F29,
+    /// General-purpose function key.
+    F30,
+    /// General-purpose function key.
+    F31,
+    /// General-purpose function key.
+    F32,
+    /// General-purpose function key.
+    F33,
+    /// General-purpose function key.
+    F34,
+    /// General-purpose function key.
+    F35,
+}
+
+impl VirtualKeystroke {
+    /// Returns the corresponding [Keystroke] with modifiers are detached from the symbol represented by the `key`.
+    ///
+    /// Detaching modifiers works based on the US QWERTY keyboard layout.
+    ///
+    /// `ime_inputs` are always empty in the returned [Keystroke].
+    ///
+    /// # Examples
+    /// ```
+    /// use gpui::{Keystroke, VirtualKeystroke, Modifiers, KeyCode};
+    /// use smallvec::SmallVec;
+    ///
+    /// let virtual_keystroke = VirtualKeystroke {
+    ///     key: "$".into(),
+    ///     modifiers: Modifiers::control(),
+    /// };
+    ///
+    /// let keystroke = virtual_keystroke.unapply_modifiers().unwrap();
+    ///
+    /// assert_eq!(keystroke, Keystroke {
+    ///     modifiers: Modifiers::control_shift(),
+    ///     code: Some(KeyCode::Digit4),
+    ///     ime_inputs: SmallVec::new(),
+    /// });
+    /// ```
+    pub fn unapply_modifiers(&self) -> Option<Keystroke> {
+        let modifiers = self.modifiers;
+        let (key_code, modifiers) = match self.key.as_ref() {
+            "f1" => (KeyCode::F1, modifiers),
+            "f2" => (KeyCode::F2, modifiers),
+            "f3" => (KeyCode::F3, modifiers),
+            "f4" => (KeyCode::F4, modifiers),
+            "f5" => (KeyCode::F5, modifiers),
+            "f6" => (KeyCode::F6, modifiers),
+            "f7" => (KeyCode::F7, modifiers),
+            "f8" => (KeyCode::F8, modifiers),
+            "f9" => (KeyCode::F9, modifiers),
+            "f10" => (KeyCode::F10, modifiers),
+            "f11" => (KeyCode::F11, modifiers),
+            "f12" => (KeyCode::F12, modifiers),
+            "f13" => (KeyCode::F13, modifiers),
+            "f14" => (KeyCode::F14, modifiers),
+            "f15" => (KeyCode::F15, modifiers),
+            "f16" => (KeyCode::F16, modifiers),
+            "f17" => (KeyCode::F17, modifiers),
+            "f18" => (KeyCode::F18, modifiers),
+            "f19" => (KeyCode::F19, modifiers),
+            "f20" => (KeyCode::F20, modifiers),
+            "f21" => (KeyCode::F21, modifiers),
+            "f22" => (KeyCode::F22, modifiers),
+            "f23" => (KeyCode::F23, modifiers),
+            "f24" => (KeyCode::F24, modifiers),
+            "f25" => (KeyCode::F25, modifiers),
+            "f26" => (KeyCode::F26, modifiers),
+            "f27" => (KeyCode::F27, modifiers),
+            "f28" => (KeyCode::F28, modifiers),
+            "f29" => (KeyCode::F29, modifiers),
+            "f30" => (KeyCode::F30, modifiers),
+            "f31" => (KeyCode::F31, modifiers),
+            "f32" => (KeyCode::F32, modifiers),
+            "f33" => (KeyCode::F33, modifiers),
+            "f34" => (KeyCode::F34, modifiers),
+            "f35" => (KeyCode::F35, modifiers),
+
+            "0" => (KeyCode::Digit0, modifiers),
+            "1" => (KeyCode::Digit1, modifiers),
+            "2" => (KeyCode::Digit2, modifiers),
+            "3" => (KeyCode::Digit3, modifiers),
+            "4" => (KeyCode::Digit4, modifiers),
+            "5" => (KeyCode::Digit5, modifiers),
+            "6" => (KeyCode::Digit6, modifiers),
+            "7" => (KeyCode::Digit7, modifiers),
+            "8" => (KeyCode::Digit8, modifiers),
+            "9" => (KeyCode::Digit9, modifiers),
+
+            ")" => (KeyCode::Digit0, modifiers.with_shift()),
+            "!" => (KeyCode::Digit1, modifiers.with_shift()),
+            "@" => (KeyCode::Digit2, modifiers.with_shift()),
+            "#" => (KeyCode::Digit3, modifiers.with_shift()),
+            "$" => (KeyCode::Digit4, modifiers.with_shift()),
+            "%" => (KeyCode::Digit5, modifiers.with_shift()),
+            "^" => (KeyCode::Digit6, modifiers.with_shift()),
+            "&" => (KeyCode::Digit7, modifiers.with_shift()),
+            "*" => (KeyCode::Digit8, modifiers.with_shift()),
+            "(" => (KeyCode::Digit9, modifiers.with_shift()),
+
+            "a" => (KeyCode::KeyA, modifiers),
+            "b" => (KeyCode::KeyB, modifiers),
+            "c" => (KeyCode::KeyC, modifiers),
+            "d" => (KeyCode::KeyD, modifiers),
+            "e" => (KeyCode::KeyE, modifiers),
+            "f" => (KeyCode::KeyF, modifiers),
+            "g" => (KeyCode::KeyG, modifiers),
+            "h" => (KeyCode::KeyH, modifiers),
+            "i" => (KeyCode::KeyI, modifiers),
+            "j" => (KeyCode::KeyJ, modifiers),
+            "k" => (KeyCode::KeyK, modifiers),
+            "l" => (KeyCode::KeyL, modifiers),
+            "m" => (KeyCode::KeyM, modifiers),
+            "n" => (KeyCode::KeyN, modifiers),
+            "o" => (KeyCode::KeyO, modifiers),
+            "p" => (KeyCode::KeyP, modifiers),
+            "q" => (KeyCode::KeyQ, modifiers),
+            "r" => (KeyCode::KeyR, modifiers),
+            "s" => (KeyCode::KeyS, modifiers),
+            "t" => (KeyCode::KeyT, modifiers),
+            "u" => (KeyCode::KeyU, modifiers),
+            "v" => (KeyCode::KeyV, modifiers),
+            "w" => (KeyCode::KeyW, modifiers),
+            "x" => (KeyCode::KeyX, modifiers),
+            "y" => (KeyCode::KeyY, modifiers),
+            "z" => (KeyCode::KeyZ, modifiers),
+
+            "A" => (KeyCode::KeyA, modifiers.with_shift()),
+            "B" => (KeyCode::KeyB, modifiers.with_shift()),
+            "C" => (KeyCode::KeyC, modifiers.with_shift()),
+            "D" => (KeyCode::KeyD, modifiers.with_shift()),
+            "E" => (KeyCode::KeyE, modifiers.with_shift()),
+            "F" => (KeyCode::KeyF, modifiers.with_shift()),
+            "G" => (KeyCode::KeyG, modifiers.with_shift()),
+            "H" => (KeyCode::KeyH, modifiers.with_shift()),
+            "I" => (KeyCode::KeyI, modifiers.with_shift()),
+            "J" => (KeyCode::KeyJ, modifiers.with_shift()),
+            "K" => (KeyCode::KeyK, modifiers.with_shift()),
+            "L" => (KeyCode::KeyL, modifiers.with_shift()),
+            "M" => (KeyCode::KeyM, modifiers.with_shift()),
+            "N" => (KeyCode::KeyN, modifiers.with_shift()),
+            "O" => (KeyCode::KeyO, modifiers.with_shift()),
+            "P" => (KeyCode::KeyP, modifiers.with_shift()),
+            "Q" => (KeyCode::KeyQ, modifiers.with_shift()),
+            "R" => (KeyCode::KeyR, modifiers.with_shift()),
+            "S" => (KeyCode::KeyS, modifiers.with_shift()),
+            "T" => (KeyCode::KeyT, modifiers.with_shift()),
+            "U" => (KeyCode::KeyU, modifiers.with_shift()),
+            "V" => (KeyCode::KeyV, modifiers.with_shift()),
+            "W" => (KeyCode::KeyW, modifiers.with_shift()),
+            "X" => (KeyCode::KeyX, modifiers.with_shift()),
+            "Y" => (KeyCode::KeyY, modifiers.with_shift()),
+            "Z" => (KeyCode::KeyZ, modifiers.with_shift()),
+
+            "`" => (KeyCode::Backquote, modifiers),
+            "\\" => (KeyCode::Backslash, modifiers),
+            "[" => (KeyCode::BracketLeft, modifiers),
+            "]" => (KeyCode::BracketRight, modifiers),
+            "," => (KeyCode::Comma, modifiers),
+            "=" => (KeyCode::Equal, modifiers),
+            "-" => (KeyCode::Minus, modifiers),
+            "." => (KeyCode::Period, modifiers),
+            "'" => (KeyCode::Quote, modifiers),
+            ";" => (KeyCode::Semicolon, modifiers),
+            "/" => (KeyCode::Slash, modifiers),
+
+            "~" => (KeyCode::Backquote, modifiers.with_shift()),
+            "|" => (KeyCode::Backslash, modifiers.with_shift()),
+            "{" => (KeyCode::BracketLeft, modifiers.with_shift()),
+            "}" => (KeyCode::BracketRight, modifiers.with_shift()),
+            "<" => (KeyCode::Comma, modifiers.with_shift()),
+            "+" => (KeyCode::Equal, modifiers.with_shift()),
+            "_" => (KeyCode::Minus, modifiers.with_shift()),
+            ">" => (KeyCode::Period, modifiers.with_shift()),
+            "\"" => (KeyCode::Quote, modifiers.with_shift()),
+            ":" => (KeyCode::Semicolon, modifiers.with_shift()),
+            "?" => (KeyCode::Slash, modifiers.with_shift()),
+
+            "alt" => (KeyCode::AltLeft, modifiers),
+            "platform" => (KeyCode::SuperLeft, modifiers),
+            "control" => (KeyCode::ControlLeft, modifiers),
+            "shift" => (KeyCode::ShiftLeft, modifiers),
+            "function" => (KeyCode::Fn, modifiers),
+            "escape" => (KeyCode::Escape, modifiers),
+            "capslock" => (KeyCode::CapsLock, modifiers),
+            "backspace" => (KeyCode::Backspace, modifiers),
+            "space" => (KeyCode::Space, modifiers),
+            "tab" => (KeyCode::Tab, modifiers),
+            "enter" => (KeyCode::Enter, modifiers),
+            "insert" => (KeyCode::Insert, modifiers),
+            "delete" => (KeyCode::Delete, modifiers),
+            "home" => (KeyCode::Home, modifiers),
+            "end" => (KeyCode::End, modifiers),
+            "pagedown" => (KeyCode::PageDown, modifiers),
+            "pageup" => (KeyCode::PageUp, modifiers),
+            "down" => (KeyCode::ArrowDown, modifiers),
+            "up" => (KeyCode::ArrowUp, modifiers),
+            "left" => (KeyCode::ArrowLeft, modifiers),
+            "right" => (KeyCode::ArrowRight, modifiers),
+            "numlock" => (KeyCode::NumLock, modifiers),
+            "clear" => (KeyCode::NumpadClear, modifiers),
+            _ => return None,
+        };
+        Some(Keystroke {
+            modifiers,
+            code: Some(key_code),
+            ime_inputs: SmallVec::new(),
+        })
+    }
+}
+
+impl Keystroke {
+    /// Returns the corresponding [VirtualKeystroke]
+    /// with modifiers are applied based on the US QWERTY layout.
+    ///
+    /// # Examples
+    /// ```
+    /// use gpui::{Keystroke, VirtualKeystroke, Modifiers, KeyCode};
+    /// use smallvec::SmallVec;
+    ///
+    /// let keystroke = Keystroke {
+    ///     modifiers: Modifiers::control_shift(),
+    ///     code: Some(KeyCode::Digit4),
+    ///     ime_inputs: SmallVec::new(),
+    /// };
+    ///
+    /// let virtual_keystroke = keystroke.apply_modifiers().unwrap();
+    ///
+    /// assert_eq!(virtual_keystroke, VirtualKeystroke {
+    ///     key: "$".into(),
+    ///     modifiers: Modifiers::control(),
+    /// });
+    /// ```
+    pub fn apply_modifiers(&self) -> Option<VirtualKeystroke> {
+        let code = self.code?;
+        let modifiers = self.modifiers;
+        let (key, modifiers) = match (code, modifiers.shift) {
+            (KeyCode::F1, _) => ("f1", modifiers),
+            (KeyCode::F2, _) => ("f2", modifiers),
+            (KeyCode::F3, _) => ("f3", modifiers),
+            (KeyCode::F4, _) => ("f4", modifiers),
+            (KeyCode::F5, _) => ("f5", modifiers),
+            (KeyCode::F6, _) => ("f6", modifiers),
+            (KeyCode::F7, _) => ("f7", modifiers),
+            (KeyCode::F8, _) => ("f8", modifiers),
+            (KeyCode::F9, _) => ("f9", modifiers),
+            (KeyCode::F10, _) => ("f10", modifiers),
+            (KeyCode::F11, _) => ("f11", modifiers),
+            (KeyCode::F12, _) => ("f12", modifiers),
+            (KeyCode::F13, _) => ("f13", modifiers),
+            (KeyCode::F14, _) => ("f14", modifiers),
+            (KeyCode::F15, _) => ("f15", modifiers),
+            (KeyCode::F16, _) => ("f16", modifiers),
+            (KeyCode::F17, _) => ("f17", modifiers),
+            (KeyCode::F18, _) => ("f18", modifiers),
+            (KeyCode::F19, _) => ("f19", modifiers),
+            (KeyCode::F20, _) => ("f20", modifiers),
+            (KeyCode::F21, _) => ("f21", modifiers),
+            (KeyCode::F22, _) => ("f22", modifiers),
+            (KeyCode::F23, _) => ("f23", modifiers),
+            (KeyCode::F24, _) => ("f24", modifiers),
+            (KeyCode::F25, _) => ("f25", modifiers),
+            (KeyCode::F26, _) => ("f26", modifiers),
+            (KeyCode::F27, _) => ("f27", modifiers),
+            (KeyCode::F28, _) => ("f28", modifiers),
+            (KeyCode::F29, _) => ("f29", modifiers),
+            (KeyCode::F30, _) => ("f30", modifiers),
+            (KeyCode::F31, _) => ("f31", modifiers),
+            (KeyCode::F32, _) => ("f32", modifiers),
+            (KeyCode::F33, _) => ("f33", modifiers),
+            (KeyCode::F34, _) => ("f34", modifiers),
+            (KeyCode::F35, _) => ("f35", modifiers),
+
+            (KeyCode::Digit0, false) => ("0", modifiers),
+            (KeyCode::Digit1, false) => ("1", modifiers),
+            (KeyCode::Digit2, false) => ("2", modifiers),
+            (KeyCode::Digit3, false) => ("3", modifiers),
+            (KeyCode::Digit4, false) => ("4", modifiers),
+            (KeyCode::Digit5, false) => ("5", modifiers),
+            (KeyCode::Digit6, false) => ("6", modifiers),
+            (KeyCode::Digit7, false) => ("7", modifiers),
+            (KeyCode::Digit8, false) => ("8", modifiers),
+            (KeyCode::Digit9, false) => ("9", modifiers),
+
+            (KeyCode::Digit0, true) => (")", modifiers.without_shift()),
+            (KeyCode::Digit1, true) => ("!", modifiers.without_shift()),
+            (KeyCode::Digit2, true) => ("@", modifiers.without_shift()),
+            (KeyCode::Digit3, true) => ("#", modifiers.without_shift()),
+            (KeyCode::Digit4, true) => ("$", modifiers.without_shift()),
+            (KeyCode::Digit5, true) => ("%", modifiers.without_shift()),
+            (KeyCode::Digit6, true) => ("^", modifiers.without_shift()),
+            (KeyCode::Digit7, true) => ("&", modifiers.without_shift()),
+            (KeyCode::Digit8, true) => ("*", modifiers.without_shift()),
+            (KeyCode::Digit9, true) => ("(", modifiers.without_shift()),
+
+            (KeyCode::KeyA, false) => ("a", modifiers),
+            (KeyCode::KeyB, false) => ("b", modifiers),
+            (KeyCode::KeyC, false) => ("c", modifiers),
+            (KeyCode::KeyD, false) => ("d", modifiers),
+            (KeyCode::KeyE, false) => ("e", modifiers),
+            (KeyCode::KeyF, false) => ("f", modifiers),
+            (KeyCode::KeyG, false) => ("g", modifiers),
+            (KeyCode::KeyH, false) => ("h", modifiers),
+            (KeyCode::KeyI, false) => ("i", modifiers),
+            (KeyCode::KeyJ, false) => ("j", modifiers),
+            (KeyCode::KeyK, false) => ("k", modifiers),
+            (KeyCode::KeyL, false) => ("l", modifiers),
+            (KeyCode::KeyM, false) => ("m", modifiers),
+            (KeyCode::KeyN, false) => ("n", modifiers),
+            (KeyCode::KeyO, false) => ("o", modifiers),
+            (KeyCode::KeyP, false) => ("p", modifiers),
+            (KeyCode::KeyQ, false) => ("q", modifiers),
+            (KeyCode::KeyR, false) => ("r", modifiers),
+            (KeyCode::KeyS, false) => ("s", modifiers),
+            (KeyCode::KeyT, false) => ("t", modifiers),
+            (KeyCode::KeyU, false) => ("u", modifiers),
+            (KeyCode::KeyV, false) => ("v", modifiers),
+            (KeyCode::KeyW, false) => ("w", modifiers),
+            (KeyCode::KeyX, false) => ("x", modifiers),
+            (KeyCode::KeyY, false) => ("y", modifiers),
+            (KeyCode::KeyZ, false) => ("z", modifiers),
+
+            (KeyCode::KeyA, true) => ("A", modifiers.without_shift()),
+            (KeyCode::KeyB, true) => ("B", modifiers.without_shift()),
+            (KeyCode::KeyC, true) => ("C", modifiers.without_shift()),
+            (KeyCode::KeyD, true) => ("D", modifiers.without_shift()),
+            (KeyCode::KeyE, true) => ("E", modifiers.without_shift()),
+            (KeyCode::KeyF, true) => ("F", modifiers.without_shift()),
+            (KeyCode::KeyG, true) => ("G", modifiers.without_shift()),
+            (KeyCode::KeyH, true) => ("H", modifiers.without_shift()),
+            (KeyCode::KeyI, true) => ("I", modifiers.without_shift()),
+            (KeyCode::KeyJ, true) => ("J", modifiers.without_shift()),
+            (KeyCode::KeyK, true) => ("K", modifiers.without_shift()),
+            (KeyCode::KeyL, true) => ("L", modifiers.without_shift()),
+            (KeyCode::KeyM, true) => ("M", modifiers.without_shift()),
+            (KeyCode::KeyN, true) => ("N", modifiers.without_shift()),
+            (KeyCode::KeyO, true) => ("O", modifiers.without_shift()),
+            (KeyCode::KeyP, true) => ("P", modifiers.without_shift()),
+            (KeyCode::KeyQ, true) => ("Q", modifiers.without_shift()),
+            (KeyCode::KeyR, true) => ("R", modifiers.without_shift()),
+            (KeyCode::KeyS, true) => ("S", modifiers.without_shift()),
+            (KeyCode::KeyT, true) => ("T", modifiers.without_shift()),
+            (KeyCode::KeyU, true) => ("U", modifiers.without_shift()),
+            (KeyCode::KeyV, true) => ("V", modifiers.without_shift()),
+            (KeyCode::KeyW, true) => ("W", modifiers.without_shift()),
+            (KeyCode::KeyX, true) => ("X", modifiers.without_shift()),
+            (KeyCode::KeyY, true) => ("Y", modifiers.without_shift()),
+            (KeyCode::KeyZ, true) => ("Z", modifiers.without_shift()),
+
+            (KeyCode::Backquote, false) => ("`", modifiers),
+            (KeyCode::BracketLeft, false) => ("[", modifiers),
+            (KeyCode::BracketRight, false) => ("]", modifiers),
+            (KeyCode::Comma, false) => (",", modifiers),
+            (KeyCode::Equal, false) => ("=", modifiers),
+            (KeyCode::Minus, false) => ("-", modifiers),
+            (KeyCode::Period, false) => (".", modifiers),
+            (KeyCode::Quote, false) => ("'", modifiers),
+            (KeyCode::Semicolon, false) => (";", modifiers),
+            (KeyCode::Slash, false) => ("/", modifiers),
+            (KeyCode::Backslash, false) => ("\\", modifiers),
+            (KeyCode::IntlBackslash, false) => ("\\", modifiers),
+            (KeyCode::IntlYen, false) => ("\\", modifiers),
+            (KeyCode::IntlRo, false) => ("\\", modifiers),
+
+            (KeyCode::Backquote, true) => ("~", modifiers.without_shift()),
+            (KeyCode::BracketLeft, true) => ("{", modifiers.without_shift()),
+            (KeyCode::BracketRight, true) => ("}", modifiers.without_shift()),
+            (KeyCode::Comma, true) => ("<", modifiers.without_shift()),
+            (KeyCode::Equal, true) => ("+", modifiers.without_shift()),
+            (KeyCode::Minus, true) => ("_", modifiers.without_shift()),
+            (KeyCode::Period, true) => (">", modifiers.without_shift()),
+            (KeyCode::Quote, true) => ("\"", modifiers.without_shift()),
+            (KeyCode::Semicolon, true) => (": ", modifiers.without_shift()),
+            (KeyCode::Slash, true) => ("?", modifiers.without_shift()),
+            (KeyCode::Backslash, true) => ("|", modifiers.without_shift()),
+            (KeyCode::IntlBackslash, true) => ("|", modifiers.without_shift()),
+            (KeyCode::IntlYen, true) => ("|", modifiers.without_shift()),
+            (KeyCode::IntlRo, true) => ("|", modifiers.without_shift()),
+
+            (KeyCode::AltLeft | KeyCode::AltRight, _) => ("alt", modifiers),
+            (KeyCode::SuperLeft | KeyCode::SuperRight, _) => ("platform", modifiers),
+            (KeyCode::ControlLeft | KeyCode::ControlRight, _) => ("control", modifiers),
+            (KeyCode::ShiftLeft | KeyCode::ShiftRight, _) => ("shift", modifiers),
+            (KeyCode::Fn, _) => ("function", modifiers),
+            (KeyCode::Escape, _) => ("escape", modifiers),
+            (KeyCode::CapsLock, _) => ("capslock", modifiers),
+            (KeyCode::Backspace, _) => ("backspace", modifiers),
+            (KeyCode::Space, _) => ("space", modifiers),
+            (KeyCode::Tab, _) => ("tab", modifiers),
+            (KeyCode::Enter, _) => ("enter", modifiers),
+            (KeyCode::Insert, _) => ("insert", modifiers),
+            (KeyCode::Delete, _) => ("delete", modifiers),
+            (KeyCode::Home, _) => ("home", modifiers),
+            (KeyCode::End, _) => ("end", modifiers),
+            (KeyCode::PageDown, _) => ("pagedown", modifiers),
+            (KeyCode::PageUp, _) => ("pageup", modifiers),
+            (KeyCode::ArrowDown, _) => ("down", modifiers),
+            (KeyCode::ArrowUp, _) => ("up", modifiers),
+            (KeyCode::ArrowLeft, _) => ("left", modifiers),
+            (KeyCode::ArrowRight, _) => ("right", modifiers),
+
+            (KeyCode::NumLock, _) => ("numlock", modifiers),
+            (KeyCode::NumpadClear, _) => ("clear", modifiers),
+            (KeyCode::Numpad0, _) => ("0", modifiers),
+            (KeyCode::Numpad1, _) => ("1", modifiers),
+            (KeyCode::Numpad2, _) => ("2", modifiers),
+            (KeyCode::Numpad3, _) => ("3", modifiers),
+            (KeyCode::Numpad4, _) => ("4", modifiers),
+            (KeyCode::Numpad5, _) => ("5", modifiers),
+            (KeyCode::Numpad6, _) => ("6", modifiers),
+            (KeyCode::Numpad7, _) => ("7", modifiers),
+            (KeyCode::Numpad8, _) => ("8", modifiers),
+            (KeyCode::Numpad9, _) => ("9", modifiers),
+            (KeyCode::NumpadAdd, _) => ("+", modifiers),
+            (KeyCode::NumpadBackspace, _) => ("backspace", modifiers),
+            (KeyCode::NumpadComma, _) => (",", modifiers),
+            (KeyCode::NumpadDecimal, _) => (".", modifiers),
+            (KeyCode::NumpadDivide, _) => ("/", modifiers),
+            (KeyCode::NumpadEnter, _) => ("enter", modifiers),
+            (KeyCode::NumpadEqual, _) => ("=", modifiers),
+            (KeyCode::NumpadHash, _) => ("#", modifiers),
+            (KeyCode::NumpadMultiply, _) => ("*", modifiers),
+            (KeyCode::NumpadParenLeft, _) => ("(", modifiers),
+            (KeyCode::NumpadParenRight, _) => (")", modifiers),
+            (KeyCode::NumpadStar, _) => ("*", modifiers),
+            (KeyCode::NumpadSubtract, _) => ("-", modifiers),
+
+            _ => return None,
+        };
+        Some(VirtualKeystroke {
+            key: Cow::Borrowed(key),
+            modifiers,
+        })
     }
 }

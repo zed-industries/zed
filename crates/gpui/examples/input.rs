@@ -566,8 +566,8 @@ impl Render for InputExample {
             .children(self.recent_keystrokes.iter().rev().map(|ks| {
                 format!(
                     "{:} {}",
-                    ks,
-                    if let Some(ime_key) = ks.ime_key.as_ref() {
+                    ks.apply_modifiers().unwrap_or_default(),
+                    if let Some(ImeInput::InsertText(None, ime_key)) = ks.ime_inputs.first() {
                         format!("-> {}", ime_key)
                     } else {
                         "".to_owned()

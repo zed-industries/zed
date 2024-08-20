@@ -1,4 +1,4 @@
-use gpui::{Action, FocusHandle, KeyBinding, Keystroke, WindowContext};
+use gpui::{Action, FocusHandle, KeyBinding, VirtualKeystroke, WindowContext};
 
 use crate::PlatformStyle;
 
@@ -30,7 +30,7 @@ pub fn text_for_key_binding(key_binding: KeyBinding, platform_style: PlatformSty
 }
 
 /// Returns a textual representation of the given [`Keystroke`].
-pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) -> String {
+pub fn text_for_keystroke(keystroke: &VirtualKeystroke, platform_style: PlatformStyle) -> String {
     let mut text = String::new();
 
     let delimiter = match platform_style {
@@ -93,7 +93,7 @@ pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) 
         }
     }
 
-    let key = match keystroke.key.as_str() {
+    let key = match keystroke.key.as_ref() {
         "pageup" => "PageUp",
         "pagedown" => "PageDown",
         key => &capitalize(key),
@@ -111,35 +111,44 @@ mod tests {
     #[test]
     fn test_text_for_keystroke() {
         assert_eq!(
-            text_for_keystroke(&Keystroke::parse("cmd-c").unwrap(), PlatformStyle::Mac),
+            text_for_keystroke(
+                &VirtualKeystroke::parse("cmd-c").unwrap(),
+                PlatformStyle::Mac
+            ),
             "Command-C".to_string()
         );
         assert_eq!(
-            text_for_keystroke(&Keystroke::parse("cmd-c").unwrap(), PlatformStyle::Linux),
+            text_for_keystroke(
+                &VirtualKeystroke::parse("cmd-c").unwrap(),
+                PlatformStyle::Linux
+            ),
             "Super+C".to_string()
         );
         assert_eq!(
-            text_for_keystroke(&Keystroke::parse("cmd-c").unwrap(), PlatformStyle::Windows),
+            text_for_keystroke(
+                &VirtualKeystroke::parse("cmd-c").unwrap(),
+                PlatformStyle::Windows
+            ),
             "Win+C".to_string()
         );
 
         assert_eq!(
             text_for_keystroke(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                &VirtualKeystroke::parse("ctrl-alt-delete").unwrap(),
                 PlatformStyle::Mac
             ),
             "Control-Option-Delete".to_string()
         );
         assert_eq!(
             text_for_keystroke(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                &VirtualKeystroke::parse("ctrl-alt-delete").unwrap(),
                 PlatformStyle::Linux
             ),
             "Ctrl+Alt+Delete".to_string()
         );
         assert_eq!(
             text_for_keystroke(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                &VirtualKeystroke::parse("ctrl-alt-delete").unwrap(),
                 PlatformStyle::Windows
             ),
             "Ctrl+Alt+Delete".to_string()
@@ -147,21 +156,21 @@ mod tests {
 
         assert_eq!(
             text_for_keystroke(
-                &Keystroke::parse("shift-pageup").unwrap(),
+                &VirtualKeystroke::parse("shift-pageup").unwrap(),
                 PlatformStyle::Mac
             ),
             "Shift-PageUp".to_string()
         );
         assert_eq!(
             text_for_keystroke(
-                &Keystroke::parse("shift-pageup").unwrap(),
+                &VirtualKeystroke::parse("shift-pageup").unwrap(),
                 PlatformStyle::Linux
             ),
             "Shift+PageUp".to_string()
         );
         assert_eq!(
             text_for_keystroke(
-                &Keystroke::parse("shift-pageup").unwrap(),
+                &VirtualKeystroke::parse("shift-pageup").unwrap(),
                 PlatformStyle::Windows
             ),
             "Shift+PageUp".to_string()

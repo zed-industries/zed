@@ -1,11 +1,11 @@
-use crate::{Action, KeyBindingContextPredicate, Keystroke};
+use crate::{Action, KeyBindingContextPredicate, Keystroke, VirtualKeystroke};
 use anyhow::Result;
 use smallvec::SmallVec;
 
 /// A keybinding and its associated metadata, from the keymap.
 pub struct KeyBinding {
     pub(crate) action: Box<dyn Action>,
-    pub(crate) keystrokes: SmallVec<[Keystroke; 2]>,
+    pub(crate) keystrokes: SmallVec<[VirtualKeystroke; 2]>,
     pub(crate) context_predicate: Option<KeyBindingContextPredicate>,
 }
 
@@ -35,7 +35,7 @@ impl KeyBinding {
 
         let keystrokes = keystrokes
             .split_whitespace()
-            .map(Keystroke::parse)
+            .map(VirtualKeystroke::parse)
             .collect::<Result<_>>()?;
 
         Ok(Self {
@@ -52,7 +52,7 @@ impl KeyBinding {
         }
 
         for (target, typed) in self.keystrokes.iter().zip(typed.iter()) {
-            if !typed.should_match(target) {
+            if !target.should_match(typed) {
                 return None;
             }
         }
@@ -61,7 +61,7 @@ impl KeyBinding {
     }
 
     /// Get the keystrokes associated with this binding
-    pub fn keystrokes(&self) -> &[Keystroke] {
+    pub fn keystrokes(&self) -> &[VirtualKeystroke] {
         self.keystrokes.as_slice()
     }
 

@@ -4,16 +4,16 @@ use crate::{
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, Flatten, FontId, GPUSpecs, Global, GlobalElementId, GlyphId, Hsla, InputHandler,
-    IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Model, ModelContext, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
+    IsZero, KeyBinding, KeyCode, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent,
+    LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers, ModifiersChangedEvent,
+    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -2986,7 +2986,6 @@ impl<'a> WindowContext<'a> {
     /// Dispatch a given keystroke as though the user had typed it.
     /// You can create a keystroke with Keystroke::parse("").
     pub fn dispatch_keystroke(&mut self, keystroke: Keystroke) -> bool {
-        let keystroke = keystroke.with_simulated_ime();
         let result = self.dispatch_event(PlatformInput::KeyDown(KeyDownEvent {
             keystroke: keystroke.clone(),
             is_held: false,
@@ -2995,12 +2994,11 @@ impl<'a> WindowContext<'a> {
             return true;
         }
 
-        if let Some(input) = keystroke.ime_key {
+        if !keystroke.ime_inputs.is_empty() {
             if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
-                #[cfg(not(target_os = "macos"))]
-                input_handler.dispatch_input(&input, self);
-                #[cfg(target_os = "macos")]
-                input_handler.dispatch_input(crate::ImeInput::InsertText(None, input), self);
+                for input in keystroke.ime_inputs {
+                    input_handler.dispatch_input(input, self);
+                }
                 self.window.platform_window.set_input_handler(input_handler);
                 return true;
             }
@@ -3197,20 +3195,18 @@ impl<'a> WindowContext<'a> {
                 && !self.window.pending_modifier.saw_keystroke
             {
                 if event.modifiers.number_of_modifiers() == 0 {
-                    let key = match self.window.pending_modifier.modifiers {
-                        modifiers if modifiers.shift => Some("shift"),
-                        modifiers if modifiers.control => Some("control"),
-                        modifiers if modifiers.alt => Some("alt"),
-                        modifiers if modifiers.platform => Some("platform"),
-                        modifiers if modifiers.function => Some("function"),
+                    let code = match self.window.pending_modifier.modifiers {
+                        modifiers if modifiers.shift => Some(KeyCode::ShiftLeft),
+                        modifiers if modifiers.control => Some(KeyCode::ControlLeft),
+                        modifiers if modifiers.alt => Some(KeyCode::AltLeft),
+                        modifiers if modifiers.platform => Some(KeyCode::SuperLeft),
+                        modifiers if modifiers.function => Some(KeyCode::Fn),
                         _ => None,
                     };
-                    if let Some(key) = key {
+                    if let Some(code) = code {
                         keystroke = Some(Keystroke {
-                            key: key.to_string(),
-                            ime_key: None,
-                            modifiers: Modifiers::default(),
-                            #[cfg(target_os = "macos")]
+                            code: Some(code),
+                            modifiers: Modifiers::none(),
                             ime_inputs: SmallVec::new(),
                         });
                     }

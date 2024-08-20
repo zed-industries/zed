@@ -402,7 +402,12 @@ impl DispatchTree {
         keymap
             .bindings_for_action(action)
             .filter(|binding| {
-                let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, &context_stack);
+                let keystrokes = &binding
+                    .keystrokes
+                    .iter()
+                    .map(|keystroke| keystroke.clone().with_simulated_ime())
+                    .collect::<Vec<_>>();
+                let (bindings, _) = keymap.bindings_for_input(keystrokes, &context_stack);
                 bindings
                     .iter()
                     .next()

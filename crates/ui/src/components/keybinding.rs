@@ -1,5 +1,5 @@
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
-use gpui::{relative, Action, FocusHandle, IntoElement, Keystroke};
+use gpui::{relative, Action, FocusHandle, IntoElement, VirtualKeystroke};
 
 #[derive(IntoElement, Clone)]
 pub struct KeyBinding {
@@ -30,8 +30,8 @@ impl KeyBinding {
         Some(Self::new(key_binding))
     }
 
-    fn icon_for_key(&self, keystroke: &Keystroke) -> Option<IconName> {
-        match keystroke.key.as_str() {
+    fn icon_for_key(&self, keystroke: &VirtualKeystroke) -> Option<IconName> {
+        match keystroke.key.as_ref() {
             "left" => Some(IconName::ArrowLeft),
             "right" => Some(IconName::ArrowRight),
             "up" => Some(IconName::ArrowUp),
