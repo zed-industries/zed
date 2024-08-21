@@ -15,7 +15,7 @@ use dap_types::{
 };
 use futures::{AsyncBufRead, AsyncReadExt, AsyncWrite};
 use gpui::{AppContext, AsyncAppContext};
-use language::Buffer;
+use language::{Buffer, BufferSnapshot};
 use parking_lot::{Mutex, MutexGuard};
 use serde_json::Value;
 use smol::{
@@ -27,7 +27,7 @@ use smol::{
 use std::{
     collections::{BTreeMap, HashMap},
     net::{Ipv4Addr, SocketAddrV4},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -640,14 +640,14 @@ impl DebugAdapterClient {
 
     pub async fn set_breakpoints(
         &self,
-        path: PathBuf,
-        breakpoints: Option<Vec<SourceBreakpoint>>,
+        absolute_file_path: Arc<Path>,
+        breakpoints: Vec<SourceBreakpoint>,
     ) -> Result<SetBreakpointsResponse> {
         let adapter_data = self.request_args.clone();
 
         self.request::<SetBreakpoints>(SetBreakpointsArguments {
             source: Source {
-                path: Some(String::from(path.to_string_lossy())),
+                path: Some(String::from(absolute_file_path.to_string_lossy())),
                 name: None,
                 source_reference: None,
                 presentation_hint: None,
@@ -656,7 +656,7 @@ impl DebugAdapterClient {
                 adapter_data,
                 checksums: None,
             },
-            breakpoints,
+            breakpoints: Some(breakpoints),
             source_modified: None,
             lines: None,
         })
@@ -734,6 +734,53 @@ impl Breakpoint {
                 .summary_for_anchor::<Point>(&self.position.text_anchor)
                 .row
                 + 1) as u64,
+            condition: None,
+            hit_condition: None,
+            log_message: None,
+            column: None,
+            mode: None,
+        }
+    }
+
+    pub fn point_for_buffer(&self, buffer: &Buffer) -> Point {
+        buffer.summary_for_anchor::<Point>(&self.position.text_anchor)
+    }
+
+    pub fn source_for_snapshot(&self, snapshot: &BufferSnapshot) -> SourceBreakpoint {
+        SourceBreakpoint {
+            line: (snapshot
+                .summary_for_anchor::<Point>(&self.position.text_anchor)
+                .row
+                + 1) as u64,
+            condition: None,
+            hit_condition: None,
+            log_message: None,
+            column: None,
+            mode: None,
+        }
+    }
+
+    pub fn to_serialized(&self, buffer: &Buffer, path: Arc<Path>) -> SerializedBreakpoint {
+        SerializedBreakpoint {
+            position: buffer
+                .summary_for_anchor::<Point>(&self.position.text_anchor)
+                .row
+                + 1,
+            path,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct SerializedBreakpoint {
+    pub position: u32,
+    pub path: Arc<Path>,
+}
+
+impl SerializedBreakpoint {
+    pub fn to_source_breakpoint(&self) -> SourceBreakpoint {
+        SourceBreakpoint {
+            line: self.position as u64,
             condition: None,
             hit_condition: None,
             log_message: None,

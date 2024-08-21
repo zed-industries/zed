@@ -71,6 +71,7 @@ terminal.workspace = true
 text.workspace = true
 util.workspace = true
 which.workspace = true
+multi_buffer.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

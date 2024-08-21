@@ -1013,6 +1013,12 @@
   //   }
   // ]
   "ssh_connections": null,
+
+  "debugger": {
+    // Save breakpoints across different Zed sessions
+    "save_breakpoints": true
+  },
+
   // Configures the Context Server Protocol binaries
   //
   // Examples:

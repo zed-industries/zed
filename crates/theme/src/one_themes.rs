@@ -74,6 +74,7 @@ pub(crate) fn one_dark() -> Theme {
                 icon_disabled: hsla(220.0 / 360., 6.4 / 100., 45.7 / 100., 1.0),
                 icon_placeholder: hsla(220.0 / 360., 6.4 / 100., 45.7 / 100., 1.0),
                 icon_accent: blue,
+                debugger_accent: red,
                 status_bar_background: bg,
                 title_bar_background: bg,
                 title_bar_inactive_background: bg,

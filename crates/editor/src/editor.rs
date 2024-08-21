@@ -584,8 +584,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
-    /// All the breakpoints that are active within a project
-    /// Is shared with editor's active project
+    /// All the breakpoints that are contained within open buffers in the editor
     breakpoints: Option<Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>>,
     /// Allow's a user to create a breakpoint by selecting this indicator
     /// It should be None while a user is not hovering over the gutter
@@ -1830,8 +1829,8 @@ impl Editor {
             None
         };
 
-        let breakpoints = if let Some(project) = project.as_ref() {
-            Some(project.update(cx, |project, _cx| project.breakpoints.clone()))
+        let opened_breakpoints = if let Some(project) = project.as_ref() {
+            project.read_with(cx, |project, _cx| Some(project.open_breakpoints.clone()))
         } else {
             None
         };
@@ -1935,7 +1934,7 @@ impl Editor {
             blame_subscription: None,
             file_header_size,
             tasks: Default::default(),
-            breakpoints,
+            breakpoints: opened_breakpoints,
             gutter_breakpoint_indicator: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -1977,6 +1976,19 @@ impl Editor {
             if this.git_blame_inline_enabled {
                 this.git_blame_inline_enabled = true;
                 this.start_git_blame_inline(false, cx);
+            }
+
+            // Check if this buffer should have breakpoints added too it
+            if let Some((project_path, buffer_id, snapshot)) = buffer.read_with(cx, |buffer, cx| {
+                let snapshot = buffer.snapshot(cx);
+                let buffer = buffer.as_singleton()?.read(cx);
+                Some((buffer.project_path(cx)?, buffer.remote_id(), snapshot))
+            }) {
+                if let Some(project) = this.project.as_ref() {
+                    project.update(cx, |project, _cx| {
+                        project.convert_to_open_breakpoints(&project_path, buffer_id, snapshot)
+                    });
+                }
             }
         }
 
@@ -5197,19 +5209,108 @@ impl Editor {
         }
     }
 
+    /// Get all display points of breakpoints that will be rendered within editor
+    ///
+    /// This function is used to handle overlaps between breakpoints and Code action/runner symbol.
+    /// It's also used to set the color of line numbers with breakpoints to the breakpoint color.
+    /// TODO Debugger: Use this function to color toggle symbols that house nested breakpoints
+    fn active_breakpoint_points(&mut self, cx: &mut ViewContext<Self>) -> HashSet<DisplayPoint> {
+        let mut breakpoint_display_points = HashSet::default();
+
+        let Some(opened_breakpoints) = self.breakpoints.clone() else {
+            return breakpoint_display_points;
+        };
+
+        let snapshot = self.snapshot(cx);
+
+        let opened_breakpoints = opened_breakpoints.read();
+
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            let buffer = buffer.read(cx);
+
+            if let Some(breakpoints) = opened_breakpoints.get(&buffer.remote_id()) {
+                for breakpoint in breakpoints {
+                    breakpoint_display_points
+                        .insert(breakpoint.position.to_display_point(&snapshot));
+                    // Breakpoints TODO: Multibuffer bp toggle failing here
+                    // dued to invalid excerpt id. Multibuffer excerpt id isn't the same as a singular buffer id
+                }
+            };
+
+            return breakpoint_display_points;
+        }
+
+        let multi_buffer_snapshot = &snapshot.display_snapshot.buffer_snapshot;
+
+        for excerpt_boundery in
+            multi_buffer_snapshot.excerpt_boundaries_in_range(Point::new(0, 0)..)
+        {
+            let info = excerpt_boundery.next.as_ref();
+
+            if let Some(info) = info {
+                let Some(excerpt_ranges) =
+                    multi_buffer_snapshot.range_for_excerpt::<Point>(info.id)
+                else {
+                    continue;
+                };
+
+                // To translate a breakpoint's position within a singular buffer to a multi buffer
+                // position we need to know it's excerpt starting location, it's position within
+                // the singular buffer, and if that position is within the excerpt's range.
+                let excerpt_head = excerpt_ranges
+                    .start
+                    .to_display_point(&snapshot.display_snapshot);
+                let buffer_range = info // Buffer lines being shown within the excerpt
+                    .buffer
+                    .summary_for_anchor::<Point>(&info.range.context.start)
+                    ..info
+                        .buffer
+                        .summary_for_anchor::<Point>(&info.range.context.end);
+
+                if let Some(breakpoints) = opened_breakpoints.get(&info.buffer_id) {
+                    for breakpoint in breakpoints {
+                        let breakpoint_position = info // Breakpoint's position within the singular buffer
+                            .buffer
+                            .summary_for_anchor::<Point>(&breakpoint.position.text_anchor);
+
+                        if buffer_range.contains(&breakpoint_position) {
+                            // Translated breakpoint position from singular buffer to multi buffer
+                            let delta = breakpoint_position.row - buffer_range.start.row;
+
+                            let position = excerpt_head + DisplayPoint::new(DisplayRow(delta), 0);
+
+                            breakpoint_display_points.insert(position);
+                        }
+                    }
+                };
+            };
+        }
+
+        breakpoint_display_points
+    }
+
     fn render_breakpoint(
         &self,
         position: Anchor,
         row: DisplayRow,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
+        let color = if self
+            .gutter_breakpoint_indicator
+            .is_some_and(|gutter_bp| gutter_bp.row() == row)
+        {
+            Color::Hint
+        } else {
+            Color::Debugger
+        };
+
         IconButton::new(("breakpoint_indicator", row.0 as usize), ui::IconName::Play)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
-            .icon_color(Color::Error)
+            .icon_color(color)
             .on_click(cx.listener(move |editor, _e, cx| {
                 editor.focus(cx);
-                editor.toggle_breakpoint_at_row(position, cx) //TODO handle folded
+                editor.toggle_breakpoint_at_anchor(position, cx)
             }))
     }
 
@@ -5218,12 +5319,19 @@ impl Editor {
         _style: &EditorStyle,
         is_active: bool,
         row: DisplayRow,
+        overlaps_breakpoint: bool,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
+        let color = if overlaps_breakpoint {
+            Color::Debugger
+        } else {
+            Color::Muted
+        };
+
         IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
             .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::XSmall)
-            .icon_color(Color::Muted)
+            .icon_color(color)
             .selected(is_active)
             .on_click(cx.listener(move |editor, _e, cx| {
                 editor.focus(cx);
@@ -6050,16 +6158,20 @@ impl Editor {
     pub fn toggle_breakpoint(&mut self, _: &ToggleBreakpoint, cx: &mut ViewContext<Self>) {
         let cursor_position: Point = self.selections.newest(cx).head();
 
+        // We Set the column position to zero so this function interacts correctly
+        // between calls by clicking on the gutter & using an action to toggle a
+        // breakpoint. Otherwise, toggling a breakpoint through an action wouldn't
+        // untoggle a breakpoint that was added through clicking on the gutter
         let breakpoint_position = self
             .snapshot(cx)
             .display_snapshot
             .buffer_snapshot
-            .anchor_before(cursor_position);
+            .anchor_before(Point::new(cursor_position.row, 0));
 
-        self.toggle_breakpoint_at_row(breakpoint_position, cx);
+        self.toggle_breakpoint_at_anchor(breakpoint_position, cx);
     }
 
-    pub fn toggle_breakpoint_at_row(
+    pub fn toggle_breakpoint_at_anchor(
         &mut self,
         breakpoint_position: Anchor,
         cx: &mut ViewContext<Self>,
@@ -6072,11 +6184,9 @@ impl Editor {
             return;
         };
 
-        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
+        let Some(buffer_id) = breakpoint_position.buffer_id else {
             return;
         };
-
-        let buffer_id = buffer.read(cx).remote_id();
 
         let breakpoint = Breakpoint {
             position: breakpoint_position,

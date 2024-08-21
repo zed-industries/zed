@@ -288,6 +288,10 @@ impl BufferStore {
         .detach_and_log_err(cx);
     }
 
+    pub fn buffer_id_for_project_path(&self, project_path: &ProjectPath) -> Option<&BufferId> {
+        self.local_buffer_ids_by_path.get(project_path)
+    }
+
     fn open_local_buffer_internal(
         &mut self,
         path: Arc<Path>,

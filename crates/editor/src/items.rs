@@ -1050,7 +1050,6 @@ impl SerializableItem for Editor {
             pane.update(&mut cx, |_, cx| {
                 cx.new_view(|cx| {
                     let mut editor = Editor::for_buffer(buffer, Some(project), cx);
-
                     editor.read_scroll_position_from_db(item_id, workspace_id, cx);
                     editor
                 })
