@@ -32,7 +32,7 @@ use theme::{ActiveTheme, ThemeSettings};
 use ui::{
     prelude::*, tooltip_container, Avatar, AvatarAvailabilityIndicator, Button, Color, ContextMenu,
     Facepile, Icon, IconButton, IconName, IconSize, Indicator, Label, ListHeader, ListItem,
-    Tooltip,
+    StateColor, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -2539,9 +2539,9 @@ impl CollabPanel {
         let has_notes_notification = channel_store.has_channel_buffer_changed(channel_id);
 
         let fg_color = if has_notes_notification {
-            Color::Default
+            Color::State(StateColor::Active)
         } else {
-            Color::Muted
+            Color::State(StateColor::Inactive)
         };
 
         const FACEPILE_LIMIT: usize = 3;
