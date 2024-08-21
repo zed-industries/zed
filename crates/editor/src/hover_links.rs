@@ -692,12 +692,6 @@ pub(crate) fn find_file(
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
 
-    // relative: file.txt
-    // absolute: /blah
-    // home abs: ~/asda
-    // whitespace, escaped: i\ dont\ -\ like-whitespace.txt
-    // punctuation: "file.txt"
-
     let offset = position.to_offset(&snapshot);
     let mut token_start = offset;
     let mut token_end = offset;
@@ -1361,10 +1355,20 @@ mod tests {
         )
         .await;
 
-        let test_cases = [(
-            r#"Let's test a file path: /ˇhome/user/documents/file.txt"#,
-            "/home/user/documents/file.txt",
-        )];
+        // relative: file.txt
+        // absolute: /blah
+        // home abs: ~/asda
+        // whitespace, escaped: i\ dont\ -\ like-whitespace.txt
+        // punctuation: "file.txt"
+
+        let test_cases = [
+            ("foobar ˇ foobar", None),
+            ("ˇfile name", Some("file")),
+            ("fiˇle name", Some("file")),
+            ("filenˇame", Some("filename")),
+            ("foobar ˇ/home/user/f.txt", Some("/home/user/f.txt")),
+            ("foobar /home/useˇr/f.txt", Some("/home/user/f.txt")),
+        ];
 
         for (input, expected) in test_cases {
             cx.set_state(input);
@@ -1383,10 +1387,14 @@ mod tests {
             });
 
             let result = find_file(snapshot, position);
-            assert!(result.is_some(), "Failed to find file path: {}", input);
 
-            let (_, path) = result.unwrap();
-            assert_eq!(path, expected, "Incorrect file path for input: {}", input);
+            if let Some(expected) = expected {
+                assert!(result.is_some(), "Failed to find file path: {}", input);
+                let (_, path) = result.unwrap();
+                assert_eq!(&path, expected, "Incorrect file path for input: {}", input);
+            } else {
+                assert!(result.is_none());
+            }
         }
     }
 }

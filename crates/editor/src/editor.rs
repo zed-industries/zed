@@ -9175,7 +9175,6 @@ impl Editor {
         .detach();
     }
 
-    // `gf`
     pub fn open_file(&mut self, _: &OpenFile, cx: &mut ViewContext<Self>) {
         let Some(workspace) = self.workspace() else {
             return;
@@ -9237,11 +9236,19 @@ impl Editor {
                     .into_iter()
                     .zip(candidate_paths)
                     .find(|(exists, _)| *exists);
+
                 if let Some((_, path)) = buffer {
-                    let task = workspace.update(&mut cx, |workspace, cx| {
-                        workspace.open_paths(vec![PathBuf::from(path)], OpenVisible::All, None, cx)
-                    })?;
-                    task.await;
+                    workspace
+                        .update(&mut cx, |workspace, cx| {
+                            println!("opening path: {:?}", path);
+                            workspace.open_paths(
+                                vec![PathBuf::from(path)],
+                                OpenVisible::All,
+                                None,
+                                cx,
+                            )
+                        })?
+                        .await;
                 }
             }
             anyhow::Ok(())

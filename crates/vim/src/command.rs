@@ -742,7 +742,11 @@ fn generate_positions(string: &str, query: &str) -> Vec<usize> {
 mod test {
     use std::path::Path;
 
-    use crate::test::{NeovimBackedTestContext, VimTestContext};
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
+    use editor::Editor;
     use gpui::TestAppContext;
     use indoc::indoc;
 
@@ -922,5 +926,28 @@ mod test {
         cx.simulate_shared_keystrokes("v 2 j : s / . / k enter")
             .await;
         cx.shared_state().await.assert_eq("k\nk\nˇk\n4\n4\n3\n2\n1");
+    }
+
+    #[gpui::test]
+    async fn test_command_gf(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let path = Path::new("/root/dir/file.rs");
+        let fs = cx.workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file(path, b"Inside new file".to_vec())
+            .await;
+
+        cx.set_state(indoc! {"go to /root/dir/fiˇle.rs"}, Mode::Normal);
+
+        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 1));
+        cx.simulate_keystrokes("g f");
+        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
+
+        cx.workspace(|workspace, cx| {
+            let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+            let text = active_editor.read(cx).text(cx);
+            assert_eq!(text, "Inside new file");
+        });
     }
 }
