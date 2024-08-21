@@ -30,6 +30,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use strum::IntoEnumIterator;
 use telemetry::{report_llm_rate_limit, report_llm_usage, LlmRateLimitEventRow, LlmUsageEventRow};
 use tokio::sync::RwLock;
 use util::ResultExt;
@@ -631,23 +632,39 @@ pub fn log_usage_periodically(state: Arc<LlmState>) {
                 .sleep(std::time::Duration::from_secs(30))
                 .await;
 
-            let Some(usages) = state
+            for provider in LanguageModelProvider::iter() {
+                for model in state.db.model_names_for_provider(provider) {
+                    if let Some(active_user_count) = state
+                        .get_active_user_count(provider, &model)
+                        .await
+                        .log_err()
+                    {
+                        tracing::info!(
+                            target: "active user counts",
+                            provider = provider.to_string(),
+                            model = model,
+                            users_in_recent_minutes = active_user_count.users_in_recent_minutes,
+                            users_in_recent_days = active_user_count.users_in_recent_days,
+                        );
+                    }
+                }
+            }
+
+            if let Some(usages) = state
                 .db
                 .get_application_wide_usages_by_model(Utc::now())
                 .await
                 .log_err()
-            else {
-                continue;
-            };
-
-            for usage in usages {
-                tracing::info!(
-                    target: "computed usage",
-                    provider = usage.provider.to_string(),
-                    model = usage.model,
-                    requests_this_minute = usage.requests_this_minute,
-                    tokens_this_minute = usage.tokens_this_minute,
-                );
+            {
+                for usage in usages {
+                    tracing::info!(
+                        target: "computed usage",
+                        provider = usage.provider.to_string(),
+                        model = usage.model,
+                        requests_this_minute = usage.requests_this_minute,
+                        tokens_this_minute = usage.tokens_this_minute,
+                    );
+                }
             }
         }
     })
