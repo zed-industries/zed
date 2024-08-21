@@ -5242,10 +5242,10 @@ impl Editor {
 
         let multi_buffer_snapshot = &snapshot.display_snapshot.buffer_snapshot;
 
-        for excerpt_boundery in
+        for excerpt_boundary in
             multi_buffer_snapshot.excerpt_boundaries_in_range(Point::new(0, 0)..)
         {
-            let info = excerpt_boundery.next.as_ref();
+            let info = excerpt_boundary.next.as_ref();
 
             if let Some(info) = info {
                 let Some(excerpt_ranges) =

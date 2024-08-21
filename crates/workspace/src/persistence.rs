@@ -145,7 +145,7 @@ pub struct Breakpoint {
     pub position: u32,
 }
 
-/// This struct is used to implment traits on Vec<breakpoint>
+/// This struct is used to implement traits on Vec<breakpoint>
 #[derive(Debug)]
 #[allow(dead_code)]
 struct Breakpoints(Vec<Breakpoint>);
