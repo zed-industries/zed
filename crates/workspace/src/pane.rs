@@ -1679,11 +1679,12 @@ impl Pane {
             cx,
         );
 
-        let indicator = if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
-            None
-        } else {
-            Some(render_item_indicator(item.boxed_clone(), cx))
-        };
+        let indicator =
+            if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
+                None
+            } else {
+                Some(render_item_indicator(item.boxed_clone(), cx))
+            };
 
         let icon = item.tab_icon(cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
