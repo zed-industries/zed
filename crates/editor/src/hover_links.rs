@@ -1493,7 +1493,7 @@ mod tests {
 
         // Moving the mouse over a file that does not exist should not create a highlight
         let screen_coord = cx.pixel_position(indoc! {"
-            You can't go to a file that does_nˇot_exist.txt.
+            You can't go to a file that dˇoes_not_exist.txt.
             Go to file2.rs if you want.
         "});
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
