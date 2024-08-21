@@ -429,10 +429,6 @@ async fn check_usage_limit(
 
     let active_users = state.get_active_user_count(provider, model_name).await?;
 
-    eprintln!("========");
-    dbg!(&active_users);
-    eprintln!("========");
-
     let users_in_recent_minutes = active_users.users_in_recent_minutes.max(1);
     let users_in_recent_days = active_users.users_in_recent_days.max(1);
 
