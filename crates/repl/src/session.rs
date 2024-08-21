@@ -648,7 +648,7 @@ impl Session {
                 })
                 .detach();
             }
-            Kernel::StartingKernel(_) | _ => {
+            _ => {
                 self.messaging_task.take();
                 self.process_status_task.take();
                 self.kernel(Kernel::Shutdown, cx);
