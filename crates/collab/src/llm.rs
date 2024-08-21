@@ -463,6 +463,24 @@ async fn check_usage_limit(
             };
 
             if let Some(client) = state.clickhouse_client.as_ref() {
+                tracing::info!(
+                    target: "user rate limit",
+                    user_id = claims.user_id,
+                    login = claims.github_user_login,
+                    authn.jti = claims.jti,
+                    is_staff = claims.is_staff,
+                    provider = provider.to_string(),
+                    model = model.name,
+                    requests_this_minute = usage.requests_this_minute,
+                    tokens_this_minute = usage.tokens_this_minute,
+                    tokens_this_day = usage.tokens_this_day,
+                    users_in_recent_minutes = users_in_recent_minutes,
+                    users_in_recent_days = users_in_recent_days,
+                    max_requests_per_minute = per_user_max_requests_per_minute,
+                    max_tokens_per_minute = per_user_max_tokens_per_minute,
+                    max_tokens_per_day = per_user_max_tokens_per_day,
+                );
+
                 report_llm_rate_limit(
                     client,
                     LlmRateLimitEventRow {
