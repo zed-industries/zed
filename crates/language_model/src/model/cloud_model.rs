@@ -2,6 +2,7 @@ use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
+use ui::IconName;
 
 use crate::LanguageModelAvailability;
 
@@ -62,6 +63,13 @@ impl CloudModel {
             Self::OpenAi(model) => model.display_name(),
             Self::Google(model) => model.display_name(),
             Self::Zed(model) => model.display_name(),
+        }
+    }
+
+    pub fn icon(&self) -> Option<IconName> {
+        match self {
+            Self::Anthropic(_) => Some(IconName::AiAnthropicHosted),
+            _ => None,
         }
     }
 

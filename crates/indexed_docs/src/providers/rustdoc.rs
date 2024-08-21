@@ -91,7 +91,7 @@ impl IndexedDocsProvider for LocalRustdocProvider {
                 let item = item.cloned();
                 async move {
                     let target_doc_path = cargo_workspace_root.join("target/doc");
-                    let mut local_cargo_doc_path = target_doc_path.join(crate_name.as_ref());
+                    let mut local_cargo_doc_path = target_doc_path.join(crate_name.as_ref().replace('-', "_"));
 
                     if !fs.is_dir(&local_cargo_doc_path).await {
                         let cargo_doc_exists_at_all = fs.is_dir(&target_doc_path).await;

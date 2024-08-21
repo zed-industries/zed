@@ -64,6 +64,8 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
+  // How much to fade out unused code.
+  "unnecessary_code_fade": 0.3,
   // The factor to grow the active pane by. Defaults to 1.0
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,
@@ -395,9 +397,9 @@
     // The default model to use when creating new contexts.
     "default_model": {
       // The provider to use.
-      "provider": "openai",
+      "provider": "zed.dev",
       // The model to use.
-      "model": "gpt-4o"
+      "model": "claude-3-5-sonnet"
     }
   },
   // The settings for slash commands.
@@ -1010,5 +1012,16 @@
   //     ]
   //   }
   // ]
-  "ssh_connections": null
+  "ssh_connections": null,
+  // Configures the Context Server Protocol binaries
+  //
+  // Examples:
+  // {
+  //   "id": "server-1",
+  //   "executable": "/path",
+  //   "args": ['arg1", "args2"]
+  // }
+  "experimental.context_servers": {
+    "servers": []
+  }
 }

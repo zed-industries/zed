@@ -1,146 +1,154 @@
-use crate::{motion::Motion, normal::yank::copy_selections_content, object::Object, Vim};
+use crate::{motion::Motion, object::Object, Vim};
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };
-use gpui::WindowContext;
 use language::{Point, Selection};
 use multi_buffer::MultiBufferRow;
+use ui::ViewContext;
 
-pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
-    vim.stop_recording();
-    vim.update_active_editor(cx, |vim, editor, cx| {
-        let text_layout_details = editor.text_layout_details(cx);
-        editor.transact(cx, |editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
-            let mut original_columns: HashMap<_, _> = Default::default();
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_with(|map, selection| {
-                    let original_head = selection.head();
-                    original_columns.insert(selection.id, original_head.column());
-                    motion.expand_selection(map, selection, times, true, &text_layout_details);
+impl Vim {
+    pub fn delete_motion(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.stop_recording(cx);
+        self.update_editor(cx, |vim, editor, cx| {
+            let text_layout_details = editor.text_layout_details(cx);
+            editor.transact(cx, |editor, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+                let mut original_columns: HashMap<_, _> = Default::default();
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_with(|map, selection| {
+                        let original_head = selection.head();
+                        original_columns.insert(selection.id, original_head.column());
+                        motion.expand_selection(map, selection, times, true, &text_layout_details);
 
-                    // Motion::NextWordStart on an empty line should delete it.
-                    if let Motion::NextWordStart {
-                        ignore_punctuation: _,
-                    } = motion
-                    {
-                        if selection.is_empty()
-                            && map
-                                .buffer_snapshot
-                                .line_len(MultiBufferRow(selection.start.to_point(&map).row))
-                                == 0
+                        // Motion::NextWordStart on an empty line should delete it.
+                        if let Motion::NextWordStart {
+                            ignore_punctuation: _,
+                        } = motion
                         {
-                            selection.end = map
-                                .buffer_snapshot
-                                .clip_point(
-                                    Point::new(selection.start.to_point(&map).row + 1, 0),
-                                    Bias::Left,
-                                )
-                                .to_display_point(map)
-                        }
-                    }
-                });
-            });
-            copy_selections_content(vim, editor, motion.linewise(), cx);
-            editor.insert("", cx);
-
-            // Fixup cursor position after the deletion
-            editor.set_clip_at_line_ends(true, cx);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_with(|map, selection| {
-                    let mut cursor = selection.head();
-                    if motion.linewise() {
-                        if let Some(column) = original_columns.get(&selection.id) {
-                            *cursor.column_mut() = *column
-                        }
-                    }
-                    cursor = map.clip_point(cursor, Bias::Left);
-                    selection.collapse_to(cursor, selection.goal)
-                });
-            });
-        });
-    });
-}
-
-pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut WindowContext) {
-    vim.stop_recording();
-    vim.update_active_editor(cx, |vim, editor, cx| {
-        editor.transact(cx, |editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
-            // Emulates behavior in vim where if we expanded backwards to include a newline
-            // the cursor gets set back to the start of the line
-            let mut should_move_to_start: HashSet<_> = Default::default();
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_with(|map, selection| {
-                    object.expand_selection(map, selection, around);
-                    let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
-                    let mut move_selection_start_to_previous_line =
-                        |map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>| {
-                            let start = selection.start.to_offset(map, Bias::Left);
-                            if selection.start.row().0 > 0 {
-                                should_move_to_start.insert(selection.id);
-                                selection.start = (start - '\n'.len_utf8()).to_display_point(map);
+                            if selection.is_empty()
+                                && map
+                                    .buffer_snapshot
+                                    .line_len(MultiBufferRow(selection.start.to_point(&map).row))
+                                    == 0
+                            {
+                                selection.end = map
+                                    .buffer_snapshot
+                                    .clip_point(
+                                        Point::new(selection.start.to_point(&map).row + 1, 0),
+                                        Bias::Left,
+                                    )
+                                    .to_display_point(map)
                             }
-                        };
-                    let range = selection.start.to_offset(map, Bias::Left)
-                        ..selection.end.to_offset(map, Bias::Right);
-                    let contains_only_newlines = map
-                        .buffer_chars_at(range.start)
-                        .take_while(|(_, p)| p < &range.end)
-                        .all(|(char, _)| char == '\n')
-                        && !offset_range.is_empty();
-                    let end_at_newline = map
-                        .buffer_chars_at(range.end)
-                        .next()
-                        .map(|(c, _)| c == '\n')
-                        .unwrap_or(false);
-
-                    // If expanded range contains only newlines and
-                    // the object is around or sentence, expand to include a newline
-                    // at the end or start
-                    if (around || object == Object::Sentence) && contains_only_newlines {
-                        if end_at_newline {
-                            move_selection_end_to_next_line(map, selection);
-                        } else {
-                            move_selection_start_to_previous_line(map, selection);
                         }
-                    }
-
-                    // Does post-processing for the trailing newline and EOF
-                    // when not cancelled.
-                    let cancelled = around && selection.start == selection.end;
-                    if object == Object::Paragraph && !cancelled {
-                        // EOF check should be done before including a trailing newline.
-                        if ends_at_eof(map, selection) {
-                            move_selection_start_to_previous_line(map, selection);
-                        }
-
-                        if end_at_newline {
-                            move_selection_end_to_next_line(map, selection);
-                        }
-                    }
+                    });
                 });
-            });
-            copy_selections_content(vim, editor, false, cx);
-            editor.insert("", cx);
+                vim.copy_selections_content(editor, motion.linewise(), cx);
+                editor.insert("", cx);
 
-            // Fixup cursor position after the deletion
-            editor.set_clip_at_line_ends(true, cx);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_with(|map, selection| {
-                    let mut cursor = selection.head();
-                    if should_move_to_start.contains(&selection.id) {
-                        *cursor.column_mut() = 0;
-                    }
-                    cursor = map.clip_point(cursor, Bias::Left);
-                    selection.collapse_to(cursor, selection.goal)
+                // Fixup cursor position after the deletion
+                editor.set_clip_at_line_ends(true, cx);
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_with(|map, selection| {
+                        let mut cursor = selection.head();
+                        if motion.linewise() {
+                            if let Some(column) = original_columns.get(&selection.id) {
+                                *cursor.column_mut() = *column
+                            }
+                        }
+                        cursor = map.clip_point(cursor, Bias::Left);
+                        selection.collapse_to(cursor, selection.goal)
+                    });
                 });
             });
         });
-    });
+    }
+
+    pub fn delete_object(&mut self, object: Object, around: bool, cx: &mut ViewContext<Self>) {
+        self.stop_recording(cx);
+        self.update_editor(cx, |vim, editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+                // Emulates behavior in vim where if we expanded backwards to include a newline
+                // the cursor gets set back to the start of the line
+                let mut should_move_to_start: HashSet<_> = Default::default();
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_with(|map, selection| {
+                        object.expand_selection(map, selection, around);
+                        let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
+                        let mut move_selection_start_to_previous_line =
+                            |map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>| {
+                                let start = selection.start.to_offset(map, Bias::Left);
+                                if selection.start.row().0 > 0 {
+                                    should_move_to_start.insert(selection.id);
+                                    selection.start =
+                                        (start - '\n'.len_utf8()).to_display_point(map);
+                                }
+                            };
+                        let range = selection.start.to_offset(map, Bias::Left)
+                            ..selection.end.to_offset(map, Bias::Right);
+                        let contains_only_newlines = map
+                            .buffer_chars_at(range.start)
+                            .take_while(|(_, p)| p < &range.end)
+                            .all(|(char, _)| char == '\n')
+                            && !offset_range.is_empty();
+                        let end_at_newline = map
+                            .buffer_chars_at(range.end)
+                            .next()
+                            .map(|(c, _)| c == '\n')
+                            .unwrap_or(false);
+
+                        // If expanded range contains only newlines and
+                        // the object is around or sentence, expand to include a newline
+                        // at the end or start
+                        if (around || object == Object::Sentence) && contains_only_newlines {
+                            if end_at_newline {
+                                move_selection_end_to_next_line(map, selection);
+                            } else {
+                                move_selection_start_to_previous_line(map, selection);
+                            }
+                        }
+
+                        // Does post-processing for the trailing newline and EOF
+                        // when not cancelled.
+                        let cancelled = around && selection.start == selection.end;
+                        if object == Object::Paragraph && !cancelled {
+                            // EOF check should be done before including a trailing newline.
+                            if ends_at_eof(map, selection) {
+                                move_selection_start_to_previous_line(map, selection);
+                            }
+
+                            if end_at_newline {
+                                move_selection_end_to_next_line(map, selection);
+                            }
+                        }
+                    });
+                });
+                vim.copy_selections_content(editor, false, cx);
+                editor.insert("", cx);
+
+                // Fixup cursor position after the deletion
+                editor.set_clip_at_line_ends(true, cx);
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_with(|map, selection| {
+                        let mut cursor = selection.head();
+                        if should_move_to_start.contains(&selection.id) {
+                            *cursor.column_mut() = 0;
+                        }
+                        cursor = map.clip_point(cursor, Bias::Left);
+                        selection.collapse_to(cursor, selection.goal)
+                    });
+                });
+            });
+        });
+    }
 }
 
 fn move_selection_end_to_next_line(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {

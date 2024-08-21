@@ -35,7 +35,7 @@ impl SlashCommand for PromptSlashCommand {
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let store = PromptStore::global(cx);
-        let query = arguments.last().cloned().unwrap_or_default();
+        let query = arguments.to_owned().join(" ");
         cx.background_executor().spawn(async move {
             let prompts = store.await?.search(query).await;
             Ok(prompts
@@ -45,7 +45,8 @@ impl SlashCommand for PromptSlashCommand {
                     Some(ArgumentCompletion {
                         label: prompt_title.clone().into(),
                         new_text: prompt_title,
-                        run_command: true,
+                        after_completion: true.into(),
+                        replace_previous_arguments: true,
                     })
                 })
                 .collect())
@@ -59,12 +60,13 @@ impl SlashCommand for PromptSlashCommand {
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let Some(title) = arguments.first() else {
+        let title = arguments.to_owned().join(" ");
+        if title.trim().is_empty() {
             return Task::ready(Err(anyhow!("missing prompt name")));
         };
 
         let store = PromptStore::global(cx);
-        let title = SharedString::from(title.to_string());
+        let title = SharedString::from(title.clone());
         let prompt = cx.background_executor().spawn({
             let title = title.clone();
             async move {

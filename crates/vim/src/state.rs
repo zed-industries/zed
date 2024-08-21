@@ -1,14 +1,19 @@
+use std::borrow::BorrowMut;
 use std::{fmt::Display, ops::Range, sync::Arc};
 
+use crate::command::command_interceptor;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
+use crate::{UseSystemClipboard, Vim, VimSettings};
 use collections::HashMap;
-use editor::{Anchor, ClipboardSelection};
-use gpui::{Action, ClipboardEntry, ClipboardItem, KeyContext};
-use language::{CursorShape, Selection, TransactionId};
+use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
+use editor::{Anchor, ClipboardSelection, Editor};
+use gpui::{Action, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Global};
+use language::Point;
 use serde::{Deserialize, Serialize};
-use ui::SharedString;
+use settings::{Settings, SettingsStore};
+use ui::{SharedString, ViewContext};
 use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -75,32 +80,6 @@ pub enum Operator {
     ToggleComments,
 }
 
-#[derive(Default, Clone)]
-pub struct EditorState {
-    pub mode: Mode,
-    pub last_mode: Mode,
-
-    /// pre_count is the number before an operator is specified (3 in 3d2d)
-    pub pre_count: Option<usize>,
-    /// post_count is the number after an operator is specified (2 in 3d2d)
-    pub post_count: Option<usize>,
-
-    pub operator_stack: Vec<Operator>,
-    pub replacements: Vec<(Range<editor::Anchor>, String)>,
-
-    pub marks: HashMap<String, Vec<Anchor>>,
-    pub stored_visual_mode: Option<(Mode, Vec<bool>)>,
-    pub change_list: Vec<Vec<Anchor>>,
-    pub change_list_position: Option<usize>,
-
-    pub current_tx: Option<TransactionId>,
-    pub current_anchor: Option<Selection<Anchor>>,
-    pub undo_modes: HashMap<TransactionId, Mode>,
-
-    pub selected_register: Option<char>,
-    pub search: SearchState,
-}
-
 #[derive(Default, Clone, Debug)]
 pub enum RecordedSelection {
     #[default]
@@ -161,7 +140,7 @@ impl From<String> for Register {
 }
 
 #[derive(Default, Clone)]
-pub struct WorkspaceState {
+pub struct VimGlobals {
     pub last_find: Option<Motion>,
 
     pub dot_recording: bool,
@@ -181,6 +160,232 @@ pub struct WorkspaceState {
     pub last_yank: Option<SharedString>,
     pub registers: HashMap<char, Register>,
     pub recordings: HashMap<char, Vec<ReplayableAction>>,
+}
+impl Global for VimGlobals {}
+
+impl VimGlobals {
+    pub(crate) fn register(cx: &mut AppContext) {
+        cx.set_global(VimGlobals::default());
+
+        cx.observe_keystrokes(|event, cx| {
+            let Some(action) = event.action.as_ref().map(|action| action.boxed_clone()) else {
+                return;
+            };
+            Vim::globals(cx).observe_action(action.boxed_clone())
+        })
+        .detach();
+
+        cx.observe_global::<SettingsStore>(move |cx| {
+            if Vim::enabled(cx) {
+                CommandPaletteFilter::update_global(cx, |filter, _| {
+                    filter.show_namespace(Vim::NAMESPACE);
+                });
+                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
+                    interceptor.set(Box::new(command_interceptor));
+                });
+            } else {
+                *Vim::globals(cx) = VimGlobals::default();
+                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
+                    interceptor.clear();
+                });
+                CommandPaletteFilter::update_global(cx, |filter, _| {
+                    filter.hide_namespace(Vim::NAMESPACE);
+                });
+            }
+        })
+        .detach();
+    }
+
+    pub(crate) fn write_registers(
+        &mut self,
+        content: Register,
+        register: Option<char>,
+        is_yank: bool,
+        linewise: bool,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        if let Some(register) = register {
+            let lower = register.to_lowercase().next().unwrap_or(register);
+            if lower != register {
+                let current = self.registers.entry(lower).or_default();
+                current.text = (current.text.to_string() + &content.text).into();
+                // not clear how to support appending to registers with multiple cursors
+                current.clipboard_selections.take();
+                let yanked = current.clone();
+                self.registers.insert('"', yanked);
+            } else {
+                self.registers.insert('"', content.clone());
+                match lower {
+                    '_' | ':' | '.' | '%' | '#' | '=' | '/' => {}
+                    '+' => {
+                        cx.write_to_clipboard(content.into());
+                    }
+                    '*' => {
+                        #[cfg(target_os = "linux")]
+                        cx.write_to_primary(content.into());
+                        #[cfg(not(target_os = "linux"))]
+                        cx.write_to_clipboard(content.into());
+                    }
+                    '"' => {
+                        self.registers.insert('0', content.clone());
+                        self.registers.insert('"', content);
+                    }
+                    _ => {
+                        self.registers.insert(lower, content);
+                    }
+                }
+            }
+        } else {
+            let setting = VimSettings::get_global(cx).use_system_clipboard;
+            if setting == UseSystemClipboard::Always
+                || setting == UseSystemClipboard::OnYank && is_yank
+            {
+                self.last_yank.replace(content.text.clone());
+                cx.write_to_clipboard(content.clone().into());
+            } else {
+                self.last_yank = cx
+                    .read_from_clipboard()
+                    .and_then(|item| item.text().map(|string| string.into()));
+            }
+
+            self.registers.insert('"', content.clone());
+            if is_yank {
+                self.registers.insert('0', content);
+            } else {
+                let contains_newline = content.text.contains('\n');
+                if !contains_newline {
+                    self.registers.insert('-', content.clone());
+                }
+                if linewise || contains_newline {
+                    let mut content = content;
+                    for i in '1'..'8' {
+                        if let Some(moved) = self.registers.insert(i, content) {
+                            content = moved;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn read_register(
+        &mut self,
+        register: Option<char>,
+        editor: Option<&mut Editor>,
+        cx: &ViewContext<Editor>,
+    ) -> Option<Register> {
+        let Some(register) = register.filter(|reg| *reg != '"') else {
+            let setting = VimSettings::get_global(cx).use_system_clipboard;
+            return match setting {
+                UseSystemClipboard::Always => cx.read_from_clipboard().map(|item| item.into()),
+                UseSystemClipboard::OnYank if self.system_clipboard_is_newer(cx) => {
+                    cx.read_from_clipboard().map(|item| item.into())
+                }
+                _ => self.registers.get(&'"').cloned(),
+            };
+        };
+        let lower = register.to_lowercase().next().unwrap_or(register);
+        match lower {
+            '_' | ':' | '.' | '#' | '=' => None,
+            '+' => cx.read_from_clipboard().map(|item| item.into()),
+            '*' => {
+                #[cfg(target_os = "linux")]
+                {
+                    cx.read_from_primary().map(|item| item.into())
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    cx.read_from_clipboard().map(|item| item.into())
+                }
+            }
+            '%' => editor.and_then(|editor| {
+                let selection = editor.selections.newest::<Point>(cx);
+                if let Some((_, buffer, _)) = editor
+                    .buffer()
+                    .read(cx)
+                    .excerpt_containing(selection.head(), cx)
+                {
+                    buffer
+                        .read(cx)
+                        .file()
+                        .map(|file| file.path().to_string_lossy().to_string().into())
+                } else {
+                    None
+                }
+            }),
+            _ => self.registers.get(&lower).cloned(),
+        }
+    }
+
+    fn system_clipboard_is_newer(&self, cx: &ViewContext<Editor>) -> bool {
+        cx.read_from_clipboard().is_some_and(|item| {
+            if let Some(last_state) = &self.last_yank {
+                Some(last_state.as_ref()) != item.text().as_deref()
+            } else {
+                true
+            }
+        })
+    }
+
+    pub fn observe_action(&mut self, action: Box<dyn Action>) {
+        if self.dot_recording {
+            self.recorded_actions
+                .push(ReplayableAction::Action(action.boxed_clone()));
+
+            if self.stop_recording_after_next_action {
+                self.dot_recording = false;
+                self.stop_recording_after_next_action = false;
+            }
+        }
+        if self.replayer.is_none() {
+            if let Some(recording_register) = self.recording_register {
+                self.recordings
+                    .entry(recording_register)
+                    .or_default()
+                    .push(ReplayableAction::Action(action));
+            }
+        }
+    }
+
+    pub fn observe_insertion(&mut self, text: &Arc<str>, range_to_replace: Option<Range<isize>>) {
+        if self.ignore_current_insertion {
+            self.ignore_current_insertion = false;
+            return;
+        }
+        if self.dot_recording {
+            self.recorded_actions.push(ReplayableAction::Insertion {
+                text: text.clone(),
+                utf16_range_to_replace: range_to_replace.clone(),
+            });
+            if self.stop_recording_after_next_action {
+                self.dot_recording = false;
+                self.stop_recording_after_next_action = false;
+            }
+        }
+        if let Some(recording_register) = self.recording_register {
+            self.recordings.entry(recording_register).or_default().push(
+                ReplayableAction::Insertion {
+                    text: text.clone(),
+                    utf16_range_to_replace: range_to_replace,
+                },
+            );
+        }
+    }
+}
+
+impl Vim {
+    pub fn globals(cx: &mut AppContext) -> &mut VimGlobals {
+        cx.global_mut::<VimGlobals>()
+    }
+
+    pub fn update_globals<C, R>(cx: &mut C, f: impl FnOnce(&mut VimGlobals, &mut C) -> R) -> R
+    where
+        C: BorrowMut<AppContext>,
+    {
+        cx.update_global(f)
+    }
 }
 
 #[derive(Debug)]
@@ -216,93 +421,6 @@ pub struct SearchState {
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
     pub prior_mode: Mode,
-}
-
-impl EditorState {
-    pub fn cursor_shape(&self) -> CursorShape {
-        match self.mode {
-            Mode::Normal => {
-                if self.operator_stack.is_empty() {
-                    CursorShape::Block
-                } else {
-                    CursorShape::Underscore
-                }
-            }
-            Mode::Replace => CursorShape::Underscore,
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
-            Mode::Insert => CursorShape::Bar,
-        }
-    }
-
-    pub fn editor_input_enabled(&self) -> bool {
-        match self.mode {
-            Mode::Insert => {
-                if let Some(operator) = self.operator_stack.last() {
-                    !operator.is_waiting(self.mode)
-                } else {
-                    true
-                }
-            }
-            Mode::Normal | Mode::Replace | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                false
-            }
-        }
-    }
-
-    pub fn should_autoindent(&self) -> bool {
-        !(self.mode == Mode::Insert && self.last_mode == Mode::VisualBlock)
-    }
-
-    pub fn clip_at_line_ends(&self) -> bool {
-        match self.mode {
-            Mode::Insert | Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::Replace => {
-                false
-            }
-            Mode::Normal => true,
-        }
-    }
-
-    pub fn active_operator(&self) -> Option<Operator> {
-        self.operator_stack.last().cloned()
-    }
-
-    pub fn keymap_context_layer(&self) -> KeyContext {
-        let mut context = KeyContext::new_with_defaults();
-
-        let mut mode = match self.mode {
-            Mode::Normal => "normal",
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
-            Mode::Insert => "insert",
-            Mode::Replace => "replace",
-        }
-        .to_string();
-
-        let mut operator_id = "none";
-
-        let active_operator = self.active_operator();
-        if active_operator.is_none() && self.pre_count.is_some()
-            || active_operator.is_some() && self.post_count.is_some()
-        {
-            context.add("VimCount");
-        }
-
-        if let Some(active_operator) = active_operator {
-            if active_operator.is_waiting(self.mode) {
-                mode = "waiting".to_string();
-            } else {
-                mode = "operator".to_string();
-                operator_id = active_operator.id();
-            }
-        }
-
-        if mode != "waiting" && mode != "insert" && mode != "replace" {
-            context.add("VimControl");
-        }
-        context.set("vim_mode", mode);
-        context.set("vim_operator", operator_id);
-
-        context
-    }
 }
 
 impl Operator {

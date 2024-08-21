@@ -27,7 +27,6 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
-lazy_static.workspace = true
 log.workspace = true
 once_cell.workspace = true
 paths.workspace = true

@@ -58,10 +58,14 @@ impl SlashCommandRegistry {
 
     /// Unregisters the provided [`SlashCommand`].
     pub fn unregister_command(&self, command: impl SlashCommand) {
+        self.unregister_command_by_name(command.name().as_str())
+    }
+
+    /// Unregisters the command with the given name.
+    pub fn unregister_command_by_name(&self, command_name: &str) {
         let mut state = self.state.write();
-        let command_name: Arc<str> = command.name().into();
-        state.featured_commands.remove(&command_name);
-        state.commands.remove(&command_name);
+        state.featured_commands.remove(command_name);
+        state.commands.remove(command_name);
     }
 
     /// Returns the names of registered [`SlashCommand`]s.

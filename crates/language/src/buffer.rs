@@ -24,7 +24,6 @@ use gpui::{
     AnyElement, AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLabel,
     WindowContext,
 };
-use lazy_static::lazy_static;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -44,7 +43,7 @@ use std::{
     ops::{Deref, Range},
     path::{Path, PathBuf},
     str,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant, SystemTime},
     vec,
 };
@@ -67,11 +66,9 @@ pub use {tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
 
-lazy_static! {
-    /// A label for the background task spawned by the buffer to compute
-    /// a diff against the contents of its file.
-    pub static ref BUFFER_DIFF_TASK: TaskLabel = TaskLabel::new();
-}
+/// A label for the background task spawned by the buffer to compute
+/// a diff against the contents of its file.
+pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(|| TaskLabel::new());
 
 /// Indicate whether a [Buffer] has permissions to edit.
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -332,6 +329,8 @@ pub enum Event {
     CapabilityChanged,
     /// The buffer was explicitly requested to close.
     Closed,
+    /// The buffer was discarded when closing.
+    Discarded,
 }
 
 /// The file associated with a buffer.
@@ -824,6 +823,12 @@ impl Buffer {
         self.has_conflict = false;
         self.saved_mtime = mtime;
         cx.emit(Event::Saved);
+        cx.notify();
+    }
+
+    /// This method is called to signal that the buffer has been discarded.
+    pub fn discarded(&mut self, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::Discarded);
         cx.notify();
     }
 

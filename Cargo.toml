@@ -19,6 +19,7 @@ members = [
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
+    "crates/context_servers",
     "crates/copilot",
     "crates/dap",
     "crates/debugger_ui",
@@ -71,6 +72,7 @@ members = [
     "crates/outline",
     "crates/outline_panel",
     "crates/paths",
+    "crates/performance",
     "crates/picker",
     "crates/prettier",
     "crates/project",
@@ -146,10 +148,12 @@ members = [
     "extensions/lua",
     "extensions/ocaml",
     "extensions/php",
+    "extensions/perplexity",
     "extensions/prisma",
     "extensions/purescript",
     "extensions/ruff",
     "extensions/ruby",
+    "extensions/slash-commands-example",
     "extensions/snippets",
     "extensions/svelte",
     "extensions/terraform",
@@ -191,6 +195,7 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
+context_servers = { path = "crates/context_servers" }
 copilot = { path = "crates/copilot" }
 dap = { path = "crates/dap" }
 db = { path = "crates/db" }
@@ -242,6 +247,7 @@ open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 paths = { path = "crates/paths" }
+performance = { path = "crates/performance" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
@@ -357,7 +363,6 @@ isahc = { version = "1.7.2", default-features = false, features = [
 ] }
 itertools = "0.11.0"
 jsonwebtoken = "9.3"
-lazy_static = "1.4.0"
 libc = "0.2"
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
@@ -381,7 +386,7 @@ rand = "0.8.5"
 regex = "1.5"
 repair_json = "0.1.0"
 rsa = "0.9.6"
-runtimelib = { version = "0.14", default-features = false, features = [
+runtimelib = { version = "0.15", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
@@ -465,7 +470,7 @@ which = "6.0.0"
 wit-component = "0.201"
 
 [workspace.dependencies.async-stripe]
-version = "0.37"
+version = "0.38"
 default-features = false
 features = [
     "runtime-tokio-hyper-rustls",
