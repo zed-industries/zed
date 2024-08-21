@@ -335,6 +335,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         },
         key,
         ime_key: None,
+        ime_inputs: smallvec::smallvec![],
     }
 }
 
