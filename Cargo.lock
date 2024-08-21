@@ -13735,6 +13735,8 @@ dependencies = [
  "cargo_metadata",
  "cargo_toml",
  "clap",
+ "schemars",
+ "serde_json",
 ]
 
 [[package]]

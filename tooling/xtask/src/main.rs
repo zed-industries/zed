@@ -18,6 +18,8 @@ enum CliCommand {
     Licenses(tasks::licenses::LicensesArgs),
     /// Checks that packages conform to a set of standards.
     PackageConformity(tasks::package_conformity::PackageConformityArgs),
+    /// Checks that settings schema conforms to a set of standards.
+    ValidateSchema(tasks::validate_schema::SchemaValidationArgs),
 }
 
 fn main() -> Result<()> {
@@ -29,5 +31,6 @@ fn main() -> Result<()> {
         CliCommand::PackageConformity(args) => {
             tasks::package_conformity::run_package_conformity(args)
         }
+        CliCommand::ValidateSchema(args) => tasks::validate_schema::run_validate_schema(args),
     }
 }
