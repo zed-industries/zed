@@ -462,7 +462,7 @@ struct MultiBufferOffset(usize);
 struct BufferOffset(usize);
 
 pub trait Addon: 'static {
-    fn extend_key_context(&self, _: &mut KeyContext, _: &Editor, _: &ViewContext<Editor>) {}
+    fn extend_key_context(&self, _: &mut KeyContext, _: &AppContext) {}
 
     fn to_any(&self) -> &dyn std::any::Any;
 }
@@ -2001,8 +2001,13 @@ impl Editor {
             }
         }
 
-        for addon in self.addons.values() {
-            addon.extend_key_context(&mut key_context, self, cx)
+        // Disable vim contexts when a sub-editor (e.g. rename/inline assistant) is focused.
+        if !self.focus_handle(cx).contains_focused(cx)
+            || (self.is_focused(cx) || self.mouse_menu_is_focused(cx))
+        {
+            for addon in self.addons.values() {
+                addon.extend_key_context(&mut key_context, cx)
+            }
         }
 
         if let Some(extension) = self

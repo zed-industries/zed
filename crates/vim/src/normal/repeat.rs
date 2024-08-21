@@ -45,14 +45,14 @@ fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
 }
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    crate::listener(editor, cx, |vim, _: &EndRepeat, cx| {
+    Vim::action(editor, cx, |vim, _: &EndRepeat, cx| {
         Vim::globals(cx).dot_replaying = false;
         vim.switch_mode(Mode::Normal, false, cx)
     });
 
-    crate::listener(editor, cx, |vim, _: &Repeat, cx| vim.repeat(false, cx));
+    Vim::action(editor, cx, |vim, _: &Repeat, cx| vim.repeat(false, cx));
 
-    crate::listener(editor, cx, |vim, _: &ToggleRecord, cx| {
+    Vim::action(editor, cx, |vim, _: &ToggleRecord, cx| {
         let globals = Vim::globals(cx);
         if let Some(char) = globals.recording_register.take() {
             globals.last_recorded_register = Some(char)
@@ -61,7 +61,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         }
     });
 
-    crate::listener(editor, cx, |vim, _: &ReplayLastRecording, cx| {
+    Vim::action(editor, cx, |vim, _: &ReplayLastRecording, cx| {
         let Some(register) = Vim::globals(cx).last_recorded_register else {
             return;
         };

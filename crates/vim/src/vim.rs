@@ -125,34 +125,13 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-/// Register an action on the editor.
-pub(crate) fn listener<A: Action>(
-    editor: &mut Editor,
-    cx: &mut ViewContext<Vim>,
-    f: impl Fn(&mut Vim, &A, &mut ViewContext<Vim>) + 'static,
-) {
-    let subscription = editor.register_action(cx.listener(f));
-    cx.on_release(|_, _, _| drop(subscription)).detach();
-}
-
 #[derive(Clone)]
 pub(crate) struct VimAddon {
     pub(crate) view: View<Vim>,
 }
 
 impl editor::Addon for VimAddon {
-    fn extend_key_context(
-        &self,
-        key_context: &mut KeyContext,
-        editor: &Editor,
-        cx: &ViewContext<Editor>,
-    ) {
-        // Disable the vim bindings when the rename/inline assist editors are focused.
-        if editor.focus_handle(cx).contains_focused(cx)
-            && !(editor.is_focused(cx) || editor.mouse_menu_is_focused(cx))
-        {
-            return;
-        }
+    fn extend_key_context(&self, key_context: &mut KeyContext, cx: &AppContext) {
         self.view.read(cx).keymap_context_layer(key_context)
     }
 
@@ -273,24 +252,24 @@ impl Vim {
         editor.register_addon(VimAddon { view: vim.clone() });
 
         vim.update(cx, |_, cx| {
-            crate::listener(editor, cx, |vim, action: &SwitchMode, cx| {
+            Vim::action(editor, cx, |vim, action: &SwitchMode, cx| {
                 vim.switch_mode(action.0, false, cx)
             });
 
-            crate::listener(editor, cx, |vim, action: &PushOperator, cx| {
+            Vim::action(editor, cx, |vim, action: &PushOperator, cx| {
                 vim.push_operator(action.0.clone(), cx)
             });
 
-            crate::listener(editor, cx, |vim, _: &ClearOperators, cx| {
+            Vim::action(editor, cx, |vim, _: &ClearOperators, cx| {
                 vim.clear_operator(cx)
             });
-            crate::listener(editor, cx, |vim, n: &Number, cx| {
+            Vim::action(editor, cx, |vim, n: &Number, cx| {
                 vim.push_count_digit(n.0, cx);
             });
-            crate::listener(editor, cx, |vim, _: &Tab, cx| {
+            Vim::action(editor, cx, |vim, _: &Tab, cx| {
                 vim.input_ignored(" ".into(), cx)
             });
-            crate::listener(editor, cx, |vim, _: &Enter, cx| {
+            Vim::action(editor, cx, |vim, _: &Enter, cx| {
                 vim.input_ignored("\n".into(), cx)
             });
 
@@ -317,6 +296,16 @@ impl Vim {
         editor.set_autoindent(true);
         editor.selections.line_mode = false;
         editor.unregister_addon::<VimAddon>();
+    }
+
+    /// Register an action on the editor.
+    pub fn action<A: Action>(
+        editor: &mut Editor,
+        cx: &mut ViewContext<Vim>,
+        f: impl Fn(&mut Vim, &A, &mut ViewContext<Vim>) + 'static,
+    ) {
+        let subscription = editor.register_action(cx.listener(f));
+        cx.on_release(|_, _, _| drop(subscription)).detach();
     }
 
     pub fn editor(&self) -> Option<View<Editor>> {

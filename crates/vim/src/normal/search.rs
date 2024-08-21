@@ -61,14 +61,14 @@ impl_actions!(
 );
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    crate::listener(editor, cx, Vim::move_to_next);
-    crate::listener(editor, cx, Vim::move_to_prev);
-    crate::listener(editor, cx, Vim::move_to_next_match);
-    crate::listener(editor, cx, Vim::move_to_prev_match);
-    crate::listener(editor, cx, Vim::search);
-    crate::listener(editor, cx, Vim::search_deploy);
-    crate::listener(editor, cx, Vim::find_command);
-    crate::listener(editor, cx, Vim::replace_command);
+    Vim::action(editor, cx, Vim::move_to_next);
+    Vim::action(editor, cx, Vim::move_to_prev);
+    Vim::action(editor, cx, Vim::move_to_next_match);
+    Vim::action(editor, cx, Vim::move_to_prev_match);
+    Vim::action(editor, cx, Vim::search);
+    Vim::action(editor, cx, Vim::search_deploy);
+    Vim::action(editor, cx, Vim::find_command);
+    Vim::action(editor, cx, Vim::replace_command);
 }
 
 impl Vim {

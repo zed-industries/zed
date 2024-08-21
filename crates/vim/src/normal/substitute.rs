@@ -7,13 +7,13 @@ use crate::{motion::Motion, Mode, Vim};
 actions!(vim, [Substitute, SubstituteLine]);
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    crate::listener(editor, cx, |vim, _: &Substitute, cx| {
+    Vim::action(editor, cx, |vim, _: &Substitute, cx| {
         vim.start_recording(cx);
         let count = vim.take_count(cx);
         vim.substitute(count, vim.mode == Mode::VisualLine, cx);
     });
 
-    crate::listener(editor, cx, |vim, _: &SubstituteLine, cx| {
+    Vim::action(editor, cx, |vim, _: &SubstituteLine, cx| {
         vim.start_recording(cx);
         if matches!(vim.mode, Mode::VisualBlock | Mode::Visual) {
             vim.switch_mode(Mode::VisualLine, false, cx)

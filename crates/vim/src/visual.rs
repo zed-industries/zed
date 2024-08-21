@@ -40,36 +40,36 @@ actions!(
 );
 
 pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    crate::listener(editor, cx, |vim, _: &ToggleVisual, cx| {
+    Vim::action(editor, cx, |vim, _: &ToggleVisual, cx| {
         vim.toggle_mode(Mode::Visual, cx)
     });
-    crate::listener(editor, cx, |vim, _: &ToggleVisualLine, cx| {
+    Vim::action(editor, cx, |vim, _: &ToggleVisualLine, cx| {
         vim.toggle_mode(Mode::VisualLine, cx)
     });
-    crate::listener(editor, cx, |vim, _: &ToggleVisualBlock, cx| {
+    Vim::action(editor, cx, |vim, _: &ToggleVisualBlock, cx| {
         vim.toggle_mode(Mode::VisualBlock, cx)
     });
-    crate::listener(editor, cx, Vim::other_end);
-    crate::listener(editor, cx, |vim, _: &VisualDelete, cx| {
+    Vim::action(editor, cx, Vim::other_end);
+    Vim::action(editor, cx, |vim, _: &VisualDelete, cx| {
         vim.record_current_action(cx);
         vim.visual_delete(false, cx);
     });
-    crate::listener(editor, cx, |vim, _: &VisualDeleteLine, cx| {
+    Vim::action(editor, cx, |vim, _: &VisualDeleteLine, cx| {
         vim.record_current_action(cx);
         vim.visual_delete(true, cx);
     });
-    crate::listener(editor, cx, |vim, _: &VisualYank, cx| vim.visual_yank(cx));
+    Vim::action(editor, cx, |vim, _: &VisualYank, cx| vim.visual_yank(cx));
 
-    crate::listener(editor, cx, Vim::select_next);
-    crate::listener(editor, cx, Vim::select_previous);
-    crate::listener(editor, cx, |vim, _: &SelectNextMatch, cx| {
+    Vim::action(editor, cx, Vim::select_next);
+    Vim::action(editor, cx, Vim::select_previous);
+    Vim::action(editor, cx, |vim, _: &SelectNextMatch, cx| {
         vim.select_match(Direction::Next, cx);
     });
-    crate::listener(editor, cx, |vim, _: &SelectPreviousMatch, cx| {
+    Vim::action(editor, cx, |vim, _: &SelectPreviousMatch, cx| {
         vim.select_match(Direction::Prev, cx);
     });
 
-    crate::listener(editor, cx, |vim, _: &RestoreVisualSelection, cx| {
+    Vim::action(editor, cx, |vim, _: &RestoreVisualSelection, cx| {
         let Some((stored_mode, reversed)) = vim.stored_visual_mode.take() else {
             return;
         };

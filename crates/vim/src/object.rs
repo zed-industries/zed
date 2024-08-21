@@ -63,45 +63,45 @@ actions!(
 );
 
 pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    crate::listener(
+    Vim::action(
         editor,
         cx,
         |vim, &Word { ignore_punctuation }: &Word, cx| {
             vim.object(Object::Word { ignore_punctuation }, cx)
         },
     );
-    crate::listener(editor, cx, |vim, _: &Tag, cx| vim.object(Object::Tag, cx));
-    crate::listener(editor, cx, |vim, _: &Sentence, cx| {
+    Vim::action(editor, cx, |vim, _: &Tag, cx| vim.object(Object::Tag, cx));
+    Vim::action(editor, cx, |vim, _: &Sentence, cx| {
         vim.object(Object::Sentence, cx)
     });
-    crate::listener(editor, cx, |vim, _: &Paragraph, cx| {
+    Vim::action(editor, cx, |vim, _: &Paragraph, cx| {
         vim.object(Object::Paragraph, cx)
     });
-    crate::listener(editor, cx, |vim, _: &Quotes, cx| {
+    Vim::action(editor, cx, |vim, _: &Quotes, cx| {
         vim.object(Object::Quotes, cx)
     });
-    crate::listener(editor, cx, |vim, _: &BackQuotes, cx| {
+    Vim::action(editor, cx, |vim, _: &BackQuotes, cx| {
         vim.object(Object::BackQuotes, cx)
     });
-    crate::listener(editor, cx, |vim, _: &DoubleQuotes, cx| {
+    Vim::action(editor, cx, |vim, _: &DoubleQuotes, cx| {
         vim.object(Object::DoubleQuotes, cx)
     });
-    crate::listener(editor, cx, |vim, _: &Parentheses, cx| {
+    Vim::action(editor, cx, |vim, _: &Parentheses, cx| {
         vim.object(Object::Parentheses, cx)
     });
-    crate::listener(editor, cx, |vim, _: &SquareBrackets, cx| {
+    Vim::action(editor, cx, |vim, _: &SquareBrackets, cx| {
         vim.object(Object::SquareBrackets, cx)
     });
-    crate::listener(editor, cx, |vim, _: &CurlyBrackets, cx| {
+    Vim::action(editor, cx, |vim, _: &CurlyBrackets, cx| {
         vim.object(Object::CurlyBrackets, cx)
     });
-    crate::listener(editor, cx, |vim, _: &AngleBrackets, cx| {
+    Vim::action(editor, cx, |vim, _: &AngleBrackets, cx| {
         vim.object(Object::AngleBrackets, cx)
     });
-    crate::listener(editor, cx, |vim, _: &VerticalBars, cx| {
+    Vim::action(editor, cx, |vim, _: &VerticalBars, cx| {
         vim.object(Object::VerticalBars, cx)
     });
-    crate::listener(editor, cx, |vim, _: &Argument, cx| {
+    Vim::action(editor, cx, |vim, _: &Argument, cx| {
         vim.object(Object::Argument, cx)
     });
 }

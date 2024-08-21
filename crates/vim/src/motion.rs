@@ -247,11 +247,11 @@ actions!(
 );
 
 pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    crate::listener(editor, cx, |vim, _: &Left, cx| vim.motion(Motion::Left, cx));
-    crate::listener(editor, cx, |vim, _: &Backspace, cx| {
+    Vim::action(editor, cx, |vim, _: &Left, cx| vim.motion(Motion::Left, cx));
+    Vim::action(editor, cx, |vim, _: &Backspace, cx| {
         vim.motion(Motion::Backspace, cx)
     });
-    crate::listener(editor, cx, |vim, action: &Down, cx| {
+    Vim::action(editor, cx, |vim, action: &Down, cx| {
         vim.motion(
             Motion::Down {
                 display_lines: action.display_lines,
@@ -259,7 +259,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             cx,
         )
     });
-    crate::listener(editor, cx, |vim, action: &Up, cx| {
+    Vim::action(editor, cx, |vim, action: &Up, cx| {
         vim.motion(
             Motion::Up {
                 display_lines: action.display_lines,
@@ -267,13 +267,13 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             cx,
         )
     });
-    crate::listener(editor, cx, |vim, _: &Right, cx| {
+    Vim::action(editor, cx, |vim, _: &Right, cx| {
         vim.motion(Motion::Right, cx)
     });
-    crate::listener(editor, cx, |vim, _: &Space, cx| {
+    Vim::action(editor, cx, |vim, _: &Space, cx| {
         vim.motion(Motion::Space, cx)
     });
-    crate::listener(editor, cx, |vim, action: &FirstNonWhitespace, cx| {
+    Vim::action(editor, cx, |vim, action: &FirstNonWhitespace, cx| {
         vim.motion(
             Motion::FirstNonWhitespace {
                 display_lines: action.display_lines,
@@ -281,7 +281,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             cx,
         )
     });
-    crate::listener(editor, cx, |vim, action: &StartOfLine, cx| {
+    Vim::action(editor, cx, |vim, action: &StartOfLine, cx| {
         vim.motion(
             Motion::StartOfLine {
                 display_lines: action.display_lines,
@@ -289,7 +289,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             cx,
         )
     });
-    crate::listener(editor, cx, |vim, action: &EndOfLine, cx| {
+    Vim::action(editor, cx, |vim, action: &EndOfLine, cx| {
         vim.motion(
             Motion::EndOfLine {
                 display_lines: action.display_lines,
@@ -297,115 +297,115 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             cx,
         )
     });
-    crate::listener(editor, cx, |vim, _: &CurrentLine, cx| {
+    Vim::action(editor, cx, |vim, _: &CurrentLine, cx| {
         vim.motion(Motion::CurrentLine, cx)
     });
-    crate::listener(editor, cx, |vim, _: &StartOfParagraph, cx| {
+    Vim::action(editor, cx, |vim, _: &StartOfParagraph, cx| {
         vim.motion(Motion::StartOfParagraph, cx)
     });
-    crate::listener(editor, cx, |vim, _: &EndOfParagraph, cx| {
+    Vim::action(editor, cx, |vim, _: &EndOfParagraph, cx| {
         vim.motion(Motion::EndOfParagraph, cx)
     });
-    crate::listener(editor, cx, |vim, _: &StartOfDocument, cx| {
+    Vim::action(editor, cx, |vim, _: &StartOfDocument, cx| {
         vim.motion(Motion::StartOfDocument, cx)
     });
-    crate::listener(editor, cx, |vim, _: &EndOfDocument, cx| {
+    Vim::action(editor, cx, |vim, _: &EndOfDocument, cx| {
         vim.motion(Motion::EndOfDocument, cx)
     });
-    crate::listener(editor, cx, |vim, _: &Matching, cx| {
+    Vim::action(editor, cx, |vim, _: &Matching, cx| {
         vim.motion(Motion::Matching, cx)
     });
 
-    crate::listener(
+    Vim::action(
         editor,
         cx,
         |vim, &NextWordStart { ignore_punctuation }: &NextWordStart, cx| {
             vim.motion(Motion::NextWordStart { ignore_punctuation }, cx)
         },
     );
-    crate::listener(
+    Vim::action(
         editor,
         cx,
         |vim, &NextWordEnd { ignore_punctuation }: &NextWordEnd, cx| {
             vim.motion(Motion::NextWordEnd { ignore_punctuation }, cx)
         },
     );
-    crate::listener(
+    Vim::action(
         editor,
         cx,
         |vim, &PreviousWordStart { ignore_punctuation }: &PreviousWordStart, cx| {
             vim.motion(Motion::PreviousWordStart { ignore_punctuation }, cx)
         },
     );
-    crate::listener(
+    Vim::action(
         editor,
         cx,
         |vim, &PreviousWordEnd { ignore_punctuation }, cx| {
             vim.motion(Motion::PreviousWordEnd { ignore_punctuation }, cx)
         },
     );
-    crate::listener(
+    Vim::action(
         editor,
         cx,
         |vim, &NextSubwordStart { ignore_punctuation }: &NextSubwordStart, cx| {
             vim.motion(Motion::NextSubwordStart { ignore_punctuation }, cx)
         },
     );
-    crate::listener(
+    Vim::action(
         editor,
         cx,
         |vim, &NextSubwordEnd { ignore_punctuation }: &NextSubwordEnd, cx| {
             vim.motion(Motion::NextSubwordEnd { ignore_punctuation }, cx)
         },
     );
-    crate::listener(
+    Vim::action(
         editor,
         cx,
         |vim, &PreviousSubwordStart { ignore_punctuation }: &PreviousSubwordStart, cx| {
             vim.motion(Motion::PreviousSubwordStart { ignore_punctuation }, cx)
         },
     );
-    crate::listener(
+    Vim::action(
         editor,
         cx,
         |vim, &PreviousSubwordEnd { ignore_punctuation }, cx| {
             vim.motion(Motion::PreviousSubwordEnd { ignore_punctuation }, cx)
         },
     );
-    crate::listener(editor, cx, |vim, &NextLineStart, cx| {
+    Vim::action(editor, cx, |vim, &NextLineStart, cx| {
         vim.motion(Motion::NextLineStart, cx)
     });
-    crate::listener(editor, cx, |vim, &PreviousLineStart, cx| {
+    Vim::action(editor, cx, |vim, &PreviousLineStart, cx| {
         vim.motion(Motion::PreviousLineStart, cx)
     });
-    crate::listener(editor, cx, |vim, &StartOfLineDownward, cx| {
+    Vim::action(editor, cx, |vim, &StartOfLineDownward, cx| {
         vim.motion(Motion::StartOfLineDownward, cx)
     });
-    crate::listener(editor, cx, |vim, &EndOfLineDownward, cx| {
+    Vim::action(editor, cx, |vim, &EndOfLineDownward, cx| {
         vim.motion(Motion::EndOfLineDownward, cx)
     });
-    crate::listener(editor, cx, |vim, &GoToColumn, cx| {
+    Vim::action(editor, cx, |vim, &GoToColumn, cx| {
         vim.motion(Motion::GoToColumn, cx)
     });
 
-    crate::listener(editor, cx, |vim, _: &RepeatFind, cx| {
+    Vim::action(editor, cx, |vim, _: &RepeatFind, cx| {
         if let Some(last_find) = Vim::globals(cx).last_find.clone().map(Box::new) {
             vim.motion(Motion::RepeatFind { last_find }, cx);
         }
     });
 
-    crate::listener(editor, cx, |vim, _: &RepeatFindReversed, cx| {
+    Vim::action(editor, cx, |vim, _: &RepeatFindReversed, cx| {
         if let Some(last_find) = Vim::globals(cx).last_find.clone().map(Box::new) {
             vim.motion(Motion::RepeatFindReversed { last_find }, cx);
         }
     });
-    crate::listener(editor, cx, |vim, &WindowTop, cx| {
+    Vim::action(editor, cx, |vim, &WindowTop, cx| {
         vim.motion(Motion::WindowTop, cx)
     });
-    crate::listener(editor, cx, |vim, &WindowMiddle, cx| {
+    Vim::action(editor, cx, |vim, &WindowMiddle, cx| {
         vim.motion(Motion::WindowMiddle, cx)
     });
-    crate::listener(editor, cx, |vim, &WindowBottom, cx| {
+    Vim::action(editor, cx, |vim, &WindowBottom, cx| {
         vim.motion(Motion::WindowBottom, cx)
     });
 }
