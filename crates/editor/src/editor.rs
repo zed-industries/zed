@@ -97,7 +97,7 @@ use language::{point_to_lsp, BufferRow, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
-use hover_links::{surrounding_filename, HoverLink, HoveredLinkState, InlayHighlight};
+use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
 pub use lsp::CompletionContext;
 use lsp::{
     CompletionItemKind, CompletionTriggerKind, DiagnosticSeverity, InsertTextFormat,
@@ -9192,28 +9192,15 @@ impl Editor {
             return;
         };
 
-        let snapshot = buffer.read(cx).snapshot();
-
         cx.spawn(|_, mut cx| async move {
-            let result = surrounding_filename(snapshot, buffer_position);
+            let result = find_file(&buffer, project, buffer_position, &mut cx).await;
 
-            if let Some((_, candidate_file_path)) = result {
-                let task = project.update(&mut cx, |project, cx| {
-                    project.file_exists_in(&candidate_file_path, &buffer, cx)
-                })?;
-
-                if let Some(path) = task.await {
-                    workspace
-                        .update(&mut cx, |workspace, cx| {
-                            workspace.open_paths(
-                                vec![PathBuf::from(path)],
-                                OpenVisible::All,
-                                None,
-                                cx,
-                            )
-                        })?
-                        .await;
-                }
+            if let Some((_, path)) = result {
+                workspace
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.open_paths(vec![path], OpenVisible::All, None, cx)
+                    })?
+                    .await;
             }
             anyhow::Ok(())
         })

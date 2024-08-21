@@ -9,10 +9,10 @@ use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
 use project::{
-    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink,
+    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink, Project,
     ResolveState,
 };
-use std::ops::Range;
+use std::{ops::Range, path::PathBuf};
 use theme::ActiveTheme as _;
 use util::{maybe, ResultExt, TryFutureExt};
 
@@ -684,6 +684,26 @@ pub(crate) fn find_url(
         }
     }
     None
+}
+
+pub(crate) async fn find_file(
+    buffer: &Model<language::Buffer>,
+    project: Model<Project>,
+    position: text::Anchor,
+    cx: &mut AsyncWindowContext,
+) -> Option<(Range<text::Anchor>, PathBuf)> {
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
+
+    let (range, candidate_file_path) = surrounding_filename(snapshot, position)?;
+
+    let existing_path = project
+        .update(cx, |project, cx| {
+            project.file_exists_in(&candidate_file_path, &buffer, cx)
+        })
+        .ok()?
+        .await?;
+
+    Some((range, existing_path))
 }
 
 pub(crate) fn surrounding_filename(
