@@ -1810,9 +1810,7 @@ impl Pane {
             .child(
                 h_flex()
                     .gap_1()
-                    .children(icon.map(|icon| {
-                        icon.size(IconSize::Small).color(icon_color)
-                    }))
+                    .children(icon.map(|icon| icon.size(IconSize::Small).color(icon_color)))
                     .child(label),
             );
 
