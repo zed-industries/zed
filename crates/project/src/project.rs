@@ -7776,6 +7776,7 @@ impl Project {
         }
     }
 
+    // Returns the expanded version of `path`, that was found in `buffer`, if it exists.
     pub fn file_exists_in(
         &self,
         path: &str,
@@ -7783,7 +7784,10 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Option<PathBuf>> {
         if self.is_local() {
-            let mut search_paths: Vec<PathBuf> = vec![];
+            let mut search_paths = self
+                .worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect::<Vec<_>>();
 
             if let Some(file) = buffer.read(cx).file() {
                 if let Some(dir) = file.abs_path(cx).parent() {
@@ -7791,21 +7795,15 @@ impl Project {
                 }
             }
 
-            for worktree in self.worktrees(cx) {
-                search_paths.push(worktree.read(cx).abs_path().to_path_buf())
-            }
-
             let expanded = shellexpand::tilde(&path).into_owned();
-
-            let candidate_paths = search_paths
-                .into_iter()
-                .map(|search_path| search_path.join(PathBuf::from(&expanded)))
-                .collect::<Vec<_>>();
 
             let fs = self.fs.clone();
             cx.background_executor().spawn(async move {
-                let tasks = candidate_paths
+                let candidate_paths = search_paths
                     .into_iter()
+                    .map(|search_path| search_path.join(PathBuf::from(&expanded)));
+
+                let tasks = candidate_paths
                     .map(|candidate_path| {
                         let fs = fs.clone();
                         async move {
