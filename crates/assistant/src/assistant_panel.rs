@@ -3792,7 +3792,7 @@ impl ContextEditor {
         let parent_message = parent_message.first()?;
 
         let step_index = self
-            .workflow_steps
+            .edit_steps
             .keys()
             .filter(|workflow_step_range| {
                 workflow_step_range
@@ -3801,7 +3801,8 @@ impl ContextEditor {
                     .is_ge()
                     && workflow_step_range.end.cmp(&range.end, &snapshot).is_le()
             })
-            .count();
+            .count()
+            + 1;
 
         let step_label = Label::new(format!("Step {step_index}")).size(LabelSize::Small);
 
@@ -3819,23 +3820,6 @@ impl ContextEditor {
             div().child(step_label)
         };
 
-        let step_label_element = step_label.into_any_element();
-
-        let step_label = h_flex()
-            .id("step")
-            .group("step-label")
-            .items_center()
-            .gap_1()
-            .child(step_label_element)
-            .child(
-                IconButton::new("edit-step", IconName::SearchCode)
-                    .size(ButtonSize::Compact)
-                    .icon_size(IconSize::Small)
-                    .shape(IconButtonShape::Square)
-                    .visible_on_hover("step-label")
-                    .tooltip(|cx| Tooltip::text("Open Step View", cx)),
-            );
-
         Some(
             div()
                 .w(max_width)
@@ -3846,7 +3830,6 @@ impl ContextEditor {
                         .h_8()
                         .border_b_1()
                         .border_color(border_color)
-                        .pb_2()
                         .items_center()
                         .justify_between()
                         .gap_2()
