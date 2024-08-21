@@ -3310,6 +3310,7 @@ dependencies = [
  "editor",
  "futures 0.3.30",
  "gpui",
+ "log",
  "project",
  "serde",
  "serde_json",

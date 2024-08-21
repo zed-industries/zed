@@ -648,6 +648,10 @@ impl FocusableView for DebugPanel {
 }
 
 impl Panel for DebugPanel {
+    fn pane(&self) -> Option<View<Pane>> {
+        Some(self.pane.clone())
+    }
+
     fn persistent_name() -> &'static str {
         "DebugPanel"
     }

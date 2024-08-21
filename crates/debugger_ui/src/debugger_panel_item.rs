@@ -6,14 +6,17 @@ use dap::{
 };
 use editor::Editor;
 use gpui::{
-    actions, list, AnyElement, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
+    impl_actions, list, AnyElement, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
     FocusableView, ListState, Subscription, View, WeakView,
 };
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use ui::{prelude::*, Tooltip};
 use ui::{ListItem, WindowContext};
+use workspace::dock::Panel;
 use workspace::item::{Item, ItemEvent};
+use workspace::Workspace;
 
 #[derive(PartialEq, Eq)]
 enum ThreadItem {
@@ -46,10 +49,30 @@ pub struct DebugPanelItem {
     _subscriptions: Vec<Subscription>,
 }
 
-actions!(
-    debug_panel_item,
-    [Continue, StepOver, StepIn, StepOut, Restart, Pause, Stop, Disconnect]
-);
+impl_actions!(debug_panel_item, [DebugItemAction]);
+
+/// This struct is for actions that should be triggered even when
+/// the debug pane is not in focus. This is done by setting workspace
+/// as the action listener then having workspace call `handle_workspace_action`
+#[derive(Clone, Deserialize, PartialEq, Default)]
+pub struct DebugItemAction {
+    kind: DebugPanelItemActionKind,
+}
+
+/// Actions that can be sent to workspace
+/// currently all of these are button toggles
+#[derive(Deserialize, PartialEq, Default, Clone, Debug)]
+enum DebugPanelItemActionKind {
+    #[default]
+    Continue,
+    StepOver,
+    StepIn,
+    StepOut,
+    Restart,
+    Pause,
+    Stop,
+    Disconnect,
+}
 
 impl DebugPanelItem {
     pub fn new(
@@ -601,7 +624,46 @@ impl DebugPanelItem {
         })
     }
 
-    fn handle_continue_action(&mut self, _: &Continue, cx: &mut ViewContext<Self>) {
+    /// Actions that should be handled even when Debug Panel is not in focus
+    pub fn workspace_action_handler(
+        workspace: &mut Workspace,
+        action: &DebugItemAction,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(pane) = workspace
+            .panel::<DebugPanel>(cx)
+            .and_then(|panel| panel.read(cx).pane())
+        else {
+            log::error!(
+                "Can't get Debug panel to handle Debug action: {:?}
+                This shouldn't happen because there has to be an Debug panel to click a button and trigger this action",
+                action.kind
+            );
+            return;
+        };
+
+        pane.update(cx, |this, cx| {
+            let Some(active_item) = this
+                .active_item()
+                .and_then(|item| item.downcast::<DebugPanelItem>())
+            else {
+                return;
+            };
+
+            active_item.update(cx, |item, cx| match action.kind {
+                DebugPanelItemActionKind::Stop => item.handle_stop_action(cx),
+                DebugPanelItemActionKind::Continue => item.handle_continue_action(cx),
+                DebugPanelItemActionKind::StepIn => item.handle_step_in_action(cx),
+                DebugPanelItemActionKind::StepOut => item.handle_step_out_action(cx),
+                DebugPanelItemActionKind::StepOver => item.handle_step_over_action(cx),
+                DebugPanelItemActionKind::Pause => item.handle_pause_action(cx),
+                DebugPanelItemActionKind::Disconnect => item.handle_disconnect_action(cx),
+                DebugPanelItemActionKind::Restart => item.handle_restart_action(cx),
+            });
+        });
+    }
+
+    fn handle_continue_action(&mut self, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_id = self.thread_id;
         let previous_status = self.current_thread_state().status;
@@ -614,7 +676,7 @@ impl DebugPanelItem {
         .detach_and_log_err(cx);
     }
 
-    fn handle_step_over_action(&mut self, _: &StepOver, cx: &mut ViewContext<Self>) {
+    fn handle_step_over_action(&mut self, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_id = self.thread_id;
         let previous_status = self.current_thread_state().status;
@@ -627,7 +689,7 @@ impl DebugPanelItem {
         .detach_and_log_err(cx);
     }
 
-    fn handle_step_in_action(&mut self, _: &StepIn, cx: &mut ViewContext<Self>) {
+    fn handle_step_in_action(&mut self, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_id = self.thread_id;
         let previous_status = self.current_thread_state().status;
@@ -640,7 +702,7 @@ impl DebugPanelItem {
         .detach_and_log_err(cx);
     }
 
-    fn handle_step_out_action(&mut self, _: &StepOut, cx: &mut ViewContext<Self>) {
+    fn handle_step_out_action(&mut self, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_id = self.thread_id;
         let previous_status = self.current_thread_state().status;
@@ -653,7 +715,7 @@ impl DebugPanelItem {
         .detach_and_log_err(cx);
     }
 
-    fn handle_restart_action(&mut self, _: &Restart, cx: &mut ViewContext<Self>) {
+    fn handle_restart_action(&mut self, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
 
         cx.background_executor()
@@ -661,7 +723,7 @@ impl DebugPanelItem {
             .detach_and_log_err(cx);
     }
 
-    fn handle_pause_action(&mut self, _: &Pause, cx: &mut ViewContext<Self>) {
+    fn handle_pause_action(&mut self, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_id = self.thread_id;
         cx.background_executor()
@@ -669,7 +731,7 @@ impl DebugPanelItem {
             .detach_and_log_err(cx);
     }
 
-    fn handle_stop_action(&mut self, _: &Stop, cx: &mut ViewContext<Self>) {
+    fn handle_stop_action(&mut self, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         let thread_ids = vec![self.thread_id; 1];
 
@@ -678,7 +740,7 @@ impl DebugPanelItem {
             .detach_and_log_err(cx);
     }
 
-    fn handle_disconnect_action(&mut self, _: &Disconnect, cx: &mut ViewContext<Self>) {
+    fn handle_disconnect_action(&mut self, cx: &mut ViewContext<Self>) {
         let client = self.client.clone();
         cx.background_executor()
             .spawn(async move { client.disconnect(None, Some(true), None).await })
@@ -709,14 +771,6 @@ impl Render for DebugPanelItem {
         h_flex()
             .key_context("DebugPanelItem")
             .track_focus(&self.focus_handle)
-            .capture_action(cx.listener(Self::handle_continue_action))
-            .capture_action(cx.listener(Self::handle_step_over_action))
-            .capture_action(cx.listener(Self::handle_step_in_action))
-            .capture_action(cx.listener(Self::handle_step_out_action))
-            .capture_action(cx.listener(Self::handle_restart_action))
-            .capture_action(cx.listener(Self::handle_pause_action))
-            .capture_action(cx.listener(Self::handle_stop_action))
-            .capture_action(cx.listener(Self::handle_disconnect_action))
             .p_2()
             .size_full()
             .items_start()
@@ -733,7 +787,9 @@ impl Render for DebugPanelItem {
                                     this.child(
                                         IconButton::new("debug-pause", IconName::DebugPause)
                                             .on_click(cx.listener(|_, _, cx| {
-                                                cx.dispatch_action(Box::new(Pause))
+                                                cx.dispatch_action(Box::new(DebugItemAction {
+                                                    kind: DebugPanelItemActionKind::Pause,
+                                                }))
                                             }))
                                             .tooltip(move |cx| Tooltip::text("Pause program", cx)),
                                     )
@@ -741,7 +797,9 @@ impl Render for DebugPanelItem {
                                     this.child(
                                         IconButton::new("debug-continue", IconName::DebugContinue)
                                             .on_click(cx.listener(|_, _, cx| {
-                                                cx.dispatch_action(Box::new(Continue))
+                                                cx.dispatch_action(Box::new(DebugItemAction {
+                                                    kind: DebugPanelItemActionKind::Continue,
+                                                }))
                                             }))
                                             .disabled(thread_status != ThreadStatus::Stopped)
                                             .tooltip(move |cx| {
@@ -753,38 +811,40 @@ impl Render for DebugPanelItem {
                             .child(
                                 IconButton::new("debug-step-over", IconName::DebugStepOver)
                                     .on_click(cx.listener(|_, _, cx| {
-                                        cx.dispatch_action(Box::new(StepOver))
+                                        cx.dispatch_action(Box::new(DebugItemAction {
+                                            kind: DebugPanelItemActionKind::StepOver,
+                                        }))
                                     }))
                                     .disabled(thread_status != ThreadStatus::Stopped)
                                     .tooltip(move |cx| Tooltip::text("Step over", cx)),
                             )
                             .child(
                                 IconButton::new("debug-step-in", IconName::DebugStepInto)
-                                    .on_click(
-                                        cx.listener(|_, _, cx| {
-                                            cx.dispatch_action(Box::new(StepIn))
-                                        }),
-                                    )
+                                    .on_click(cx.listener(|_, _, cx| {
+                                        cx.dispatch_action(Box::new(DebugItemAction {
+                                            kind: DebugPanelItemActionKind::StepIn,
+                                        }))
+                                    }))
                                     .disabled(thread_status != ThreadStatus::Stopped)
                                     .tooltip(move |cx| Tooltip::text("Step in", cx)),
                             )
                             .child(
                                 IconButton::new("debug-step-out", IconName::DebugStepOut)
-                                    .on_click(
-                                        cx.listener(|_, _, cx| {
-                                            cx.dispatch_action(Box::new(StepOut))
-                                        }),
-                                    )
+                                    .on_click(cx.listener(|_, _, cx| {
+                                        cx.dispatch_action(Box::new(DebugItemAction {
+                                            kind: DebugPanelItemActionKind::StepOut,
+                                        }))
+                                    }))
                                     .disabled(thread_status != ThreadStatus::Stopped)
                                     .tooltip(move |cx| Tooltip::text("Step out", cx)),
                             )
                             .child(
                                 IconButton::new("debug-restart", IconName::DebugRestart)
-                                    .on_click(
-                                        cx.listener(|_, _, cx| {
-                                            cx.dispatch_action(Box::new(Restart))
-                                        }),
-                                    )
+                                    .on_click(cx.listener(|_, _, cx| {
+                                        cx.dispatch_action(Box::new(DebugItemAction {
+                                            kind: DebugPanelItemActionKind::Restart,
+                                        }))
+                                    }))
                                     .disabled(
                                         !self
                                             .client
@@ -798,9 +858,11 @@ impl Render for DebugPanelItem {
                             )
                             .child(
                                 IconButton::new("debug-stop", IconName::DebugStop)
-                                    .on_click(
-                                        cx.listener(|_, _, cx| cx.dispatch_action(Box::new(Stop))),
-                                    )
+                                    .on_click(cx.listener(|_, _, cx| {
+                                        cx.dispatch_action(Box::new(DebugItemAction {
+                                            kind: DebugPanelItemActionKind::Stop,
+                                        }))
+                                    }))
                                     .disabled(
                                         thread_status != ThreadStatus::Stopped
                                             && thread_status != ThreadStatus::Running,
@@ -810,7 +872,9 @@ impl Render for DebugPanelItem {
                             .child(
                                 IconButton::new("debug-disconnect", IconName::DebugDisconnect)
                                     .on_click(cx.listener(|_, _, cx| {
-                                        cx.dispatch_action(Box::new(Disconnect))
+                                        cx.dispatch_action(Box::new(DebugItemAction {
+                                            kind: DebugPanelItemActionKind::Disconnect,
+                                        }))
                                     }))
                                     .disabled(
                                         thread_status == ThreadStatus::Exited
