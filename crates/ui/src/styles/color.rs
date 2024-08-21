@@ -69,27 +69,28 @@ impl Color {
     }
 }
 
-// fn most_intense_color(cx: &WindowContext, colors: &Vec<Hsla>) -> Hsla {
-//     let is_light = cx.theme().appearance().is_light();
-//     colors
-//         .iter()
-//         .max_by(|a, b| {
-//             if is_light {
-//                 b.l.partial_cmp(&a.l).unwrap()
-//             } else {
-//                 a.l.partial_cmp(&b.l).unwrap()
-//             }
-//         })
-//         .cloned()
-//         .unwrap_or_default()
-// }
+fn most_intense_color(cx: &WindowContext, colors: &Vec<Hsla>) -> Hsla {
+    let is_light = cx.theme().appearance().is_light();
+    colors
+        .iter()
+        .max_by(|a, b| {
+            if is_light {
+                b.l.partial_cmp(&a.l).unwrap()
+            } else {
+                a.l.partial_cmp(&b.l).unwrap()
+            }
+        })
+        .cloned()
+        .unwrap_or_default()
+}
 
 fn build_state_colors(cx: &WindowContext) -> (Hsla, Hsla, Hsla) {
     let is_light = cx.theme().appearance().is_light();
-    // let color_canidates = vec![cx.theme().colors().text];
-    // let base_color = most_intense_color(cx, &color_canidates);
-
-    let base_color = cx.theme().colors().text;
+    let color_canidates = vec![
+        cx.theme().colors().text,
+        cx.theme().colors().editor_foreground,
+    ];
+    let base_color = most_intense_color(cx, &color_canidates);
 
     let intensity_reduction = if is_light { 0.24 } else { 0.2 };
 
