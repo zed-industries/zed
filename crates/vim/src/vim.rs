@@ -412,15 +412,6 @@ impl Vim {
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
 
-        if VimSettings::get_global(cx).smart_relative_line {
-            let relative_line_numbers = mode != Mode::Insert;
-            if EditorSettings::get_global(cx).relative_line_numbers != relative_line_numbers {
-                let mut editor_settings = EditorSettings::get_global(cx).clone();
-                editor_settings.relative_line_numbers = relative_line_numbers;
-                EditorSettings::override_global(editor_settings, cx);
-            }
-        }
-
         if leave_selections {
             return;
         }
@@ -431,6 +422,13 @@ impl Vim {
 
         // Adjust selections
         self.update_active_editor(cx, |_, editor, cx| {
+            if VimSettings::get_global(cx).smart_relative_line {
+                let is_relative = mode != Mode::Insert;
+                if EditorSettings::get_global(cx).relative_line_numbers != is_relative {
+                    editor.set_relative_line_numbers(is_relative, cx)
+                }
+            }
+
             if last_mode != Mode::VisualBlock && last_mode.is_visual() && mode == Mode::VisualBlock
             {
                 visual_block_motion(true, editor, cx, |_, point, goal| Some((point, goal)))

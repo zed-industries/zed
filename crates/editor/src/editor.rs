@@ -10525,6 +10525,12 @@ impl Editor {
         EditorSettings::override_global(editor_settings, cx);
     }
 
+    pub fn set_relative_line_numbers(&mut self, is_relative: bool, cx: &mut ViewContext<Self>) {
+        let mut editor_settings = EditorSettings::get_global(cx).clone();
+        editor_settings.relative_line_numbers = is_relative;
+        EditorSettings::override_global(editor_settings, cx);
+    }
+
     pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
         self.show_gutter = show_gutter;
         cx.notify();
