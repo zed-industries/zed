@@ -9226,6 +9226,23 @@ impl Editor {
                     cx.open_url(&url);
                     Task::ready(Ok(None))
                 }
+                HoverLink::File(path) => {
+                    if let Some(workspace) = self.workspace() {
+                        cx.spawn(|_, mut cx| async move {
+                            let open_paths_task = workspace.update(&mut cx, |workspace, cx| {
+                                workspace.open_paths(vec![path], OpenVisible::All, None, cx)
+                            })?;
+
+                            let results = open_paths_task.await;
+                            if let Some(Some(item)) = results.into_iter().next() {
+                                item?;
+                            }
+                            Ok(None)
+                        })
+                    } else {
+                        Task::ready(Ok(None))
+                    }
+                }
             };
             cx.spawn(|editor, mut cx| async move {
                 let target = target_task.await.context("target resolution task")?;
@@ -9309,6 +9326,7 @@ impl Editor {
                                 }),
                                 HoverLink::InlayHint(_, _) => None,
                                 HoverLink::Url(_) => None,
+                                HoverLink::File(_) => None,
                             })
                             .unwrap_or(tab_kind.to_string());
                         let location_tasks = definitions
@@ -9319,6 +9337,7 @@ impl Editor {
                                     editor.compute_target_location(lsp_location, server_id, cx)
                                 }
                                 HoverLink::Url(_) => Task::ready(Ok(None)),
+                                HoverLink::File(_) => Task::ready(Ok(None)),
                             })
                             .collect::<Vec<_>>();
                         (title, location_tasks, editor.workspace().clone())

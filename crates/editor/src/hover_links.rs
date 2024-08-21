@@ -63,6 +63,7 @@ impl RangeInEditor {
 #[derive(Debug, Clone)]
 pub enum HoverLink {
     Url(String),
+    File(PathBuf),
     Text(LocationLink),
     InlayHint(lsp::Location, LanguageServerId),
 }
@@ -522,35 +523,54 @@ pub fn show_link_definition(
                         })
                         .ok()
                     } else if let Some(project) = project {
-                        // query the LSP for definition info
-                        project
-                            .update(&mut cx, |project, cx| match preferred_kind {
-                                LinkDefinitionKind::Symbol => {
-                                    project.definition(&buffer, buffer_position, cx)
-                                }
+                        if let Some((filename_range, filename)) =
+                            find_file(&buffer, project.clone(), buffer_position, &mut cx).await
+                        {
+                            let range = maybe!({
+                                let start =
+                                    snapshot.anchor_in_excerpt(excerpt_id, filename_range.start)?;
+                                let end =
+                                    snapshot.anchor_in_excerpt(excerpt_id, filename_range.end)?;
+                                Some(RangeInEditor::Text(start..end))
+                            });
 
-                                LinkDefinitionKind::Type => {
-                                    project.type_definition(&buffer, buffer_position, cx)
-                                }
-                            })?
-                            .await
-                            .ok()
-                            .map(|definition_result| {
-                                (
-                                    definition_result.iter().find_map(|link| {
-                                        link.origin.as_ref().and_then(|origin| {
-                                            let start = snapshot.anchor_in_excerpt(
-                                                excerpt_id,
-                                                origin.range.start,
-                                            )?;
-                                            let end = snapshot
-                                                .anchor_in_excerpt(excerpt_id, origin.range.end)?;
-                                            Some(RangeInEditor::Text(start..end))
-                                        })
-                                    }),
-                                    definition_result.into_iter().map(HoverLink::Text).collect(),
-                                )
-                            })
+                            Some((range, vec![HoverLink::File(filename)]))
+                        } else {
+                            // query the LSP for definition info
+                            project
+                                .update(&mut cx, |project, cx| match preferred_kind {
+                                    LinkDefinitionKind::Symbol => {
+                                        project.definition(&buffer, buffer_position, cx)
+                                    }
+
+                                    LinkDefinitionKind::Type => {
+                                        project.type_definition(&buffer, buffer_position, cx)
+                                    }
+                                })?
+                                .await
+                                .ok()
+                                .map(|definition_result| {
+                                    (
+                                        definition_result.iter().find_map(|link| {
+                                            link.origin.as_ref().and_then(|origin| {
+                                                let start = snapshot.anchor_in_excerpt(
+                                                    excerpt_id,
+                                                    origin.range.start,
+                                                )?;
+                                                let end = snapshot.anchor_in_excerpt(
+                                                    excerpt_id,
+                                                    origin.range.end,
+                                                )?;
+                                                Some(RangeInEditor::Text(start..end))
+                                            })
+                                        }),
+                                        definition_result
+                                            .into_iter()
+                                            .map(HoverLink::Text)
+                                            .collect(),
+                                    )
+                                })
+                        }
                     } else {
                         None
                     }
@@ -706,7 +726,7 @@ pub(crate) async fn find_file(
     Some((range, existing_path))
 }
 
-pub(crate) fn surrounding_filename(
+fn surrounding_filename(
     snapshot: language::BufferSnapshot,
     position: text::Anchor,
 ) -> Option<(Range<text::Anchor>, String)> {
