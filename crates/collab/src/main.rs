@@ -7,6 +7,7 @@ use axum::{
 };
 use collab::llm::{db::LlmDatabase, log_usage_periodically};
 use collab::migrations::run_database_migrations;
+use collab::user_backfiller::spawn_user_backfiller;
 use collab::{api::billing::poll_stripe_events_periodically, llm::LlmState, ServiceMode};
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor,
@@ -131,6 +132,7 @@ async fn main() -> Result<()> {
                 if mode.is_api() {
                     poll_stripe_events_periodically(state.clone());
                     fetch_extensions_from_blob_store_periodically(state.clone());
+                    spawn_user_backfiller(state.clone());
 
                     app = app
                         .merge(collab::api::events::router())
