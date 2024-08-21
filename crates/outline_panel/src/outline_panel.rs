@@ -1589,8 +1589,18 @@ impl OutlinePanel {
         match_range: &Range<editor::Anchor>,
         search_data: &SearchData,
         depth: usize,
+        string_match: Option<&StringMatch>,
         cx: &mut ViewContext<Self>,
     ) -> Stateful<Div> {
+        let search_matches = string_match
+            .iter()
+            .flat_map(|string_match| string_match.ranges())
+            .collect::<Vec<_>>();
+        let match_ranges = if search_matches.is_empty() {
+            &search_data.search_match_indices
+        } else {
+            &search_matches
+        };
         let label_element = language::render_item(
             &OutlineItem {
                 depth,
@@ -1598,10 +1608,10 @@ impl OutlinePanel {
                 text: search_data.entire_row_text.clone(),
                 annotation_range: None,
                 highlight_ranges: search_data.highlight_ranges.clone(),
-                name_ranges: search_data.search_match_indices.iter().cloned().collect(),
+                name_ranges: search_data.search_match_indices.clone(),
                 body_range: Some(search_data.entire_row_range.clone()),
             },
-            search_data.search_match_indices.clone(),
+            match_ranges.into_iter().cloned(),
             cx,
         )
         .into_any_element();
@@ -3418,6 +3428,7 @@ impl Render for OutlinePanel {
                                             &match_range,
                                             search_data,
                                             cached_entry.depth,
+                                            cached_entry.string_match.as_ref(),
                                             cx,
                                         )
                                     }),
