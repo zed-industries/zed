@@ -1820,8 +1820,12 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        let search = cx.new_model(|cx| ProjectSearch::new(project, cx));
-        let search_view = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx, None));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx).unwrap();
+        let search = cx.new_model(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), cx, None)
+        });
 
         perform_search(search_view, "TWO", cx);
         search_view.update(cx, |search_view, cx| {
@@ -3294,8 +3298,12 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx).unwrap();
         let search = cx.new_model(|cx| ProjectSearch::new(project, cx));
-        let search_view = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx, None));
+        let search_view = cx.add_window(|cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), cx, None)
+        });
 
         // First search
         perform_search(search_view, "A", cx);
