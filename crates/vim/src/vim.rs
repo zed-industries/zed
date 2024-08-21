@@ -425,6 +425,14 @@ impl Vim {
         self.sync_vim_settings(cx);
 
         if leave_selections {
+            if VimSettings::get_global(cx).smart_relative_line {
+                self.update_editor(cx, |_, editor, cx| {
+                    let is_relative = mode != Mode::Insert;
+                    if EditorSettings::get_global(cx).relative_line_numbers != is_relative {
+                        editor.set_relative_line_numbers(is_relative, cx)
+                    }
+                });
+            }
             return;
         }
 
