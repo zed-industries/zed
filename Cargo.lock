@@ -8618,6 +8618,7 @@ dependencies = [
  "anyhow",
  "auto_update",
  "client",
+ "dap",
  "dev_server_projects",
  "editor",
  "futures 0.3.30",

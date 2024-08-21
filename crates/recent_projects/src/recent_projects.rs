@@ -5,6 +5,8 @@ mod ssh_remotes;
 pub use ssh_connections::open_ssh_project;
 
 use client::{DevServerProjectId, ProjectId};
+#[cfg(test)]
+use dap::debugger_settings::DebuggerSettings;
 use dev_servers::reconnect_to_dev_server_project;
 pub use dev_servers::DevServerProjects;
 use disconnected_overlay::DisconnectedOverlay;
@@ -857,6 +859,7 @@ mod tests {
             crate::init(cx);
             editor::init(cx);
             workspace::init_settings(cx);
+            DebuggerSettings::register(cx);
             Project::init_settings(cx);
             state
         })
