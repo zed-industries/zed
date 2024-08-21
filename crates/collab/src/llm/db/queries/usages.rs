@@ -343,15 +343,27 @@ impl LlmDatabase {
         .await
     }
 
-    pub async fn get_active_user_count(&self, now: DateTimeUtc) -> Result<ActiveUserCount> {
+    /// Returns the active user count for the specified model.
+    pub async fn get_active_user_count(
+        &self,
+        provider: LanguageModelProvider,
+        model_name: &str,
+        now: DateTimeUtc,
+    ) -> Result<ActiveUserCount> {
         self.transaction(|tx| async move {
             let minute_since = now - Duration::minutes(5);
             let day_since = now - Duration::days(5);
 
+            let model = self
+                .models
+                .get(&(provider, model_name.to_string()))
+                .ok_or_else(|| anyhow!("unknown model {provider}:{model_name}"))?;
+
             let users_in_recent_minutes = usage::Entity::find()
                 .filter(
-                    usage::Column::Timestamp
-                        .gte(minute_since.naive_utc())
+                    usage::Column::ModelId
+                        .eq(model.id)
+                        .and(usage::Column::Timestamp.gte(minute_since.naive_utc()))
                         .and(usage::Column::IsStaff.eq(false)),
                 )
                 .select_only()
@@ -362,8 +374,9 @@ impl LlmDatabase {
 
             let users_in_recent_days = usage::Entity::find()
                 .filter(
-                    usage::Column::Timestamp
-                        .gte(day_since.naive_utc())
+                    usage::Column::ModelId
+                        .eq(model.id)
+                        .and(usage::Column::Timestamp.gte(day_since.naive_utc()))
                         .and(usage::Column::IsStaff.eq(false)),
                 )
                 .select_only()
