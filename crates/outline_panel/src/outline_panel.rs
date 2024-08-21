@@ -14,7 +14,6 @@ use anyhow::Context;
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    actions::SelectAll,
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
     scroll::ScrollAnchor,
@@ -552,9 +551,6 @@ impl OutlinePanel {
         if self.filter_editor.focus_handle(cx).is_focused(cx) {
             self.focus_handle.focus(cx);
         } else {
-            self.filter_editor.update(cx, |filter_editor, cx| {
-                filter_editor.select_all(&SelectAll, cx)
-            });
             self.filter_editor.focus_handle(cx).focus(cx);
         }
 
@@ -629,7 +625,7 @@ impl OutlinePanel {
         };
 
         if let Some((offset, anchor)) = scroll_target {
-            self.selected_entry = SelectedEntry::Valid(entry.clone());
+            self.select_entry(entry.clone(), true, cx);
             active_editor.update(cx, |editor, cx| {
                 editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, cx);
             });
@@ -660,9 +656,7 @@ impl OutlinePanel {
                 .next()
                 .cloned()
         }) {
-            self.selected_entry = SelectedEntry::Valid(entry_to_select);
-            self.autoscroll(cx);
-            cx.notify();
+            self.select_entry(entry_to_select, true, cx);
         } else {
             self.select_first(&SelectFirst {}, cx)
         }
@@ -679,9 +673,7 @@ impl OutlinePanel {
                 .next()
                 .cloned()
         }) {
-            self.selected_entry = SelectedEntry::Valid(entry_to_select);
-            self.autoscroll(cx);
-            cx.notify();
+            self.select_entry(entry_to_select, true, cx);
         } else {
             self.select_first(&SelectFirst {}, cx)
         }
@@ -767,9 +759,7 @@ impl OutlinePanel {
                 }
             }
         }) {
-            self.selected_entry = SelectedEntry::Valid(entry_to_select.clone());
-            self.autoscroll(cx);
-            cx.notify();
+            self.select_entry(entry_to_select.clone(), true, cx);
         } else {
             self.select_first(&SelectFirst {}, cx);
         }
@@ -777,9 +767,7 @@ impl OutlinePanel {
 
     fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
         if let Some(first_entry) = self.cached_entries_with_depth.iter().next() {
-            self.selected_entry = SelectedEntry::Valid(first_entry.entry.clone());
-            self.autoscroll(cx);
-            cx.notify();
+            self.select_entry(first_entry.entry.clone(), true, cx);
         }
     }
 
@@ -791,9 +779,7 @@ impl OutlinePanel {
             .map(|cached_entry| &cached_entry.entry)
             .next()
         {
-            self.selected_entry = SelectedEntry::Valid(new_selection.clone());
-            self.autoscroll(cx);
-            cx.notify();
+            self.select_entry(new_selection.clone(), true, cx);
         }
     }
 
@@ -822,7 +808,7 @@ impl OutlinePanel {
         entry: PanelEntry,
         cx: &mut ViewContext<Self>,
     ) {
-        self.selected_entry = SelectedEntry::Valid(entry.clone());
+        self.select_entry(entry.clone(), true, cx);
         let is_root = match &entry {
             PanelEntry::Fs(FsEntry::File(worktree_id, entry, ..))
             | PanelEntry::Fs(FsEntry::Directory(worktree_id, entry)) => self
@@ -964,19 +950,19 @@ impl OutlinePanel {
             PanelEntry::Fs(FsEntry::Directory(worktree_id, selected_dir_entry)) => {
                 self.collapsed_entries
                     .insert(CollapsedEntry::Dir(*worktree_id, selected_dir_entry.id));
-                self.selected_entry = SelectedEntry::Valid(selected_entry);
+                self.select_entry(selected_entry, true, cx);
                 self.update_cached_entries(None, cx);
             }
             PanelEntry::Fs(FsEntry::File(worktree_id, _, buffer_id, _)) => {
                 self.collapsed_entries
                     .insert(CollapsedEntry::File(*worktree_id, *buffer_id));
-                self.selected_entry = SelectedEntry::Valid(selected_entry);
+                self.select_entry(selected_entry, true, cx);
                 self.update_cached_entries(None, cx);
             }
             PanelEntry::Fs(FsEntry::ExternalFile(buffer_id, _)) => {
                 self.collapsed_entries
                     .insert(CollapsedEntry::ExternalFile(*buffer_id));
-                self.selected_entry = SelectedEntry::Valid(selected_entry);
+                self.select_entry(selected_entry, true, cx);
                 self.update_cached_entries(None, cx);
             }
             PanelEntry::FoldedDirs(worktree_id, dir_entries) => {
@@ -985,7 +971,7 @@ impl OutlinePanel {
                         .collapsed_entries
                         .insert(CollapsedEntry::Dir(*worktree_id, dir_entry.id))
                     {
-                        self.selected_entry = SelectedEntry::Valid(selected_entry);
+                        self.select_entry(selected_entry, true, cx);
                         self.update_cached_entries(None, cx);
                     }
                 }
@@ -995,7 +981,7 @@ impl OutlinePanel {
                     .collapsed_entries
                     .insert(CollapsedEntry::Excerpt(*buffer_id, *excerpt_id))
                 {
-                    self.selected_entry = SelectedEntry::Valid(selected_entry);
+                    self.select_entry(selected_entry, true, cx);
                     self.update_cached_entries(None, cx);
                 }
             }
@@ -1119,7 +1105,7 @@ impl OutlinePanel {
             PanelEntry::Search(..) | PanelEntry::Outline(..) => return,
         }
 
-        self.selected_entry = SelectedEntry::Valid(entry.clone());
+        self.select_entry(entry.clone(), true, cx);
         self.update_cached_entries(None, cx);
     }
 
@@ -1292,9 +1278,8 @@ impl OutlinePanel {
             }
         }
 
-        self.selected_entry = SelectedEntry::Valid(entry_with_selection);
+        self.select_entry(entry_with_selection, false, cx);
         self.update_cached_entries(None, cx);
-        self.autoscroll(cx);
     }
 
     fn render_excerpt(
@@ -2491,7 +2476,7 @@ impl OutlinePanel {
                                 outline_panel.location_for_editor_selection(&active_editor, cx)
                             })
                         {
-                            outline_panel.selected_entry = SelectedEntry::Valid(new_selected_entry);
+                            outline_panel.select_entry(new_selected_entry, false, cx);
                         }
                     }
 
@@ -3139,6 +3124,15 @@ impl OutlinePanel {
                 search_data.get()
             }
         }
+    }
+
+    fn select_entry(&mut self, entry: PanelEntry, focus: bool, cx: &mut ViewContext<Self>) {
+        if focus {
+            self.focus_handle.focus(cx);
+        }
+        self.selected_entry = SelectedEntry::Valid(entry);
+        self.autoscroll(cx);
+        cx.notify();
     }
 }
 
