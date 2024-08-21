@@ -377,4 +377,35 @@ impl Database {
         })
         .await
     }
+
+    pub async fn get_users_missing_github_user_created_at(&self) -> Result<Vec<user::Model>> {
+        self.transaction(|tx| async move {
+            Ok(user::Entity::find()
+                .filter(user::Column::GithubUserCreatedAt.is_null())
+                .all(&*tx)
+                .await?)
+        })
+        .await
+    }
+
+    pub async fn update_user_github_data(
+        &self,
+        user_id: UserId,
+        github_user_id: i32,
+        github_user_created_at: NaiveDateTime,
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            user::Entity::update_many()
+                .filter(user::Column::Id.eq(user_id))
+                .set(user::ActiveModel {
+                    github_user_id: ActiveValue::set(Some(github_user_id)),
+                    github_user_created_at: ActiveValue::set(Some(github_user_created_at)),
+                    ..Default::default()
+                })
+                .exec(&*tx)
+                .await?;
+            Ok(())
+        })
+        .await
+    }
 }
