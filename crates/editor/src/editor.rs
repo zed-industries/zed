@@ -461,6 +461,7 @@ struct MultiBufferOffset(usize);
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 struct BufferOffset(usize);
 
+// Addons allow storing per-editor state in other crates (e.g. Vim)
 pub trait Addon: 'static {
     fn extend_key_context(&self, _: &mut KeyContext, _: &AppContext) {}
 
