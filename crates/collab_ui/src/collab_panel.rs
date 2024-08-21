@@ -13,10 +13,10 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, anchored, canvas, deferred, div, fill, list, point, prelude::*, px, AnyElement,
     AppContext, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
-    EventEmitter, FocusHandle, FocusableView, FontStyle, InteractiveElement, IntoElement,
-    ListOffset, ListState, Model, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
-    Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext, VisualContext,
-    WeakView,
+    EventEmitter, FocusHandle, FocusableView, FontStyle, FontWeight, InteractiveElement,
+    IntoElement, ListOffset, ListState, Model, MouseDownEvent, ParentElement, Pixels, Point,
+    PromptLevel, Render, SharedString, Styled, Subscription, Task, TextStyle, View, ViewContext,
+    VisualContext, WeakView,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -2575,7 +2575,7 @@ impl CollabPanel {
         let root_id = channel.root_id();
 
         div()
-            .h_6()
+            .h(rems(1.5).to_pixels(cx.rem_size()) + px(2.))
             .id(channel_id.0 as usize)
             .group("")
             .flex()
@@ -2628,14 +2628,14 @@ impl CollabPanel {
                         },
                     ))
                     .start_slot(
-                        div().relative().child(
+                        div().pr_0p5().relative().child(
                             Icon::new(if is_public {
                                 IconName::Hash
                             } else {
                                 IconName::Lock
                             })
                             .size(IconSize::Small)
-                            .color(fg_color),
+                            .color(Color::State(StateColor::Inactive)),
                         ),
                     )
                     .child(
