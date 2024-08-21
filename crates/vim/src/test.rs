@@ -57,11 +57,9 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("«hjklˇ»");
     cx.update_editor(|_, cx| cx.focus_self());
     cx.assert_editor_state("«hjklˇ»");
-    dbg!("about to enable....");
 
     // Enabling dynamically sets vim mode again and restores normal mode
     cx.enable_vim();
-    dbg!("enabled...");
     assert_eq!(cx.mode(), Mode::Visual);
     cx.simulate_keystrokes("escape h h h l");
     assert_eq!(cx.buffer_text(), "hjkl".to_owned());

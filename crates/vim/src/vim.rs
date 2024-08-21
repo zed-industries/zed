@@ -23,8 +23,8 @@ use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, AppContext, EventEmitter, FocusableView, KeyContext,
-    KeystrokeEvent, Render, View, ViewContext, WeakView,
+    actions, impl_actions, Action, AppContext, EventEmitter, KeyContext, KeystrokeEvent, Render,
+    View, ViewContext, WeakView,
 };
 use insert::NormalBefore;
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -132,7 +132,7 @@ pub(crate) struct VimAddon {
 
 impl editor::Addon for VimAddon {
     fn extend_key_context(&self, key_context: &mut KeyContext, cx: &AppContext) {
-        self.view.read(cx).keymap_context_layer(key_context)
+        self.view.read(cx).extend_key_context(key_context)
     }
 
     fn to_any(&self) -> &dyn std::any::Any {
@@ -552,7 +552,7 @@ impl Vim {
         }
     }
 
-    pub fn keymap_context_layer(&self, context: &mut KeyContext) {
+    pub fn extend_key_context(&self, context: &mut KeyContext) {
         let mut mode = match self.mode {
             Mode::Normal => "normal",
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",

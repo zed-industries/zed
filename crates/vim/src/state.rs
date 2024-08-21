@@ -349,11 +349,7 @@ impl VimGlobals {
         }
     }
 
-    pub fn observe_insertion(
-        self: &mut Self,
-        text: &Arc<str>,
-        range_to_replace: Option<Range<isize>>,
-    ) {
+    pub fn observe_insertion(&mut self, text: &Arc<str>, range_to_replace: Option<Range<isize>>) {
         if self.ignore_current_insertion {
             self.ignore_current_insertion = false;
             return;

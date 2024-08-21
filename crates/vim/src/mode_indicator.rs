@@ -56,7 +56,7 @@ impl ModeIndicator {
         });
     }
 
-    fn vim<'a>(&self) -> Option<View<Vim>> {
+    fn vim(&self) -> Option<View<Vim>> {
         self.vim.as_ref().and_then(|vim| vim.upgrade())
     }
 
