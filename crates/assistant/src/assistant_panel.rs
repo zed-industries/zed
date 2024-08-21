@@ -2423,8 +2423,9 @@ impl ContextEditor {
                 }
             }
 
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let (&excerpt_id, _, _) = snapshot.as_singleton().unwrap();
+            let snapshot = editor.snapshot(cx);
+            let buffer = &snapshot.buffer_snapshot;
+            let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
 
             for range in updated {
                 let Some(step) = self.context.read(cx).edit_step_for_range(range.clone(), cx)
@@ -2432,15 +2433,15 @@ impl ContextEditor {
                     continue;
                 };
 
-                let header_range = snapshot
+                let header_range = buffer
                     .anchor_in_excerpt(excerpt_id, step.source_range.start)
                     .unwrap()
-                    ..snapshot
+                    ..buffer
                         .anchor_in_excerpt(excerpt_id, step.leading_tags_end)
                         .unwrap();
                 let footer_range = step.trailing_tag_start.map(|start| {
-                    snapshot.anchor_in_excerpt(excerpt_id, start).unwrap()
-                        ..snapshot
+                    buffer.anchor_in_excerpt(excerpt_id, start).unwrap()
+                        ..buffer
                             .anchor_in_excerpt(excerpt_id, step.source_range.end)
                             .unwrap()
                 });
@@ -2499,29 +2500,34 @@ impl ContextEditor {
                     cx,
                 );
 
-                editor.fold_ranges(
-                    [(header_range, header_placeholder)]
-                        .into_iter()
-                        .chain(footer_range.map(|range| (range, footer_placeholder))),
-                    false,
-                    cx,
-                );
-
                 let state = EditStepState {
                     header_crease_id: new_crease_ids[0],
                     footer_crease_id: new_crease_ids.get(1).copied(),
                 };
 
+                let is_unfolded;
                 match self.edit_steps.entry(range.clone()) {
                     hash_map::Entry::Vacant(entry) => {
                         entry.insert(state);
+                        is_unfolded = false;
                     }
                     hash_map::Entry::Occupied(mut entry) => {
                         let entry = entry.get_mut();
                         removed_crease_ids.push(entry.header_crease_id);
                         removed_crease_ids.extend(entry.footer_crease_id);
+                        is_unfolded = !snapshot.intersects_fold(header_range.start);
                         *entry = state;
                     }
+                }
+
+                if !is_unfolded {
+                    editor.fold_ranges(
+                        [(header_range, header_placeholder)]
+                            .into_iter()
+                            .chain(footer_range.map(|range| (range, footer_placeholder))),
+                        false,
+                        cx,
+                    );
                 }
             }
 
