@@ -28,7 +28,6 @@ use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
-use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::Mutex;
 use regex::Regex;
@@ -53,7 +52,7 @@ use std::{
     str,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
-        Arc,
+        Arc, LazyLock,
     },
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
@@ -111,23 +110,23 @@ where
     func(cursor.deref_mut())
 }
 
-lazy_static! {
-    static ref NEXT_LANGUAGE_ID: AtomicUsize = Default::default();
-    static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
-    static ref WASM_ENGINE: wasmtime::Engine = {
-        wasmtime::Engine::new(&wasmtime::Config::new()).unwrap()
-    };
+static NEXT_LANGUAGE_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
+static NEXT_GRAMMAR_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
+static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
+    wasmtime::Engine::new(&wasmtime::Config::new()).expect("Failed to create Wasmtime engine")
+});
 
-    /// A shared grammar for plain text, exposed for reuse by downstream crates.
-    pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
+/// A shared grammar for plain text, exposed for reuse by downstream crates.
+pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
+    Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
             soft_wrap: Some(SoftWrap::EditorWidth),
             ..Default::default()
         },
         None,
-    ));
-}
+    ))
+});
 
 /// Types that represent a position in a buffer, and can be converted into
 /// an LSP position, to send to a language server.

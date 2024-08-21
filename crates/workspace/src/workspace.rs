@@ -44,7 +44,6 @@ pub use item::{
 };
 use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
-use lazy_static::lazy_static;
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
@@ -77,7 +76,7 @@ use std::{
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::{atomic::AtomicUsize, Arc, Weak},
+    sync::{atomic::AtomicUsize, Arc, LazyLock, Weak},
     time::Duration,
 };
 use task::SpawnInTerminal;
@@ -101,16 +100,19 @@ use crate::persistence::{
     SerializedAxis,
 };
 
-lazy_static! {
-    static ref ZED_WINDOW_SIZE: Option<Size<Pixels>> = env::var("ZED_WINDOW_SIZE")
+static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
+    env::var("ZED_WINDOW_SIZE")
         .ok()
         .as_deref()
-        .and_then(parse_pixel_size_env_var);
-    static ref ZED_WINDOW_POSITION: Option<Point<Pixels>> = env::var("ZED_WINDOW_POSITION")
+        .and_then(parse_pixel_size_env_var)
+});
+
+static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
+    env::var("ZED_WINDOW_POSITION")
         .ok()
         .as_deref()
-        .and_then(parse_pixel_position_env_var);
-}
+        .and_then(parse_pixel_position_env_var)
+});
 
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);

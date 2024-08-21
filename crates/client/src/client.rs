@@ -22,7 +22,6 @@ use gpui::{
     actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
-use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
 use proto::ProtoClient;
@@ -43,7 +42,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Weak,
+        Arc, LazyLock, Weak,
     },
     time::{Duration, Instant},
 };
@@ -65,27 +64,35 @@ impl fmt::Display for DevServerToken {
     }
 }
 
-lazy_static! {
-    static ref ZED_SERVER_URL: Option<String> = std::env::var("ZED_SERVER_URL").ok();
-    static ref ZED_RPC_URL: Option<String> = std::env::var("ZED_RPC_URL").ok();
-    /// An environment variable whose presence indicates that the development auth
-    /// provider should be used.
-    ///
-    /// Only works in development. Setting this environment variable in other release
-    /// channels is a no-op.
-    pub static ref ZED_DEVELOPMENT_AUTH: bool =
-        std::env::var("ZED_DEVELOPMENT_AUTH").map_or(false, |value| !value.is_empty());
-    pub static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
+static ZED_SERVER_URL: LazyLock<Option<String>> =
+    LazyLock::new(|| std::env::var("ZED_SERVER_URL").ok());
+static ZED_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZED_RPC_URL").ok());
+
+/// An environment variable whose presence indicates that the development auth
+/// provider should be used.
+///
+/// Only works in development. Setting this environment variable in other release
+/// channels is a no-op.
+pub static ZED_DEVELOPMENT_AUTH: LazyLock<bool> = LazyLock::new(|| {
+    std::env::var("ZED_DEVELOPMENT_AUTH").map_or(false, |value| !value.is_empty())
+});
+pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
+    std::env::var("ZED_IMPERSONATE")
         .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) });
-    pub static ref ADMIN_API_TOKEN: Option<String> = std::env::var("ZED_ADMIN_API_TOKEN")
+        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+});
+
+pub static ADMIN_API_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| {
+    std::env::var("ZED_ADMIN_API_TOKEN")
         .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) });
-    pub static ref ZED_APP_PATH: Option<PathBuf> =
-        std::env::var("ZED_APP_PATH").ok().map(PathBuf::from);
-    pub static ref ZED_ALWAYS_ACTIVE: bool =
-        std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty());
-}
+        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+});
+
+pub static ZED_APP_PATH: LazyLock<Option<PathBuf>> =
+    LazyLock::new(|| std::env::var("ZED_APP_PATH").ok().map(PathBuf::from));
+
+pub static ZED_ALWAYS_ACTIVE: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty()));
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
 pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);

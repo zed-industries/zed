@@ -19,7 +19,6 @@ test-support = []
 anyhow.workspace = true
 gpui.workspace = true
 indoc.workspace = true
-lazy_static.workspace = true
 log.workspace = true
 paths.workspace = true
 release_channel.workspace = true
