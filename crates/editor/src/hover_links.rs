@@ -686,7 +686,7 @@ pub(crate) fn find_url(
     None
 }
 
-pub(crate) fn find_file(
+pub(crate) fn surrounding_filename(
     snapshot: language::BufferSnapshot,
     position: text::Anchor,
 ) -> Option<(Range<text::Anchor>, String)> {
@@ -1360,7 +1360,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_find_file(cx: &mut gpui::TestAppContext) {
+    async fn test_surrounding_filename(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
@@ -1413,7 +1413,7 @@ mod tests {
                 (positions, snapshot)
             });
 
-            let result = find_file(snapshot, position);
+            let result = surrounding_filename(snapshot, position);
 
             if let Some(expected) = expected {
                 assert!(result.is_some(), "Failed to find file path: {}", input);

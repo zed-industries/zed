@@ -7784,16 +7784,19 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Option<PathBuf>> {
         if self.is_local() {
-            let mut search_paths = self
-                .worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                .collect::<Vec<_>>();
+            let mut search_paths = vec![];
 
+            // The buffers parent dir should be first in the search path
             if let Some(file) = buffer.read(cx).file() {
                 if let Some(dir) = file.abs_path(cx).parent() {
                     search_paths.push(dir.to_path_buf());
                 }
             }
+
+            search_paths.extend(
+                self.worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf()),
+            );
 
             let expanded = shellexpand::tilde(&path).into_owned();
 

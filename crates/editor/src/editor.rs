@@ -97,7 +97,7 @@ use language::{point_to_lsp, BufferRow, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
-use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
+use hover_links::{surrounding_filename, HoverLink, HoveredLinkState, InlayHighlight};
 pub use lsp::CompletionContext;
 use lsp::{
     CompletionItemKind, CompletionTriggerKind, DiagnosticSeverity, InsertTextFormat,
@@ -9195,7 +9195,7 @@ impl Editor {
         let snapshot = buffer.read(cx).snapshot();
 
         cx.spawn(|_, mut cx| async move {
-            let result = find_file(snapshot, buffer_position);
+            let result = surrounding_filename(snapshot, buffer_position);
 
             if let Some((_, candidate_file_path)) = result {
                 let task = project.update(&mut cx, |project, cx| {
