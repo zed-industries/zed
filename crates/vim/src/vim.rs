@@ -283,7 +283,7 @@ impl Vim {
             change_list::register(editor, cx);
 
             cx.defer(|vim, cx| {
-                vim.focused(cx);
+                vim.focused(false, cx);
             })
         })
     }
@@ -347,7 +347,7 @@ impl Vim {
 
     fn handle_editor_event(&mut self, event: &EditorEvent, cx: &mut ViewContext<Self>) {
         match event {
-            EditorEvent::Focused => self.focused(cx),
+            EditorEvent::Focused => self.focused(true, cx),
             EditorEvent::Blurred => self.blurred(cx),
             EditorEvent::SelectionsChanged { local: true } => {
                 self.local_selections_changed(cx);
@@ -586,7 +586,7 @@ impl Vim {
         context.set("vim_operator", operator_id);
     }
 
-    fn focused(&mut self, cx: &mut ViewContext<Self>) {
+    fn focused(&mut self, preserve_selection: bool, cx: &mut ViewContext<Self>) {
         let Some(editor) = self.editor() else {
             return;
         };
@@ -600,7 +600,18 @@ impl Vim {
                 // When following someone, don't switch vim mode.
                 && editor.leader_peer_id().is_none()
         {
-            self.switch_mode(Mode::Visual, true, cx);
+            if preserve_selection {
+                self.switch_mode(Mode::Visual, true, cx);
+            } else {
+                self.update_editor(cx, |_, editor, cx| {
+                    editor.set_clip_at_line_ends(false, cx);
+                    editor.change_selections(None, cx, |s| {
+                        s.move_with(|_, selection| {
+                            selection.collapse_to(selection.start, selection.goal)
+                        })
+                    });
+                });
+            }
         }
 
         cx.emit(VimEvent::Focused);
