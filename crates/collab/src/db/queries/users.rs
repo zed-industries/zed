@@ -387,25 +387,4 @@ impl Database {
         })
         .await
     }
-
-    pub async fn update_user_github_data(
-        &self,
-        user_id: UserId,
-        github_user_id: i32,
-        github_user_created_at: NaiveDateTime,
-    ) -> Result<()> {
-        self.transaction(|tx| async move {
-            user::Entity::update_many()
-                .filter(user::Column::Id.eq(user_id))
-                .set(user::ActiveModel {
-                    github_user_id: ActiveValue::set(Some(github_user_id)),
-                    github_user_created_at: ActiveValue::set(Some(github_user_created_at)),
-                    ..Default::default()
-                })
-                .exec(&*tx)
-                .await?;
-            Ok(())
-        })
-        .await
-    }
 }
