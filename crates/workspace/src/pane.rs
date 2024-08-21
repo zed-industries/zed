@@ -1678,9 +1678,15 @@ impl Pane {
             },
             cx,
         );
+
+        let indicator = if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
+            None
+        } else {
+            Some(render_item_indicator(item.boxed_clone(), cx))
+        };
+
         let icon = item.tab_icon(cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
-        let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
@@ -1754,7 +1760,9 @@ impl Pane {
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
-            .start_slot::<Indicator>(indicator)
+            .when_some(indicator, |this, indicator| {
+                this.start_slot::<Indicator>(indicator)
+            })
             .end_slot(
                 IconButton::new("close tab", IconName::Close)
                     .shape(IconButtonShape::Square)
