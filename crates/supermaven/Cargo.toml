@@ -31,6 +31,9 @@ text.workspace = true
 ui.workspace = true
 util.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true

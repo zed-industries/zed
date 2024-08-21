@@ -187,6 +187,8 @@ impl fmt::Display for PeerId {
 }
 
 messages!(
+    (AcceptTermsOfService, Foreground),
+    (AcceptTermsOfServiceResponse, Foreground),
     (Ack, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
@@ -298,10 +300,6 @@ messages!(
     (PrepareRename, Background),
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
-    (CompleteWithLanguageModel, Background),
-    (CompleteWithLanguageModelResponse, Background),
-    (StreamCompleteWithLanguageModel, Background),
-    (StreamCompleteWithLanguageModelResponse, Background),
     (CountLanguageModelTokens, Background),
     (CountLanguageModelTokensResponse, Background),
     (RefreshInlayHints, Foreground),
@@ -415,6 +413,7 @@ messages!(
 );
 
 request_messages!(
+    (AcceptTermsOfService, AcceptTermsOfServiceResponse),
     (ApplyCodeAction, ApplyCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
@@ -478,11 +477,6 @@ request_messages!(
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
     (PrepareRename, PrepareRenameResponse),
-    (CompleteWithLanguageModel, CompleteWithLanguageModelResponse),
-    (
-        StreamCompleteWithLanguageModel,
-        StreamCompleteWithLanguageModelResponse
-    ),
     (CountLanguageModelTokens, CountLanguageModelTokensResponse),
     (RefreshInlayHints, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),

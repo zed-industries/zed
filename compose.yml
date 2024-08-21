@@ -33,5 +33,31 @@ services:
     volumes:
       - ./livekit.yaml:/livekit.yaml
 
+  postgrest_app:
+    image: postgrest/postgrest
+    container_name: postgrest_app
+    ports:
+      - 8081:8081
+    environment:
+      PGRST_DB_URI: postgres://postgres@postgres:5432/zed
+    volumes:
+      - ./crates/collab/postgrest_app.conf:/etc/postgrest.conf
+    command: postgrest /etc/postgrest.conf
+    depends_on:
+      - postgres
+
+  postgrest_llm:
+    image: postgrest/postgrest
+    container_name: postgrest_llm
+    ports:
+      - 8082:8082
+    environment:
+      PGRST_DB_URI: postgres://postgres@postgres:5432/zed_llm
+    volumes:
+      - ./crates/collab/postgrest_llm.conf:/etc/postgrest.conf
+    command: postgrest /etc/postgrest.conf
+    depends_on:
+      - postgres
+
 volumes:
   postgres_data:

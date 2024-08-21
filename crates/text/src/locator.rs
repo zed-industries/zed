@@ -1,11 +1,9 @@
-use lazy_static::lazy_static;
 use smallvec::{smallvec, SmallVec};
 use std::iter;
+use std::sync::LazyLock;
 
-lazy_static! {
-    static ref MIN: Locator = Locator::min();
-    static ref MAX: Locator = Locator::max();
-}
+static MIN: LazyLock<Locator> = LazyLock::new(|| Locator::min());
+static MAX: LazyLock<Locator> = LazyLock::new(|| Locator::max());
 
 /// An identifier for a position in a ordered collection.
 ///

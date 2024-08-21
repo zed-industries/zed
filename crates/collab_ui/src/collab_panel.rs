@@ -1395,15 +1395,22 @@ impl CollabPanel {
         cx.notify();
     }
 
+    fn reset_filter_editor_text(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.filter_editor.update(cx, |editor, cx| {
+            if editor.buffer().read(cx).len(cx) > 0 {
+                editor.set_text("", cx);
+                true
+            } else {
+                false
+            }
+        })
+    }
+
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         if self.take_editing_state(cx) {
             cx.focus_view(&self.filter_editor);
-        } else {
-            self.filter_editor.update(cx, |editor, cx| {
-                if editor.buffer().read(cx).len(cx) > 0 {
-                    editor.set_text("", cx);
-                }
-            });
+        } else if !self.reset_filter_editor_text(cx) {
+            self.focus_handle.focus(cx);
         }
 
         if self.context_menu.is_some() {
@@ -2042,7 +2049,7 @@ impl CollabPanel {
         let Some(channel) = channel_store.channel_for_id(channel_id) else {
             return;
         };
-        let item = ClipboardItem::new(channel.link(cx));
+        let item = ClipboardItem::new_string(channel.link(cx));
         cx.write_to_clipboard(item)
     }
 
@@ -2261,7 +2268,7 @@ impl CollabPanel {
                     .size(ButtonSize::None)
                     .visible_on_hover("section-header")
                     .on_click(move |_, cx| {
-                        let item = ClipboardItem::new(channel_link_copy.clone());
+                        let item = ClipboardItem::new_string(channel_link_copy.clone());
                         cx.write_to_clipboard(item)
                     })
                     .tooltip(|cx| Tooltip::text("Copy channel link", cx))

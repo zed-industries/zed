@@ -44,7 +44,7 @@ pub fn init(cx: &mut AppContext) {
                 cx.spawn(|_, mut cx| async move {
                     let specs = specs.await.to_string();
 
-                    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new(specs.clone())))
+                    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(specs.clone())))
                         .log_err();
 
                     cx.prompt(

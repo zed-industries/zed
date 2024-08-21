@@ -31,6 +31,7 @@ use axum::{
     routing::get,
     Extension, Router, TypedHeader,
 };
+use chrono::Utc;
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
@@ -70,7 +71,7 @@ use std::{
     time::{Duration, Instant},
 };
 use time::OffsetDateTime;
-use tokio::sync::{watch, Semaphore};
+use tokio::sync::{watch, MutexGuard, Semaphore};
 use tower::ServiceBuilder;
 use tracing::{
     field::{self},
@@ -100,18 +101,6 @@ struct Response<R> {
 impl<R: RequestMessage> Response<R> {
     fn send(self, payload: R::Response) -> Result<()> {
         self.responded.store(true, SeqCst);
-        self.peer.respond(self.receipt, payload)?;
-        Ok(())
-    }
-}
-
-struct StreamingResponse<R: RequestMessage> {
-    peer: Arc<Peer>,
-    receipt: Receipt<R>,
-}
-
-impl<R: RequestMessage> StreamingResponse<R> {
-    fn send(&self, payload: R::Response) -> Result<()> {
         self.peer.respond(self.receipt, payload)?;
         Ok(())
     }
@@ -203,7 +192,7 @@ impl Session {
         }
     }
 
-    pub async fn current_plan(&self) -> anyhow::Result<proto::Plan> {
+    pub async fn current_plan(&self, db: MutexGuard<'_, DbHandle>) -> anyhow::Result<proto::Plan> {
         if self.is_staff() {
             return Ok(proto::Plan::ZedPro);
         }
@@ -212,7 +201,6 @@ impl Session {
             return Ok(proto::Plan::Free);
         };
 
-        let db = self.db().await;
         if db.has_active_billing_subscription(user_id).await? {
             Ok(proto::Plan::ZedPro)
         } else {
@@ -616,6 +604,7 @@ impl Server {
             .add_message_handler(user_message_handler(update_followers))
             .add_request_handler(user_handler(get_private_user_info))
             .add_request_handler(user_handler(get_llm_api_token))
+            .add_request_handler(user_handler(accept_terms_of_service))
             .add_message_handler(user_message_handler(acknowledge_channel_message))
             .add_message_handler(user_message_handler(acknowledge_buffer_version))
             .add_request_handler(user_handler(get_supermaven_api_key))
@@ -630,31 +619,6 @@ impl Server {
             ))
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
             .add_message_handler(update_context)
-            .add_request_handler({
-                let app_state = app_state.clone();
-                move |request, response, session| {
-                    let app_state = app_state.clone();
-                    async move {
-                        complete_with_language_model(request, response, session, &app_state.config)
-                            .await
-                    }
-                }
-            })
-            .add_streaming_request_handler({
-                let app_state = app_state.clone();
-                move |request, response, session| {
-                    let app_state = app_state.clone();
-                    async move {
-                        stream_complete_with_language_model(
-                            request,
-                            response,
-                            session,
-                            &app_state.config,
-                        )
-                        .await
-                    }
-                }
-            })
             .add_request_handler({
                 let app_state = app_state.clone();
                 move |request, response, session| {
@@ -934,40 +898,6 @@ impl Server {
                         } else {
                             Err(anyhow!("handler did not send a response"))?
                         }
-                    }
-                    Err(error) => {
-                        let proto_err = match &error {
-                            Error::Internal(err) => err.to_proto(),
-                            _ => ErrorCode::Internal.message(format!("{}", error)).to_proto(),
-                        };
-                        peer.respond_with_error(receipt, proto_err)?;
-                        Err(error)
-                    }
-                }
-            }
-        })
-    }
-
-    fn add_streaming_request_handler<F, Fut, M>(&mut self, handler: F) -> &mut Self
-    where
-        F: 'static + Send + Sync + Fn(M, StreamingResponse<M>, Session) -> Fut,
-        Fut: Send + Future<Output = Result<()>>,
-        M: RequestMessage,
-    {
-        let handler = Arc::new(handler);
-        self.add_handler(move |envelope, session| {
-            let receipt = envelope.receipt();
-            let handler = handler.clone();
-            async move {
-                let peer = session.peer.clone();
-                let response = StreamingResponse {
-                    peer: peer.clone(),
-                    receipt,
-                };
-                match (handler)(envelope.payload, response, session).await {
-                    Ok(()) => {
-                        peer.end_stream(receipt)?;
-                        Ok(())
                     }
                     Err(error) => {
                         let proto_err = match &error {
@@ -3569,7 +3499,7 @@ fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
 }
 
 async fn update_user_plan(_user_id: UserId, session: &Session) -> Result<()> {
-    let plan = session.current_plan().await?;
+    let plan = session.current_plan(session.db().await).await?;
 
     session
         .peer
@@ -4561,202 +4491,6 @@ async fn acknowledge_buffer_version(
     Ok(())
 }
 
-struct ZedProCompleteWithLanguageModelRateLimit;
-
-impl RateLimit for ZedProCompleteWithLanguageModelRateLimit {
-    fn capacity(&self) -> usize {
-        std::env::var("COMPLETE_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(120) // Picked arbitrarily
-    }
-
-    fn refill_duration(&self) -> chrono::Duration {
-        chrono::Duration::hours(1)
-    }
-
-    fn db_name(&self) -> &'static str {
-        "zed-pro:complete-with-language-model"
-    }
-}
-
-struct FreeCompleteWithLanguageModelRateLimit;
-
-impl RateLimit for FreeCompleteWithLanguageModelRateLimit {
-    fn capacity(&self) -> usize {
-        std::env::var("COMPLETE_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR_FREE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(120 / 10) // Picked arbitrarily
-    }
-
-    fn refill_duration(&self) -> chrono::Duration {
-        chrono::Duration::hours(1)
-    }
-
-    fn db_name(&self) -> &'static str {
-        "free:complete-with-language-model"
-    }
-}
-
-async fn complete_with_language_model(
-    request: proto::CompleteWithLanguageModel,
-    response: Response<proto::CompleteWithLanguageModel>,
-    session: Session,
-    config: &Config,
-) -> Result<()> {
-    let Some(session) = session.for_user() else {
-        return Err(anyhow!("user not found"))?;
-    };
-    authorize_access_to_language_models(&session).await?;
-
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan().await? {
-        proto::Plan::ZedPro => Box::new(ZedProCompleteWithLanguageModelRateLimit),
-        proto::Plan::Free => Box::new(FreeCompleteWithLanguageModelRateLimit),
-    };
-
-    session
-        .app_state
-        .rate_limiter
-        .check(&*rate_limit, session.user_id())
-        .await?;
-
-    let result = match proto::LanguageModelProvider::from_i32(request.provider) {
-        Some(proto::LanguageModelProvider::Anthropic) => {
-            let api_key = config
-                .anthropic_api_key
-                .as_ref()
-                .context("no Anthropic AI API key configured on the server")?;
-            anthropic::complete(
-                session.http_client.as_ref(),
-                anthropic::ANTHROPIC_API_URL,
-                api_key,
-                serde_json::from_str(&request.request)?,
-            )
-            .await?
-        }
-        _ => return Err(anyhow!("unsupported provider"))?,
-    };
-
-    response.send(proto::CompleteWithLanguageModelResponse {
-        completion: serde_json::to_string(&result)?,
-    })?;
-
-    Ok(())
-}
-
-async fn stream_complete_with_language_model(
-    request: proto::StreamCompleteWithLanguageModel,
-    response: StreamingResponse<proto::StreamCompleteWithLanguageModel>,
-    session: Session,
-    config: &Config,
-) -> Result<()> {
-    let Some(session) = session.for_user() else {
-        return Err(anyhow!("user not found"))?;
-    };
-    authorize_access_to_language_models(&session).await?;
-
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan().await? {
-        proto::Plan::ZedPro => Box::new(ZedProCompleteWithLanguageModelRateLimit),
-        proto::Plan::Free => Box::new(FreeCompleteWithLanguageModelRateLimit),
-    };
-
-    session
-        .app_state
-        .rate_limiter
-        .check(&*rate_limit, session.user_id())
-        .await?;
-
-    match proto::LanguageModelProvider::from_i32(request.provider) {
-        Some(proto::LanguageModelProvider::Anthropic) => {
-            let api_key = config
-                .anthropic_api_key
-                .as_ref()
-                .context("no Anthropic AI API key configured on the server")?;
-            let mut chunks = anthropic::stream_completion(
-                session.http_client.as_ref(),
-                anthropic::ANTHROPIC_API_URL,
-                api_key,
-                serde_json::from_str(&request.request)?,
-                None,
-            )
-            .await?;
-            while let Some(event) = chunks.next().await {
-                let chunk = event?;
-                response.send(proto::StreamCompleteWithLanguageModelResponse {
-                    event: serde_json::to_string(&chunk)?,
-                })?;
-            }
-        }
-        Some(proto::LanguageModelProvider::OpenAi) => {
-            let api_key = config
-                .openai_api_key
-                .as_ref()
-                .context("no OpenAI API key configured on the server")?;
-            let mut events = open_ai::stream_completion(
-                session.http_client.as_ref(),
-                open_ai::OPEN_AI_API_URL,
-                api_key,
-                serde_json::from_str(&request.request)?,
-                None,
-            )
-            .await?;
-            while let Some(event) = events.next().await {
-                let event = event?;
-                response.send(proto::StreamCompleteWithLanguageModelResponse {
-                    event: serde_json::to_string(&event)?,
-                })?;
-            }
-        }
-        Some(proto::LanguageModelProvider::Google) => {
-            let api_key = config
-                .google_ai_api_key
-                .as_ref()
-                .context("no Google AI API key configured on the server")?;
-            let mut events = google_ai::stream_generate_content(
-                session.http_client.as_ref(),
-                google_ai::API_URL,
-                api_key,
-                serde_json::from_str(&request.request)?,
-            )
-            .await?;
-            while let Some(event) = events.next().await {
-                let event = event?;
-                response.send(proto::StreamCompleteWithLanguageModelResponse {
-                    event: serde_json::to_string(&event)?,
-                })?;
-            }
-        }
-        Some(proto::LanguageModelProvider::Zed) => {
-            let api_key = config
-                .qwen2_7b_api_key
-                .as_ref()
-                .context("no Qwen2-7B API key configured on the server")?;
-            let api_url = config
-                .qwen2_7b_api_url
-                .as_ref()
-                .context("no Qwen2-7B URL configured on the server")?;
-            let mut events = open_ai::stream_completion(
-                session.http_client.as_ref(),
-                &api_url,
-                api_key,
-                serde_json::from_str(&request.request)?,
-                None,
-            )
-            .await?;
-            while let Some(event) = events.next().await {
-                let event = event?;
-                response.send(proto::StreamCompleteWithLanguageModelResponse {
-                    event: serde_json::to_string(&event)?,
-                })?;
-            }
-        }
-        None => return Err(anyhow!("unknown provider"))?,
-    }
-
-    Ok(())
-}
-
 async fn count_language_model_tokens(
     request: proto::CountLanguageModelTokens,
     response: Response<proto::CountLanguageModelTokens>,
@@ -4766,9 +4500,9 @@ async fn count_language_model_tokens(
     let Some(session) = session.for_user() else {
         return Err(anyhow!("user not found"))?;
     };
-    authorize_access_to_language_models(&session).await?;
+    authorize_access_to_legacy_llm_endpoints(&session).await?;
 
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan().await? {
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan(session.db().await).await? {
         proto::Plan::ZedPro => Box::new(ZedProCountLanguageModelTokensRateLimit),
         proto::Plan::Free => Box::new(FreeCountLanguageModelTokensRateLimit),
     };
@@ -4886,9 +4620,9 @@ async fn compute_embeddings(
     api_key: Option<Arc<str>>,
 ) -> Result<()> {
     let api_key = api_key.context("no OpenAI API key configured on the server")?;
-    authorize_access_to_language_models(&session).await?;
+    authorize_access_to_legacy_llm_endpoints(&session).await?;
 
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan().await? {
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan(session.db().await).await? {
         proto::Plan::ZedPro => Box::new(ZedProComputeEmbeddingsRateLimit),
         proto::Plan::Free => Box::new(FreeComputeEmbeddingsRateLimit),
     };
@@ -4950,7 +4684,7 @@ async fn get_cached_embeddings(
     response: Response<proto::GetCachedEmbeddings>,
     session: UserSession,
 ) -> Result<()> {
-    authorize_access_to_language_models(&session).await?;
+    authorize_access_to_legacy_llm_endpoints(&session).await?;
 
     let db = session.db().await;
     let embeddings = db.get_embeddings(&request.model, &request.digests).await?;
@@ -4964,14 +4698,15 @@ async fn get_cached_embeddings(
     Ok(())
 }
 
-async fn authorize_access_to_language_models(session: &UserSession) -> Result<(), Error> {
-    let db = session.db().await;
-    let flags = db.get_user_flags(session.user_id()).await?;
-    if flags.iter().any(|flag| flag == "language-models") {
-        return Ok(());
+/// This is leftover from before the LLM service.
+///
+/// The endpoints protected by this check will be moved there eventually.
+async fn authorize_access_to_legacy_llm_endpoints(session: &UserSession) -> Result<(), Error> {
+    if session.is_staff() {
+        Ok(())
+    } else {
+        Err(anyhow!("permission denied"))?
     }
-
-    Err(anyhow!("permission denied"))?
 }
 
 /// Get a Supermaven API key for the user
@@ -5149,23 +4884,70 @@ async fn get_private_user_info(
         metrics_id,
         staff: user.admin,
         flags,
+        accepted_tos_at: user.accepted_tos_at.map(|t| t.and_utc().timestamp() as u64),
     })?;
     Ok(())
 }
+
+/// Accept the terms of service (tos) on behalf of the current user
+async fn accept_terms_of_service(
+    _request: proto::AcceptTermsOfService,
+    response: Response<proto::AcceptTermsOfService>,
+    session: UserSession,
+) -> Result<()> {
+    let db = session.db().await;
+
+    let accepted_tos_at = Utc::now();
+    db.set_user_accepted_tos_at(session.user_id(), Some(accepted_tos_at.naive_utc()))
+        .await?;
+
+    response.send(proto::AcceptTermsOfServiceResponse {
+        accepted_tos_at: accepted_tos_at.timestamp() as u64,
+    })?;
+    Ok(())
+}
+
+/// The minimum account age an account must have in order to use the LLM service.
+const MIN_ACCOUNT_AGE_FOR_LLM_USE: chrono::Duration = chrono::Duration::days(30);
 
 async fn get_llm_api_token(
     _request: proto::GetLlmToken,
     response: Response<proto::GetLlmToken>,
     session: UserSession,
 ) -> Result<()> {
-    if !session.is_staff() {
+    let db = session.db().await;
+
+    let flags = db.get_user_flags(session.user_id()).await?;
+    let has_language_models_feature_flag = flags.iter().any(|flag| flag == "language-models");
+    let has_llm_closed_beta_feature_flag = flags.iter().any(|flag| flag == "llm-closed-beta");
+
+    if !session.is_staff() && !has_language_models_feature_flag {
         Err(anyhow!("permission denied"))?
     }
 
+    let user_id = session.user_id();
+    let user = db
+        .get_user_by_id(user_id)
+        .await?
+        .ok_or_else(|| anyhow!("user {} not found", user_id))?;
+
+    if user.accepted_tos_at.is_none() {
+        Err(anyhow!("terms of service not accepted"))?
+    }
+
+    let mut account_created_at = user.created_at;
+    if let Some(github_created_at) = user.github_user_created_at {
+        account_created_at = account_created_at.min(github_created_at);
+    }
+    if Utc::now().naive_utc() - account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
+        Err(anyhow!("account too young"))?
+    }
     let token = LlmTokenClaims::create(
-        session.user_id(),
+        user.id,
+        user.github_login.clone(),
         session.is_staff(),
-        session.current_plan().await?,
+        has_llm_closed_beta_feature_flag,
+        session.current_plan(db).await?,
         &session.app_state.config,
     )?;
     response.send(proto::GetLlmTokenResponse { token })?;

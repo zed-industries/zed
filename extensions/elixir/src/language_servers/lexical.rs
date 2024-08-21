@@ -95,6 +95,8 @@ impl Lexical {
             .map_err(|e| format!("failed to download file: {e}"))?;
 
             zed::make_file_executable(&binary_path)?;
+            zed::make_file_executable(&format!("{version_dir}/lexical/bin/debug_shell.sh"))?;
+            zed::make_file_executable(&format!("{version_dir}/lexical/priv/port_wrapper.sh"))?;
 
             let entries =
                 fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
