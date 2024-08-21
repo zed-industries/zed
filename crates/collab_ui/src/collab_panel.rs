@@ -2538,6 +2538,12 @@ impl CollabPanel {
         let has_messages_notification = channel_store.has_new_messages(channel_id);
         let has_notes_notification = channel_store.has_channel_buffer_changed(channel_id);
 
+        let fg_color = if has_notes_notification {
+            Color::Default
+        } else {
+            Color::Muted
+        };
+
         const FACEPILE_LIMIT: usize = 3;
         let participants = self.channel_store.read(cx).channel_participants(channel_id);
 
@@ -2622,30 +2628,20 @@ impl CollabPanel {
                         },
                     ))
                     .start_slot(
-                        div()
-                            .relative()
-                            .child(
-                                Icon::new(if is_public {
-                                    IconName::Public
-                                } else {
-                                    IconName::Hash
-                                })
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                            )
-                            .children(has_notes_notification.then(|| {
-                                div()
-                                    .w_1p5()
-                                    .absolute()
-                                    .right(px(-1.))
-                                    .top(px(-1.))
-                                    .child(Indicator::dot().color(Color::Info))
-                            })),
+                        div().relative().child(
+                            Icon::new(if is_public {
+                                IconName::Public
+                            } else {
+                                IconName::Hash
+                            })
+                            .size(IconSize::Small)
+                            .color(fg_color),
+                        ),
                     )
                     .child(
                         h_flex()
                             .id(channel_id.0 as usize)
-                            .child(Label::new(channel.name.clone()))
+                            .child(Label::new(channel.name.clone()).color(fg_color))
                             .children(face_pile.map(|face_pile| face_pile.p_1())),
                     ),
             )
