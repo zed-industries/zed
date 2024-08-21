@@ -700,6 +700,7 @@ pub(crate) fn find_file(
     let mut inside_quotes = false;
 
     let mut filename = String::new();
+
     let mut backwards = snapshot.reversed_chars_at(offset).take(LIMIT).peekable();
     while let Some(ch) = backwards.next() {
         // Escaped whitespace
@@ -733,7 +734,6 @@ pub(crate) fn find_file(
         .chars_at(offset)
         .take(LIMIT - (offset - token_start))
         .peekable();
-
     while let Some(ch) = forwards.next() {
         // Skip escaped whitespace
         if ch == '\\' && forwards.peek().map_or(false, |ch| ch.is_whitespace()) {
@@ -762,8 +762,7 @@ pub(crate) fn find_file(
         filename.push(ch);
         token_end += ch.len_utf8();
     }
-    // Check if we didn't find the ending whitespace or if we read more or equal than LIMIT
-    // which at this point would happen only if we reached the end of buffer
+
     if !found_end && (token_end - token_start >= LIMIT) {
         return None;
     }
