@@ -23,7 +23,7 @@ use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, ToPoint,
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, EntityId, FocusableView, Global, KeystrokeEvent,
@@ -411,6 +411,15 @@ impl Vim {
 
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
+
+        if VimSettings::get_global(cx).smart_relative_line {
+            let relative_line_numbers = mode != Mode::Insert;
+            if EditorSettings::get_global(cx).relative_line_numbers != relative_line_numbers {
+                let mut editor_settings = EditorSettings::get_global(cx).clone();
+                editor_settings.relative_line_numbers = relative_line_numbers;
+                EditorSettings::override_global(editor_settings, cx);
+            }
+        }
 
         if leave_selections {
             return;
@@ -1060,6 +1069,7 @@ pub enum UseSystemClipboard {
 
 #[derive(Deserialize)]
 struct VimSettings {
+    pub smart_relative_line: bool,
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
@@ -1068,6 +1078,7 @@ struct VimSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 struct VimSettingsContent {
+    pub smart_relative_line: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,

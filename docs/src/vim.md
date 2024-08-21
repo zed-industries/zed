@@ -238,6 +238,8 @@ Some vim settings are available to modify the default vim behavior:
 ```json
 {
   "vim": {
+    // absolute numbering in any mode except insert mode
+    "smart_relative_line": true,
     // "always": use system clipboard when no register is specified
     // "never": don't use system clipboard unless "+ or "* is specified
     // "on_yank": use system clipboard for yank operations when no register is specified
