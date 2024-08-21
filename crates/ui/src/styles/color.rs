@@ -89,8 +89,7 @@ fn build_state_colors(cx: &WindowContext) -> (Hsla, Hsla, Hsla) {
     // let color_canidates = vec![cx.theme().colors().text];
     // let base_color = most_intense_color(cx, &color_canidates);
 
-    let mut base_color = cx.theme().colors().text;
-    base_color.grayscale();
+    let base_color = cx.theme().colors().text;
 
     let intensity_reduction = if is_light { 0.24 } else { 0.2 };
 
@@ -99,14 +98,14 @@ fn build_state_colors(cx: &WindowContext) -> (Hsla, Hsla, Hsla) {
     let inactive = if is_light {
         Hsla {
             h: base_color.h,
-            s: base_color.s,
+            s: (base_color.s / 2.0).max(0.0),
             l: (base_color.l + intensity_reduction).min(1.0),
             a: base_color.a,
         }
     } else {
         Hsla {
             h: base_color.h,
-            s: base_color.s,
+            s: (base_color.s / 3.0).max(0.0),
             l: (base_color.l - intensity_reduction).max(0.0),
             a: base_color.a,
         }
@@ -115,14 +114,14 @@ fn build_state_colors(cx: &WindowContext) -> (Hsla, Hsla, Hsla) {
     let disabled = if is_light {
         Hsla {
             h: base_color.h,
-            s: base_color.s,
+            s: (base_color.s / 3.0).max(0.0),
             l: (base_color.l + 2.0 * intensity_reduction).min(1.0),
             a: base_color.a,
         }
     } else {
         Hsla {
             h: base_color.h,
-            s: base_color.s,
+            s: (base_color.s / 4.0).max(0.0),
             l: (base_color.l - 2.0 * intensity_reduction).max(0.0),
             a: base_color.a,
         }
