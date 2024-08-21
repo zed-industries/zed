@@ -254,6 +254,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
                     name: model.name.clone(),
                     max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
                 }),
                 AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
                     name: model.name.clone(),
@@ -513,7 +514,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
-                let request = request.into_open_ai(model.id().into());
+                let request = request.into_open_ai(model.id().into(), model.max_output_tokens());
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let response = Self::perform_llm_completion(
@@ -557,7 +558,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Zed(model) => {
                 let client = self.client.clone();
-                let mut request = request.into_open_ai(model.id().into());
+                let mut request = request.into_open_ai(model.id().into(), None);
                 request.max_tokens = Some(4000);
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
@@ -629,7 +630,8 @@ impl LanguageModel for CloudLanguageModel {
                     .boxed()
             }
             CloudModel::OpenAi(model) => {
-                let mut request = request.into_open_ai(model.id().into());
+                let mut request =
+                    request.into_open_ai(model.id().into(), model.max_output_tokens());
                 request.tool_choice = Some(open_ai::ToolChoice::Other(
                     open_ai::ToolDefinition::Function {
                         function: open_ai::FunctionDefinition {
@@ -676,7 +678,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Zed(model) => {
                 // All Zed models are OpenAI-based at the time of writing.
-                let mut request = request.into_open_ai(model.id().into());
+                let mut request = request.into_open_ai(model.id().into(), None);
                 request.tool_choice = Some(open_ai::ToolChoice::Other(
                     open_ai::ToolDefinition::Function {
                         function: open_ai::FunctionDefinition {
