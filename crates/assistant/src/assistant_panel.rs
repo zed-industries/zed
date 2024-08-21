@@ -50,6 +50,7 @@ use language_model::{
     LanguageModelRegistry, Role,
 };
 use multi_buffer::MultiBufferRow;
+use parking_lot::Mutex;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
@@ -2481,11 +2482,29 @@ impl ContextEditor {
                     merge_adjacent: false,
                 };
 
+                let footer_fold_callback = Arc::new(Mutex::<Option<ToggleFold>>::new(None));
+
                 let new_crease_ids = editor.insert_creases(
                     [Crease::new(
                         header_range.clone(),
                         header_placeholder.clone(),
-                        render_slash_command_output_toggle,
+                        {
+                            let footer_fold_callback = footer_fold_callback.clone();
+                            move |row, is_folded, fold, _cx| {
+                                Disclosure::new(("edit-fold-indicator", row.0 as u64), !is_folded)
+                                    .selected(is_folded)
+                                    .on_click({
+                                        let footer_fold_callback = footer_fold_callback.clone();
+                                        move |_e, cx| {
+                                            fold(!is_folded, cx);
+                                            if let Some(callback) = &*footer_fold_callback.lock() {
+                                                callback(!is_folded, cx);
+                                            }
+                                        }
+                                    })
+                                    .into_any_element()
+                            }
+                        },
                         |_, _, _| Empty.into_any_element(),
                     )]
                     .into_iter()
@@ -2493,7 +2512,13 @@ impl ContextEditor {
                         Crease::new(
                             footer_range,
                             footer_placeholder.clone(),
-                            render_slash_command_output_toggle,
+                            {
+                                let footer_fold_callback = footer_fold_callback.clone();
+                                move |_row, _is_folded, fold, _cx| {
+                                    *footer_fold_callback.lock() = Some(fold);
+                                    Empty.into_any_element()
+                                }
+                            },
                             |_, _, _| Empty.into_any_element(),
                         )
                     })),
