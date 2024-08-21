@@ -7776,14 +7776,54 @@ impl Project {
         }
     }
 
-    pub fn file_exists(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<bool> {
+    pub fn file_exists_in(
+        &self,
+        path: &str,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<PathBuf>> {
         if self.is_local() {
+            let mut search_paths: Vec<PathBuf> = vec![];
+
+            if let Some(file) = buffer.read(cx).file() {
+                if let Some(dir) = file.abs_path(cx).parent() {
+                    search_paths.push(dir.to_path_buf());
+                }
+            }
+
+            for worktree in self.worktrees(cx) {
+                search_paths.push(worktree.read(cx).abs_path().to_path_buf())
+            }
+
+            let expanded = shellexpand::tilde(&path).into_owned();
+
+            let candidate_paths = search_paths
+                .into_iter()
+                .map(|search_path| search_path.join(PathBuf::from(&expanded)))
+                .collect::<Vec<_>>();
+
             let fs = self.fs.clone();
-            let path = PathBuf::from(&query);
-            cx.background_executor()
-                .spawn(async move { fs.is_file(&path).await })
+            cx.background_executor().spawn(async move {
+                let tasks = candidate_paths
+                    .into_iter()
+                    .map(|candidate_path| {
+                        let fs = fs.clone();
+                        async move {
+                            let path = Path::new(&candidate_path);
+                            let exists = fs.is_file(path).await;
+                            (candidate_path, exists)
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                futures::future::join_all(tasks)
+                    .await
+                    .into_iter()
+                    .find(|(_, exists)| *exists)
+                    .map(|(path, _)| path.clone())
+            })
         } else {
-            Task::ready(false)
+            Task::ready(None)
         }
     }
 

@@ -9188,57 +9188,21 @@ impl Editor {
             return;
         };
 
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+
         let snapshot = buffer.read(cx).snapshot();
-
-        let mut search_paths: Vec<PathBuf> = vec![];
-
-        if let Some(file) = buffer.read(cx).file() {
-            if let Some(dir) = file.abs_path(cx).parent() {
-                search_paths.push(dir.to_path_buf());
-            }
-        }
-
-        if let Some(project) = self.project.as_ref() {
-            for worktree in project.read(cx).worktrees(cx) {
-                search_paths.push(worktree.read(cx).abs_path().to_path_buf())
-            }
-        }
-
-        let project = self.project.clone();
 
         cx.spawn(|_, mut cx| async move {
             let result = find_file(snapshot, buffer_position);
 
             if let Some((_, candidate_file_path)) = result {
-                let candidate_paths = search_paths
-                    .into_iter()
-                    .map(|search_path| {
-                        search_path
-                            .join(PathBuf::from(&candidate_file_path))
-                            .to_string_lossy()
-                            .to_string()
-                    })
-                    .collect::<Vec<_>>();
+                let task = project.update(&mut cx, |project, cx| {
+                    project.file_exists_in(&candidate_file_path, &buffer, cx)
+                })?;
 
-                let tasks = candidate_paths
-                    .iter()
-                    .filter_map(|candidate_path| {
-                        project
-                            .clone()?
-                            .update(&mut cx, |project, cx| {
-                                project.file_exists(candidate_path, cx)
-                            })
-                            .ok()
-                    })
-                    .collect::<Vec<Task<_>>>();
-
-                let paths = futures::future::join_all(tasks).await;
-                let buffer = paths
-                    .into_iter()
-                    .zip(candidate_paths)
-                    .find(|(exists, _)| *exists);
-
-                if let Some((_, path)) = buffer {
+                if let Some(path) = task.await {
                     workspace
                         .update(&mut cx, |workspace, cx| {
                             workspace.open_paths(
