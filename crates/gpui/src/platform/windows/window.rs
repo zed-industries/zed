@@ -166,7 +166,7 @@ impl WindowsWindowState {
 
     /// get the logical size of the app's drawable area.
     ///
-    /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
+    /// Currently, GPUI uses the logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
         self.logical_size
@@ -187,13 +187,13 @@ impl WindowsWindowState {
     }
 
     fn title_bar_height(&self) -> Pixels {
-        // todo(windows) this is hard set to match the ui title bar
+        // todo(windows) this is hardcoded to match the ui title bar
         //               in the future the ui title bar component will report the size
         px(32.) + self.title_bar_top_offset()
     }
 
     pub(crate) fn caption_button_width(&self) -> Pixels {
-        // todo(windows) this is hard set to match the ui title bar
+        // todo(windows) this is hardcoded to match the ui title bar
         //               in the future the ui title bar component will report the size
         px(36.)
     }
@@ -404,7 +404,7 @@ impl PlatformWindow for WindowsWindow {
 
     /// get the logical size of the app's drawable area.
     ///
-    /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
+    /// Currently, GPUI uses the logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
         self.0.state.borrow().content_size()
@@ -1017,7 +1017,7 @@ fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) -> Result<()> {
 
 fn calculate_window_rect(bounds: Bounds<DevicePixels>, border_offset: WindowBorderOffset) -> RECT {
     // NOTE:
-    // The reason that not using `AdjustWindowRectEx()` here is
+    // The reason we're not using `AdjustWindowRectEx()` here is
     // that the size reported by this function is incorrect.
     // You can test it, and there are similar discussions online.
     // See: https://stackoverflow.com/questions/12423584/how-to-set-exact-client-size-for-overlapped-window-winapi
