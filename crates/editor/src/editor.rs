@@ -9187,6 +9187,7 @@ impl Editor {
         else {
             return;
         };
+
         let snapshot = buffer.read(cx).snapshot();
 
         let mut search_paths: Vec<PathBuf> = vec![];

@@ -697,12 +697,13 @@ pub(crate) fn find_file(
     let mut token_end = offset;
     let mut found_start = false;
     let mut found_end = false;
+    let mut inside_quotes = false;
 
     let mut filename = String::new();
     let mut backwards = snapshot.reversed_chars_at(offset).take(LIMIT).peekable();
     while let Some(ch) = backwards.next() {
-        // a\ a
-        if backwards.peek() == Some(&'\\') && ch == ' ' {
+        // Escaped whitespace
+        if ch.is_whitespace() && backwards.peek() == Some(&'\\') {
             filename.push(ch);
             token_start -= ch.len_utf8();
             backwards.next();
@@ -713,6 +714,12 @@ pub(crate) fn find_file(
             found_start = true;
             break;
         }
+        if (ch == '"' || ch == '\'') && !inside_quotes {
+            found_start = true;
+            inside_quotes = true;
+            break;
+        }
+
         filename.push(ch);
         token_start -= ch.len_utf8();
     }
@@ -720,28 +727,37 @@ pub(crate) fn find_file(
         return None;
     }
 
-    filename = filename
-        .chars()
-        .rev()
-        .skip_while(|ch| !ch.is_alphanumeric())
-        .collect();
+    filename = filename.chars().rev().collect();
 
     let mut forwards = snapshot
         .chars_at(offset)
-        .take(LIMIT - (offset - token_start));
+        .take(LIMIT - (offset - token_start))
+        .peekable();
 
     while let Some(ch) = forwards.next() {
-        if ch == '\\' {
+        // Skip escaped whitespace
+        if ch == '\\' && forwards.peek().map_or(false, |ch| ch.is_whitespace()) {
             token_end += ch.len_utf8();
-            // todo!() check for ch == ' '
-            if let Some(ch) = forwards.next() {
-                filename.push(ch);
-                token_end += ch.len_utf8();
-            }
+            let whitespace = forwards.next().unwrap();
+            token_end += whitespace.len_utf8();
+            filename.push(whitespace);
+            continue;
         }
+
         if ch.is_whitespace() {
             found_end = true;
             break;
+        }
+        if ch == '"' || ch == '\'' {
+            // If we're inside quotes, we stop when we come across the next quote
+            if inside_quotes {
+                found_end = true;
+                break;
+            } else {
+                // Otherwise, we skip the quote
+                inside_quotes = true;
+                continue;
+            }
         }
         filename.push(ch);
         token_end += ch.len_utf8();
@@ -752,13 +768,13 @@ pub(crate) fn find_file(
         return None;
     }
 
-    let possible_file_path = snapshot
-        .text_for_range(token_start..token_end)
-        .collect::<String>();
+    if filename.is_empty() {
+        return None;
+    }
 
     let range = snapshot.anchor_before(token_start)..snapshot.anchor_after(token_end);
 
-    Some((range, possible_file_path))
+    Some((range, filename))
 }
 
 #[cfg(test)]
@@ -1355,19 +1371,31 @@ mod tests {
         )
         .await;
 
-        // relative: file.txt
-        // absolute: /blah
-        // home abs: ~/asda
-        // whitespace, escaped: i\ dont\ -\ like-whitespace.txt
-        // punctuation: "file.txt"
-
         let test_cases = [
-            // ("foobar ˇ foobar", None),
+            ("file ˇ name", None),
             ("ˇfile name", Some("file")),
+            ("file ˇname", Some("name")),
             ("fiˇle name", Some("file")),
             ("filenˇame", Some("filename")),
+            // Absolute path
             ("foobar ˇ/home/user/f.txt", Some("/home/user/f.txt")),
             ("foobar /home/useˇr/f.txt", Some("/home/user/f.txt")),
+            // Windows
+            ("C:\\Useˇrs\\user\\f.txt", Some("C:\\Users\\user\\f.txt")),
+            // Whitespace
+            ("ˇfile\\ -\\ name.txt", Some("file - name.txt")),
+            ("file\\ -\\ naˇme.txt", Some("file - name.txt")),
+            // Tilde
+            ("ˇ~/file.txt", Some("~/file.txt")),
+            ("~/fiˇle.txt", Some("~/file.txt")),
+            // Double quotes
+            ("\"fˇile.txt\"", Some("file.txt")),
+            ("ˇ\"file.txt\"", Some("file.txt")),
+            ("ˇ\"fi\\ le.txt\"", Some("fi le.txt")),
+            // Single quotes
+            ("'fˇile.txt'", Some("file.txt")),
+            ("ˇ'file.txt'", Some("file.txt")),
+            ("ˇ'fi\\ le.txt'", Some("fi le.txt")),
         ];
 
         for (input, expected) in test_cases {
@@ -1393,7 +1421,11 @@ mod tests {
                 let (_, path) = result.unwrap();
                 assert_eq!(&path, expected, "Incorrect file path for input: {}", input);
             } else {
-                assert!(result.is_none());
+                assert!(
+                    result.is_none(),
+                    "Expected no result, but got one: {:?}",
+                    result
+                );
             }
         }
     }
