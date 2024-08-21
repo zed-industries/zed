@@ -1,43 +1,50 @@
-use editor::Editor;
 use gpui::{div, Element, Render, Subscription, View, ViewContext, WeakView};
 use itertools::Itertools;
 use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
-use crate::{Vim, VimAddon};
+use crate::{Vim, VimEvent};
 
 /// The ModeIndicator displays the current mode in the status bar.
 pub struct ModeIndicator {
     vim: Option<WeakView<Vim>>,
     pending_keys: Option<String>,
-    _keys_subscription: Subscription,
     vim_subscription: Option<Subscription>,
 }
 
 impl ModeIndicator {
     /// Construct a new mode indicator in this window.
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let keys_subscription = cx.observe_pending_input(|this, cx| {
+        cx.observe_pending_input(|this, cx| {
             this.update_pending_keys(cx);
             cx.notify();
-        });
+        })
+        .detach();
 
-        let mut this = Self {
+        let handle = cx.view().clone();
+        let window = cx.window_handle();
+        cx.observe_new_views::<Vim>(move |_, cx| {
+            if cx.window_handle() != window {
+                return;
+            }
+            let vim = cx.view().clone();
+            handle.update(cx, |_, cx| {
+                cx.subscribe(&vim, |mode_indicator, vim, event, cx| match event {
+                    VimEvent::Focused => {
+                        mode_indicator.vim_subscription =
+                            Some(cx.observe(&vim, |_, _, cx| cx.notify()));
+                        mode_indicator.vim = Some(vim.downgrade());
+                    }
+                })
+                .detach()
+            })
+        })
+        .detach();
+
+        Self {
             vim: None,
             pending_keys: None,
-            _keys_subscription: keys_subscription,
             vim_subscription: None,
-        };
-        this.update_mode(cx);
-        this
-    }
-
-    fn update_mode(&mut self, _: &mut ViewContext<Self>) {
-        // if let Some(vim) = self.vim(cx) {
-        //     self.mode = Some(vim.mode);
-        //     self.operators = self.current_operators_description(&vim, cx);
-        // } else {
-        //     self.mode = None;
-        // }
+        }
     }
 
     fn update_pending_keys(&mut self, cx: &mut ViewContext<Self>) {
@@ -92,19 +99,8 @@ impl Render for ModeIndicator {
 impl StatusItemView for ModeIndicator {
     fn set_active_pane_item(
         &mut self,
-        active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        _active_pane_item: Option<&dyn ItemHandle>,
+        _cx: &mut ViewContext<Self>,
     ) {
-        let Some(vim) = active_pane_item
-            .and_then(|item| item.downcast::<Editor>())
-            .and_then(|editor| editor.read(cx).addon::<VimAddon>())
-            .map(|addon| addon.view.clone())
-        else {
-            self.vim.take();
-            self.vim_subscription.take();
-            return;
-        };
-        self.vim_subscription = Some(cx.observe(&vim, |_, _, cx| cx.notify()));
-        self.vim = Some(vim.downgrade());
     }
 }

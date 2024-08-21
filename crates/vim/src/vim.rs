@@ -23,8 +23,8 @@ use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, AppContext, FocusableView, KeyContext, KeystrokeEvent, Render,
-    View, ViewContext, WeakView,
+    actions, impl_actions, Action, AppContext, EventEmitter, FocusableView, KeyContext,
+    KeystrokeEvent, Render, View, ViewContext, WeakView,
 };
 use insert::NormalBefore;
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -197,6 +197,11 @@ impl Render for Vim {
         gpui::Empty
     }
 }
+
+enum VimEvent {
+    Focused,
+}
+impl EventEmitter<VimEvent> for Vim {}
 
 impl Vim {
     /// The namespace for Vim actions.
@@ -609,6 +614,7 @@ impl Vim {
             self.switch_mode(Mode::Visual, true, cx);
         }
 
+        cx.emit(VimEvent::Focused);
         self.sync_vim_settings(cx);
     }
 
