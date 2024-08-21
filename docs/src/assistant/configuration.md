@@ -13,7 +13,7 @@ The following providers are supported:
 
 To configure different providers, run `assistant: show configuration` in the command palette, or click on the hamburger menu at the top-right of the assistant panel and select "Configure".
 
-[^1]: This provider does not support [`/workflow`](./commands#workflow-not-generally-available) command.
+[^1]: This provider does not support the [`/workflow`](./commands#workflow-not-generally-available) command.
 
 To further customize providers, you can use `settings.json` to do that as follows:
 
@@ -29,7 +29,7 @@ A hosted service providing convenient and performant support for AI-enabled codi
 
 You can use Claude 3.5 Sonnet via [Zed AI](#zed-ai) for free. To use other Anthropic models you will need to configure it by providing your own API key.
 
-1. You can obtain an API key [here](https://console.anthropic.com/settings/keys).
+1. Sign up for Anthropic and [create an API key](https://console.anthropic.com/settings/keys)
 2. Make sure that your Anthropic account has credits
 3. Open the configuration view (`assistant: show configuration`) and navigate to the Anthropic section
 4. Enter your Anthropic API key
@@ -40,7 +40,7 @@ Zed will also use the `ANTHROPIC_API_KEY` environment variable if it's defined.
 
 #### Anthropic Custom Models {#anthropic-custom-models}
 
-You can add custom models to the Anthropic provider, by adding the following to your Zed `settings.json`:
+You can add custom models to the Anthropic provider by adding the following to your Zed `settings.json`:
 
 ```json
 {
@@ -75,8 +75,8 @@ You can use GitHub Copilot chat with the Zed assistant by choosing it via the mo
 
 You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
-1. Create an API key [here](https://aistudio.google.com/app/apikey).
-2. Open the configuration view (`assistant: show configuration`) and navigate to the OpenAI section
+1. Go the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
+2. Open the configuration view (`assistant: show configuration`) and navigate to the Google AI section
 3. Enter your Google AI API key
 
 The Google AI API key will be saved in your keychain.
@@ -85,7 +85,7 @@ Zed will also use the `GOOGLE_AI_API_KEY` environment variable if it's defined.
 
 #### Google AI custom models {#google-ai-custom-models}
 
-You can add custom models to the GoogleAI provider, by adding the following to your Zed `settings.json`:
+You can add custom models to the Google AI provider by adding the following to your Zed `settings.json`:
 
 ```json
 {
@@ -137,7 +137,7 @@ You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI 
 
 ### OpenAI {#openai}
 
-1. Create an [OpenAI API key](https://platform.openai.com/account/api-keys)
+1. Visit the OpenAI platform and [create an API key](https://platform.openai.com/account/api-keys)
 2. Make sure that your OpenAI account has credits
 3. Open the configuration view (`assistant: show configuration`) and navigate to the OpenAI section
 4. Enter your OpenAI API key
@@ -244,7 +244,7 @@ You can also manually edit the `default_model` object in your settings:
 | key            | type    | default | description                                                                           |
 | -------------- | ------- | ------- | ------------------------------------------------------------------------------------- |
 | enabled        | boolean | true    | Setting this to `false` will completely disable the assistant                         |
-| button         | boolean | true    | Show the assistant icon                                                               |
+| button         | boolean | true    | Show the assistant icon in the status bar                                             |
 | dock           | string  | "right" | The default dock position for the assistant panel. Can be ["left", "right", "bottom"] |
 | default_height | string  | null    | The pixel height of the assistant panel when docked to the bottom                     |
 | default_width  | string  | null    | The pixel width of the assistant panel when docked to the left or right               |
