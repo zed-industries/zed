@@ -2505,22 +2505,31 @@ impl ContextEditor {
                     footer_crease_id: new_crease_ids.get(1).copied(),
                 };
 
-                let is_unfolded;
+                let was_unfolded;
                 match self.edit_steps.entry(range.clone()) {
                     hash_map::Entry::Vacant(entry) => {
                         entry.insert(state);
-                        is_unfolded = false;
+                        was_unfolded = false;
                     }
                     hash_map::Entry::Occupied(mut entry) => {
                         let entry = entry.get_mut();
                         removed_crease_ids.push(entry.header_crease_id);
                         removed_crease_ids.extend(entry.footer_crease_id);
-                        is_unfolded = !snapshot.intersects_fold(header_range.start);
+                        was_unfolded = !snapshot.intersects_fold(header_range.start);
                         *entry = state;
                     }
                 }
 
-                if !is_unfolded {
+                editor.unfold_ranges(
+                    [header_range.clone()]
+                        .into_iter()
+                        .chain(footer_range.clone()),
+                    true,
+                    false,
+                    cx,
+                );
+
+                if !was_unfolded {
                     editor.fold_ranges(
                         [(header_range, header_placeholder)]
                             .into_iter()
@@ -3801,8 +3810,7 @@ impl ContextEditor {
                     .is_ge()
                     && workflow_step_range.end.cmp(&range.end, &snapshot).is_le()
             })
-            .count()
-            + 1;
+            .count();
 
         let step_label = Label::new(format!("Step {step_index}")).size(LabelSize::Small);
 
