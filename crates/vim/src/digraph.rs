@@ -4,7 +4,7 @@ use collections::HashMap;
 use gpui::AppContext;
 use settings::Settings;
 use std::sync::LazyLock;
-use ui::WindowContext;
+use ui::ViewContext;
 
 use crate::{Vim, VimSettings};
 
@@ -34,16 +34,21 @@ fn lookup_digraph(a: char, b: char, cx: &AppContext) -> Arc<str> {
         .unwrap_or_else(|| b.to_string().into())
 }
 
-pub fn insert_digraph(first_char: char, second_char: char, cx: &mut WindowContext) {
-    let text = lookup_digraph(first_char, second_char, &cx);
+impl Vim {
+    pub fn insert_digraph(
+        &mut self,
+        first_char: char,
+        second_char: char,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let text = lookup_digraph(first_char, second_char, &cx);
 
-    Vim::update(cx, |vim, cx| vim.pop_operator(cx));
-    if Vim::read(cx).state().editor_input_enabled() {
-        Vim::update(cx, |vim, cx| {
-            vim.update_active_editor(cx, |_, editor, cx| editor.insert(&text, cx));
-        });
-    } else {
-        Vim::active_editor_input_ignored(text, cx);
+        self.pop_operator(cx);
+        if self.editor_input_enabled() {
+            self.update_editor(cx, |_, editor, cx| editor.insert(&text, cx));
+        } else {
+            self.input_ignored(text, cx);
+        }
     }
 }
 
