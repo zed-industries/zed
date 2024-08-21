@@ -1468,4 +1468,69 @@ mod tests {
             }
         }
     }
+
+    #[gpui::test]
+    async fn test_hover_filenames(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Insert a new file
+        let fs = cx.update_workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
+            .await;
+
+        cx.set_state(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you wantˇ.
+        "});
+
+        // Moving the mouse over a file that does not exist should not create a highlight
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that does_nˇot_exist.txt.
+            Go to file2.rs if you want.
+        "});
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+        "});
+
+        // Moving the mouse over a file that does exist should
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to fˇile2.rs if you want.
+        "});
+
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to «file2.rsˇ» if you want.
+        "});
+
+        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+
+        cx.update_workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.update_workspace(|workspace, cx| {
+            let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+
+            let buffer = active_editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap();
+
+            let file = buffer.read(cx).file().unwrap();
+            let file_path = file.abs_path(cx);
+
+            assert_eq!(file_path.to_str().unwrap(), "/root/dir/file2.rs");
+        });
+    }
 }
