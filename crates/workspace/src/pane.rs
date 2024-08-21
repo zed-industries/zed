@@ -12,6 +12,7 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
+use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
     AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, DismissEvent, Div, DragMoveEvent,
@@ -37,7 +38,6 @@ use std::{
     },
 };
 use theme::ThemeSettings;
-use git::repository::GitFileStatus;
 
 use ui::{
     prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconButtonShape, IconName,
