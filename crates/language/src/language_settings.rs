@@ -383,6 +383,8 @@ pub enum SoftWrap {
     EditorWidth,
     /// Soft wrap lines at the preferred line length
     PreferredLineLength,
+    /// EditorWidth and PreferredLineLength min value
+    Bounded,
 }
 
 /// Controls the behavior of formatting files when they are saved.

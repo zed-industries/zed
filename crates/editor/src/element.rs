@@ -4978,7 +4978,7 @@ impl Element for EditorElement {
                     };
                     let overscroll = size(em_width + right_margin, px(0.));
 
-                    snapshot = self.editor.update(cx, |editor, cx| {
+                    snapshot = self.editor.update(cx, |editor, cx| -> EditorSnapshot {
                         editor.last_bounds = Some(bounds);
                         editor.gutter_dimensions = gutter_dimensions;
                         editor.set_visible_line_count(bounds.size.height / line_height, cx);
@@ -4994,7 +4994,8 @@ impl Element for EditorElement {
                                     Some((MAX_LINE_LEN / 2) as f32 * em_advance)
                                 }
                                 SoftWrap::EditorWidth => Some(editor_width),
-                                SoftWrap::Column(column) => {
+                                SoftWrap::Column(column) => Some(column as f32 * em_advance),
+                                SoftWrap::Smart(column) => {
                                     Some(editor_width.min(column as f32 * em_advance))
                                 }
                             };
