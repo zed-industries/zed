@@ -27,6 +27,7 @@ pub enum ThreadEntry {
     Scope(Scope),
     Variable {
         depth: usize,
+        scope: Scope,
         variable: Arc<Variable>,
         has_children: bool,
     },
@@ -286,10 +287,11 @@ impl DebugPanelItem {
             ThreadEntry::Scope(scope) => self.render_scope(scope, cx),
             ThreadEntry::Variable {
                 depth,
+                scope,
                 variable,
                 has_children,
                 ..
-            } => self.render_variable(variable, *depth, *has_children, cx),
+            } => self.render_variable(ix, variable, scope, *depth, *has_children, cx),
         }
     }
 
@@ -297,8 +299,11 @@ impl DebugPanelItem {
         SharedString::from(format!("scope-{}", scope.variables_reference))
     }
 
-    fn variable_entry_id(variable: &Variable, depth: usize) -> SharedString {
-        SharedString::from(format!("variable-{}-{}", depth, variable.name))
+    fn variable_entry_id(variable: &Variable, scope: &Scope, depth: usize) -> SharedString {
+        SharedString::from(format!(
+            "variable-{}-{}-{}",
+            depth, scope.variables_reference, variable.name
+        ))
     }
 
     fn render_scope(&self, scope: &Scope, cx: &mut ViewContext<Self>) -> AnyElement {
@@ -329,12 +334,15 @@ impl DebugPanelItem {
 
     fn render_variable(
         &self,
+        ix: usize,
         variable: &Variable,
+        scope: &Scope,
         depth: usize,
         has_children: bool,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement {
-        let variable_id = Self::variable_entry_id(variable, depth);
+        let variable_reference = variable.variables_reference;
+        let variable_id = Self::variable_entry_id(variable, scope, depth);
 
         let disclosed = has_children.then(|| self.open_entries.binary_search(&variable_id).is_ok());
 
@@ -349,11 +357,79 @@ impl DebugPanelItem {
                     .indent_step_size(px(20.))
                     .always_show_disclosure_icon(true)
                     .toggle(disclosed)
-                    .on_toggle(
-                        cx.listener(move |this, _, cx| {
-                            this.toggle_entry_collapsed(&variable_id, cx)
-                        }),
-                    )
+                    .on_toggle(cx.listener(move |this, _, cx| {
+                        if !has_children {
+                            return;
+                        }
+
+                        // if we already opened the variable/we already fetched it
+                        // we can just toggle it because we already have the nested variable
+                        if disclosed.unwrap_or(true)
+                            || this
+                                .current_thread_state()
+                                .vars
+                                .contains_key(&variable_reference)
+                        {
+                            return this.toggle_entry_collapsed(&variable_id, cx);
+                        }
+
+                        let Some(entries) = this
+                            .stack_frame_entries
+                            .get(&this.current_thread_state().current_stack_frame_id)
+                        else {
+                            return;
+                        };
+
+                        let Some(entry) = entries.get(ix) else {
+                            return;
+                        };
+
+                        if let ThreadEntry::Variable { scope, depth, .. } = entry {
+                            let variable_id = variable_id.clone();
+                            let client = this.client.clone();
+                            let scope = scope.clone();
+                            let depth = *depth;
+                            cx.spawn(|this, mut cx| async move {
+                                let variables = client.variables(variable_reference).await?;
+
+                                this.update(&mut cx, |this, cx| {
+                                    let client = this.client.clone();
+                                    let mut thread_states = client.thread_states();
+                                    let Some(thread_state) = thread_states.get_mut(&this.thread_id)
+                                    else {
+                                        return;
+                                    };
+
+                                    if let Some(state) = thread_state
+                                        .variables
+                                        .get_mut(&thread_state.current_stack_frame_id)
+                                        .and_then(|s| s.get_mut(&scope))
+                                    {
+                                        let position = state.iter().position(|(d, v)| {
+                                            Self::variable_entry_id(v, &scope, *d) == variable_id
+                                        });
+
+                                        if let Some(position) = position {
+                                            state.splice(
+                                                position + 1..position + 1,
+                                                variables
+                                                    .clone()
+                                                    .into_iter()
+                                                    .map(|v| (depth + 1, v)),
+                                            );
+                                        }
+
+                                        thread_state.vars.insert(variable_reference, variables);
+                                    }
+
+                                    drop(thread_states);
+
+                                    this.toggle_entry_collapsed(&variable_id, cx);
+                                })
+                            })
+                            .detach_and_log_err(cx);
+                        }
+                    }))
                     .child(
                         h_flex()
                             .gap_1()
@@ -478,7 +554,7 @@ impl DebugPanelItem {
 
                 if self
                     .open_entries
-                    .binary_search(&Self::variable_entry_id(variable, *depth))
+                    .binary_search(&Self::variable_entry_id(&variable, &scope, *depth))
                     .is_err()
                 {
                     if depth_check.is_none() || depth_check.is_some_and(|d| d > *depth) {
@@ -487,9 +563,10 @@ impl DebugPanelItem {
                 }
 
                 entries.push(ThreadEntry::Variable {
-                    depth: *depth,
-                    variable: Arc::new(variable.clone()),
                     has_children,
+                    depth: *depth,
+                    scope: scope.clone(),
+                    variable: Arc::new(variable.clone()),
                 });
             }
         }

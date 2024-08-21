@@ -193,15 +193,28 @@ pub fn prompts_dir() -> &'static PathBuf {
 /// Returns the path to the prompt templates directory.
 ///
 /// This is where the prompt templates for core features can be overridden with templates.
-pub fn prompt_overrides_dir() -> &'static PathBuf {
-    static PROMPT_TEMPLATES_DIR: OnceLock<PathBuf> = OnceLock::new();
-    PROMPT_TEMPLATES_DIR.get_or_init(|| {
-        if cfg!(target_os = "macos") {
-            config_dir().join("prompt_overrides")
-        } else {
-            support_dir().join("prompt_overrides")
+///
+/// # Arguments
+///
+/// * `dev_mode` - If true, assumes the current working directory is the Zed repository.
+pub fn prompt_overrides_dir(repo_path: Option<&Path>) -> PathBuf {
+    if let Some(path) = repo_path {
+        let dev_path = path.join("assets").join("prompts");
+        if dev_path.exists() {
+            return dev_path;
         }
-    })
+    }
+
+    static PROMPT_TEMPLATES_DIR: OnceLock<PathBuf> = OnceLock::new();
+    PROMPT_TEMPLATES_DIR
+        .get_or_init(|| {
+            if cfg!(target_os = "macos") {
+                config_dir().join("prompt_overrides")
+            } else {
+                support_dir().join("prompt_overrides")
+            }
+        })
+        .clone()
 }
 
 /// Returns the path to the semantic search's embeddings directory.

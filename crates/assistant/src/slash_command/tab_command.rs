@@ -39,6 +39,10 @@ impl SlashCommand for TabSlashCommand {
         false
     }
 
+    fn accepts_arguments(&self) -> bool {
+        true
+    }
+
     fn complete_argument(
         self: Arc<Self>,
         arguments: &[String],
@@ -62,6 +66,16 @@ impl SlashCommand for TabSlashCommand {
         if has_all_tabs_completion_item {
             return Task::ready(Ok(Vec::new()));
         }
+
+        let active_item_path = workspace.as_ref().and_then(|workspace| {
+            workspace
+                .update(cx, |workspace, cx| {
+                    let snapshot = active_item_buffer(workspace, cx).ok()?;
+                    snapshot.resolve_file_path(cx, true)
+                })
+                .ok()
+                .flatten()
+        });
         let current_query = arguments.last().cloned().unwrap_or_default();
         let tab_items_search =
             tab_items_for_queries(workspace, &[current_query], cancel, false, cx);
@@ -73,21 +87,38 @@ impl SlashCommand for TabSlashCommand {
                 if argument_set.contains(&path_string) {
                     return None;
                 }
+                if active_item_path.is_some() && active_item_path == path {
+                    return None;
+                }
                 Some(ArgumentCompletion {
                     label: path_string.clone().into(),
                     new_text: path_string,
-                    run_command,
+                    replace_previous_arguments: false,
+                    after_completion: run_command.into(),
                 })
             });
 
-            Ok(Some(ArgumentCompletion {
-                label: ALL_TABS_COMPLETION_ITEM.into(),
-                new_text: ALL_TABS_COMPLETION_ITEM.to_owned(),
-                run_command: true,
-            })
-            .into_iter()
-            .chain(tab_completion_items)
-            .collect::<Vec<_>>())
+            let active_item_completion = active_item_path
+                .as_deref()
+                .map(|active_item_path| active_item_path.to_string_lossy().to_string())
+                .filter(|path_string| !argument_set.contains(path_string))
+                .map(|path_string| ArgumentCompletion {
+                    label: path_string.clone().into(),
+                    new_text: path_string,
+                    replace_previous_arguments: false,
+                    after_completion: run_command.into(),
+                });
+
+            Ok(active_item_completion
+                .into_iter()
+                .chain(Some(ArgumentCompletion {
+                    label: ALL_TABS_COMPLETION_ITEM.into(),
+                    new_text: ALL_TABS_COMPLETION_ITEM.to_owned(),
+                    replace_previous_arguments: false,
+                    after_completion: true.into(),
+                }))
+                .chain(tab_completion_items)
+                .collect())
         })
     }
 
@@ -160,19 +191,7 @@ fn tab_items_for_queries(
                 .context("no workspace")?
                 .update(&mut cx, |workspace, cx| {
                     if strict_match && empty_query {
-                        let active_editor = workspace
-                            .active_item(cx)
-                            .context("no active item")?
-                            .downcast::<Editor>()
-                            .context("active item is not an editor")?;
-                        let snapshot = active_editor
-                            .read(cx)
-                            .buffer()
-                            .read(cx)
-                            .as_singleton()
-                            .context("active editor is not a singleton buffer")?
-                            .read(cx)
-                            .snapshot();
+                        let snapshot = active_item_buffer(workspace, cx)?;
                         let full_path = snapshot.resolve_file_path(cx, true);
                         return anyhow::Ok(vec![(full_path, snapshot, 0)]);
                     }
@@ -276,4 +295,24 @@ fn tab_items_for_queries(
             })
             .await
     })
+}
+
+fn active_item_buffer(
+    workspace: &mut Workspace,
+    cx: &mut ui::ViewContext<Workspace>,
+) -> anyhow::Result<BufferSnapshot> {
+    let active_editor = workspace
+        .active_item(cx)
+        .context("no active item")?
+        .downcast::<Editor>()
+        .context("active item is not an editor")?;
+    let snapshot = active_editor
+        .read(cx)
+        .buffer()
+        .read(cx)
+        .as_singleton()
+        .context("active editor is not a singleton buffer")?
+        .read(cx)
+        .snapshot();
+    Ok(snapshot)
 }

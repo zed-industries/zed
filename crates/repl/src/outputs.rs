@@ -250,24 +250,38 @@ pub struct ErrorView {
 }
 
 impl ErrorView {
-    fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
+    fn render(&self, cx: &mut ViewContext<ExecutionView>) -> Option<AnyElement> {
         let theme = cx.theme();
 
         let padding = cx.line_height() / 2.;
 
         Some(
             v_flex()
-                .w_full()
-                .px(padding)
-                .py(padding)
-                .border_1()
-                .border_color(theme.status().error_border)
+                .gap_3()
                 .child(
                     h_flex()
-                        .font_weight(FontWeight::BOLD)
-                        .child(format!("{}: {}", self.ename, self.evalue)),
+                        .font_buffer(cx)
+                        .child(
+                            Label::new(format!("{}: ", self.ename.clone()))
+                                // .size(LabelSize::Large)
+                                .color(Color::Error)
+                                .weight(FontWeight::BOLD),
+                        )
+                        .child(
+                            Label::new(self.evalue.clone())
+                                // .size(LabelSize::Large)
+                                .weight(FontWeight::BOLD),
+                        ),
                 )
-                .child(self.traceback.render(cx))
+                .child(
+                    div()
+                        .w_full()
+                        .px(padding)
+                        .py(padding)
+                        .border_l_1()
+                        .border_color(theme.status().error_border)
+                        .child(self.traceback.render(cx)),
+                )
                 .into_any_element(),
         )
     }
@@ -358,7 +372,7 @@ pub enum OutputContent {
 }
 
 impl OutputContent {
-    fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
+    fn render(&self, cx: &mut ViewContext<ExecutionView>) -> Option<AnyElement> {
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either

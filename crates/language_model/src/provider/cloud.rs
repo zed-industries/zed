@@ -1,29 +1,35 @@
 use super::open_ai::count_open_ai_tokens;
 use crate::{
-    settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelId,
-    LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
+    settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
+    LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, ZedModel,
 };
 use anthropic::AnthropicError;
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{anyhow, Result};
 use client::{Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME};
 use collections::BTreeMap;
-use feature_flags::{FeatureFlagAppExt, ZedPro};
-use futures::{future::BoxFuture, stream::BoxStream, AsyncBufReadExt, FutureExt, StreamExt};
+use feature_flags::{FeatureFlagAppExt, LlmClosedBeta, ZedPro};
+use futures::{
+    future::BoxFuture, stream::BoxStream, AsyncBufReadExt, FutureExt, Stream, StreamExt,
+    TryStreamExt as _,
+};
 use gpui::{
     AnyElement, AnyView, AppContext, AsyncAppContext, FontWeight, Model, ModelContext,
     Subscription, Task,
 };
 use http_client::{AsyncBody, HttpClient, Method, Response};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::value::RawValue;
 use settings::{Settings, SettingsStore};
 use smol::{
     io::{AsyncReadExt, BufReader},
     lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard},
 };
-use std::{future, sync::Arc};
+use std::{
+    future,
+    sync::{Arc, LazyLock},
+};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
@@ -33,6 +39,18 @@ use super::anthropic::count_anthropic_tokens;
 
 pub const PROVIDER_ID: &str = "zed.dev";
 pub const PROVIDER_NAME: &str = "Zed";
+
+const ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: Option<&str> =
+    option_env!("ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON");
+
+fn zed_cloud_provider_additional_models() -> &'static [AvailableModel] {
+    static ADDITIONAL_MODELS: LazyLock<Vec<AvailableModel>> = LazyLock::new(|| {
+        ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON
+            .map(|json| serde_json::from_str(json).unwrap())
+            .unwrap_or(Vec::new())
+    });
+    ADDITIONAL_MODELS.as_slice()
+}
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
@@ -49,10 +67,20 @@ pub enum AvailableProvider {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
-    provider: AvailableProvider,
-    name: String,
-    max_tokens: usize,
-    tool_override: Option<String>,
+    /// The provider of the language model.
+    pub provider: AvailableProvider,
+    /// The model's name in the provider's API. e.g. claude-3-5-sonnet-20240620
+    pub name: String,
+    /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+    pub display_name: Option<String>,
+    /// The size of the context window, indicating the maximum number of tokens the model can process.
+    pub max_tokens: usize,
+    /// The maximum number of output tokens allowed by the model.
+    pub max_output_tokens: Option<u32>,
+    /// Override this model with a different Anthropic model for tool calls.
+    pub tool_override: Option<String>,
+    /// Indicates whether this custom model supports caching.
+    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
 }
 
 pub struct CloudLanguageModelProvider {
@@ -187,36 +215,53 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             for model in ZedModel::iter() {
                 models.insert(model.id().to_string(), CloudModel::Zed(model));
             }
-
-            // Override with available models from settings
-            for model in &AllLanguageModelSettings::get_global(cx)
-                .zed_dot_dev
-                .available_models
-            {
-                let model = match model.provider {
-                    AvailableProvider::Anthropic => {
-                        CloudModel::Anthropic(anthropic::Model::Custom {
-                            name: model.name.clone(),
-                            max_tokens: model.max_tokens,
-                            tool_override: model.tool_override.clone(),
-                        })
-                    }
-                    AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
-                        name: model.name.clone(),
-                        max_tokens: model.max_tokens,
-                    }),
-                    AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
-                        name: model.name.clone(),
-                        max_tokens: model.max_tokens,
-                    }),
-                };
-                models.insert(model.id().to_string(), model.clone());
-            }
         } else {
             models.insert(
                 anthropic::Model::Claude3_5Sonnet.id().to_string(),
                 CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet),
             );
+        }
+
+        let llm_closed_beta_models = if cx.has_flag::<LlmClosedBeta>() {
+            zed_cloud_provider_additional_models()
+        } else {
+            &[]
+        };
+
+        // Override with available models from settings
+        for model in AllLanguageModelSettings::get_global(cx)
+            .zed_dot_dev
+            .available_models
+            .iter()
+            .chain(llm_closed_beta_models)
+            .cloned()
+        {
+            let model = match model.provider {
+                AvailableProvider::Anthropic => CloudModel::Anthropic(anthropic::Model::Custom {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    tool_override: model.tool_override.clone(),
+                    cache_configuration: model.cache_configuration.as_ref().map(|config| {
+                        anthropic::AnthropicModelCacheConfiguration {
+                            max_cache_anchors: config.max_cache_anchors,
+                            should_speculate: config.should_speculate,
+                            min_total_token: config.min_total_token,
+                        }
+                    }),
+                    max_output_tokens: model.max_output_tokens,
+                }),
+                AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
+                }),
+                AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                }),
+            };
+            models.insert(model.id().to_string(), model.clone());
         }
 
         models
@@ -256,9 +301,9 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         let state = self.state.read(cx);
 
         let terms = [(
-            "anthropic_terms_of_service",
-            "Anthropic Terms of Service",
-            "https://www.anthropic.com/legal/consumer-terms",
+            "terms_of_service",
+            "Terms of Service",
+            "https://zed.dev/terms-of-service",
         )]
         .map(|(id, label, url)| {
             Button::new(id, label)
@@ -278,8 +323,13 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     .gap_2()
                     .child(
                         v_flex()
-                            .child(Label::new("Terms & Conditions").weight(FontWeight::MEDIUM))
-                            .child(Label::new("Please read and accept the terms and conditions of Zed AI and our provider partners to continue.").size(LabelSize::Small))
+                            .child(Label::new("Terms and Conditions").weight(FontWeight::MEDIUM))
+                            .child(
+                                Label::new(
+                                    "Please read and accept our terms and conditions to continue.",
+                                )
+                                .size(LabelSize::Small),
+                            ),
                     )
                     .child(v_flex().gap_1().children(terms))
                     .child(
@@ -371,6 +421,10 @@ impl LanguageModel for CloudLanguageModel {
         LanguageModelName::from(self.model.display_name().to_string())
     }
 
+    fn icon(&self) -> Option<IconName> {
+        self.model.icon()
+    }
+
     fn provider_id(&self) -> LanguageModelProviderId {
         LanguageModelProviderId(PROVIDER_ID.into())
     }
@@ -430,7 +484,7 @@ impl LanguageModel for CloudLanguageModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         match &self.model {
             CloudModel::Anthropic(model) => {
-                let request = request.into_anthropic(model.id().into());
+                let request = request.into_anthropic(model.id().into(), model.max_output_tokens());
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
@@ -446,21 +500,9 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    let body = BufReader::new(response.into_body());
-                    let stream = futures::stream::try_unfold(body, move |mut body| async move {
-                        let mut buffer = String::new();
-                        match body.read_line(&mut buffer).await {
-                            Ok(0) => Ok(None),
-                            Ok(_) => {
-                                let event: anthropic::Event = serde_json::from_str(&buffer)
-                                    .context("failed to parse Anthropic event")?;
-                                Ok(Some((event, body)))
-                            }
-                            Err(err) => Err(AnthropicError::Other(err.into())),
-                        }
-                    });
-
-                    Ok(anthropic::extract_text_from_events(stream))
+                    Ok(anthropic::extract_text_from_events(
+                        response_lines(response).map_err(AnthropicError::Other),
+                    ))
                 });
                 async move {
                     Ok(future
@@ -472,7 +514,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
-                let request = request.into_open_ai(model.id().into());
+                let request = request.into_open_ai(model.id().into(), model.max_output_tokens());
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let response = Self::perform_llm_completion(
@@ -487,21 +529,7 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    let body = BufReader::new(response.into_body());
-                    let stream = futures::stream::try_unfold(body, move |mut body| async move {
-                        let mut buffer = String::new();
-                        match body.read_line(&mut buffer).await {
-                            Ok(0) => Ok(None),
-                            Ok(_) => {
-                                let event: open_ai::ResponseStreamEvent =
-                                    serde_json::from_str(&buffer)?;
-                                Ok(Some((event, body)))
-                            }
-                            Err(e) => Err(e.into()),
-                        }
-                    });
-
-                    Ok(open_ai::extract_text_from_events(stream))
+                    Ok(open_ai::extract_text_from_events(response_lines(response)))
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
@@ -522,27 +550,15 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    let body = BufReader::new(response.into_body());
-                    let stream = futures::stream::try_unfold(body, move |mut body| async move {
-                        let mut buffer = String::new();
-                        match body.read_line(&mut buffer).await {
-                            Ok(0) => Ok(None),
-                            Ok(_) => {
-                                let event: google_ai::GenerateContentResponse =
-                                    serde_json::from_str(&buffer)?;
-                                Ok(Some((event, body)))
-                            }
-                            Err(e) => Err(e.into()),
-                        }
-                    });
-
-                    Ok(google_ai::extract_text_from_events(stream))
+                    Ok(google_ai::extract_text_from_events(response_lines(
+                        response,
+                    )))
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
             CloudModel::Zed(model) => {
                 let client = self.client.clone();
-                let mut request = request.into_open_ai(model.id().into());
+                let mut request = request.into_open_ai(model.id().into(), None);
                 request.max_tokens = Some(4000);
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
@@ -558,21 +574,7 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    let body = BufReader::new(response.into_body());
-                    let stream = futures::stream::try_unfold(body, move |mut body| async move {
-                        let mut buffer = String::new();
-                        match body.read_line(&mut buffer).await {
-                            Ok(0) => Ok(None),
-                            Ok(_) => {
-                                let event: open_ai::ResponseStreamEvent =
-                                    serde_json::from_str(&buffer)?;
-                                Ok(Some((event, body)))
-                            }
-                            Err(e) => Err(e.into()),
-                        }
-                    });
-
-                    Ok(open_ai::extract_text_from_events(stream))
+                    Ok(open_ai::extract_text_from_events(response_lines(response)))
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
@@ -586,11 +588,14 @@ impl LanguageModel for CloudLanguageModel {
         tool_description: String,
         input_schema: serde_json::Value,
         _cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        let client = self.client.clone();
+        let llm_api_token = self.llm_api_token.clone();
+
         match &self.model {
             CloudModel::Anthropic(model) => {
-                let client = self.client.clone();
-                let mut request = request.into_anthropic(model.tool_model_id().into());
+                let mut request =
+                    request.into_anthropic(model.tool_model_id().into(), model.max_output_tokens());
                 request.tool_choice = Some(anthropic::ToolChoice::Tool {
                     name: tool_name.clone(),
                 });
@@ -600,7 +605,6 @@ impl LanguageModel for CloudLanguageModel {
                     input_schema,
                 }];
 
-                let llm_api_token = self.llm_api_token.clone();
                 self.request_limiter
                     .run(async move {
                         let response = Self::perform_llm_completion(
@@ -616,70 +620,35 @@ impl LanguageModel for CloudLanguageModel {
                         )
                         .await?;
 
-                        let mut tool_use_index = None;
-                        let mut tool_input = String::new();
-                        let mut body = BufReader::new(response.into_body());
-                        let mut line = String::new();
-                        while body.read_line(&mut line).await? > 0 {
-                            let event: anthropic::Event = serde_json::from_str(&line)?;
-                            line.clear();
-
-                            match event {
-                                anthropic::Event::ContentBlockStart {
-                                    content_block,
-                                    index,
-                                } => {
-                                    if let anthropic::Content::ToolUse { name, .. } = content_block
-                                    {
-                                        if name == tool_name {
-                                            tool_use_index = Some(index);
-                                        }
-                                    }
-                                }
-                                anthropic::Event::ContentBlockDelta { index, delta } => match delta
-                                {
-                                    anthropic::ContentDelta::TextDelta { .. } => {}
-                                    anthropic::ContentDelta::InputJsonDelta { partial_json } => {
-                                        if Some(index) == tool_use_index {
-                                            tool_input.push_str(&partial_json);
-                                        }
-                                    }
-                                },
-                                anthropic::Event::ContentBlockStop { index } => {
-                                    if Some(index) == tool_use_index {
-                                        return Ok(serde_json::from_str(&tool_input)?);
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        if tool_use_index.is_some() {
-                            Err(anyhow!("tool content incomplete"))
-                        } else {
-                            Err(anyhow!("tool not used"))
-                        }
+                        Ok(anthropic::extract_tool_args_from_events(
+                            tool_name,
+                            Box::pin(response_lines(response)),
+                        )
+                        .await?
+                        .boxed())
                     })
                     .boxed()
             }
             CloudModel::OpenAi(model) => {
-                let mut request = request.into_open_ai(model.id().into());
-                let client = self.client.clone();
-                let mut function = open_ai::FunctionDefinition {
-                    name: tool_name.clone(),
-                    description: None,
-                    parameters: None,
-                };
-                let func = open_ai::ToolDefinition::Function {
-                    function: function.clone(),
-                };
-                request.tool_choice = Some(open_ai::ToolChoice::Other(func.clone()));
-                // Fill in description and params separately, as they're not needed for tool_choice field.
-                function.description = Some(tool_description);
-                function.parameters = Some(input_schema);
-                request.tools = vec![open_ai::ToolDefinition::Function { function }];
+                let mut request =
+                    request.into_open_ai(model.id().into(), model.max_output_tokens());
+                request.tool_choice = Some(open_ai::ToolChoice::Other(
+                    open_ai::ToolDefinition::Function {
+                        function: open_ai::FunctionDefinition {
+                            name: tool_name.clone(),
+                            description: None,
+                            parameters: None,
+                        },
+                    },
+                ));
+                request.tools = vec![open_ai::ToolDefinition::Function {
+                    function: open_ai::FunctionDefinition {
+                        name: tool_name.clone(),
+                        description: Some(tool_description),
+                        parameters: Some(input_schema),
+                    },
+                }];
 
-                let llm_api_token = self.llm_api_token.clone();
                 self.request_limiter
                     .run(async move {
                         let response = Self::perform_llm_completion(
@@ -695,41 +664,12 @@ impl LanguageModel for CloudLanguageModel {
                         )
                         .await?;
 
-                        let mut body = BufReader::new(response.into_body());
-                        let mut line = String::new();
-                        let mut load_state = None;
-
-                        while body.read_line(&mut line).await? > 0 {
-                            let part: open_ai::ResponseStreamEvent = serde_json::from_str(&line)?;
-                            line.clear();
-
-                            for choice in part.choices {
-                                let Some(tool_calls) = choice.delta.tool_calls else {
-                                    continue;
-                                };
-
-                                for call in tool_calls {
-                                    if let Some(func) = call.function {
-                                        if func.name.as_deref() == Some(tool_name.as_str()) {
-                                            load_state = Some((String::default(), call.index));
-                                        }
-                                        if let Some((arguments, (output, index))) =
-                                            func.arguments.zip(load_state.as_mut())
-                                        {
-                                            if call.index == *index {
-                                                output.push_str(&arguments);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if let Some((arguments, _)) = load_state {
-                            return Ok(serde_json::from_str(&arguments)?);
-                        } else {
-                            bail!("tool not used");
-                        }
+                        Ok(open_ai::extract_tool_args_from_events(
+                            tool_name,
+                            Box::pin(response_lines(response)),
+                        )
+                        .await?
+                        .boxed())
                     })
                     .boxed()
             }
@@ -738,23 +678,24 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Zed(model) => {
                 // All Zed models are OpenAI-based at the time of writing.
-                let mut request = request.into_open_ai(model.id().into());
-                let client = self.client.clone();
-                let mut function = open_ai::FunctionDefinition {
-                    name: tool_name.clone(),
-                    description: None,
-                    parameters: None,
-                };
-                let func = open_ai::ToolDefinition::Function {
-                    function: function.clone(),
-                };
-                request.tool_choice = Some(open_ai::ToolChoice::Other(func.clone()));
-                // Fill in description and params separately, as they're not needed for tool_choice field.
-                function.description = Some(tool_description);
-                function.parameters = Some(input_schema);
-                request.tools = vec![open_ai::ToolDefinition::Function { function }];
+                let mut request = request.into_open_ai(model.id().into(), None);
+                request.tool_choice = Some(open_ai::ToolChoice::Other(
+                    open_ai::ToolDefinition::Function {
+                        function: open_ai::FunctionDefinition {
+                            name: tool_name.clone(),
+                            description: None,
+                            parameters: None,
+                        },
+                    },
+                ));
+                request.tools = vec![open_ai::ToolDefinition::Function {
+                    function: open_ai::FunctionDefinition {
+                        name: tool_name.clone(),
+                        description: Some(tool_description),
+                        parameters: Some(input_schema),
+                    },
+                }];
 
-                let llm_api_token = self.llm_api_token.clone();
                 self.request_limiter
                     .run(async move {
                         let response = Self::perform_llm_completion(
@@ -770,45 +711,36 @@ impl LanguageModel for CloudLanguageModel {
                         )
                         .await?;
 
-                        let mut body = BufReader::new(response.into_body());
-                        let mut line = String::new();
-                        let mut load_state = None;
-
-                        while body.read_line(&mut line).await? > 0 {
-                            let part: open_ai::ResponseStreamEvent = serde_json::from_str(&line)?;
-                            line.clear();
-
-                            for choice in part.choices {
-                                let Some(tool_calls) = choice.delta.tool_calls else {
-                                    continue;
-                                };
-
-                                for call in tool_calls {
-                                    if let Some(func) = call.function {
-                                        if func.name.as_deref() == Some(tool_name.as_str()) {
-                                            load_state = Some((String::default(), call.index));
-                                        }
-                                        if let Some((arguments, (output, index))) =
-                                            func.arguments.zip(load_state.as_mut())
-                                        {
-                                            if call.index == *index {
-                                                output.push_str(&arguments);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if let Some((arguments, _)) = load_state {
-                            return Ok(serde_json::from_str(&arguments)?);
-                        } else {
-                            bail!("tool not used");
-                        }
+                        Ok(open_ai::extract_tool_args_from_events(
+                            tool_name,
+                            Box::pin(response_lines(response)),
+                        )
+                        .await?
+                        .boxed())
                     })
                     .boxed()
             }
         }
     }
+}
+
+fn response_lines<T: DeserializeOwned>(
+    response: Response<AsyncBody>,
+) -> impl Stream<Item = Result<T>> {
+    futures::stream::try_unfold(
+        (String::new(), BufReader::new(response.into_body())),
+        move |(mut line, mut body)| async {
+            match body.read_line(&mut line).await {
+                Ok(0) => Ok(None),
+                Ok(_) => {
+                    let event: T = serde_json::from_str(&line)?;
+                    line.clear();
+                    Ok(Some((event, (line, body))))
+                }
+                Err(e) => Err(e.into()),
+            }
+        },
+    )
 }
 
 impl LlmApiToken {

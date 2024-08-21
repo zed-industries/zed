@@ -1216,7 +1216,10 @@ impl ExtensionStore {
                                 command: crate::wit::SlashCommand {
                                     name: slash_command_name.to_string(),
                                     description: slash_command.description.to_string(),
-                                    tooltip_text: slash_command.tooltip_text.to_string(),
+                                    // We don't currently expose this as a configurable option, as it currently drives
+                                    // the `menu_text` on the `SlashCommand` trait, which is not used for slash commands
+                                    // defined in extensions, as they are not able to be added to the menu.
+                                    tooltip_text: String::new(),
                                     requires_argument: slash_command.requires_argument,
                                 },
                                 extension: wasm_extension.clone(),

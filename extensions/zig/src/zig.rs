@@ -61,21 +61,11 @@ impl ZigExtension {
             &language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
-        // TODO: Once we're ready to release v0.0.7 of the Zed extension API we want to pin
-        // ZLS to a specific version with `zed::github_release_by_tag_name`.
         // We're pinning ZLS to a release that has `.tar.gz` assets, since the latest release does not have
         // them, at time of writing.
         //
         // ZLS tracking issue: https://github.com/zigtools/zls/issues/1879
-        // let release = zed::github_release_by_tag_name("zigtools/zls", "0.11.0")?;
-
-        let release = zed::latest_github_release(
-            "zigtools/zls",
-            zed::GithubReleaseOptions {
-                require_assets: true,
-                pre_release: false,
-            },
-        )?;
+        let release = zed::github_release_by_tag_name("zigtools/zls", "0.11.0")?;
 
         let asset_name = format!(
             "zls-{arch}-{os}.{extension}",

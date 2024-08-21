@@ -1,4 +1,4 @@
-import { danger, warn } from "danger";
+import { danger, message, warn } from "danger";
 const { prHygiene } = require("danger-plugin-pr-hygiene");
 
 prHygiene({
@@ -37,14 +37,14 @@ if (!hasReleaseNotes) {
 }
 
 const ISSUE_LINK_PATTERN = new RegExp(
-  "(?:https://github\\.com/[\\w-]+/[\\w-]+/issues/\\d+|#\\d+)",
+  "https://github\\.com/[\\w-]+/[\\w-]+/issues/\\d+",
   "g",
 );
 
 const includesIssueUrl = ISSUE_LINK_PATTERN.test(body);
 
 if (includesIssueUrl) {
-  const matches = body.match(ISSUE_LINK_PATTERN);
+  const matches = body.match(ISSUE_LINK_PATTERN) ?? [];
   const issues = matches
     .map((match) =>
       match
@@ -53,7 +53,7 @@ if (includesIssueUrl) {
     )
     .filter((issue, index, self) => self.indexOf(issue) === index);
 
-  warn(
+  message(
     [
       "This PR includes links to the following GitHub Issues: " +
         issues.map((issue) => `#${issue}`).join(", "),

@@ -1395,15 +1395,22 @@ impl CollabPanel {
         cx.notify();
     }
 
+    fn reset_filter_editor_text(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.filter_editor.update(cx, |editor, cx| {
+            if editor.buffer().read(cx).len(cx) > 0 {
+                editor.set_text("", cx);
+                true
+            } else {
+                false
+            }
+        })
+    }
+
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         if self.take_editing_state(cx) {
             cx.focus_view(&self.filter_editor);
-        } else {
-            self.filter_editor.update(cx, |editor, cx| {
-                if editor.buffer().read(cx).len(cx) > 0 {
-                    editor.set_text("", cx);
-                }
-            });
+        } else if !self.reset_filter_editor_text(cx) {
+            self.focus_handle.focus(cx);
         }
 
         if self.context_menu.is_some() {

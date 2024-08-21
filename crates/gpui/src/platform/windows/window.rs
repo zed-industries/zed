@@ -660,8 +660,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow_mut().callbacks.appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
-        self.0.state.borrow_mut().renderer.draw(scene)
+    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
+        self.0.state.borrow_mut().renderer.draw(scene, on_complete)
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -674,6 +674,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         Some(self.0.state.borrow().renderer.gpu_specs())
+    }
+
+    fn fps(&self) -> Option<f32> {
+        None
     }
 }
 

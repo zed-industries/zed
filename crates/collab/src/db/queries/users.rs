@@ -312,10 +312,11 @@ impl Database {
     }
 
     /// Creates a new feature flag.
-    pub async fn create_user_flag(&self, flag: &str) -> Result<FlagId> {
+    pub async fn create_user_flag(&self, flag: &str, enabled_for_all: bool) -> Result<FlagId> {
         self.transaction(|tx| async move {
             let flag = feature_flag::Entity::insert(feature_flag::ActiveModel {
                 flag: ActiveValue::set(flag.to_string()),
+                enabled_for_all: ActiveValue::set(enabled_for_all),
                 ..Default::default()
             })
             .exec(&*tx)
@@ -350,7 +351,15 @@ impl Database {
                 Flag,
             }
 
-            let flags = user::Model {
+            let flags_enabled_for_all = feature_flag::Entity::find()
+                .filter(feature_flag::Column::EnabledForAll.eq(true))
+                .select_only()
+                .column(feature_flag::Column::Flag)
+                .into_values::<_, QueryAs>()
+                .all(&*tx)
+                .await?;
+
+            let flags_enabled_for_user = user::Model {
                 id: user,
                 ..Default::default()
             }
@@ -361,7 +370,10 @@ impl Database {
             .all(&*tx)
             .await?;
 
-            Ok(flags)
+            let mut all_flags = HashSet::from_iter(flags_enabled_for_all);
+            all_flags.extend(flags_enabled_for_user);
+
+            Ok(all_flags.into_iter().collect())
         })
         .await
     }

@@ -48,7 +48,6 @@ http_client.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
-lazy_static.workspace = true
 linkify.workspace = true
 log.workspace = true
 lsp.workspace = true
