@@ -2630,9 +2630,9 @@ impl CollabPanel {
                     .start_slot(
                         div().relative().child(
                             Icon::new(if is_public {
-                                IconName::Public
-                            } else {
                                 IconName::Hash
+                            } else {
+                                IconName::Lock
                             })
                             .size(IconSize::Small)
                             .color(fg_color),
