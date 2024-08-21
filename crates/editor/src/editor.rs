@@ -1767,7 +1767,7 @@ impl Editor {
         let blink_manager = cx.new_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
         let soft_wrap_mode_override = matches!(mode, EditorMode::SingleLine { .. })
-            .then(|| language_settings::SoftWrap::PreferredLineLength);
+            .then(|| language_settings::SoftWrap::PreferLine);
 
         let mut project_subscriptions = Vec::new();
         if mode == EditorMode::Full {

@@ -4978,7 +4978,7 @@ impl Element for EditorElement {
                     };
                     let overscroll = size(em_width + right_margin, px(0.));
 
-                    snapshot = self.editor.update(cx, |editor, cx| -> EditorSnapshot {
+                    snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
                         editor.gutter_dimensions = gutter_dimensions;
                         editor.set_visible_line_count(bounds.size.height / line_height, cx);
