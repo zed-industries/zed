@@ -302,10 +302,7 @@ async fn handle_liveness_probe(
     }
 
     if let Some(llm_state) = llm_state {
-        llm_state
-            .db
-            .get_active_user_count(chrono::Utc::now())
-            .await?;
+        llm_state.db.list_providers().await?;
     }
 
     Ok("ok".to_string())
