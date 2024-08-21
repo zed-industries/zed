@@ -27,14 +27,13 @@ use gpui::{
     AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EventEmitter,
     FocusHandle, FocusableView, HighlightStyle, InteractiveElement, IntoElement, KeyContext, Model,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext,
+    WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrev};
 
-use multi_buffer::MultiBufferRow;
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
 use project::{File, Fs, Item, Project};
 use search::ProjectSearchView;
@@ -210,7 +209,6 @@ enum PanelEntry {
 
 #[derive(Clone, Debug)]
 struct SearchData {
-    match_line_range_range: Range<MultiBufferRow>,
     entire_row_range: Range<editor::Anchor>,
     entire_row_text: String,
     highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
@@ -284,8 +282,6 @@ impl SearchData {
             search_match_indices,
             entire_row_range,
             entire_row_text,
-            match_line_range_range: MultiBufferRow(match_point_range.start.row)
-                ..MultiBufferRow(match_point_range.end.row),
         }
     }
 }
@@ -1605,8 +1601,6 @@ impl OutlinePanel {
             Some(PanelEntry::Search(selected_range, _)) => match_range == selected_range,
             _ => false,
         };
-        let match_line_start = search_data.match_line_range_range.start;
-        let match_line_end = search_data.match_line_range_range.end;
         self.entry_element(
             PanelEntry::Search(match_range.clone(), OnceCell::new()),
             ElementId::from(SharedString::from(format!("search-{match_range:?}"))),
@@ -1616,14 +1610,6 @@ impl OutlinePanel {
             label_element,
             cx,
         )
-        .tooltip(move |cx| {
-            let text = if match_line_start == match_line_end {
-                format!("Line {}", match_line_start.0 + 1)
-            } else {
-                format!("Lines {}-{}", match_line_start.0 + 1, match_line_end.0 + 1)
-            };
-            Tooltip::text(text, cx)
-        })
     }
 
     #[allow(clippy::too_many_arguments)]
