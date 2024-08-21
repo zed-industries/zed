@@ -9240,7 +9240,6 @@ impl Editor {
                 if let Some((_, path)) = buffer {
                     workspace
                         .update(&mut cx, |workspace, cx| {
-                            println!("opening path: {:?}", path);
                             workspace.open_paths(
                                 vec![PathBuf::from(path)],
                                 OpenVisible::All,
