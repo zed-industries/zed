@@ -647,7 +647,9 @@ impl EditorElement {
             if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
                 return;
             }
-
+            if !EditorSettings::get_global(cx).linux_middle_click_paste {
+                return;
+            }
             #[cfg(target_os = "linux")]
             if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
                 let point_for_position =
