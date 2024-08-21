@@ -14,6 +14,7 @@ use anyhow::Context;
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
+    actions::SelectAll,
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
     scroll::ScrollAnchor,
@@ -549,13 +550,12 @@ impl OutlinePanel {
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         if self.filter_editor.focus_handle(cx).is_focused(cx) {
-            self.filter_editor.update(cx, |editor, cx| {
-                if editor.buffer().read(cx).len(cx) > 0 {
-                    editor.set_text("", cx);
-                }
-            });
+            self.focus_handle.focus(cx);
         } else {
-            cx.focus_view(&self.filter_editor);
+            self.filter_editor.update(cx, |filter_editor, cx| {
+                filter_editor.select_all(&SelectAll, cx)
+            });
+            self.filter_editor.focus_handle(cx).focus(cx);
         }
 
         if self.context_menu.is_some() {
