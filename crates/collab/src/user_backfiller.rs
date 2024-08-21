@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
+use chrono::{DateTime, Utc};
 use util::ResultExt;
 
 use crate::db::Database;
@@ -35,6 +36,11 @@ pub fn spawn_user_backfiller(app_state: Arc<AppState>) {
         }
     });
 }
+
+const GITHUB_REQUESTS_PER_HOUR_LIMIT: usize = 5_000;
+const SLEEP_DURATION_BETWEEN_USERS: std::time::Duration = std::time::Duration::from_millis(
+    (GITHUB_REQUESTS_PER_HOUR_LIMIT as f64 / 60. / 60. * 1000.) as u64,
+);
 
 struct UserBackfiller {
     config: Config,
@@ -92,9 +98,7 @@ impl UserBackfiller {
                 }
             }
 
-            self.executor
-                .sleep(std::time::Duration::from_millis(200))
-                .await;
+            self.executor.sleep(SLEEP_DURATION_BETWEEN_USERS).await;
         }
 
         Ok(())
@@ -113,6 +117,32 @@ impl UserBackfiller {
             .await
             .with_context(|| format!("failed to fetch '{url}'"))?;
 
+        let rate_limit_remaining = response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<i32>().ok());
+        let rate_limit_reset = response
+            .headers()
+            .get("x-ratelimit-reset")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<i64>().ok())
+            .and_then(|value| DateTime::from_timestamp(value, 0));
+
+        if rate_limit_remaining == Some(0) {
+            if let Some(reset_at) = rate_limit_reset {
+                let now = Utc::now();
+                if reset_at > now {
+                    let sleep_duration = reset_at - now;
+                    log::info!(
+                        "rate limit reached. Sleeping for {} seconds",
+                        sleep_duration.num_seconds()
+                    );
+                    self.executor.sleep(sleep_duration.to_std().unwrap()).await;
+                }
+            }
+        }
+
         let response = match response.error_for_status() {
             Ok(response) => response,
             Err(err) => return Err(anyhow!("failed to fetch GitHub user: {err}")),
@@ -128,5 +158,5 @@ impl UserBackfiller {
 #[derive(serde::Deserialize)]
 struct GithubUser {
     id: i32,
-    created_at: chrono::DateTime<chrono::Utc>,
+    created_at: DateTime<Utc>,
 }
