@@ -9217,38 +9217,54 @@ impl Editor {
         // If there is one definition, just open it directly
         if definitions.len() == 1 {
             let definition = definitions.pop().unwrap();
+
+            enum TargetTaskResult {
+                Location(Option<Location>),
+                AlreadyNavigated,
+            }
+
             let target_task = match definition {
-                HoverLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
+                HoverLink::Text(link) => {
+                    Task::ready(anyhow::Ok(TargetTaskResult::Location(Some(link.target))))
+                }
                 HoverLink::InlayHint(lsp_location, server_id) => {
-                    self.compute_target_location(lsp_location, server_id, cx)
+                    let computation = self.compute_target_location(lsp_location, server_id, cx);
+                    cx.background_executor().spawn(async move {
+                        let location = computation.await?;
+                        Ok(TargetTaskResult::Location(location))
+                    })
                 }
                 HoverLink::Url(url) => {
                     cx.open_url(&url);
-                    Task::ready(Ok(None))
+                    Task::ready(Ok(TargetTaskResult::AlreadyNavigated))
                 }
                 HoverLink::File(path) => {
                     if let Some(workspace) = self.workspace() {
                         cx.spawn(|_, mut cx| async move {
                             let open_paths_task = workspace.update(&mut cx, |workspace, cx| {
-                                workspace.open_paths(vec![path], OpenVisible::All, None, cx)
+                                // let a = workspace.open_abs_paths(vec![]);
+                                let pane = workspace.active_pane().clone().downgrade();
+                                workspace.open_paths(vec![path], OpenVisible::All, Some(pane), cx)
                             })?;
 
                             let results = open_paths_task.await;
-                            if let Some(Some(item)) = results.into_iter().next() {
+                            if let Some(item) = results.into_iter().next().flatten() {
                                 item?;
                             }
-                            Ok(None)
+                            Ok(TargetTaskResult::AlreadyNavigated)
                         })
                     } else {
-                        Task::ready(Ok(None))
+                        Task::ready(Ok(TargetTaskResult::Location(None)))
                     }
                 }
             };
             cx.spawn(|editor, mut cx| async move {
-                let target = target_task.await.context("target resolution task")?;
-                let Some(target) = target else {
-                    return Ok(Navigated::No);
+                let target = match target_task.await.context("target resolution task")? {
+                    TargetTaskResult::AlreadyNavigated => return Ok(Navigated::Yes),
+                    TargetTaskResult::Location(None) => return Ok(Navigated::No),
+                    TargetTaskResult::Location(Some(target)) => target,
                 };
+
                 editor.update(&mut cx, |editor, cx| {
                     let Some(workspace) = editor.workspace() else {
                         return Navigated::No;
