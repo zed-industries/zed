@@ -3016,6 +3016,17 @@ impl Editor {
             if start_offset > buffer_snapshot.len() || end_offset > buffer_snapshot.len() {
                 continue;
             }
+            if self.selections.disjoint_anchor_ranges().iter().any(|s| {
+                if s.start.buffer_id != selection.start.buffer_id
+                    || s.end.buffer_id != selection.end.buffer_id
+                {
+                    return false;
+                }
+                TO::to_offset(&s.start.text_anchor, &buffer_snapshot) <= end_offset
+                    && TO::to_offset(&s.end.text_anchor, &buffer_snapshot) >= start_offset
+            }) {
+                continue;
+            }
             let start = buffer_snapshot.anchor_after(start_offset);
             let end = buffer_snapshot.anchor_after(end_offset);
             linked_edits
