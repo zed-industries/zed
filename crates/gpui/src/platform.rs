@@ -1016,6 +1016,13 @@ impl ClipboardItem {
         }
     }
 
+    /// Create a new ClipboardItem::Image with the given image with no associated metadata
+    pub fn new_image(image: &Image) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::Image(image.clone())],
+        }
+    }
+
     /// Concatenates together all the ClipboardString entries in the item.
     /// Returns None if there were no ClipboardString entries.
     pub fn text(&self) -> Option<String> {
@@ -1084,10 +1091,11 @@ pub enum ImageFormat {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Image {
     /// The image format the bytes represent (e.g. PNG)
-    format: ImageFormat,
+    pub format: ImageFormat,
     /// The raw image bytes
-    bytes: Vec<u8>,
-    id: u64,
+    pub bytes: Vec<u8>,
+    /// The unique ID for the image
+    pub id: u64,
 }
 
 impl Hash for Image {
