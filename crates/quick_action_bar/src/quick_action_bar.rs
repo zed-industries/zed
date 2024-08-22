@@ -159,7 +159,7 @@ impl Render for QuickActionBar {
         );
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
-            let editor = editor.clone();
+            let focus = editor.focus_handle(cx);
             PopoverMenu::new("editor-selections-dropdown")
                 .trigger(
                     IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
@@ -174,7 +174,6 @@ impl Render for QuickActionBar {
                 .with_handle(self.toggle_selections_handle.clone())
                 .anchor(AnchorCorner::TopRight)
                 .menu(move |cx| {
-                    let focus = editor.focus_handle(cx);
                     let focus = focus.clone();
                     let menu = ContextMenu::build(cx, move |menu, _| {
                         menu.context(focus.clone())
@@ -207,6 +206,7 @@ impl Render for QuickActionBar {
                 })
         });
 
+        let editor = editor.downgrade();
         let editor_settings_dropdown = PopoverMenu::new("editor-settings")
             .trigger(
                 IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
@@ -221,7 +221,6 @@ impl Render for QuickActionBar {
             .anchor(AnchorCorner::TopRight)
             .with_handle(self.toggle_settings_handle.clone())
             .menu(move |cx| {
-                let editor = editor.clone();
                 let menu = ContextMenu::build(cx, |mut menu, _| {
                     if supports_inlay_hints {
                         menu = menu.toggleable_entry(
@@ -232,12 +231,14 @@ impl Render for QuickActionBar {
                             {
                                 let editor = editor.clone();
                                 move |cx| {
-                                    editor.update(cx, |editor, cx| {
-                                        editor.toggle_inlay_hints(
-                                            &editor::actions::ToggleInlayHints,
-                                            cx,
-                                        );
-                                    });
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            editor.toggle_inlay_hints(
+                                                &editor::actions::ToggleInlayHints,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
                                 }
                             },
                         );
@@ -251,12 +252,14 @@ impl Render for QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                editor.update(cx, |editor, cx| {
-                                    editor.toggle_git_blame_inline(
-                                        &editor::actions::ToggleGitBlameInline,
-                                        cx,
-                                    )
-                                });
+                                editor
+                                    .update(cx, |editor, cx| {
+                                        editor.toggle_git_blame_inline(
+                                            &editor::actions::ToggleGitBlameInline,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
                             }
                         },
                     );
@@ -269,12 +272,14 @@ impl Render for QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                editor.update(cx, |editor, cx| {
-                                    editor.toggle_selection_menu(
-                                        &editor::actions::ToggleSelectionMenu,
-                                        cx,
-                                    )
-                                });
+                                editor
+                                    .update(cx, |editor, cx| {
+                                        editor.toggle_selection_menu(
+                                            &editor::actions::ToggleSelectionMenu,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
                             }
                         },
                     );
@@ -287,12 +292,14 @@ impl Render for QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                editor.update(cx, |editor, cx| {
-                                    editor.toggle_auto_signature_help_menu(
-                                        &editor::actions::ToggleAutoSignatureHelp,
-                                        cx,
-                                    );
-                                });
+                                editor
+                                    .update(cx, |editor, cx| {
+                                        editor.toggle_auto_signature_help_menu(
+                                            &editor::actions::ToggleAutoSignatureHelp,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
                             }
                         },
                     );
