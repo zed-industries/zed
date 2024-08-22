@@ -1,8 +1,11 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
-use schemars::{schema::RootSchema, visit::Visitor};
+use schemars::{
+    schema::{RootSchema, SchemaObject},
+    visit::Visitor,
+};
 use serde_json::Value;
 
 #[derive(Parser)]
@@ -10,20 +13,42 @@ pub struct SchemaValidationArgs {
     path: PathBuf,
 }
 
+enum Violation {
+    MissingDefault,
+    MissingExample,
+    MissingMetadata,
+}
+struct Violations(SchemaObject, Vec<Violation>);
+
 #[derive(Default)]
 struct SettingsSchemaValidator {
-    count: usize,
-    default: usize,
+    objects: Vec<Violations>,
 }
 
+struct ViolationsBuilder<'a> {
+    target: &'a mut SettingsSchemaValidator,
+    violation: Violation,
+}
+
+impl Drop for ViolationsBuilder<'_> {
+    fn drop(&mut self) {
+        if !self.violation.1.is_empty() {
+            self.target.objects.push(self.violation);
+        }
+    }
+}
 impl Visitor for SettingsSchemaValidator {
-    fn visit_schema_object(&mut self, schema: &mut schemars::schema::SchemaObject) {
-        self.count += 1;
-        if schema.metadata.as_ref().map_or(false, |meta| {
-            meta.default.as_ref().is_some_and(|d| d != &Value::Null)
-        }) {
-            dbg!(&schema.metadata);
-            self.default += 1;
+    fn visit_schema_object(&mut self, schema: &mut SchemaObject) {
+        let mut violation = Violations(schema.clone(), vec![]);
+
+        let Some(metadata) = schema.metadata.as_ref() else {};
+
+        if schema
+            .metadata
+            .as_ref()
+            .map_or(false, |meta| meta.default.as_ref().is_none())
+        {
+            self.objects.entry()
         }
         schemars::visit::visit_schema_object(self, schema)
     }
@@ -35,9 +60,6 @@ pub fn run_validate_schema(args: SchemaValidationArgs) -> Result<()> {
     //schemars::visit::
     let mut validator = SettingsSchemaValidator::default();
     validator.visit_root_schema(&mut schema);
-    println!(
-        "Found {} schemas, {} with defaults",
-        validator.count, validator.default
-    );
+
     Ok(())
 }
