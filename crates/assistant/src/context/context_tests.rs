@@ -1,4 +1,4 @@
-use super::{EditSuggestion, MessageCacheMetadata};
+use super::{MessageCacheMetadata, WorkflowStepParameters};
 use crate::{
     assistant_panel, prompt_library, slash_command::file_command, workflow::tool, CacheStatus,
     Context, ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
@@ -750,7 +750,7 @@ async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
 
         «<edit_step>
         <path>»",
-        &[EditSuggestion {
+        &[WorkflowStepParameters {
             path: None,
             location: None,
             operation: None,
@@ -797,7 +797,7 @@ async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
         </edit_step>»
 
         also,",
-        &[EditSuggestion {
+        &[WorkflowStepParameters {
             path: Some("src/lib.rs".into()),
             location: Some("fn one() {}".into()),
             operation: None,
@@ -857,12 +857,12 @@ async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
 
         Call the new function»",
         &[
-            EditSuggestion {
+            WorkflowStepParameters {
                 path: Some("src/lib.rs".into()),
                 location: Some("fn one() {}".into()),
                 operation: None,
             },
-            EditSuggestion {
+            WorkflowStepParameters {
                 path: Some("src/main.rs".into()),
                 location: Some("one();".into()),
                 operation: None,
@@ -883,7 +883,7 @@ async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
     fn expect_suggestion_ranges(
         context: &Model<Context>,
         expected_marked_text: &str,
-        expected_suggestions: &[EditSuggestion],
+        expected_suggestions: &[WorkflowStepParameters],
         cx: &mut TestAppContext,
     ) {
         context.update(cx, |context, cx| {
@@ -892,9 +892,9 @@ async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
             context.buffer.read_with(cx, |buffer, _| {
                 assert_eq!(buffer.text(), expected_text);
                 let ranges = context
-                    .edit_steps
+                    .workflow_steps_v2
                     .iter()
-                    .map(|entry| entry.source_range.to_offset(buffer))
+                    .map(|entry| entry.range.to_offset(buffer))
                     .collect::<Vec<_>>();
                 let marked = generate_marked_text(&expected_text, &ranges, false);
                 assert_eq!(
@@ -902,7 +902,7 @@ async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
                     expected_marked_text,
                     "unexpected suggestion ranges. actual: {ranges:?}, expected: {expected_ranges:?}"
                 );
-                let suggestions = context.edit_steps.iter().map(|step| step.suggestion.clone()).collect::<Vec<_>>();
+                let suggestions = context.workflow_steps_v2.iter().map(|step| step.parameters.clone()).collect::<Vec<_>>();
                 assert_eq!(suggestions, expected_suggestions);
             });
         });
