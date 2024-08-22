@@ -332,6 +332,7 @@ pub enum Event {
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Model<Buffer>),
     DebugClientStarted(DebugAdapterClientId),
+    DebugClientStopped(DebugAdapterClientId),
     DebugClientEvent {
         client_id: DebugAdapterClientId,
         payload: Payload,
@@ -1544,12 +1545,18 @@ impl Project {
         };
 
         if !should_terminate {
-            return;
+            return cx.emit(Event::DebugClientStopped(client_id));
         }
 
         if let DebugAdapterClientState::Running(client) = debug_client {
-            cx.spawn(|_, _| async move { client.terminate().await })
-                .detach_and_log_err(cx)
+            cx.spawn(|project, mut cx| async move {
+                client.terminate().await.log_err();
+
+                project.update(&mut cx, |_, cx| {
+                    cx.emit(Event::DebugClientStopped(client.id()))
+                })
+            })
+            .detach_and_log_err(cx)
         }
     }
 
