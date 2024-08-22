@@ -2127,16 +2127,22 @@ impl ProjectPanel {
                                     .tooltip(move |cx| {
                                         Tooltip::text(
                                             match git_status {
-                                                GitFileStatus::Added => "Added",
-                                                GitFileStatus::Modified => "Modified",
-                                                GitFileStatus::Conflict => "Conflict",
+                                                GitFileStatus::Added => {
+                                                    format!("{path} • Untracked")
+                                                }
+                                                GitFileStatus::Modified => {
+                                                    format!("{path} • Modified")
+                                                }
+                                                GitFileStatus::Conflict => {
+                                                    format!("{path} • Conflict")
+                                                }
                                             },
                                             cx,
                                         )
                                     })
                                     .child(
                                         Label::new(match git_status {
-                                            GitFileStatus::Added => "A",
+                                            GitFileStatus::Added => "U",
                                             GitFileStatus::Modified => "M",
                                             GitFileStatus::Conflict => "C",
                                         })
