@@ -10,6 +10,8 @@ pub struct Svg {
     interactivity: Interactivity,
     transformation: Option<Transformation>,
     path: Option<SharedString>,
+    /// whether to respect the fill color of the SVG file
+    polychrome: bool,
 }
 
 /// Create a new SVG element.
@@ -18,6 +20,7 @@ pub fn svg() -> Svg {
         interactivity: Interactivity::default(),
         transformation: None,
         path: None,
+        polychrome: false,
     }
 }
 
@@ -32,6 +35,12 @@ impl Svg {
     /// Note that this won't effect the hitbox or layout of the element, only the rendering.
     pub fn with_transformation(mut self, transformation: Transformation) -> Self {
         self.transformation = Some(transformation);
+        self
+    }
+
+    /// Respect the colors of the SVG file.
+    pub fn with_polychrome(mut self) -> Self {
+        self.polychrome = true;
         self
     }
 }
@@ -78,7 +87,7 @@ impl Element for Svg {
     {
         self.interactivity
             .paint(global_id, bounds, hitbox.as_ref(), cx, |style, cx| {
-                if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
+                if let Some((path, style_color)) = self.path.as_ref().zip(style.text.color) {
                     let transformation = self
                         .transformation
                         .as_ref()
@@ -87,6 +96,11 @@ impl Element for Svg {
                         })
                         .unwrap_or_default();
 
+                    let color = if self.polychrome {
+                        None
+                    } else {
+                        Some(style_color)
+                    };
                     cx.paint_svg(bounds, path.clone(), transformation, color)
                         .log_err();
                 }

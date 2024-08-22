@@ -2532,7 +2532,7 @@ impl<'a> WindowContext<'a> {
         bounds: Bounds<Pixels>,
         path: SharedString,
         transformation: TransformationMatrix,
-        color: Hsla,
+        maybe_color: Option<Hsla>,
     ) -> Result<()> {
         debug_assert_eq!(
             self.window.draw_phase,
@@ -2564,20 +2564,36 @@ impl<'a> WindowContext<'a> {
         };
         let content_mask = self.content_mask().scale(scale_factor);
 
-        self.window
-            .next_frame
-            .scene
-            .insert_primitive(MonochromeSprite {
-                order: 0,
-                pad: 0,
-                bounds: bounds
-                    .map_origin(|origin| origin.floor())
-                    .map_size(|size| size.ceil()),
-                content_mask,
-                color,
-                tile,
-                transformation,
-            });
+        let sized_bounds = bounds
+            .map_origin(|origin| origin.floor())
+            .map_size(|size| size.ceil());
+
+        if let Some(color) = maybe_color {
+            self.window
+                .next_frame
+                .scene
+                .insert_primitive(MonochromeSprite {
+                    order: 0,
+                    pad: 0,
+                    bounds: sized_bounds,
+                    content_mask,
+                    color,
+                    tile,
+                    transformation,
+                });
+        } else {
+            self.window
+                .next_frame
+                .scene
+                .insert_primitive(PolychromeSprite {
+                    order: 0,
+                    bounds: sized_bounds,
+                    content_mask,
+                    tile,
+                    grayscale: false,
+                    corner_radii: Corners::default(),
+                });
+        }
 
         Ok(())
     }
