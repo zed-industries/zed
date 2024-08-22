@@ -1162,11 +1162,19 @@ impl SearchableItem for Editor {
     }
 
     fn update_matches(&mut self, matches: &[Range<Anchor>], cx: &mut ViewContext<Self>) {
+        let existing_range = self
+            .background_highlights
+            .get(&TypeId::of::<BufferSearchHighlights>())
+            .map(|(_, range)| range.as_ref());
+        let updated = existing_range != Some(matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
             |theme| theme.search_match_background,
             cx,
         );
+        if updated {
+            cx.emit(SearchEvent::MatchesInvalidated);
+        }
     }
 
     fn has_filtered_search_ranges(&mut self) -> bool {
