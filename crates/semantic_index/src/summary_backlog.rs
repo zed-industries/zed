@@ -33,6 +33,7 @@ impl SummaryBacklog {
     }
 
     /// Remove all the entries in the backlog and return the file paths as an iterator.
+    #[allow(clippy::needless_lifetimes)] // Clippy thinks this 'a can be elided, but eliding it gives a compile error
     pub fn drain<'a>(&'a mut self) -> impl Iterator<Item = (Arc<Path>, Option<SystemTime>)> + 'a {
         self.total_bytes = 0;
 
