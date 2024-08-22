@@ -556,6 +556,7 @@ pub struct Window {
     pending_modifier: ModifierState,
     pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
+    ignore_mouse_events: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -833,6 +834,7 @@ impl Window {
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
+            ignore_mouse_events: false,
         })
     }
     fn new_focus_listener(
@@ -3049,7 +3051,6 @@ impl<'a> WindowContext<'a> {
         self.app.propagate_event = true;
         // Handlers may set this to true by calling `prevent_default`.
         self.window.default_prevented = false;
-
         let event = match event {
             // Track the mouse position with our own state, since accessing the platform
             // API for the mouse position can only occur on the main thread.
@@ -3138,6 +3139,10 @@ impl<'a> WindowContext<'a> {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any) {
+        if self.window.ignore_mouse_events {
+            return;
+        }
+
         let hit_test = self.window.rendered_frame.hit_test(self.mouse_position());
         if hit_test != self.window.mouse_hit_test {
             self.window.mouse_hit_test = hit_test;
@@ -3573,6 +3578,12 @@ impl<'a> WindowContext<'a> {
     /// Toggle full screen status on the current window at the platform level.
     pub fn toggle_fullscreen(&self) {
         self.window.platform_window.toggle_fullscreen();
+    }
+
+    /// Toggle mouse events from window.
+    pub fn toggle_mouse_events(&mut self) {
+        let toggle = self.window.ignore_mouse_events;
+        self.window.ignore_mouse_events = !toggle;
     }
 
     /// Present a platform dialog.

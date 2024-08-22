@@ -45,7 +45,7 @@ use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{EditorState, Mode, Operator, RecordedSelection, Register, WorkspaceState};
 use std::{ops::Range, sync::Arc};
 use surrounds::{add_surrounds, change_surrounds, delete_surrounds, SurroundsType};
-use ui::BorrowAppContext;
+use ui::{BorrowAppContext, Context};
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
 
@@ -84,7 +84,8 @@ actions!(
         InnerObject,
         FindForward,
         FindBackward,
-        OpenDefaultKeymap
+        OpenDefaultKeymap,
+        ToggleMouse,
     ]
 );
 
@@ -123,6 +124,15 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    workspace.register_action(|_: &mut Workspace, _: &ToggleMouse, cx| {
+        let windows = cx.windows();
+        for w in &windows {
+            cx.update_window(*w, |_, cx| {
+                cx.toggle_mouse_events();
+            })
+            .unwrap();
+        }
+    });
     workspace.register_action(|_: &mut Workspace, &SwitchMode(mode): &SwitchMode, cx| {
         Vim::update(cx, |vim, cx| vim.switch_mode(mode, false, cx))
     });
@@ -1032,6 +1042,8 @@ impl Vim {
         }
         editor.remove_keymap_context_layer::<Self>(cx)
     }
+
+    fn d(&self) {}
 }
 
 impl Settings for VimModeSetting {
