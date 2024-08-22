@@ -5,8 +5,8 @@ use crate::stdio::TerminalOutput;
 use anyhow::Result;
 use base64::prelude::*;
 use gpui::{
-    img, percentage, Animation, AnimationExt, AnyElement, ClipboardItem, FontWeight, ImageFormat,
-    Render, RenderImage, Task, TextRun, Transformation, View,
+    img, percentage, Animation, AnimationExt, AnyElement, ClipboardItem, FontWeight, Image,
+    ImageFormat, Render, RenderImage, Task, TextRun, Transformation, View,
 };
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
@@ -34,9 +34,14 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
     }
 }
 
+pub(crate) trait SupportsClipboard {
+    fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem>;
+    fn has_clipboard_content(&self, cx: &WindowContext) -> bool;
+}
+
 /// ImageView renders an image inline in an editor, adapting to the line height to fit the image.
 pub struct ImageView {
-    clipboard_content: ClipboardItem,
+    clipboard_image: Arc<Image>,
     height: u32,
     width: u32,
     image: Arc<RenderImage>,
@@ -91,19 +96,29 @@ impl ImageView {
             }
         };
 
-        let clipboard_content =
-            ClipboardItem::new_image_from_bytes(bytes, format, gpui_image_data.id);
+        // Convert back to a GPUI image for use with the clipboard
+        let clipboard_image = Arc::new(Image {
+            format,
+            bytes,
+            id: gpui_image_data.id.0 as u64,
+        });
 
         return Ok(ImageView {
-            clipboard_content,
+            clipboard_image,
             height,
             width,
             image: Arc::new(gpui_image_data),
         });
     }
+}
 
+impl SupportsClipboard for ImageView {
     fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
-        Some(self.clipboard_content.clone())
+        Some(ClipboardItem::new_image(self.clipboard_image.as_ref()))
+    }
+
+    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+        true
     }
 }
 
@@ -237,10 +252,6 @@ impl TableView {
         markdown
     }
 
-    pub fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
-        Some(self.cached_clipboard_content.clone())
-    }
-
     pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
         let data = match &self.table.data {
             Some(data) => data,
@@ -329,6 +340,16 @@ impl TableView {
     }
 }
 
+impl SupportsClipboard for TableView {
+    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+        Some(self.cached_clipboard_content.clone())
+    }
+
+    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+        true
+    }
+}
+
 /// Userspace error from the kernel
 pub struct ErrorView {
     pub ename: String,
@@ -405,9 +426,15 @@ impl MarkdownView {
             parsing_markdown_task: Some(task),
         }
     }
+}
 
-    pub fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+impl SupportsClipboard for MarkdownView {
+    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
         Some(ClipboardItem::new_string(self.raw_text.clone()))
+    }
+
+    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+        true
     }
 }
 
@@ -453,8 +480,10 @@ impl Output {
             display_id: None,
         }
     }
+}
 
-    pub fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem> {
+impl SupportsClipboard for Output {
+    fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem> {
         match &self.content {
             OutputContent::Plain(terminal) => terminal.clipboard_content(cx),
             OutputContent::Stream(terminal) => terminal.clipboard_content(cx),
@@ -464,6 +493,19 @@ impl Output {
             OutputContent::Table(table) => table.clipboard_content(cx),
             OutputContent::Markdown(markdown) => markdown.read(cx).clipboard_content(cx),
             OutputContent::ClearOutputWaitMarker => None,
+        }
+    }
+
+    fn has_clipboard_content(&self, cx: &WindowContext) -> bool {
+        match &self.content {
+            OutputContent::Plain(terminal) => terminal.has_clipboard_content(cx),
+            OutputContent::Stream(terminal) => terminal.has_clipboard_content(cx),
+            OutputContent::Image(image) => image.has_clipboard_content(cx),
+            OutputContent::ErrorOutput(error) => error.traceback.has_clipboard_content(cx),
+            OutputContent::Message(_) => false,
+            OutputContent::Table(table) => table.has_clipboard_content(cx),
+            OutputContent::Markdown(markdown) => markdown.read(cx).has_clipboard_content(cx),
+            OutputContent::ClearOutputWaitMarker => false,
         }
     }
 }
@@ -747,8 +789,6 @@ impl Render for ExecutionView {
         div()
             .w_full()
             .children(self.outputs.iter().enumerate().map(|(index, output)| {
-                let clipboard_content = output.clipboard_content(cx);
-
                 div()
                     .relative()
                     .w_full()
@@ -758,7 +798,9 @@ impl Render for ExecutionView {
                             .render(cx)
                             .unwrap_or_else(|| div().into_any_element()),
                     )
-                    .when_some(clipboard_content, |el, clipboard_content| {
+                    .when(output.has_clipboard_content(cx), |el| {
+                        let clipboard_content = output.clipboard_content(cx);
+
                         el.child(
                             div().child(
                                 Button::new(
@@ -768,7 +810,10 @@ impl Render for ExecutionView {
                                 .style(ButtonStyle::Transparent)
                                 .on_click(cx.listener(
                                     move |_, _, cx| {
-                                        cx.write_to_clipboard(clipboard_content.clone());
+                                        if let Some(clipboard_content) = clipboard_content.as_ref()
+                                        {
+                                            cx.write_to_clipboard(clipboard_content.clone());
+                                        }
                                     },
                                 )),
                             ),
