@@ -836,6 +836,7 @@
       "language_servers": ["starpls", "!buck2-lsp", "..."]
     },
     "Svelte": {
+      "language_servers": ["svelte-language-server", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["prettier-plugin-svelte"]
@@ -859,6 +860,7 @@
       }
     },
     "Vue.js": {
+      "language_servers": ["vue-language-server", "..."],
       "prettier": {
         "allowed": true
       }
