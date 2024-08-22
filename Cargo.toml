@@ -305,7 +305,7 @@ zed_actions = { path = "crates/zed_actions" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "cacdb5bb3b72bad2c729227537979d95af75978f" }
+alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "91d034ff8b53867143c005acfaa14609147c9a2c" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 ashpd = "0.9.1"
@@ -388,7 +388,7 @@ runtimelib = { version = "0.15", default-features = false, features = [
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-schemars = {version = "0.8", features = ["impl_json_schema"]}
+schemars = { version = "0.8", features = ["impl_json_schema"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
