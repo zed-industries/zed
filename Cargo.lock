@@ -1624,7 +1624,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/kvark/blade?rev=ac25c77ed8d86c386a541c935ffe0a0f6024e701#ac25c77ed8d86c386a541c935ffe0a0f6024e701"
+source = "git+https://github.com/kvark/blade?rev=7f54ddfc001edc48225e6602d3c38ebb855421aa#7f54ddfc001edc48225e6602d3c38ebb855421aa"
 dependencies = [
  "ash",
  "ash-window",
@@ -1654,7 +1654,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=ac25c77ed8d86c386a541c935ffe0a0f6024e701#ac25c77ed8d86c386a541c935ffe0a0f6024e701"
+source = "git+https://github.com/kvark/blade?rev=7f54ddfc001edc48225e6602d3c38ebb855421aa#7f54ddfc001edc48225e6602d3c38ebb855421aa"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1664,7 +1664,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/kvark/blade?rev=ac25c77ed8d86c386a541c935ffe0a0f6024e701#ac25c77ed8d86c386a541c935ffe0a0f6024e701"
+source = "git+https://github.com/kvark/blade?rev=7f54ddfc001edc48225e6602d3c38ebb855421aa#7f54ddfc001edc48225e6602d3c38ebb855421aa"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -5874,9 +5874,9 @@ dependencies = [
 
 [[package]]
 name = "khronos-egl"
-version = "5.0.0"
+version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1382b16c04aeb821453d6215a3c80ba78f24c6595c5aa85653378aabe0c83e3"
+checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
 dependencies = [
  "libc",
  "libloading",
