@@ -8,8 +8,8 @@ use editor::actions::{
 use editor::{Editor, EditorSettings};
 
 use gpui::{
-    anchored, deferred, Action, AnchorCorner, ClickEvent, ElementId, EventEmitter,
-    InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
+    Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, InteractiveElement, ParentElement,
+    Render, Styled, Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
