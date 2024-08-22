@@ -153,8 +153,8 @@ impl AssistantSettingsContent {
                                         models
                                             .into_iter()
                                             .filter_map(|model| match model {
-                                                open_ai::Model::Custom { name, max_tokens } => {
-                                                    Some(language_model::provider::open_ai::AvailableModel { name, max_tokens })
+                                                open_ai::Model::Custom { name, max_tokens,max_output_tokens } => {
+                                                    Some(language_model::provider::open_ai::AvailableModel { name, max_tokens,max_output_tokens })
                                                 }
                                                 _ => None,
                                             })
@@ -543,8 +543,8 @@ mod tests {
             assert_eq!(
                 AssistantSettings::get_global(cx).default_model,
                 LanguageModelSelection {
-                    provider: "openai".into(),
-                    model: "gpt-4o".into(),
+                    provider: "zed.dev".into(),
+                    model: "claude-3-5-sonnet".into(),
                 }
             );
         });

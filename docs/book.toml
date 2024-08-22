@@ -9,8 +9,8 @@ site-url = "/docs/"
 [output.html]
 no-section-label = true
 preferred-dark-theme = "light"
-additional-css = ["theme/page-toc.css"]
-additional-js  = ["theme/page-toc.js"]
+additional-css = ["theme/page-toc.css", "theme/plugins.css"]
+additional-js  = ["theme/page-toc.js", "theme/plugins.js"]
 
 [output.html.print]
 enable = false
@@ -20,3 +20,4 @@ enable = false
 "/javascript.html" = "/docs/languages/javascript.html"
 "/ruby.html" = "/docs/languages/ruby.html"
 "/python.html" = "/docs/languages/python.html"
+"/adding-new-languages.html" = "/docs/extensions/languages.html"

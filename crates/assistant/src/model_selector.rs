@@ -1,14 +1,16 @@
-use feature_flags::LanguageModels;
+use feature_flags::ZedPro;
+use gpui::Action;
+use gpui::DismissEvent;
+
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
+use workspace::ShowConfiguration;
 
 use std::sync::Arc;
 use ui::ListItemSpacing;
 
 use crate::assistant_settings::AssistantSettings;
-use crate::ShowConfiguration;
 use fs::Fs;
-use gpui::Action;
 use gpui::SharedString;
 use gpui::Task;
 use picker::{Picker, PickerDelegate};
@@ -35,7 +37,7 @@ pub struct ModelPickerDelegate {
 #[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
-    provider_icon: IconName,
+    icon: IconName,
     availability: LanguageModelAvailability,
     is_selected: bool,
 }
@@ -132,6 +134,8 @@ impl PickerDelegate for ModelPickerDelegate {
                 model.is_selected = model.model.id() == selected_model_id
                     && model.model.provider_id() == selected_provider_id;
             }
+
+            cx.emit(DismissEvent);
         }
     }
 
@@ -143,7 +147,10 @@ impl PickerDelegate for ModelPickerDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        use feature_flags::FeatureFlagAppExt;
         let model_info = self.filtered_models.get(ix)?;
+        let show_badges = cx.has_flag::<ZedPro>();
+        let provider_name: String = model_info.model.provider_name().0.into();
 
         Some(
             ListItem::new(ix)
@@ -152,9 +159,9 @@ impl PickerDelegate for ModelPickerDelegate {
                 .selected(selected)
                 .start_slot(
                     div().pr_1().child(
-                        Icon::new(model_info.provider_icon)
+                        Icon::new(model_info.icon)
                             .color(Color::Muted)
-                            .size(IconSize::XSmall),
+                            .size(IconSize::Medium),
                     ),
                 )
                 .child(
@@ -162,19 +169,26 @@ impl PickerDelegate for ModelPickerDelegate {
                         .w_full()
                         .justify_between()
                         .font_buffer(cx)
-                        .min_w(px(200.))
+                        .min_w(px(240.))
                         .child(
                             h_flex()
                                 .gap_2()
                                 .child(Label::new(model_info.model.name().0.clone()))
+                                .child(
+                                    Label::new(provider_name)
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
                                 .children(match model_info.availability {
                                     LanguageModelAvailability::Public => None,
                                     LanguageModelAvailability::RequiresPlan(Plan::Free) => None,
-                                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro) => Some(
-                                        Label::new("Pro")
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted),
-                                    ),
+                                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro) => {
+                                        show_badges.then(|| {
+                                            Label::new("Pro")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                        })
+                                    }
                                 }),
                         )
                         .child(div().when(model_info.is_selected, |this| {
@@ -190,9 +204,6 @@ impl PickerDelegate for ModelPickerDelegate {
 
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
         use feature_flags::FeatureFlagAppExt;
-        if !cx.has_flag::<LanguageModels>() {
-            return None;
-        }
 
         let plan = proto::Plan::ZedPro;
         let is_trial = false;
@@ -205,26 +216,28 @@ impl PickerDelegate for ModelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .justify_between()
-                .child(match plan {
-                    // Already a zed pro subscriber
-                    Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
-                        .icon(IconName::ZedAssistant)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .icon_position(IconPosition::Start)
-                        .on_click(|_, cx| {
-                            cx.dispatch_action(Box::new(zed_actions::OpenAccountSettings))
-                        }),
-                    // Free user
-                    Plan::Free => Button::new(
-                        "try-pro",
-                        if is_trial {
-                            "Upgrade to Pro"
-                        } else {
-                            "Try Pro"
-                        },
-                    )
-                    .on_click(|_, cx| cx.open_url(TRY_ZED_PRO_URL)),
+                .when(cx.has_flag::<ZedPro>(), |this| {
+                    this.child(match plan {
+                        // Already a zed pro subscriber
+                        Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
+                            .icon(IconName::ZedAssistant)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .icon_position(IconPosition::Start)
+                            .on_click(|_, cx| {
+                                cx.dispatch_action(Box::new(zed_actions::OpenAccountSettings))
+                            }),
+                        // Free user
+                        Plan::Free => Button::new(
+                            "try-pro",
+                            if is_trial {
+                                "Upgrade to Pro"
+                            } else {
+                                "Try Pro"
+                            },
+                        )
+                        .on_click(|_, cx| cx.open_url(TRY_ZED_PRO_URL)),
+                    })
                 })
                 .child(
                     Button::new("configure", "Configure")
@@ -256,16 +269,17 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
             .iter()
             .flat_map(|provider| {
                 let provider_id = provider.id();
-                let provider_icon = provider.icon();
+                let icon = provider.icon();
                 let selected_model = selected_model.clone();
                 let selected_provider = selected_provider.clone();
 
                 provider.provided_models(cx).into_iter().map(move |model| {
                     let model = model.clone();
+                    let icon = model.icon().unwrap_or(icon);
 
                     ModelInfo {
                         model: model.clone(),
-                        provider_icon,
+                        icon,
                         availability: model.availability(),
                         is_selected: selected_model.as_ref() == Some(&model.id())
                             && selected_provider.as_ref() == Some(&provider_id),
@@ -290,5 +304,6 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
             .menu(move |_cx| Some(picker_view.clone()))
             .trigger(self.trigger)
             .attach(gpui::AnchorCorner::BottomLeft)
+            .when_some(self.handle, |menu, handle| menu.with_handle(handle))
     }
 }

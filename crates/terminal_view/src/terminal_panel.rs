@@ -174,9 +174,9 @@ impl TerminalPanel {
         self.pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 if !pane.has_focus(cx) {
-                    return None;
+                    return (None, None);
                 }
-                h_flex()
+                let right_children = h_flex()
                     .gap_2()
                     .children(additional_buttons.clone())
                     .child(
@@ -232,7 +232,8 @@ impl TerminalPanel {
                             })
                     })
                     .into_any_element()
-                    .into()
+                    .into();
+                (None, right_children)
             });
         });
     }

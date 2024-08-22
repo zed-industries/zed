@@ -96,8 +96,8 @@ pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
         start: 0,
         end: text.len(),
     };
-    for link in finder.links(&text[text_range.clone()]) {
-        let link_range = text_range.start + link.start()..text_range.start + link.end();
+    for link in finder.links(&text) {
+        let link_range = link.start()..link.end();
 
         if link_range.start > text_range.start {
             events.push((text_range.start..link_range.start, MarkdownEvent::Text));
@@ -118,7 +118,9 @@ pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
         text_range.start = link_range.end;
     }
 
-    events.push((text_range, MarkdownEvent::Text));
+    if text_range.end > text_range.start {
+        events.push((text_range, MarkdownEvent::Text));
+    }
 
     events
 }

@@ -669,7 +669,7 @@ impl RecentProjectsDelegate {
                     .unwrap_or_default();
                 this.update(&mut cx, move |picker, cx| {
                     picker.delegate.set_workspaces(workspaces);
-                    picker.delegate.set_selected_index(ix - 1, cx);
+                    picker.delegate.set_selected_index(ix.saturating_sub(1), cx);
                     picker.delegate.reset_selected_match_index = false;
                     picker.update_matches(picker.query(cx), cx)
                 })

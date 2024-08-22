@@ -488,9 +488,9 @@ impl TerminalView {
 
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
-        if let Some(item) = cx.read_from_clipboard() {
+        if let Some(clipboard_string) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.terminal
-                .update(cx, |terminal, _cx| terminal.paste(item.text()));
+                .update(cx, |terminal, _cx| terminal.paste(&clipboard_string));
         }
     }
 
@@ -943,26 +943,31 @@ impl Item for TerminalView {
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
+        let rerun_button = |task_id: task::TaskId| {
+            IconButton::new("rerun-icon", IconName::Rerun)
+                .icon_size(IconSize::Small)
+                .size(ButtonSize::Compact)
+                .icon_color(Color::Default)
+                .shape(ui::IconButtonShape::Square)
+                .tooltip(|cx| Tooltip::text("Rerun task", cx))
+                .on_click(move |_, cx| {
+                    cx.dispatch_action(Box::new(tasks_ui::Rerun {
+                        task_id: Some(task_id.clone()),
+                        ..tasks_ui::Rerun::default()
+                    }));
+                })
+        };
 
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Unknown => (IconName::ExclamationTriangle, Color::Warning, None),
                 TaskStatus::Running => (IconName::Play, Color::Disabled, None),
+                TaskStatus::Unknown => (
+                    IconName::ExclamationTriangle,
+                    Color::Warning,
+                    Some(rerun_button(terminal_task.id.clone())),
+                ),
                 TaskStatus::Completed { success } => {
-                    let task_id = terminal_task.id.clone();
-                    let rerun_button = IconButton::new("rerun-icon", IconName::Rerun)
-                        .icon_size(IconSize::Small)
-                        .size(ButtonSize::Compact)
-                        .icon_color(Color::Default)
-                        .shape(ui::IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::text("Rerun task", cx))
-                        .on_click(move |_, cx| {
-                            cx.dispatch_action(Box::new(tasks_ui::Rerun {
-                                task_id: Some(task_id.clone()),
-                                ..Default::default()
-                            }));
-                        });
-
+                    let rerun_button = rerun_button(terminal_task.id.clone());
                     if *success {
                         (IconName::Check, Color::Success, Some(rerun_button))
                     } else {

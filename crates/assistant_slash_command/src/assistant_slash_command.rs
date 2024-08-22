@@ -15,14 +15,45 @@ pub fn init(cx: &mut AppContext) {
     SlashCommandRegistry::default_global(cx);
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AfterCompletion {
+    /// Run the command
+    Run,
+    /// Continue composing the current argument, doesn't add a space
+    Compose,
+    /// Continue the command composition, adds a space
+    Continue,
+}
+
+impl From<bool> for AfterCompletion {
+    fn from(value: bool) -> Self {
+        if value {
+            AfterCompletion::Run
+        } else {
+            AfterCompletion::Continue
+        }
+    }
+}
+
+impl AfterCompletion {
+    pub fn run(&self) -> bool {
+        match self {
+            AfterCompletion::Run => true,
+            AfterCompletion::Compose | AfterCompletion::Continue => false,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ArgumentCompletion {
     /// The label to display for this completion.
-    pub label: String,
+    pub label: CodeLabel,
     /// The new text that should be inserted into the command when this completion is accepted.
     pub new_text: String,
     /// Whether the command should be run when accepting this completion.
-    pub run_command: bool,
+    pub after_completion: AfterCompletion,
+    /// Whether to replace the all arguments, or whether to treat this as an independent argument.
+    pub replace_previous_arguments: bool,
 }
 
 pub trait SlashCommand: 'static + Send + Sync {
@@ -34,15 +65,18 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn menu_text(&self) -> String;
     fn complete_argument(
         self: Arc<Self>,
-        query: String,
+        arguments: &[String],
         cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>>;
     fn requires_argument(&self) -> bool;
+    fn accepts_arguments(&self) -> bool {
+        self.requires_argument()
+    }
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         // TODO: We're just using the `LspAdapterDelegate` here because that is
         // what the extension API is already expecting.

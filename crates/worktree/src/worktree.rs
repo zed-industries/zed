@@ -3184,6 +3184,7 @@ pub struct Entry {
     pub git_status: Option<GitFileStatus>,
     /// Whether this entry is considered to be a `.env` file.
     pub is_private: bool,
+    pub char_bag: CharBag,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -3191,7 +3192,7 @@ pub enum EntryKind {
     UnloadedDir,
     PendingDir,
     Dir,
-    File(CharBag),
+    File,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -3226,12 +3227,13 @@ impl Entry {
         root_char_bag: CharBag,
         canonical_path: Option<Box<Path>>,
     ) -> Self {
+        let char_bag = char_bag_for_path(root_char_bag, &path);
         Self {
             id: ProjectEntryId::new(next_entry_id),
             kind: if metadata.is_dir {
                 EntryKind::PendingDir
             } else {
-                EntryKind::File(char_bag_for_path(root_char_bag, &path))
+                EntryKind::File
             },
             path,
             inode: metadata.inode,
@@ -3242,6 +3244,7 @@ impl Entry {
             is_external: false,
             is_private: false,
             git_status: None,
+            char_bag,
         }
     }
 
@@ -3275,7 +3278,7 @@ impl EntryKind {
     }
 
     pub fn is_file(&self) -> bool {
-        matches!(self, EntryKind::File(_))
+        matches!(self, EntryKind::File)
     }
 }
 
@@ -5113,11 +5116,10 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
         let kind = if entry.is_dir {
             EntryKind::Dir
         } else {
-            let mut char_bag = *root_char_bag;
-            char_bag.extend(entry.path.chars().map(|c| c.to_ascii_lowercase()));
-            EntryKind::File(char_bag)
+            EntryKind::File
         };
         let path: Arc<Path> = PathBuf::from(entry.path).into();
+        let char_bag = char_bag_for_path(*root_char_bag, &path);
         Ok(Entry {
             id: ProjectEntryId::from_proto(entry.id),
             kind,
@@ -5130,6 +5132,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             git_status: git_status_from_proto(entry.git_status),
             is_private: false,
             is_symlink: entry.is_symlink,
+            char_bag,
         })
     }
 }

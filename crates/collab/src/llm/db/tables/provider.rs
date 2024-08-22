@@ -1,6 +1,5 @@
-use sea_orm::entity::prelude::*;
-
 use crate::llm::db::ProviderId;
+use sea_orm::entity::prelude::*;
 
 /// An LLM provider.
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]

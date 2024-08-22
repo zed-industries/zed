@@ -9,7 +9,9 @@ CREATE TABLE "users" (
     "connected_once" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "metrics_id" TEXT,
-    "github_user_id" INTEGER
+    "github_user_id" INTEGER,
+    "accepted_tos_at" TIMESTAMP WITHOUT TIME ZONE,
+    "github_user_created_at" TIMESTAMP WITHOUT TIME ZONE
 );
 CREATE UNIQUE INDEX "index_users_github_login" ON "users" ("github_login");
 CREATE UNIQUE INDEX "index_invite_code_users" ON "users" ("invite_code");
@@ -293,7 +295,8 @@ CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_channel_id_connection
 
 CREATE TABLE "feature_flags" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "flag" TEXT NOT NULL UNIQUE
+    "flag" TEXT NOT NULL UNIQUE,
+    "enabled_for_all" BOOLEAN NOT NULL DEFAULT false
 );
 
 CREATE INDEX "index_feature_flags" ON "feature_flags" ("id");

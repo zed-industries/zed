@@ -150,7 +150,7 @@ impl Markdown {
             return;
         }
         let text = text.text_for_range(self.selection.start..self.selection.end);
-        cx.write_to_clipboard(ClipboardItem::new(text));
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
     fn parse(&mut self, cx: &mut ViewContext<Self>) {
@@ -480,7 +480,7 @@ impl MarkdownElement {
                         {
                             let text = rendered_text
                                 .text_for_range(markdown.selection.start..markdown.selection.end);
-                            cx.write_to_primary(ClipboardItem::new(text))
+                            cx.write_to_primary(ClipboardItem::new_string(text))
                         }
                         cx.notify();
                     }

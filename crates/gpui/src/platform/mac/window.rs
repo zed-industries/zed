@@ -784,12 +784,12 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().bounds()
     }
 
-    fn window_bounds(&self) -> WindowBounds {
-        self.0.as_ref().lock().window_bounds()
-    }
-
     fn is_maximized(&self) -> bool {
         self.0.as_ref().lock().is_maximized()
+    }
+
+    fn window_bounds(&self) -> WindowBounds {
+        self.0.as_ref().lock().window_bounds()
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -975,8 +975,6 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn set_app_id(&mut self, _app_id: &str) {}
-
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut this = self.0.as_ref().lock();
         this.renderer
@@ -1005,30 +1003,6 @@ impl PlatformWindow for MacWindow {
             let window_number = this.native_window.windowNumber();
             CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
         }
-    }
-
-    fn set_edited(&mut self, edited: bool) {
-        unsafe {
-            let window = self.0.lock().native_window;
-            msg_send![window, setDocumentEdited: edited as BOOL]
-        }
-
-        // Changing the document edited state resets the traffic light position,
-        // so we have to move it again.
-        self.0.lock().move_traffic_light();
-    }
-
-    fn show_character_palette(&self) {
-        let this = self.0.lock();
-        let window = this.native_window;
-        this.executor
-            .spawn(async move {
-                unsafe {
-                    let app = NSApplication::sharedApplication(nil);
-                    let _: () = msg_send![app, orderFrontCharacterPalette: window];
-                }
-            })
-            .detach();
     }
 
     fn minimize(&self) {
@@ -1107,17 +1081,47 @@ impl PlatformWindow for MacWindow {
         self.0.lock().appearance_changed_callback = Some(callback);
     }
 
-    fn draw(&self, scene: &crate::Scene) {
+    fn draw(&self, scene: &crate::Scene, on_complete: Option<oneshot::Sender<()>>) {
         let mut this = self.0.lock();
-        this.renderer.draw(scene);
+        this.renderer.draw(scene, on_complete);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
     }
 
+    fn set_edited(&mut self, edited: bool) {
+        unsafe {
+            let window = self.0.lock().native_window;
+            msg_send![window, setDocumentEdited: edited as BOOL]
+        }
+
+        // Changing the document edited state resets the traffic light position,
+        // so we have to move it again.
+        self.0.lock().move_traffic_light();
+    }
+
+    fn show_character_palette(&self) {
+        let this = self.0.lock();
+        let window = this.native_window;
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    let app = NSApplication::sharedApplication(nil);
+                    let _: () = msg_send![app, orderFrontCharacterPalette: window];
+                }
+            })
+            .detach();
+    }
+
+    fn set_app_id(&mut self, _app_id: &str) {}
+
     fn gpu_specs(&self) -> Option<crate::GPUSpecs> {
         None
+    }
+
+    fn fps(&self) -> Option<f32> {
+        Some(self.0.lock().renderer.fps())
     }
 }
 

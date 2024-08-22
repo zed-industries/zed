@@ -1401,7 +1401,7 @@ impl ProjectPanel {
 
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
-            cx.write_to_clipboard(ClipboardItem::new(
+            cx.write_to_clipboard(ClipboardItem::new_string(
                 worktree
                     .abs_path()
                     .join(&entry.path)
@@ -1413,7 +1413,9 @@ impl ProjectPanel {
 
     fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
         if let Some((_, entry)) = self.selected_entry(cx) {
-            cx.write_to_clipboard(ClipboardItem::new(entry.path.to_string_lossy().to_string()));
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                entry.path.to_string_lossy().to_string(),
+            ));
         }
     }
 
@@ -1654,7 +1656,7 @@ impl ProjectPanel {
                     new_entry_kind = if edit_state.is_dir {
                         EntryKind::Dir
                     } else {
-                        EntryKind::File(Default::default())
+                        EntryKind::File
                     };
                 }
             }
@@ -1694,6 +1696,7 @@ impl ProjectPanel {
                         git_status: entry.git_status,
                         canonical_path: entry.canonical_path.clone(),
                         is_symlink: entry.is_symlink,
+                        char_bag: entry.char_bag,
                     });
                 }
                 if expanded_dir_ids.binary_search(&entry.id).is_err()
@@ -1917,7 +1920,7 @@ impl ProjectPanel {
                     let status = git_status_setting.then(|| entry.git_status).flatten();
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
                     let icon = match entry.kind {
-                        EntryKind::File(_) => {
+                        EntryKind::File => {
                             if show_file_icons {
                                 FileIcons::get_icon(&entry.path, cx)
                             } else {

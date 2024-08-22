@@ -5,8 +5,9 @@ use axum::{
     routing::get,
     Extension, Router,
 };
-use collab::llm::db::LlmDatabase;
+use collab::llm::{db::LlmDatabase, log_usage_periodically};
 use collab::migrations::run_database_migrations;
+use collab::user_backfiller::spawn_user_backfiller;
 use collab::{api::billing::poll_stripe_events_periodically, llm::LlmState, ServiceMode};
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor,
@@ -52,10 +53,18 @@ async fn main() -> Result<()> {
         Some("seed") => {
             let config = envy::from_env::<Config>().expect("error loading config");
             let db_options = db::ConnectOptions::new(config.database_url.clone());
+
             let mut db = Database::new(db_options, Executor::Production).await?;
             db.initialize_notification_kinds().await?;
 
-            collab::seed::seed(&config, &db, true).await?;
+            collab::seed::seed(&config, &db, false).await?;
+
+            if let Some(llm_database_url) = config.llm_database_url.clone() {
+                let db_options = db::ConnectOptions::new(llm_database_url);
+                let mut db = LlmDatabase::new(db_options.clone(), Executor::Production).await?;
+                db.initialize().await?;
+                collab::llm::db::seed_database(&config, &mut db, true).await?;
+            }
         }
         Some("serve") => {
             let mode = match args.next().as_deref() {
@@ -86,6 +95,8 @@ async fn main() -> Result<()> {
                 setup_llm_database(&config).await?;
 
                 let state = LlmState::new(config.clone(), Executor::Production).await?;
+
+                log_usage_periodically(state.clone());
 
                 app = app
                     .merge(collab::llm::routes())
@@ -121,6 +132,7 @@ async fn main() -> Result<()> {
                 if mode.is_api() {
                     poll_stripe_events_periodically(state.clone());
                     fetch_extensions_from_blob_store_periodically(state.clone());
+                    spawn_user_backfiller(state.clone());
 
                     app = app
                         .merge(collab::api::events::router())
@@ -142,6 +154,10 @@ async fn main() -> Result<()> {
                             "http_request",
                             method = ?request.method(),
                             matched_path,
+                            user_id = tracing::field::Empty,
+                            login = tracing::field::Empty,
+                            authn.jti = tracing::field::Empty,
+                            is_staff = tracing::field::Empty
                         )
                     })
                     .on_response(
@@ -240,11 +256,6 @@ async fn setup_app_database(config: &Config) -> Result<()> {
 }
 
 async fn setup_llm_database(config: &Config) -> Result<()> {
-    // TODO: This is temporary until we have the LLM database stood up.
-    if !config.is_development() {
-        return Ok(());
-    }
-
     let database_url = config
         .llm_database_url
         .as_ref()
@@ -279,10 +290,7 @@ async fn setup_llm_database(config: &Config) -> Result<()> {
 }
 
 async fn handle_root(Extension(mode): Extension<ServiceMode>) -> String {
-    format!(
-        "collab {mode:?} v{VERSION} ({})",
-        REVISION.unwrap_or("unknown")
-    )
+    format!("zed:{mode} v{VERSION} ({})", REVISION.unwrap_or("unknown"))
 }
 
 async fn handle_liveness_probe(
@@ -293,7 +301,9 @@ async fn handle_liveness_probe(
         state.db.get_all_users(0, 1).await?;
     }
 
-    if let Some(_llm_state) = llm_state {}
+    if let Some(llm_state) = llm_state {
+        llm_state.db.list_providers().await?;
+    }
 
     Ok("ok".to_string())
 }

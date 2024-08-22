@@ -449,6 +449,7 @@ impl ProjectDiagnosticsEditor {
                                     style: BlockStyle::Sticky,
                                     render: diagnostic_header_renderer(primary),
                                     disposition: BlockDisposition::Above,
+                                    priority: 0,
                                 });
                             }
 
@@ -470,6 +471,7 @@ impl ProjectDiagnosticsEditor {
                                             diagnostic, None, true, true,
                                         ),
                                         disposition: BlockDisposition::Below,
+                                        priority: 0,
                                     });
                                 }
                             }
@@ -508,6 +510,7 @@ impl ProjectDiagnosticsEditor {
                         style: block.style,
                         render: block.render,
                         disposition: block.disposition,
+                        priority: 0,
                     })
                 }),
                 Some(Autoscroll::fit()),
