@@ -63,7 +63,7 @@ impl Database {
     pub async fn add_contributor(
         &self,
         github_login: &str,
-        github_user_id: Option<i32>,
+        github_user_id: i32,
         github_email: Option<&str>,
         github_user_created_at: Option<DateTimeUtc>,
         initial_channel_id: Option<ChannelId>,
