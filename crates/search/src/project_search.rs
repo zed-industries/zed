@@ -1631,6 +1631,7 @@ impl Render for ProjectSearchBar {
                 .child(
                     IconButton::new("project-search-opened-only", IconName::Book)
                         .selected(self.is_opened_only_enabled(cx))
+                        .tooltip(|cx| Tooltip::text("Search only in Opend Editors", cx))
                         .on_click(cx.listener(|this, _, cx| {
                             this.toggle_opened_only(cx);
                         })),
