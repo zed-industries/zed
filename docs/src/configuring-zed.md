@@ -1789,7 +1789,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 - Description: Whether to fold directories automatically when directory has only one directory inside.
 - Setting: `auto_fold_dirs`
-- Default: `false`
+- Default: `true`
 
 **Options**
 
