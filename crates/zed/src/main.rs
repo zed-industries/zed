@@ -8,6 +8,7 @@ mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
 use assistant::PromptBuilder;
+use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, DevServerToken, UserStore};
@@ -44,6 +45,7 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
+use time::UtcOffset;
 use util::{maybe, parse_env_output, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
@@ -886,7 +888,10 @@ fn init_logger() {
                 let mut config_builder = ConfigBuilder::new();
 
                 config_builder.set_time_format_rfc3339();
-                config_builder.set_time_offset_to_local().log_err();
+                let local_offset = chrono::Local::now().offset().fix().local_minus_utc();
+                if let Ok(offset) = UtcOffset::from_whole_seconds(local_offset) {
+                    config_builder.set_time_offset(offset);
+                }
 
                 #[cfg(target_os = "linux")]
                 {
