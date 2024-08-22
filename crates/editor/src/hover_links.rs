@@ -1573,7 +1573,7 @@ mod tests {
                 .unwrap();
 
             let file = buffer.read(cx).file().unwrap();
-            let file_path = file.abs_path(cx);
+            let file_path = file.as_local().unwrap().abs_path(cx);
 
             assert_eq!(file_path.to_str().unwrap(), "/root/dir/file2.rs");
         });

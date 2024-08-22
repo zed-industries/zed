@@ -947,7 +947,7 @@ mod test {
 
         let text = buffer.read(cx).text();
         let file = buffer.read(cx).file().unwrap();
-        let file_path = file.abs_path(cx);
+        let file_path = file.as_local().unwrap().abs_path(cx);
 
         assert_eq!(text, expected_text);
         assert_eq!(file_path.to_str().unwrap(), expected_path);
