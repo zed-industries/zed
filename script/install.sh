@@ -6,6 +6,7 @@ set -eu
 # https://zed.dev/docs/linux.
 
 main() {
+    operation="${1:-install}"
     platform="$(uname -s)"
     arch="$(uname -m)"
     channel="${ZED_CHANNEL:-stable}"
@@ -48,9 +49,9 @@ main() {
 
     "$platform" "$@"
 
-    if [ "$(which "zed")" = "$HOME/.local/bin/zed" ]; then
+    if [ "$operation" = install ] && [ "$(which "zed")" = "$HOME/.local/bin/zed" ]; then
         echo "Zed has been installed. Run with 'zed'"
-    else
+    elif [ "$operation" = install ]; then
         echo "To run Zed from your terminal, you must add ~/.local/bin to your PATH"
         echo "Run:"
 
@@ -69,11 +70,13 @@ main() {
         esac
 
         echo "To run Zed now, '~/.local/bin/zed'"
+    else
+	    echo "Uninstall completed."
     fi
 }
 
 linux() {
-    if [ -n "${ZED_BUNDLE_PATH:-}" ]; then
+    [ "$operation" = install ] && if [ -n "${ZED_BUNDLE_PATH:-}" ]; then
         cp "$ZED_BUNDLE_PATH" "$temp/zed-linux-$arch.tar.gz"
     else
         echo "Downloading Zed"
@@ -107,25 +110,31 @@ linux() {
 
     # Unpack
     rm -rf "$HOME/.local/zed$suffix.app"
-    mkdir -p "$HOME/.local/zed$suffix.app"
-    tar -xzf "$temp/zed-linux-$arch.tar.gz" -C "$HOME/.local/"
+    [ "$operation" = install ] && {
+        mkdir -p "$HOME/.local/zed$suffix.app" && tar -xzf "$temp/zed-linux-$arch.tar.gz" -C "$HOME/.local/"
 
-    # Setup ~/.local directories
-    mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
+        # Setup ~/.local directories
+        mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
 
-    # Link the binary
-    if [ -f "$HOME/.local/zed$suffix.app/bin/zed" ]; then
-        ln -sf "$HOME/.local/zed$suffix.app/bin/zed" "$HOME/.local/bin/zed"
-    else
-        # support for versions before 0.139.x.
-        ln -sf "$HOME/.local/zed$suffix.app/bin/cli" "$HOME/.local/bin/zed"
-    fi
+        # Link the binary
+        if [ -f "$HOME/.local/zed$suffix.app/bin/zed" ]; then
+            ln -sf "$HOME/.local/zed$suffix.app/bin/zed" "$HOME/.local/bin/zed"
+        else
+            # support for versions before 0.139.x.
+            ln -sf "$HOME/.local/zed$suffix.app/bin/cli" "$HOME/.local/bin/zed"
+        fi
+    }
+    [ "$operation" = uninstall ] && rm -f "$HOME/.local/bin/zed"
 
     # Copy .desktop file
     desktop_file_path="$HOME/.local/share/applications/${appid}.desktop"
-    cp "$HOME/.local/zed$suffix.app/share/applications/zed$suffix.desktop" "${desktop_file_path}"
-    sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
-    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/libexec/zed-editor|g" "${desktop_file_path}"
+    [ "$operation" = install ] && {
+        cp "$HOME/.local/zed$suffix.app/share/applications/zed$suffix.desktop" "${desktop_file_path}"
+        sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
+        sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/libexec/zed-editor|g" "${desktop_file_path}"
+    }
+    [ "$operation" = uninstall ] && rm -f "$desktop_file_path"
+    return 0
 }
 
 macos() {
@@ -133,17 +142,26 @@ macos() {
     curl "https://zed.dev/api/releases/$channel/latest/Zed-$arch.dmg" > "$temp/Zed-$arch.dmg"
     hdiutil attach -quiet "$temp/Zed-$arch.dmg" -mountpoint "$temp/mount"
     app="$(cd "$temp/mount/"; echo *.app)"
-    echo "Installing $app"
+
+    [ "$operation" = install ] && echo "Installing $app"
+
     if [ -d "/Applications/$app" ]; then
         echo "Removing existing $app"
         rm -rf "/Applications/$app"
     fi
-    ditto "$temp/mount/$app" "/Applications/$app"
+
+    [ "$operation" = install ] && ditto "$temp/mount/$app" "/Applications/$app"
+
     hdiutil detach -quiet "$temp/mount"
 
-    mkdir -p "$HOME/.local/bin"
-    # Link the binary
-    ln -sf "/Applications/$app/Contents/MacOS/cli" "$HOME/.local/bin/zed"
+    [ "$operation" = install ] && {
+        mkdir -p "$HOME/.local/bin"
+        # Link the binary
+        ln -sf "/Applications/$app/Contents/MacOS/cli" "$HOME/.local/bin/zed"
+    }
+
+    [ "$operation" = uninstall ] && rm -f "$HOME/.local/bin/zed"
+    return 0
 }
 
 main "$@"
