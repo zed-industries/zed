@@ -524,7 +524,7 @@
       "ctrl-alt-c": "outline_panel::CopyPath",
       "alt-ctrl-shift-c": "outline_panel::CopyRelativePath",
       "alt-ctrl-r": "outline_panel::RevealInFileManager",
-      "space": "outline_panel::Open",
+      "space": ["outline_panel::Open", { "change_selection": false }],
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev"
     }

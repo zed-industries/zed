@@ -16,19 +16,19 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
-    scroll::ScrollAnchor,
+    scroll::{Autoscroll, ScrollAnchor},
     AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, ExcerptId, ExcerptRange,
     MultiBufferSnapshot, RangeToAnchorExt,
 };
 use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, anchored, deferred, div, px, uniform_list, Action, AnyElement, AppContext,
-    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EventEmitter,
-    FocusHandle, FocusableView, HighlightStyle, InteractiveElement, IntoElement, KeyContext, Model,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
+    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId,
+    EventEmitter, FocusHandle, FocusableView, HighlightStyle, InteractiveElement, IntoElement,
+    KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render,
+    SharedString, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -54,6 +54,13 @@ use workspace::{
 };
 use worktree::{Entry, ProjectEntryId, WorktreeId};
 
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct Open {
+    change_selection: bool,
+}
+
+impl_actions!(outline_panel, [Open]);
+
 actions!(
     outline_panel,
     [
@@ -64,7 +71,6 @@ actions!(
         ExpandAllEntries,
         ExpandSelectedEntry,
         FoldDirectory,
-        Open,
         ToggleActiveEditorPin,
         RevealInFileManager,
         SelectParent,
@@ -537,11 +543,11 @@ impl OutlinePanel {
         self.update_cached_entries(None, cx);
     }
 
-    fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
+    fn open(&mut self, open: &Open, cx: &mut ViewContext<Self>) {
         if self.filter_editor.focus_handle(cx).is_focused(cx) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
-            self.open_entry(&selected_entry, cx);
+            self.open_entry(&selected_entry, open.change_selection, cx);
         }
     }
 
@@ -558,7 +564,12 @@ impl OutlinePanel {
         }
     }
 
-    fn open_entry(&mut self, entry: &PanelEntry, cx: &mut ViewContext<OutlinePanel>) {
+    fn open_entry(
+        &mut self,
+        entry: &PanelEntry,
+        change_selection: bool,
+        cx: &mut ViewContext<OutlinePanel>,
+    ) {
         let Some(active_editor) = self.active_editor() else {
             return;
         };
@@ -624,9 +635,19 @@ impl OutlinePanel {
 
         if let Some((offset, anchor)) = scroll_target {
             self.select_entry(entry.clone(), true, cx);
-            active_editor.update(cx, |editor, cx| {
-                editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, cx);
-            });
+            if change_selection {
+                active_editor.update(cx, |editor, cx| {
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        s.select_ranges(Some(anchor..anchor))
+                    });
+                });
+                active_editor.focus_handle(cx).focus(cx);
+            } else {
+                active_editor.update(cx, |editor, cx| {
+                    editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, cx);
+                });
+                self.focus_handle.focus(cx);
+            }
 
             if let PanelEntry::Search(..) = entry {
                 if let Some(active_project_search) =
@@ -1644,7 +1665,8 @@ impl OutlinePanel {
                             if event.down.button == MouseButton::Right || event.down.first_mouse {
                                 return;
                             }
-                            outline_panel.open_entry(&clicked_entry, cx);
+                            let change_selection = event.down.click_count > 1;
+                            outline_panel.open_entry(&clicked_entry, change_selection, cx);
                         })
                     })
                     .on_secondary_mouse_down(cx.listener(
