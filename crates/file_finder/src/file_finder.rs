@@ -4,7 +4,7 @@ mod file_finder_tests;
 mod new_path_prompt;
 mod open_path_prompt;
 
-use collections::{BTreeSet, HashMap};
+use collections::HashMap;
 use editor::{scroll::Autoscroll, Bias, Editor};
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
@@ -12,7 +12,6 @@ use gpui::{
     FocusableView, Model, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task,
     View, ViewContext, VisualContext, WeakView,
 };
-use itertools::Itertools;
 use new_path_prompt::NewPathPrompt;
 use open_path_prompt::OpenPathPrompt;
 use picker::{Picker, PickerDelegate};
@@ -208,7 +207,7 @@ struct Matches {
     matches: Vec<Match>,
 }
 
-#[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 struct HistoryEntry {
     path: FoundPath,
     panel_match: Option<ProjectPanelOrdMatch>,
@@ -220,30 +219,12 @@ enum Match {
     Search(ProjectPanelOrdMatch),
 }
 
-impl PartialOrd for Match {
-    fn partial_cmp(&self, other: &Match) -> Option<cmp::Ordering> {
-        Some(self.cmp(&other))
-    }
-}
-
-impl Ord for Match {
-    fn cmp(&self, other: &Match) -> cmp::Ordering {
-        match (self, other) {
-            (Match::History(entry_a, _), Match::History(entry_b, _)) => entry_a.cmp(&entry_b),
-            (Match::Search(a), Match::Search(b)) => a.cmp(&b),
-            (Match::History(_, _), Match::Search(_)) => cmp::Ordering::Less,
-            (Match::Search(_), Match::History(_, _)) => cmp::Ordering::Greater,
-        }
-    }
-}
-
 impl PartialEq for Match {
     fn eq(&self, other: &Match) -> bool {
-        match (self, other) {
-            (Match::History(entry_a, _), Match::History(entry_b, _)) => entry_a.eq(&entry_b),
-            (Match::Search(a), Match::Search(b)) => a.eq(&b),
-            (Match::History(_, _), Match::Search(_)) => false,
-            (Match::Search(_), Match::History(_, _)) => false,
+        match (&self, &other) {
+            (Match::History(lhs, _), Match::History(rhs, _)) => lhs.eq(rhs),
+            (Match::Search(lhs), Match::Search(rhs)) => lhs.eq(rhs),
+            _ => false,
         }
     }
 }
@@ -288,11 +269,13 @@ impl Matches {
         let new_search_matches = new_search_matches
             .filter(|path_match| !matching_history_paths.contains_key(&path_match.0.path))
             .map(Match::Search);
-        let old_search_matches = self
-            .matches
-            .drain(..)
-            .filter(|_| extend_old_matches)
-            .filter(|m| matches!(m, Match::Search(_)));
+
+        if extend_old_matches {
+            self.matches.retain(|m| matches!(m, Match::Search(_)));
+        } else {
+            self.matches.clear();
+        }
+
         let history_matches = history_items
             .into_iter()
             .chain(currently_opened)
@@ -317,14 +300,19 @@ impl Matches {
 
         self.opened_path = currently_opened.cloned();
 
-        let mut unique_matches = BTreeSet::new();
-        self.matches = old_search_matches
-            .chain(history_matches)
-            .chain(new_search_matches)
-            .filter(|m| unique_matches.insert(m.clone()))
-            .sorted_by(|a, b| Self::cmp_matches(self.separate_history, currently_opened, &a, &b))
-            .take(100)
-            .collect();
+        for new_match in history_matches.chain(new_search_matches) {
+            match self.matches.binary_search_by(|m| {
+                Self::cmp_matches(self.separate_history, currently_opened, &m, &new_match)
+            }) {
+                Ok(_duplicate) => continue,
+                Err(i) => {
+                    self.matches.insert(i, new_match);
+                    if self.matches.len() == 100 {
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     fn cmp_matches(
@@ -333,6 +321,10 @@ impl Matches {
         a: &Match,
         b: &Match,
     ) -> cmp::Ordering {
+        if a.eq(b) {
+            return cmp::Ordering::Equal;
+        }
+
         match (&a, &b) {
             // bubble currently opened files to the top
             (Match::History(entry, _), _) if Some(&entry.path) == currently_opened => {
@@ -791,13 +783,11 @@ impl FileFinderDelegate {
 
     /// Skips first history match (that is displayed topmost) if it's currently opened.
     fn calculate_selected_index(&self) -> usize {
-        if let Some(m) = self.matches.get(0) {
-            if let Match::History(entry, _) = &m {
-                if Some(&entry.path) == self.currently_opened_path.as_ref() {
-                    let elements_after_first = self.matches.len() - 1;
-                    if elements_after_first > 0 {
-                        return 1;
-                    }
+        if let Some(Match::History(entry, _)) = self.matches.get(0) {
+            if Some(&entry.path) == self.currently_opened_path.as_ref() {
+                let elements_after_first = self.matches.len() - 1;
+                if elements_after_first > 0 {
+                    return 1;
                 }
             }
         }

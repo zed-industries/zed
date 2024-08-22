@@ -1628,7 +1628,7 @@ async fn test_first_match_selected_if_previous_one_is_not_in_the_match_list(
     // Select even/file_2.txt
     cx.dispatch_action(SelectNext);
 
-    // Add more matches to the search results
+    // Remove the selected entry
     app_state
         .fs
         .remove_file("/src/file_2.txt".as_ref(), Default::default())
