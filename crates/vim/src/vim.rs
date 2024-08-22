@@ -296,6 +296,9 @@ impl Vim {
         editor.set_autoindent(true);
         editor.selections.line_mode = false;
         editor.unregister_addon::<VimAddon>();
+        if VimSettings::get_global(cx).smart_relative_line {
+            editor.set_relativg_line_numbers(None, cx)
+        }
     }
 
     /// Register an action on the editor.
@@ -425,14 +428,6 @@ impl Vim {
         self.sync_vim_settings(cx);
 
         if leave_selections {
-            if VimSettings::get_global(cx).smart_relative_line {
-                self.update_editor(cx, |_, editor, cx| {
-                    let is_relative = mode != Mode::Insert;
-                    if EditorSettings::get_global(cx).relative_line_numbers != is_relative {
-                        editor.set_relative_line_numbers(is_relative, cx)
-                    }
-                });
-            }
             return;
         }
 
@@ -442,13 +437,6 @@ impl Vim {
 
         // Adjust selections
         self.update_editor(cx, |vim, editor, cx| {
-            if VimSettings::get_global(cx).smart_relative_line {
-                let is_relative = mode != Mode::Insert;
-                if EditorSettings::get_global(cx).relative_line_numbers != is_relative {
-                    editor.set_relative_line_numbers(is_relative, cx)
-                }
-            }
-
             if last_mode != Mode::VisualBlock && last_mode.is_visual() && mode == Mode::VisualBlock
             {
                 vim.visual_block_motion(true, editor, cx, |_, point, goal| Some((point, goal)))
@@ -639,6 +627,9 @@ impl Vim {
         self.clear_operator(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.set_cursor_shape(language::CursorShape::Hollow, cx);
+            if VimSettings::get_global(cx).smart_relative_line {
+                editor.set_relativg_line_numbers(Some(false), cx)
+            }
         });
     }
 
@@ -1023,6 +1014,10 @@ impl Vim {
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
+            if VimSettings::get_global(cx).smart_relative_line {
+                let is_relative = vim.mode != Mode::Insert;
+                editor.set_relativg_line_numbers(Some(is_relative), cx)
+            }
         });
         cx.notify()
     }

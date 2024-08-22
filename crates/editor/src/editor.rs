@@ -508,6 +508,7 @@ pub struct Editor {
     show_breadcrumbs: bool,
     show_gutter: bool,
     show_line_numbers: Option<bool>,
+    use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
@@ -1849,6 +1850,7 @@ impl Editor {
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
             show_line_numbers: None,
+            use_relative_line_numbers: None,
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_runnables: None,
@@ -10511,20 +10513,28 @@ impl Editor {
         EditorSettings::override_global(editor_settings, cx);
     }
 
+    pub fn should_relative_line_numbers(&self) -> Option<bool> {
+        self.use_relative_line_numbers
+    }
+
     pub fn toggle_relative_line_numbers(
         &mut self,
         _: &ToggleRelativeLineNumbers,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut editor_settings = EditorSettings::get_global(cx).clone();
-        editor_settings.relative_line_numbers = !editor_settings.relative_line_numbers;
-        EditorSettings::override_global(editor_settings, cx);
+        let is_relative = self
+            .should_relative_line_numbers()
+            .unwrap_or(EditorSettings::get_global(cx).relative_line_numbers);
+        self.set_relativg_line_numbers(Some(!is_relative), cx)
     }
 
-    pub fn set_relative_line_numbers(&mut self, is_relative: bool, cx: &mut ViewContext<Self>) {
-        let mut editor_settings = EditorSettings::get_global(cx).clone();
-        editor_settings.relative_line_numbers = is_relative;
-        EditorSettings::override_global(editor_settings, cx);
+    pub fn set_relativg_line_numbers(
+        &mut self,
+        is_relative: Option<bool>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.use_relative_line_numbers = is_relative;
+        cx.notify();
     }
 
     pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
