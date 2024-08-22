@@ -1419,33 +1419,7 @@ impl Context {
         // Rebuild the XML tags in the edited range.
         let intersecting_tags_range =
             self.indices_intersecting_buffer_range(&self.xml_tags, buffer_start..buffer_end, cx);
-        let mut new_tags = Vec::new();
-        let mut lines = buffer.text_for_range(buffer_start..buffer_end).lines();
-        let mut offset = lines.offset();
-        while let Some(line) = lines.next() {
-            for (start_ix, _) in line.match_indices('<') {
-                let mut name_start_ix = start_ix + 1;
-                let name_end_ix = line[start_ix..].find('>').map(|i| start_ix + i);
-                if let Some(name_end_ix) = name_end_ix {
-                    let end_ix = name_end_ix + 1;
-                    let mut is_open_tag = true;
-                    if line[name_start_ix..name_end_ix].starts_with('/') {
-                        name_start_ix += 1;
-                        is_open_tag = false;
-                    }
-                    let tag_name = &line[name_start_ix..name_end_ix];
-                    if let Ok(kind) = XmlTagKind::from_str(tag_name) {
-                        new_tags.push(XmlTag {
-                            range: buffer.anchor_after(offset + start_ix)
-                                ..buffer.anchor_before(offset + end_ix),
-                            is_open_tag,
-                            kind,
-                        });
-                    };
-                }
-            }
-            offset = lines.offset();
-        }
+        let new_tags = xml_tags_in_range(buffer, buffer_start..buffer_end);
         self.xml_tags
             .splice(intersecting_tags_range.clone(), new_tags);
 
@@ -2663,6 +2637,40 @@ impl Context {
         summary.text = custom_summary;
         cx.emit(ContextEvent::SummaryChanged);
     }
+}
+
+fn xml_tags_in_range(buffer: &Buffer, range: Range<text::Anchor>) -> Vec<XmlTag> {
+    let mut new_tags = Vec::new();
+    let mut lines = buffer.text_for_range(range).lines();
+    let mut offset = lines.offset();
+    while let Some(line) = lines.next() {
+        for (start_ix, _) in line.match_indices('<') {
+            let mut name_start_ix = start_ix + 1;
+            let closing_bracket_ix = line[start_ix..].find('>').map(|i| start_ix + i);
+            if let Some(closing_bracket_ix) = closing_bracket_ix {
+                let end_ix = closing_bracket_ix + 1;
+                let mut is_open_tag = true;
+                if line[name_start_ix..closing_bracket_ix].starts_with('/') {
+                    name_start_ix += 1;
+                    is_open_tag = false;
+                }
+                let tag_inner = &line[name_start_ix..closing_bracket_ix];
+                let tag_name_len = tag_inner
+                    .find(|c: char| c.is_whitespace())
+                    .unwrap_or(tag_inner.len());
+                if let Ok(kind) = XmlTagKind::from_str(&tag_inner[..tag_name_len]) {
+                    new_tags.push(XmlTag {
+                        range: buffer.anchor_after(offset + start_ix)
+                            ..buffer.anchor_before(offset + end_ix),
+                        is_open_tag,
+                        kind,
+                    });
+                };
+            }
+        }
+        offset = lines.offset();
+    }
+    new_tags
 }
 
 #[derive(Debug, Default)]
