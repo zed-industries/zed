@@ -3504,11 +3504,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "collections",
- "gpui",
  "mdbook",
  "regex",
- "semver",
  "serde",
  "serde_json",
  "settings",

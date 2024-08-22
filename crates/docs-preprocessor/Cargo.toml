@@ -8,10 +8,7 @@ license = "GPL-3.0-or-later"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-collections.workspace = true
-gpui.workspace = true
 mdbook = "0.4.40"
-semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
