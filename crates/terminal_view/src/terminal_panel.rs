@@ -886,7 +886,11 @@ fn to_windows_shell_variable(shell_type: WindowsShellType, input: String) -> Str
 
 #[cfg(target_os = "windows")]
 fn to_windows_shell_type(shell: &str) -> WindowsShellType {
-    if shell == "powershell" || shell.ends_with("powershell.exe") {
+    if shell == "powershell"
+        || shell.ends_with("powershell.exe")
+        || shell == "pwsh"
+        || shell.ends_with("pwsh.exe")
+    {
         WindowsShellType::Powershell
     } else if shell == "cmd" || shell.ends_with("cmd.exe") {
         WindowsShellType::Cmd
