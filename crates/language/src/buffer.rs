@@ -383,7 +383,7 @@ pub trait File: Send + Sync {
 
 /// The file associated with a buffer, in the case where the file is on the local disk.
 pub trait LocalFile: File {
-    /// Returns the absolute path of this file.
+    /// Returns the absolute path of this file
     fn abs_path(&self, cx: &AppContext) -> PathBuf;
 
     /// Loads the file's contents from disk.

@@ -742,9 +742,15 @@ fn generate_positions(string: &str, query: &str) -> Vec<usize> {
 mod test {
     use std::path::Path;
 
-    use crate::test::{NeovimBackedTestContext, VimTestContext};
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
+    use editor::Editor;
     use gpui::TestAppContext;
     use indoc::indoc;
+    use ui::ViewContext;
+    use workspace::Workspace;
 
     #[gpui::test]
     async fn test_command_basics(cx: &mut TestAppContext) {
@@ -922,5 +928,56 @@ mod test {
         cx.simulate_shared_keystrokes("v 2 j : s / . / k enter")
             .await;
         cx.shared_state().await.assert_eq("k\nk\nˇk\n4\n4\n3\n2\n1");
+    }
+
+    fn assert_active_item(
+        workspace: &mut Workspace,
+        expected_path: &str,
+        expected_text: &str,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+
+        let buffer = active_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap();
+
+        let text = buffer.read(cx).text();
+        let file = buffer.read(cx).file().unwrap();
+        let file_path = file.as_local().unwrap().abs_path(cx);
+
+        assert_eq!(text, expected_text);
+        assert_eq!(file_path.to_str().unwrap(), expected_path);
+    }
+
+    #[gpui::test]
+    async fn test_command_gf(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Assert base state, that we're in /root/dir/file.rs
+        cx.workspace(|workspace, cx| {
+            assert_active_item(workspace, "/root/dir/file.rs", "", cx);
+        });
+
+        // Insert a new file
+        let fs = cx.workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
+            .await;
+
+        // Put the path to the second file into the currently open buffer
+        cx.set_state(indoc! {"go to fiˇle2.rs"}, Mode::Normal);
+
+        // Go to file2.rs
+        cx.simulate_keystrokes("g f");
+
+        // We now have two items
+        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, cx| {
+            assert_active_item(workspace, "/root/dir/file2.rs", "This is file2.rs", cx);
+        });
     }
 }
