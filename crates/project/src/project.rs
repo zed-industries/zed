@@ -7782,7 +7782,7 @@ impl Project {
         path: &str,
         buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Option<PathBuf>> {
+    ) -> Task<Option<ResolvedPath>> {
         // TODO: ssh based remoting.
         if self.ssh_session.is_some() {
             return Task::ready(None);
@@ -7826,7 +7826,8 @@ impl Project {
                     .await
                     .into_iter()
                     .find(|(_, exists)| *exists)
-                    .map(|(path, _)| path.clone())
+                    // TODO: If we have a worktree, we need to return that
+                    .map(|(path, _)| ResolvedPath::AbsPath(path.clone()))
             })
         } else {
             let path = PathBuf::from(path);
@@ -7847,7 +7848,7 @@ impl Project {
             cx.spawn(|_, mut cx| async move {
                 for worktree in worktrees {
                     for candidate in candidates.iter() {
-                        let exists = worktree
+                        let path = worktree
                             .update(&mut cx, |worktree, _| {
                                 let root_entry_path = &worktree.root_entry().unwrap().path;
 
@@ -7856,12 +7857,17 @@ impl Project {
                                 let stripped =
                                     resolved.strip_prefix(&root_entry_path).unwrap_or(&resolved);
 
-                                worktree.entry_for_path(stripped).is_some()
+                                worktree.entry_for_path(stripped).map(|entry| {
+                                    ResolvedPath::ProjectPath(ProjectPath {
+                                        worktree_id: worktree.id(),
+                                        path: entry.path.clone(),
+                                    })
+                                })
                             })
                             .ok()?;
 
-                        if exists {
-                            return Some(candidate.clone());
+                        if path.is_some() {
+                            return path;
                         }
                     }
                 }
@@ -11329,6 +11335,14 @@ fn resolve_path(base: &Path, path: &Path) -> PathBuf {
         }
     }
     result
+}
+
+/// ResolvedPath is a path that has been resolved to either a ProjectPath
+/// or an AbsPath and that *exists*.
+#[derive(Debug, Clone)]
+pub enum ResolvedPath {
+    ProjectPath(ProjectPath),
+    AbsPath(PathBuf),
 }
 
 impl Item for Buffer {

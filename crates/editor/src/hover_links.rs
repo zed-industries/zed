@@ -10,9 +10,9 @@ use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
 use project::{
     HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink, Project,
-    ResolveState,
+    ResolveState, ResolvedPath,
 };
-use std::{ops::Range, path::PathBuf};
+use std::ops::Range;
 use theme::ActiveTheme as _;
 use util::{maybe, ResultExt, TryFutureExt};
 
@@ -63,7 +63,7 @@ impl RangeInEditor {
 #[derive(Debug, Clone)]
 pub enum HoverLink {
     Url(String),
-    File(PathBuf),
+    File(ResolvedPath),
     Text(LocationLink),
     InlayHint(lsp::Location, LanguageServerId),
 }
@@ -711,7 +711,7 @@ pub(crate) async fn find_file(
     project: Model<Project>,
     position: text::Anchor,
     cx: &mut AsyncWindowContext,
-) -> Option<(Range<text::Anchor>, PathBuf)> {
+) -> Option<(Range<text::Anchor>, ResolvedPath)> {
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
 
     let (range, candidate_file_path) = surrounding_filename(snapshot, position)?;

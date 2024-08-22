@@ -155,7 +155,7 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
-use workspace::{OpenInTerminal, OpenTerminal, OpenVisible, TabBarSettings, Toast};
+use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
 use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
@@ -9198,9 +9198,9 @@ impl Editor {
             if let Some((_, path)) = result {
                 workspace
                     .update(&mut cx, |workspace, cx| {
-                        workspace.open_paths(vec![path], OpenVisible::All, None, cx)
+                        workspace.open_resolved_path(path, cx)
                     })?
-                    .await;
+                    .await?;
             }
             anyhow::Ok(())
         })
@@ -9241,16 +9241,12 @@ impl Editor {
                 HoverLink::File(path) => {
                     if let Some(workspace) = self.workspace() {
                         cx.spawn(|_, mut cx| async move {
-                            let open_paths_task = workspace.update(&mut cx, |workspace, cx| {
-                                let pane = workspace.active_pane().clone().downgrade();
-                                workspace.open_paths(vec![path], OpenVisible::All, Some(pane), cx)
-                            })?;
-
-                            let results = open_paths_task.await;
-                            if let Some(item) = results.into_iter().next().flatten() {
-                                item?;
-                            }
-                            Ok(TargetTaskResult::AlreadyNavigated)
+                            workspace
+                                .update(&mut cx, |workspace, cx| {
+                                    workspace.open_resolved_path(path, cx)
+                                })?
+                                .await
+                                .map(|_| TargetTaskResult::AlreadyNavigated)
                         })
                     } else {
                         Task::ready(Ok(TargetTaskResult::Location(None)))
