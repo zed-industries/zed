@@ -13,43 +13,95 @@ pub struct SchemaValidationArgs {
     path: PathBuf,
 }
 
+#[derive(Debug)]
 enum Violation {
     MissingDefault,
     MissingExample,
     MissingMetadata,
+    MissingDescription,
 }
-struct Violations(SchemaObject, Vec<Violation>);
+struct Violations {
+    schema: SchemaObject,
+    violations: Vec<(Vec<String>, Violation)>,
+}
 
 #[derive(Default)]
 struct SettingsSchemaValidator {
     objects: Vec<Violations>,
 }
 
-struct ViolationsBuilder<'a> {
-    target: &'a mut SettingsSchemaValidator,
-    violation: Violation,
-}
+impl SettingsSchemaValidator {
+    fn validate_schema_object(&mut self, builder: &mut ViolationsBuilder, schema: &SchemaObject) {
+        if schema.metadata.is_none() {
+            builder.add(Violation::MissingMetadata);
+        } else if let Some(metadata) = &schema.metadata {
+            if metadata.description.is_none() {
+                builder.add(Violation::MissingDescription);
+            }
+            if metadata.default.is_none() {
+                builder.add(Violation::MissingDefault);
+            }
+            if metadata.examples.is_empty() && !Self::is_boolean_schema(schema) {
+                builder.add(Violation::MissingExample);
+            }
+        }
 
-impl Drop for ViolationsBuilder<'_> {
-    fn drop(&mut self) {
-        if !self.violation.1.is_empty() {
-            self.target.objects.push(self.violation);
+        if let Some(object) = &schema.object {
+            for (property, property_schema) in &object.properties {
+                builder.push(property.clone());
+                self.validate_schema_object(builder, &property_schema.clone().into_object());
+                builder.pop();
+            }
         }
     }
+
+    fn is_boolean_schema(schema: &SchemaObject) -> bool {
+        schema.instance_type == Some(schemars::schema::InstanceType::Boolean.into())
+    }
 }
+
+struct ViolationsBuilder<'a> {
+    violations: &'a mut Violations,
+    current_path: Vec<String>,
+}
+
+impl<'a> ViolationsBuilder<'a> {
+    fn new(violations: &'a mut Violations) -> Self {
+        Self {
+            violations,
+            current_path: Vec::new(),
+        }
+    }
+
+    fn add(&mut self, violation: Violation) {
+        self.violations
+            .violations
+            .push((self.current_path.clone(), violation));
+    }
+
+    fn push(&mut self, segment: String) {
+        self.current_path.push(segment);
+    }
+
+    fn pop(&mut self) {
+        self.current_path.pop();
+    }
+}
+
 impl Visitor for SettingsSchemaValidator {
     fn visit_schema_object(&mut self, schema: &mut SchemaObject) {
-        let mut violation = Violations(schema.clone(), vec![]);
+        let mut violations = Violations {
+            schema: schema.clone(),
+            violations: Vec::new(),
+        };
+        let mut builder = ViolationsBuilder::new(&mut violations);
 
-        let Some(metadata) = schema.metadata.as_ref() else {};
+        self.validate_schema_object(&mut builder, schema);
 
-        if schema
-            .metadata
-            .as_ref()
-            .map_or(false, |meta| meta.default.as_ref().is_none())
-        {
-            self.objects.entry()
+        if !violations.violations.is_empty() {
+            self.objects.push(violations);
         }
+
         schemars::visit::visit_schema_object(self, schema)
     }
 }
@@ -57,9 +109,20 @@ impl Visitor for SettingsSchemaValidator {
 pub fn run_validate_schema(args: SchemaValidationArgs) -> Result<()> {
     let contents = std::fs::read_to_string(args.path)?;
     let mut schema: RootSchema = serde_json::from_str(&contents)?;
-    //schemars::visit::
     let mut validator = SettingsSchemaValidator::default();
     validator.visit_root_schema(&mut schema);
+
+    let total_violations: usize = validator.objects.iter().map(|v| v.violations.len()).sum();
+    println!("Total violations found: {}", total_violations);
+
+    for violation in validator.objects.iter().flat_map(|v| &v.violations) {
+        let path_str = if violation.0.is_empty() {
+            "<root>".to_string()
+        } else {
+            violation.0.join(".")
+        };
+        println!("{}: {:?}", path_str, violation.1);
+    }
 
     Ok(())
 }
