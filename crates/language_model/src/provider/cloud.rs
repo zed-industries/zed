@@ -444,6 +444,21 @@ impl LanguageModel for CloudLanguageModel {
         self.model.max_token_count()
     }
 
+    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
+        match &self.model {
+            CloudModel::Anthropic(model) => {
+                model
+                    .cache_configuration()
+                    .map(|cache| LanguageModelCacheConfiguration {
+                        max_cache_anchors: cache.max_cache_anchors,
+                        should_speculate: cache.should_speculate,
+                        min_total_token: cache.min_total_token,
+                    })
+            }
+            CloudModel::OpenAi(_) | CloudModel::Google(_) | CloudModel::Zed(_) => None,
+        }
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
