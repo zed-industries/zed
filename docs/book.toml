@@ -22,3 +22,4 @@ enable = false
 "/python.html" = "/docs/languages/python.html"
 "/adding-new-languages.html" = "/docs/extensions/languages.html"
 "/language-model-integration.html" = "/docs/assistant/assistant.html"
+"/assistant.html" = "/docs/assistant/assistant.html"
