@@ -18,7 +18,7 @@ use alacritty_terminal::{
         Config, RenderableCursor, TermMode,
     },
     tty::{self, setup_env},
-    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode, Rgb},
+    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode},
     Term,
 };
 use anyhow::{bail, Result};
@@ -127,7 +127,6 @@ pub enum MaybeNavigationTarget {
 
 #[derive(Clone)]
 enum InternalEvent {
-    ColorRequest(usize, Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>),
     Resize(TerminalSize),
     Clear,
     // FocusNextMatch,
@@ -688,9 +687,19 @@ impl Terminal {
                     cx.emit(Event::TitleChanged);
                 }
             }
-            AlacTermEvent::ColorRequest(idx, fun_ptr) => {
-                self.events
-                    .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
+            AlacTermEvent::ColorRequest(index, format) => {
+                // It's important that the color request is processed here to retain relative order
+                // with other PTY writes. Otherwise applications might witness out-of-order
+                // responses to requests. For example: An application sending `OSC 11 ; ? ST`
+                // (color request) followed by `CSI c` (request device attributes) would receive
+                // the response to `CSI c` first.
+                // Instead of locking, we could store the colors in `self.last_content`. But then
+                // we might respond with out of date value if a "set color" sequence is immediately
+                // followed by a color request sequence.
+                let color = self.term.lock().colors()[*index].unwrap_or_else(|| {
+                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
+                });
+                self.write_to_pty(format(color));
             }
             AlacTermEvent::ChildExit(error_code) => {
                 self.register_task_finished(Some(*error_code), cx);
@@ -714,12 +723,6 @@ impl Terminal {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            InternalEvent::ColorRequest(index, format) => {
-                let color = term.colors()[*index].unwrap_or_else(|| {
-                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
-                });
-                self.write_to_pty(format(color))
-            }
             InternalEvent::Resize(mut new_size) => {
                 new_size.size.height = cmp::max(new_size.line_height, new_size.height());
                 new_size.size.width = cmp::max(new_size.cell_width, new_size.width());
