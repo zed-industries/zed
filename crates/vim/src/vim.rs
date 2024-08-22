@@ -296,9 +296,7 @@ impl Vim {
         editor.set_autoindent(true);
         editor.selections.line_mode = false;
         editor.unregister_addon::<VimAddon>();
-        if VimSettings::get_global(cx).smart_relative_line {
-            editor.set_relativg_line_numbers(None, cx)
-        }
+        editor.set_relative_line_number(None, cx)
     }
 
     /// Register an action on the editor.
@@ -627,8 +625,8 @@ impl Vim {
         self.clear_operator(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.set_cursor_shape(language::CursorShape::Hollow, cx);
-            if VimSettings::get_global(cx).smart_relative_line {
-                editor.set_relativg_line_numbers(Some(false), cx)
+            if VimSettings::get_global(cx).toggle_relative_line_numbers {
+                editor.set_relative_line_number(Some(false), cx)
             }
         });
     }
@@ -1014,9 +1012,11 @@ impl Vim {
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
-            if VimSettings::get_global(cx).smart_relative_line {
+            if VimSettings::get_global(cx).toggle_relative_line_numbers {
                 let is_relative = vim.mode != Mode::Insert;
-                editor.set_relativg_line_numbers(Some(is_relative), cx)
+                editor.set_relative_line_number(Some(is_relative), cx)
+            } else {
+                editor.set_relative_line_number(None, cx)
             }
         });
         cx.notify()
@@ -1049,7 +1049,7 @@ pub enum UseSystemClipboard {
 
 #[derive(Deserialize)]
 struct VimSettings {
-    pub smart_relative_line: bool,
+    pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
@@ -1058,7 +1058,7 @@ struct VimSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 struct VimSettingsContent {
-    pub smart_relative_line: Option<bool>,
+    pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,

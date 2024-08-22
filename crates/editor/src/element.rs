@@ -1768,9 +1768,7 @@ impl EditorElement {
         });
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
 
-        let is_relative = editor
-            .should_relative_line_numbers()
-            .unwrap_or(EditorSettings::get_global(cx).relative_line_numbers);
+        let is_relative = editor.should_use_relative_line_numbers(cx);
         let relative_to = if is_relative {
             Some(newest_selection_head.row())
         } else {

@@ -10513,8 +10513,9 @@ impl Editor {
         EditorSettings::override_global(editor_settings, cx);
     }
 
-    pub fn should_relative_line_numbers(&self) -> Option<bool> {
+    pub fn should_use_relative_line_numbers(&self, cx: &WindowContext) -> bool {
         self.use_relative_line_numbers
+            .unwrap_or(EditorSettings::get_global(cx).relative_line_numbers)
     }
 
     pub fn toggle_relative_line_numbers(
@@ -10522,13 +10523,11 @@ impl Editor {
         _: &ToggleRelativeLineNumbers,
         cx: &mut ViewContext<Self>,
     ) {
-        let is_relative = self
-            .should_relative_line_numbers()
-            .unwrap_or(EditorSettings::get_global(cx).relative_line_numbers);
-        self.set_relativg_line_numbers(Some(!is_relative), cx)
+        let is_relative = self.should_use_relative_line_numbers(cx);
+        self.set_relative_line_number(Some(!is_relative), cx)
     }
 
-    pub fn set_relativg_line_numbers(
+    pub fn set_relative_line_number(
         &mut self,
         is_relative: Option<bool>,
         cx: &mut ViewContext<Self>,
