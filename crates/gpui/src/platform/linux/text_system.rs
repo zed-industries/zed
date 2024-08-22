@@ -1,7 +1,7 @@
 use crate::{
     point, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle,
     FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams,
-    ShapedGlyph, SharedString, Size,
+    ShapedGlyph, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context, Ok, Result};
 use collections::HashMap;
@@ -284,11 +284,10 @@ impl CosmicTextSystemState {
 
     fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.loaded_fonts_store[params.font_id.0];
-        let font_system = &mut self.font_system;
         let image = self
             .swash_cache
             .get_image(
-                font_system,
+                &mut self.font_system,
                 CacheKey::new(
                     font.id(),
                     params.glyph_id.0 as u16,
@@ -315,19 +314,20 @@ impl CosmicTextSystemState {
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
             Err(anyhow!("glyph bounds are empty"))
         } else {
-            // todo(linux) handle subpixel variants
             let bitmap_size = glyph_bounds.size;
             let font = &self.loaded_fonts_store[params.font_id.0];
-            let font_system = &mut self.font_system;
+            let subpixel_shift = params
+                .subpixel_variant
+                .map(|v| v as f32 / (SUBPIXEL_VARIANTS as f32 * params.scale_factor));
             let mut image = self
                 .swash_cache
                 .get_image(
-                    font_system,
+                    &mut self.font_system,
                     CacheKey::new(
                         font.id(),
                         params.glyph_id.0 as u16,
                         (params.font_size * params.scale_factor).into(),
-                        (0.0, 0.0),
+                        (subpixel_shift.x, subpixel_shift.y.trunc()),
                         cosmic_text::CacheKeyFlags::empty(),
                     )
                     .0,
