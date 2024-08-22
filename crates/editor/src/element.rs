@@ -165,6 +165,7 @@ impl EditorElement {
         });
 
         crate::rust_analyzer_ext::apply_related_actions(view, cx);
+        crate::clangd_ext::apply_related_actions(view, cx);
         register_action(view, cx, Editor::move_left);
         register_action(view, cx, Editor::move_right);
         register_action(view, cx, Editor::move_down);
@@ -373,6 +374,13 @@ impl EditorElement {
             }
         });
         register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.compose_completion(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
+        register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.confirm_code_action(action, cx) {
                 task.detach_and_log_err(cx);
             } else {
@@ -413,6 +421,7 @@ impl EditorElement {
         register_action(view, cx, Editor::unique_lines_case_sensitive);
         register_action(view, cx, Editor::accept_partial_inline_completion);
         register_action(view, cx, Editor::accept_inline_completion);
+        register_action(view, cx, Editor::revert_file);
         register_action(view, cx, Editor::revert_selected_hunks);
         register_action(view, cx, Editor::open_active_item_in_terminal)
     }
@@ -641,7 +650,7 @@ impl EditorElement {
             }
 
             #[cfg(target_os = "linux")]
-            if let Some(item) = cx.read_from_primary() {
+            if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
                 let point_for_position =
                     position_map.point_for_position(text_hitbox.bounds, event.position);
                 let position = point_for_position.previous_valid;
@@ -654,7 +663,7 @@ impl EditorElement {
                     },
                     cx,
                 );
-                editor.insert(item.text(), cx);
+                editor.insert(&text, cx);
             }
             cx.stop_propagation()
         }
@@ -4289,7 +4298,7 @@ fn deploy_blame_entry_context_menu(
         let sha = format!("{}", blame_entry.sha);
         menu.on_blur_subscription(Subscription::new(|| {}))
             .entry("Copy commit SHA", None, move |cx| {
-                cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
+                cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
             })
             .when_some(
                 details.and_then(|details| details.permalink.clone()),
@@ -5605,7 +5614,7 @@ impl Element for EditorElement {
         cx: &mut WindowContext,
     ) {
         let focus_handle = self.editor.focus_handle(cx);
-        let key_context = self.editor.read(cx).key_context(cx);
+        let key_context = self.editor.update(cx, |editor, cx| editor.key_context(cx));
         cx.set_key_context(key_context);
         cx.handle_input(
             &focus_handle,

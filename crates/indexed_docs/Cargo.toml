@@ -14,6 +14,7 @@ path = "src/indexed_docs.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+cargo_metadata.workspace = true
 collections.workspace = true
 derive_more.workspace = true
 fs.workspace = true

@@ -295,7 +295,8 @@ CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_channel_id_connection
 
 CREATE TABLE "feature_flags" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "flag" TEXT NOT NULL UNIQUE
+    "flag" TEXT NOT NULL UNIQUE,
+    "enabled_for_all" BOOLEAN NOT NULL DEFAULT false
 );
 
 CREATE INDEX "index_feature_flags" ON "feature_flags" ("id");

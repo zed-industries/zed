@@ -42,9 +42,7 @@ If this script is insufficient for your use case or you run into problems runnin
 
 The Command Palette is the main way to access functionality in Zed, and its keybinding is the first one you should make yourself familiar with.
 
-On macOS, use `⌘-P` (`cmd-shift-p`) to open the Command Palette.
-
-On Linux, use `⌃-P` (`ctrl-shift-p`) to open the Command Palette.
+To open the Command Palette, use <kbd>cmd-shift-p|ctrl-shift-p</kbd>.
 
 The Command Palette allows you to access pretty much any functionality that's available in Zed.
 
@@ -56,14 +54,14 @@ Any time you see instructions that include commands of the form `zed: ...` or `e
 
 ## Configure Zed
 
-Use `⌘` + `,`, or `ctrl` - `,` to open your custom settings to set things like fonts, formatting settings, per-language settings, and more.
+Use <kbd>cmd-,|ctrl-,</kbd> to open your custom settings to set things like fonts, formatting settings, per-language settings, and more.
 
 On macOS, you can access the default configuration using the `Zed > Settings > Open Default Settings` menu item. See [Configuring Zed](./configuring-zed.md) for all available settings.
 
-On Linux, you can access the default configuration via the Command Palette. Open it with `ctrl-shift-p` and type in `zed: open default settings` and then hit return.
+On Linux, you can access the default configuration via the Command Palette. Open it with <kbd>ctrl-shift-p</kbd> and type in `zed: open default settings` and then hit return.
 
 ## Set up your key bindings
 
-On macOS, you can access the default key binding set using the `Zed > Settings > Open Default Key Bindings` menu item. Use `⌘` + `K`, `⌘` + `S` to open your custom keymap to add your key bindings. See Key Bindings for more info.
+On macOS, you can access the default key binding set using the `Zed > Settings > Open Default Key Bindings` menu item. Use <kbd>cmd-k cmd-s|ctrl-k ctrl-s</kbd> to open your custom keymap to add your key bindings. See Key Bindings for more info.
 
-On Linux, you can access the default key bindings via the Command Palette. Open it with `ctrl-shift-p` and type in `zed: open default keymap` and then hit return.
+On Linux, you can access the default key bindings via the Command Palette. Open it with <kbd>ctrl-shift-p</kbd> and type in `zed: open default keymap` and then hit return.

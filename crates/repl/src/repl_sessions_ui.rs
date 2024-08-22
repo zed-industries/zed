@@ -23,6 +23,7 @@ actions!(
         Sessions,
         Interrupt,
         Shutdown,
+        Restart,
         RefreshKernelspecs
     ]
 );
@@ -123,6 +124,19 @@ pub fn init(cx: &mut AppContext) {
                     }
 
                     crate::shutdown(editor_handle.clone(), cx);
+                }
+            })
+            .detach();
+
+        editor
+            .register_action({
+                let editor_handle = editor_handle.clone();
+                move |_: &Restart, cx| {
+                    if !JupyterSettings::enabled(cx) {
+                        return;
+                    }
+
+                    crate::restart(editor_handle.clone(), cx);
                 }
             })
             .detach();

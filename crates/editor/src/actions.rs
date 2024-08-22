@@ -65,6 +65,12 @@ pub struct ConfirmCompletion {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ComposeCompletion {
+    #[serde(default)]
+    pub item_ix: Option<usize>,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
@@ -140,6 +146,7 @@ impl_actions!(
     [
         ConfirmCodeAction,
         ConfirmCompletion,
+        ComposeCompletion,
         ExpandExcerpts,
         ExpandExcerptsUp,
         ExpandExcerptsDown,
@@ -266,6 +273,7 @@ gpui::actions!(
         RestartLanguageServer,
         RevealInFileManager,
         ReverseLines,
+        RevertFile,
         RevertSelectedHunks,
         ScrollCursorBottom,
         ScrollCursorCenter,
@@ -298,6 +306,7 @@ gpui::actions!(
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
         SplitSelectionIntoLines,
+        SwitchSourceHeader,
         Tab,
         TabPrev,
         ToggleAutoSignatureHelp,

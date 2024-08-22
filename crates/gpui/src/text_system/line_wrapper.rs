@@ -309,7 +309,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     use crate as gpui;
 
-    // These seem to vary wildly based on the the text system.
+    // These seem to vary wildly based on the text system.
     #[cfg(target_os = "macos")]
     #[crate::test]
     fn test_wrap_shaped_line(cx: &mut TestAppContext) {

@@ -50,6 +50,9 @@ theme.workspace = true
 tiktoken-rs.workspace = true
 ui.workspace = true
 util.workspace = true
+base64.workspace = true
+image.workspace = true
+
 
 [dev-dependencies]
 ctor.workspace = true

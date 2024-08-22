@@ -7,28 +7,27 @@ use editor::{
 use gpui::{actions, ViewContext};
 use language::Bias;
 use settings::Settings;
-use workspace::Workspace;
 
 actions!(
     vim,
     [LineUp, LineDown, ScrollUp, ScrollDown, PageUp, PageDown]
 );
 
-pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-    workspace.register_action(|_: &mut Workspace, _: &LineDown, cx| {
-        scroll(cx, false, |c| ScrollAmount::Line(c.unwrap_or(1.)))
+pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &LineDown, cx| {
+        vim.scroll(false, cx, |c| ScrollAmount::Line(c.unwrap_or(1.)))
     });
-    workspace.register_action(|_: &mut Workspace, _: &LineUp, cx| {
-        scroll(cx, false, |c| ScrollAmount::Line(-c.unwrap_or(1.)))
+    Vim::action(editor, cx, |vim, _: &LineUp, cx| {
+        vim.scroll(false, cx, |c| ScrollAmount::Line(-c.unwrap_or(1.)))
     });
-    workspace.register_action(|_: &mut Workspace, _: &PageDown, cx| {
-        scroll(cx, false, |c| ScrollAmount::Page(c.unwrap_or(1.)))
+    Vim::action(editor, cx, |vim, _: &PageDown, cx| {
+        vim.scroll(false, cx, |c| ScrollAmount::Page(c.unwrap_or(1.)))
     });
-    workspace.register_action(|_: &mut Workspace, _: &PageUp, cx| {
-        scroll(cx, false, |c| ScrollAmount::Page(-c.unwrap_or(1.)))
+    Vim::action(editor, cx, |vim, _: &PageUp, cx| {
+        vim.scroll(false, cx, |c| ScrollAmount::Page(-c.unwrap_or(1.)))
     });
-    workspace.register_action(|_: &mut Workspace, _: &ScrollDown, cx| {
-        scroll(cx, true, |c| {
+    Vim::action(editor, cx, |vim, _: &ScrollDown, cx| {
+        vim.scroll(true, cx, |c| {
             if let Some(c) = c {
                 ScrollAmount::Line(c)
             } else {
@@ -36,8 +35,8 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
             }
         })
     });
-    workspace.register_action(|_: &mut Workspace, _: &ScrollUp, cx| {
-        scroll(cx, true, |c| {
+    Vim::action(editor, cx, |vim, _: &ScrollUp, cx| {
+        vim.scroll(true, cx, |c| {
             if let Some(c) = c {
                 ScrollAmount::Line(-c)
             } else {
@@ -47,17 +46,18 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     });
 }
 
-fn scroll(
-    cx: &mut ViewContext<Workspace>,
-    move_cursor: bool,
-    by: fn(c: Option<f32>) -> ScrollAmount,
-) {
-    Vim::update(cx, |vim, cx| {
-        let amount = by(vim.take_count(cx).map(|c| c as f32));
-        vim.update_active_editor(cx, |_, editor, cx| {
+impl Vim {
+    fn scroll(
+        &mut self,
+        move_cursor: bool,
+        cx: &mut ViewContext<Self>,
+        by: fn(c: Option<f32>) -> ScrollAmount,
+    ) {
+        let amount = by(self.take_count(cx).map(|c| c as f32));
+        self.update_editor(cx, |_, editor, cx| {
             scroll_editor(editor, move_cursor, &amount, cx)
         });
-    })
+    }
 }
 
 fn scroll_editor(

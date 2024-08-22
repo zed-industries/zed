@@ -7,7 +7,7 @@
 //!
 //! # Element Basics
 //!
-//! Elements are constructed by calling [`Render::render()`] on the root view of the window, which
+//! Elements are constructed by calling [`Render::render()`] on the root view of the window,
 //! which recursively constructs the element tree from the current state of the application,.
 //! These elements are then laid out by Taffy, and painted to the screen according to their own
 //! implementation of [`Element::paint()`]. Before the start of the next frame, the entire element
