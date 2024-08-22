@@ -21,11 +21,11 @@ impl Database {
                 ..Default::default()
             })
             .on_conflict(
-                OnConflict::column(user::Column::GithubLogin)
+                OnConflict::column(user::Column::GithubUserId)
                     .update_columns([
                         user::Column::Admin,
                         user::Column::EmailAddress,
-                        user::Column::GithubUserId,
+                        user::Column::GithubLogin,
                     ])
                     .to_owned(),
             )
