@@ -43,10 +43,10 @@ impl SlashCommand for AutoCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         // There's no autocomplete for a prompt, since it's arbitrary text.
         // However, we can use this opportunity to kick off a drain of the backlog.
@@ -66,6 +66,8 @@ impl SlashCommand for AutoCommand {
             return Task::ready(Err(anyhow!("No project indexer, cannot use /auto")));
         };
 
+        let cx: &mut AppContext = cx;
+
         cx.spawn(|cx: gpui::AsyncAppContext| async move {
             let task = project_index.read_with(&cx, |project_index, cx| {
                 project_index.flush_summary_backlogs(cx)
@@ -83,7 +85,7 @@ impl SlashCommand for AutoCommand {
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -91,10 +93,10 @@ impl SlashCommand for AutoCommand {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
-        let Some(argument) = argument else {
+        if arguments.is_empty() {
             return Task::ready(Err(anyhow!("missing prompt")));
         };
-
+        let argument = arguments.join(" ");
         let original_prompt = argument.to_string();
         let project = workspace.read(cx).project().clone();
         let Some(project_index) =
@@ -215,7 +217,9 @@ async fn commands_for_summaries(
     let make_request = |prompt: String| LanguageModelRequest {
         messages: vec![LanguageModelRequestMessage {
             role: Role::User,
-            content: prompt.clone(),
+            content: vec![prompt.into()],
+            // Nothing in here will benefit from caching
+            cache: false,
         }],
         stop: Vec::new(),
         temperature: 1.0,

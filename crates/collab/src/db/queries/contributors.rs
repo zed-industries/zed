@@ -65,6 +65,7 @@ impl Database {
         github_login: &str,
         github_user_id: Option<i32>,
         github_email: Option<&str>,
+        github_user_created_at: Option<DateTimeUtc>,
         initial_channel_id: Option<ChannelId>,
     ) -> Result<()> {
         self.transaction(|tx| async move {
@@ -73,6 +74,7 @@ impl Database {
                     github_login,
                     github_user_id,
                     github_email,
+                    github_user_created_at.map(|time| time.naive_utc()),
                     initial_channel_id,
                     &tx,
                 )

@@ -1,6 +1,7 @@
 use crate::restorable_workspace_locations;
 use crate::{handle_open_request, init_headless, init_ui};
 use anyhow::{anyhow, Context, Result};
+use assistant::PromptBuilder;
 use cli::{ipc, IpcHandshake};
 use cli::{ipc::IpcSender, CliRequest, CliResponse};
 use client::parse_zed_link;
@@ -245,6 +246,7 @@ pub async fn open_paths_with_positions(
 pub async fn handle_cli_connection(
     (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
     app_state: Arc<AppState>,
+    prompt_builder: Arc<PromptBuilder>,
     mut cx: AsyncAppContext,
 ) {
     if let Some(request) = requests.next().await {
@@ -289,7 +291,12 @@ pub async fn handle_cli_connection(
                     cx.update(|cx| {
                         match OpenRequest::parse(urls, cx) {
                             Ok(open_request) => {
-                                handle_open_request(open_request, app_state.clone(), cx);
+                                handle_open_request(
+                                    open_request,
+                                    app_state.clone(),
+                                    prompt_builder.clone(),
+                                    cx,
+                                );
                                 responses.send(CliResponse::Exit { status: 0 }).log_err();
                             }
                             Err(e) => {
@@ -307,7 +314,7 @@ pub async fn handle_cli_connection(
                 }
 
                 if let Err(e) = cx
-                    .update(|cx| init_ui(app_state.clone(), cx))
+                    .update(|cx| init_ui(app_state.clone(), prompt_builder.clone(), cx))
                     .and_then(|r| r)
                 {
                     responses

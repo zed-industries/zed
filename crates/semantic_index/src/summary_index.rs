@@ -544,7 +544,10 @@ impl SummaryIndex {
         cx: &AppContext,
     ) -> impl Future<Output = Result<String>> {
         let start = Instant::now();
-        let summary_model_id: LanguageModelId = "qwen2-7b-instruct".to_string().into(); // TODO read this from the user's settings.
+        let (summary_model_id, use_cache): (LanguageModelId, bool) = (
+            "qwen2-7b-instruct".to_string().into(), // TODO read this from the user's settings.
+            false,                                  // qwen2 doesn't have a cache
+        );
         let Some(model) = LanguageModelRegistry::read_global(cx)
             .available_models(cx)
             .find(|model| &model.id() == &summary_model_id)
@@ -566,7 +569,8 @@ impl SummaryIndex {
         let request = LanguageModelRequest {
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
-                content: prompt,
+                content: vec![prompt.into()],
+                cache: use_cache,
             }],
             stop: Vec::new(),
             temperature: 1.0,

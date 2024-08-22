@@ -1,9 +1,13 @@
 use anyhow::Context;
 use collections::HashMap;
 use futures::{channel::oneshot, Future, FutureExt};
-use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
-use std::{marker::PhantomData, ops::Deref, sync::Arc, thread};
+use std::{
+    marker::PhantomData,
+    ops::Deref,
+    sync::{Arc, LazyLock},
+    thread,
+};
 use thread_local::ThreadLocal;
 
 use crate::{connection::Connection, domain::Migrator, util::UnboundedSyncSender};
@@ -13,14 +17,13 @@ const MIGRATION_RETRIES: usize = 10;
 type QueuedWrite = Box<dyn 'static + Send + FnOnce()>;
 type WriteQueue = Box<dyn 'static + Send + Sync + Fn(QueuedWrite)>;
 type WriteQueueConstructor = Box<dyn 'static + Send + FnMut() -> WriteQueue>;
-lazy_static! {
-    /// List of queues of tasks by database uri. This lets us serialize writes to the database
-    /// and have a single worker thread per db file. This means many thread safe connections
-    /// (possibly with different migrations) could all be communicating with the same background
-    /// thread.
-    static ref QUEUES: RwLock<HashMap<Arc<str>, WriteQueue>> =
-        Default::default();
-}
+
+/// List of queues of tasks by database uri. This lets us serialize writes to the database
+/// and have a single worker thread per db file. This means many thread safe connections
+/// (possibly with different migrations) could all be communicating with the same background
+/// thread.
+static QUEUES: LazyLock<RwLock<HashMap<Arc<str>, WriteQueue>>> =
+    LazyLock::new(|| Default::default());
 
 /// Thread safe connection to a given database file or in memory db. This can be cloned, shared, static,
 /// whatever. It derefs to a synchronous connection by thread that is read only. A write capable connection
@@ -276,7 +279,7 @@ pub fn locking_queue() -> WriteQueueConstructor {
 #[cfg(test)]
 mod test {
     use indoc::indoc;
-    use lazy_static::__Deref;
+    use std::ops::Deref;
 
     use std::thread;
 

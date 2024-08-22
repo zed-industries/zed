@@ -1,16 +1,14 @@
 use crate::{
-    point, px, size, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels, Element,
-    ElementId, GlobalElementId, Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Length, Pixels, SharedString, SharedUri, Size, StyleRefinement, Styled, SvgSize,
-    UriOrPath, WindowContext,
+    px, AbsoluteLength, AppContext, Asset, Bounds, DefiniteLength, Element, ElementId,
+    GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    Length, ObjectFit, Pixels, RenderImage, SharedString, SharedUri, Size, StyleRefinement, Styled,
+    SvgSize, UriOrPath, WindowContext,
 };
 use futures::{AsyncReadExt, Future};
 use http_client;
 use image::{
     codecs::gif::GifDecoder, AnimationDecoder, Frame, ImageBuffer, ImageError, ImageFormat,
 };
-#[cfg(target_os = "macos")]
-use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
 use std::{
     fs,
@@ -23,20 +21,18 @@ use thiserror::Error;
 use util::ResultExt;
 
 /// A source of image content.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ImageSource {
     /// Image content will be loaded from provided URI at render time.
     Uri(SharedUri),
     /// Image content will be loaded from the provided file at render time.
     File(Arc<PathBuf>),
     /// Cached image data
-    Data(Arc<ImageData>),
+    Render(Arc<RenderImage>),
+    /// Cached image data
+    Image(Arc<Image>),
     /// Image content will be loaded from Asset at render time.
-    Asset(SharedString),
-    // TODO: move surface definitions into mac platform module
-    /// A CoreVideo image buffer
-    #[cfg(target_os = "macos")]
-    Surface(CVImageBuffer),
+    Embedded(SharedString),
 }
 
 fn is_uri(uri: &str) -> bool {
@@ -54,7 +50,7 @@ impl From<&'static str> for ImageSource {
         if is_uri(&s) {
             Self::Uri(s.into())
         } else {
-            Self::Asset(s.into())
+            Self::Embedded(s.into())
         }
     }
 }
@@ -64,7 +60,7 @@ impl From<String> for ImageSource {
         if is_uri(&s) {
             Self::Uri(s.into())
         } else {
-            Self::Asset(s.into())
+            Self::Embedded(s.into())
         }
     }
 }
@@ -74,7 +70,7 @@ impl From<SharedString> for ImageSource {
         if is_uri(&s) {
             Self::Uri(s.into())
         } else {
-            Self::Asset(s)
+            Self::Embedded(s)
         }
     }
 }
@@ -91,16 +87,9 @@ impl From<PathBuf> for ImageSource {
     }
 }
 
-impl From<Arc<ImageData>> for ImageSource {
-    fn from(value: Arc<ImageData>) -> Self {
-        Self::Data(value)
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl From<CVImageBuffer> for ImageSource {
-    fn from(value: CVImageBuffer) -> Self {
-        Self::Surface(value)
+impl From<Arc<RenderImage>> for ImageSource {
+    fn from(value: Arc<RenderImage>) -> Self {
+        Self::Render(value)
     }
 }
 
@@ -119,121 +108,6 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
         source: source.into(),
         grayscale: false,
         object_fit: ObjectFit::Contain,
-    }
-}
-
-/// How to fit the image into the bounds of the element.
-pub enum ObjectFit {
-    /// The image will be stretched to fill the bounds of the element.
-    Fill,
-    /// The image will be scaled to fit within the bounds of the element.
-    Contain,
-    /// The image will be scaled to cover the bounds of the element.
-    Cover,
-    /// The image will be scaled down to fit within the bounds of the element.
-    ScaleDown,
-    /// The image will maintain its original size.
-    None,
-}
-
-impl ObjectFit {
-    /// Get the bounds of the image within the given bounds.
-    pub fn get_bounds(
-        &self,
-        bounds: Bounds<Pixels>,
-        image_size: Size<DevicePixels>,
-    ) -> Bounds<Pixels> {
-        let image_size = image_size.map(|dimension| Pixels::from(u32::from(dimension)));
-        let image_ratio = image_size.width / image_size.height;
-        let bounds_ratio = bounds.size.width / bounds.size.height;
-
-        let result_bounds = match self {
-            ObjectFit::Fill => bounds,
-            ObjectFit::Contain => {
-                let new_size = if bounds_ratio > image_ratio {
-                    size(
-                        image_size.width * (bounds.size.height / image_size.height),
-                        bounds.size.height,
-                    )
-                } else {
-                    size(
-                        bounds.size.width,
-                        image_size.height * (bounds.size.width / image_size.width),
-                    )
-                };
-
-                Bounds {
-                    origin: point(
-                        bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
-                        bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
-                    ),
-                    size: new_size,
-                }
-            }
-            ObjectFit::ScaleDown => {
-                // Check if the image is larger than the bounds in either dimension.
-                if image_size.width > bounds.size.width || image_size.height > bounds.size.height {
-                    // If the image is larger, use the same logic as Contain to scale it down.
-                    let new_size = if bounds_ratio > image_ratio {
-                        size(
-                            image_size.width * (bounds.size.height / image_size.height),
-                            bounds.size.height,
-                        )
-                    } else {
-                        size(
-                            bounds.size.width,
-                            image_size.height * (bounds.size.width / image_size.width),
-                        )
-                    };
-
-                    Bounds {
-                        origin: point(
-                            bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
-                            bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
-                        ),
-                        size: new_size,
-                    }
-                } else {
-                    // If the image is smaller than or equal to the container, display it at its original size,
-                    // centered within the container.
-                    let original_size = size(image_size.width, image_size.height);
-                    Bounds {
-                        origin: point(
-                            bounds.origin.x + (bounds.size.width - original_size.width) / 2.0,
-                            bounds.origin.y + (bounds.size.height - original_size.height) / 2.0,
-                        ),
-                        size: original_size,
-                    }
-                }
-            }
-            ObjectFit::Cover => {
-                let new_size = if bounds_ratio > image_ratio {
-                    size(
-                        bounds.size.width,
-                        image_size.height * (bounds.size.width / image_size.width),
-                    )
-                } else {
-                    size(
-                        image_size.width * (bounds.size.height / image_size.height),
-                        bounds.size.height,
-                    )
-                };
-
-                Bounds {
-                    origin: point(
-                        bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
-                        bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
-                    ),
-                    size: new_size,
-                }
-            }
-            ObjectFit::None => Bounds {
-                origin: bounds.origin,
-                size: image_size,
-            },
-        };
-
-        result_bounds
     }
 }
 
@@ -291,7 +165,7 @@ impl Element for Img {
             let layout_id = self
                 .interactivity
                 .request_layout(global_id, cx, |mut style, cx| {
-                    if let Some(data) = self.source.data(cx) {
+                    if let Some(data) = self.source.use_data(cx) {
                         if let Some(state) = &mut state {
                             let frame_count = data.frame_count();
                             if frame_count > 1 {
@@ -363,7 +237,7 @@ impl Element for Img {
             .paint(global_id, bounds, hitbox.as_ref(), cx, |style, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
-                if let Some(data) = source.data(cx) {
+                if let Some(data) = source.use_data(cx) {
                     let new_bounds = self.object_fit.get_bounds(bounds, data.size(*frame_index));
                     cx.paint_image(
                         new_bounds,
@@ -373,17 +247,6 @@ impl Element for Img {
                         self.grayscale,
                     )
                     .log_err();
-                }
-
-                match source {
-                    #[cfg(target_os = "macos")]
-                    ImageSource::Surface(surface) => {
-                        let size = size(surface.width().into(), surface.height().into());
-                        let new_bounds = self.object_fit.get_bounds(bounds, size);
-                        // TODO: Add support for corner_radii and grayscale.
-                        cx.paint_surface(new_bounds, surface);
-                    }
-                    _ => {}
                 }
             })
     }
@@ -410,39 +273,74 @@ impl InteractiveElement for Img {
 }
 
 impl ImageSource {
-    fn data(&self, cx: &mut WindowContext) -> Option<Arc<ImageData>> {
+    pub(crate) fn use_data(&self, cx: &mut WindowContext) -> Option<Arc<RenderImage>> {
         match self {
-            ImageSource::Uri(_) | ImageSource::Asset(_) | ImageSource::File(_) => {
+            ImageSource::Uri(_) | ImageSource::Embedded(_) | ImageSource::File(_) => {
                 let uri_or_path: UriOrPath = match self {
                     ImageSource::Uri(uri) => uri.clone().into(),
                     ImageSource::File(path) => path.clone().into(),
-                    ImageSource::Asset(path) => UriOrPath::Asset(path.clone()),
+                    ImageSource::Embedded(path) => UriOrPath::Embedded(path.clone()),
                     _ => unreachable!(),
                 };
 
-                cx.use_cached_asset::<Image>(&uri_or_path)?.log_err()
+                cx.use_asset::<ImageAsset>(&uri_or_path)?.log_err()
             }
 
-            ImageSource::Data(data) => Some(data.to_owned()),
-            #[cfg(target_os = "macos")]
-            ImageSource::Surface(_) => None,
+            ImageSource::Render(data) => Some(data.to_owned()),
+            ImageSource::Image(data) => cx.use_asset::<ImageDecoder>(data)?.log_err(),
+        }
+    }
+
+    /// Fetch the data associated with this source, using GPUI's asset caching
+    pub async fn data(&self, cx: &mut AppContext) -> Option<Arc<RenderImage>> {
+        match self {
+            ImageSource::Uri(_) | ImageSource::Embedded(_) | ImageSource::File(_) => {
+                let uri_or_path: UriOrPath = match self {
+                    ImageSource::Uri(uri) => uri.clone().into(),
+                    ImageSource::File(path) => path.clone().into(),
+                    ImageSource::Embedded(path) => UriOrPath::Embedded(path.clone()),
+                    _ => unreachable!(),
+                };
+
+                cx.fetch_asset::<ImageAsset>(&uri_or_path).0.await.log_err()
+            }
+
+            ImageSource::Render(data) => Some(data.to_owned()),
+            ImageSource::Image(data) => cx.fetch_asset::<ImageDecoder>(data).0.await.log_err(),
         }
     }
 }
 
 #[derive(Clone)]
-enum Image {}
+enum ImageDecoder {}
 
-impl Asset for Image {
-    type Source = UriOrPath;
-    type Output = Result<Arc<ImageData>, ImageCacheError>;
+impl Asset for ImageDecoder {
+    type Source = Arc<Image>;
+    type Output = Result<Arc<RenderImage>, Arc<anyhow::Error>>;
 
     fn load(
         source: Self::Source,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let result = source.to_image_data(cx).map_err(Arc::new);
+        async { result }
+    }
+}
+
+#[derive(Clone)]
+enum ImageAsset {}
+
+impl Asset for ImageAsset {
+    type Source = UriOrPath;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+
+    fn load(
+        source: Self::Source,
+        cx: &mut AppContext,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let client = cx.http_client();
-        let scale_factor = cx.scale_factor();
+        // TODO: Can we make SVGs always rescale?
+        // let scale_factor = cx.scale_factor();
         let svg_renderer = cx.svg_renderer();
         let asset_source = cx.asset_source().clone();
         async move {
@@ -453,15 +351,18 @@ impl Asset for Image {
                     let mut body = Vec::new();
                     response.body_mut().read_to_end(&mut body).await?;
                     if !response.status().is_success() {
+                        let mut body = String::from_utf8_lossy(&body).into_owned();
+                        let first_line = body.lines().next().unwrap_or("").trim_end();
+                        body.truncate(first_line.len());
                         return Err(ImageCacheError::BadStatus {
                             uri,
                             status: response.status(),
-                            body: String::from_utf8_lossy(&body).into_owned(),
+                            body,
                         });
                     }
                     body
                 }
-                UriOrPath::Asset(path) => {
+                UriOrPath::Embedded(path) => {
                     let data = asset_source.load(&path).ok().flatten();
                     if let Some(data) = data {
                         data.to_vec()
@@ -503,15 +404,16 @@ impl Asset for Image {
                     }
                 };
 
-                ImageData::new(data)
+                RenderImage::new(data)
             } else {
                 let pixmap =
-                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(scale_factor))?;
+                    // TODO: Can we make svgs always rescale?
+                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(1.0))?;
 
                 let buffer =
                     ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
 
-                ImageData::new(SmallVec::from_elem(Frame::new(buffer), 1))
+                RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1))
             };
 
             Ok(Arc::new(data))

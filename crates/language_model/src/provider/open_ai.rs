@@ -7,14 +7,16 @@ use gpui::{
     View, WhiteSpace,
 };
 use http_client::HttpClient;
-use open_ai::stream_completion;
+use open_ai::{
+    stream_completion, FunctionDefinition, ResponseStreamEvent, ToolChoice, ToolDefinition,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::{future, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Indicator};
+use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::ResultExt;
 
 use crate::{
@@ -38,6 +40,7 @@ pub struct OpenAiSettings {
 pub struct AvailableModel {
     pub name: String,
     pub max_tokens: usize,
+    pub max_output_tokens: Option<u32>,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -47,8 +50,11 @@ pub struct OpenAiLanguageModelProvider {
 
 pub struct State {
     api_key: Option<String>,
+    api_key_from_env: bool,
     _subscription: Subscription,
 }
+
+const OPENAI_API_KEY_VAR: &'static str = "OPENAI_API_KEY";
 
 impl State {
     fn is_authenticated(&self) -> bool {
@@ -62,6 +68,7 @@ impl State {
             delete_credentials.await.log_err();
             this.update(&mut cx, |this, cx| {
                 this.api_key = None;
+                this.api_key_from_env = false;
                 cx.notify();
             })
         })
@@ -90,17 +97,18 @@ impl State {
                 .api_url
                 .clone();
             cx.spawn(|this, mut cx| async move {
-                let api_key = if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
-                    api_key
+                let (api_key, from_env) = if let Ok(api_key) = std::env::var(OPENAI_API_KEY_VAR) {
+                    (api_key, true)
                 } else {
                     let (_, api_key) = cx
                         .update(|cx| cx.read_credentials(&api_url))?
                         .await?
                         .ok_or_else(|| anyhow!("credentials not found"))?;
-                    String::from_utf8(api_key)?
+                    (String::from_utf8(api_key)?, false)
                 };
                 this.update(&mut cx, |this, cx| {
                     this.api_key = Some(api_key);
+                    this.api_key_from_env = from_env;
                     cx.notify();
                 })
             })
@@ -112,6 +120,7 @@ impl OpenAiLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let state = cx.new_model(|cx| State {
             api_key: None,
+            api_key_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
                 cx.notify();
             }),
@@ -162,6 +171,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                 open_ai::Model::Custom {
                     name: model.name.clone(),
                     max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
                 },
             );
         }
@@ -206,6 +216,42 @@ pub struct OpenAiLanguageModel {
     request_limiter: RateLimiter,
 }
 
+impl OpenAiLanguageModel {
+    fn stream_completion(
+        &self,
+        request: open_ai::Request,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
+    {
+        let http_client = self.http_client.clone();
+        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).openai;
+            (
+                state.api_key.clone(),
+                settings.api_url.clone(),
+                settings.low_speed_timeout,
+            )
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        let future = self.request_limiter.stream(async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            let request = stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                low_speed_timeout,
+            );
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+}
+
 impl LanguageModel for OpenAiLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -231,6 +277,10 @@ impl LanguageModel for OpenAiLanguageModel {
         self.model.max_token_count()
     }
 
+    fn max_output_tokens(&self) -> Option<u32> {
+        self.model.max_output_tokens()
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
@@ -244,45 +294,46 @@ impl LanguageModel for OpenAiLanguageModel {
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let request = request.into_open_ai(self.model.id().into());
-
-        let http_client = self.http_client.clone();
-        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).openai;
-            (
-                state.api_key.clone(),
-                settings.api_url.clone(),
-                settings.low_speed_timeout,
-            )
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            let request = stream_completion(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                request,
-                low_speed_timeout,
-            );
-            let response = request.await?;
-            Ok(open_ai::extract_text_from_events(response).boxed())
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
+        let request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
+        let completions = self.stream_completion(request, cx);
+        async move { Ok(open_ai::extract_text_from_events(completions.await?).boxed()) }.boxed()
     }
 
     fn use_any_tool(
         &self,
-        _request: LanguageModelRequest,
-        _name: String,
-        _description: String,
-        _schema: serde_json::Value,
-        _cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<serde_json::Value>> {
-        future::ready(Err(anyhow!("not implemented"))).boxed()
+        request: LanguageModelRequest,
+        tool_name: String,
+        tool_description: String,
+        schema: serde_json::Value,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
+        let mut request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
+        request.tool_choice = Some(ToolChoice::Other(ToolDefinition::Function {
+            function: FunctionDefinition {
+                name: tool_name.clone(),
+                description: None,
+                parameters: None,
+            },
+        }));
+        request.tools = vec![ToolDefinition::Function {
+            function: FunctionDefinition {
+                name: tool_name.clone(),
+                description: Some(tool_description),
+                parameters: Some(schema),
+            },
+        }];
+
+        let response = self.stream_completion(request, cx);
+        self.request_limiter
+            .run(async move {
+                let response = response.await?;
+                Ok(
+                    open_ai::extract_tool_args_from_events(tool_name, Box::pin(response))
+                        .await?
+                        .boxed(),
+                )
+            })
+            .boxed()
     }
 }
 
@@ -302,7 +353,7 @@ pub fn count_open_ai_tokens(
                         Role::Assistant => "assistant".into(),
                         Role::System => "system".into(),
                     },
-                    content: Some(message.content),
+                    content: Some(message.string_contents()),
                     name: None,
                     function_call: None,
                 })
@@ -437,6 +488,8 @@ impl Render for ConfigurationView {
             "Paste your OpenAI API key below and hit enter to use the assistant:",
         ];
 
+        let env_var_set = self.state.read(cx).api_key_from_env;
+
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials...")).into_any()
         } else if self.should_render_editor(cx) {
@@ -444,7 +497,7 @@ impl Render for ConfigurationView {
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
                 .children(
-                    INSTRUCTIONS.map(|instruction| Label::new(instruction).size(LabelSize::Small)),
+                    INSTRUCTIONS.map(|instruction| Label::new(instruction)),
                 )
                 .child(
                     h_flex()
@@ -458,7 +511,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        "You can also assign the OPENAI_API_KEY environment variable and restart Zed.",
+                        format!("You can also assign the {OPENAI_API_KEY_VAR} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small),
                 )
@@ -469,15 +522,23 @@ impl Render for ConfigurationView {
                 .justify_between()
                 .child(
                     h_flex()
-                        .gap_2()
-                        .child(Indicator::dot().color(Color::Success))
-                        .child(Label::new("API key configured").size(LabelSize::Small)),
+                        .gap_1()
+                        .child(Icon::new(IconName::Check).color(Color::Success))
+                        .child(Label::new(if env_var_set {
+                            format!("API key set in {OPENAI_API_KEY_VAR} environment variable.")
+                        } else {
+                            "API key configured.".to_string()
+                        })),
                 )
                 .child(
                     Button::new("reset-key", "Reset key")
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
+                        .disabled(env_var_set)
+                        .when(env_var_set, |this| {
+                            this.tooltip(|cx| Tooltip::text(format!("To reset your API key, unset the {OPENAI_API_KEY_VAR} environment variable."), cx))
+                        })
                         .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx))),
                 )
                 .into_any()

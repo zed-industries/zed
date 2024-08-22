@@ -2,7 +2,6 @@ use crate::{
     slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssist, InlineAssistant,
 };
 use anyhow::{anyhow, Result};
-use assets::Assets;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
 use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
@@ -12,7 +11,7 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    actions, point, size, transparent_black, AppContext, AssetSource, BackgroundExecutor, Bounds,
+    actions, point, size, transparent_black, Action, AppContext, BackgroundExecutor, Bounds,
     EventEmitter, Global, HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
     TitlebarOptions, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
@@ -36,9 +35,10 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
+use text::LineEnding;
 use theme::ThemeSettings;
 use ui::{
-    div, prelude::*, IconButtonShape, ListItem, ListItemSpacing, ParentElement, Render,
+    div, prelude::*, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render,
     SharedString, Styled, Tooltip, ViewContext, VisualContext,
 };
 use util::{ResultExt, TryFutureExt};
@@ -100,7 +100,7 @@ pub fn open_prompt_library(
                     WindowOptions {
                         titlebar: Some(TitlebarOptions {
                             title: Some("Prompt Library".into()),
-                            appears_transparent: true,
+                            appears_transparent: !cfg!(windows),
                             traffic_light_position: Some(point(px(9.0), px(9.0))),
                         }),
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -153,6 +153,14 @@ impl PickerDelegate for PromptPickerDelegate {
 
     fn match_count(&self) -> usize {
         self.matches.len()
+    }
+
+    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+        if self.store.prompt_count() == 0 {
+            "No prompts.".into()
+        } else {
+            "No prompts found matching your search.".into()
+        }
     }
 
     fn selected_index(&self) -> usize {
@@ -486,7 +494,10 @@ impl PromptLibrary {
                             let mut editor = Editor::auto_width(cx);
                             editor.set_placeholder_text("Untitled", cx);
                             editor.set_text(prompt_metadata.title.unwrap_or_default(), cx);
-                            editor.set_read_only(true);
+                            if prompt_id.is_built_in() {
+                                editor.set_read_only(true);
+                                editor.set_show_inline_completions(false);
+                            }
                             editor
                         });
                         let body_editor = cx.new_view(|cx| {
@@ -498,7 +509,10 @@ impl PromptLibrary {
                             });
 
                             let mut editor = Editor::for_buffer(buffer, None, cx);
-                            editor.set_read_only(true);
+                            if prompt_id.is_built_in() {
+                                editor.set_read_only(true);
+                                editor.set_show_inline_completions(false);
+                            }
                             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
                             editor.set_show_gutter(false, cx);
                             editor.set_show_wrap_guides(false, cx);
@@ -775,7 +789,8 @@ impl PromptLibrary {
                                 LanguageModelRequest {
                                     messages: vec![LanguageModelRequestMessage {
                                         role: Role::System,
-                                        content: body.to_string(),
+                                        content: vec![body.to_string().into()],
+                                        cache: false,
                                     }],
                                     stop: Vec::new(),
                                     temperature: 1.,
@@ -911,6 +926,7 @@ impl PromptLibrary {
                                                         color: Some(cx.theme().status().predictive),
                                                         ..HighlightStyle::default()
                                                     },
+                                                    ..EditorStyle::default()
                                                 },
                                             )),
                                     ),
@@ -1094,7 +1110,55 @@ impl Render for PromptLibrary {
             .font(ui_font)
             .text_color(theme.colors().text)
             .child(self.render_prompt_list(cx))
-            .child(self.render_active_prompt(cx))
+            .map(|el| {
+                if self.store.prompt_count() == 0 {
+                    el.child(
+                        v_flex()
+                            .w_2_3()
+                            .h_full()
+                            .items_center()
+                            .justify_center()
+                            .gap_4()
+                            .bg(cx.theme().colors().editor_background)
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Icon::new(IconName::Book)
+                                            .size(IconSize::Medium)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("No prompts yet")
+                                            .size(LabelSize::Large)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .child(h_flex())
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(Label::new("Create your first prompt:"))
+                                            .child(
+                                                Button::new("create-prompt", "New Prompt")
+                                                    .full_width()
+                                                    .key_binding(KeyBinding::for_action(
+                                                        &NewPrompt, cx,
+                                                    ))
+                                                    .on_click(|_, cx| {
+                                                        cx.dispatch_action(NewPrompt.boxed_clone())
+                                                    }),
+                                            ),
+                                    )
+                                    .child(h_flex()),
+                            ),
+                    )
+                } else {
+                    el.child(self.render_active_prompt(cx))
+                }
+            })
     }
 }
 
@@ -1200,6 +1264,12 @@ impl PromptStore {
                 let mut txn = db_env.write_txn()?;
                 let metadata = db_env.create_database(&mut txn, Some("metadata.v2"))?;
                 let bodies = db_env.create_database(&mut txn, Some("bodies.v2"))?;
+
+                // Remove edit workflow prompt, as we decided to opt into it using
+                // a slash command instead.
+                metadata.delete(&mut txn, &PromptId::EditWorkflow).ok();
+                bodies.delete(&mut txn, &PromptId::EditWorkflow).ok();
+
                 txn.commit()?;
 
                 Self::upgrade_dbs(&db_env, metadata, bodies).log_err();
@@ -1208,17 +1278,13 @@ impl PromptStore {
                 let metadata_cache = MetadataCache::from_db(metadata, &txn)?;
                 txn.commit()?;
 
-                let store = PromptStore {
+                Ok(PromptStore {
                     executor,
                     env: db_env,
                     metadata_cache: RwLock::new(metadata_cache),
                     metadata,
                     bodies,
-                };
-
-                store.save_built_in_prompts().log_err();
-
-                Ok(store)
+                })
             }
         })
     }
@@ -1302,10 +1368,12 @@ impl PromptStore {
         let bodies = self.bodies;
         self.executor.spawn(async move {
             let txn = env.read_txn()?;
-            Ok(bodies
+            let mut prompt = bodies
                 .get(&txn, &id)?
                 .ok_or_else(|| anyhow!("prompt not found"))?
-                .into())
+                .into();
+            LineEnding::normalize(&mut prompt);
+            Ok(prompt)
         })
     }
 
@@ -1336,6 +1404,11 @@ impl PromptStore {
             txn.commit()?;
             Ok(())
         })
+    }
+
+    /// Returns the number of prompts in the store.
+    fn prompt_count(&self) -> usize {
+        self.metadata_cache.read().metadata.len()
     }
 
     fn metadata(&self, id: PromptId) -> Option<PromptMetadata> {
@@ -1422,49 +1495,6 @@ impl PromptStore {
         })
     }
 
-    fn save_built_in_prompts(&self) -> Result<()> {
-        self.save_built_in_prompt(
-            PromptId::EditWorkflow,
-            "Built-in: Editing Workflow",
-            "prompts/edit_workflow.md",
-        )?;
-        Ok(())
-    }
-
-    /// Write a built-in prompt to the database, preserving the value of the default field
-    /// if a prompt with this id already exists. This method blocks.
-    fn save_built_in_prompt(
-        &self,
-        id: PromptId,
-        title: impl Into<SharedString>,
-        body_path: &str,
-    ) -> Result<()> {
-        let mut metadata_cache = self.metadata_cache.write();
-        let existing_metadata = metadata_cache.metadata_by_id.get(&id).cloned();
-
-        let prompt_metadata = PromptMetadata {
-            id,
-            title: Some(title.into()),
-            default: existing_metadata.map_or(true, |m| m.default),
-            saved_at: Utc::now(),
-        };
-
-        metadata_cache.insert(prompt_metadata.clone());
-
-        let db_connection = self.env.clone();
-        let bodies = self.bodies;
-        let metadata_db = self.metadata;
-
-        let mut txn = db_connection.write_txn()?;
-        metadata_db.put(&mut txn, &id, &prompt_metadata)?;
-
-        let body = String::from_utf8(Assets.load(body_path)?.unwrap().to_vec())?;
-        bodies.put(&mut txn, &id, &body)?;
-
-        txn.commit()?;
-        Ok(())
-    }
-
     fn save_metadata(
         &self,
         id: PromptId,
@@ -1503,17 +1533,6 @@ impl PromptStore {
 
     fn first(&self) -> Option<PromptMetadata> {
         self.metadata_cache.read().metadata.first().cloned()
-    }
-
-    pub fn step_resolution_prompt(&self) -> String {
-        String::from_utf8(
-            Assets
-                .load("prompts/step_resolution.md")
-                .unwrap()
-                .unwrap()
-                .to_vec(),
-        )
-        .unwrap()
     }
 }
 

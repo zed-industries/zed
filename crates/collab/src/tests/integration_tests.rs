@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use anyhow::{anyhow, Result};
-use assistant::ContextStore;
+use assistant::{ContextStore, PromptBuilder};
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
@@ -6485,12 +6485,13 @@ async fn test_context_collaboration_with_reconnect(
         assert_eq!(project.collaborators().len(), 1);
     });
 
+    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context_store_a = cx_a
-        .update(|cx| ContextStore::new(project_a.clone(), cx))
+        .update(|cx| ContextStore::new(project_a.clone(), prompt_builder.clone(), cx))
         .await
         .unwrap();
     let context_store_b = cx_b
-        .update(|cx| ContextStore::new(project_b.clone(), cx))
+        .update(|cx| ContextStore::new(project_b.clone(), prompt_builder.clone(), cx))
         .await
         .unwrap();
 
