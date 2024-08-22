@@ -38,10 +38,10 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::platform::linux::wayland::WaylandClient;
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
-    DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers,
-    OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler,
-    PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, SharedString,
-    Size, Task, WindowAppearance, WindowOptions, WindowParams,
+    DisplayId, ForegroundExecutor, ImeInput, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem,
+    Modifiers, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    PlatformInputHandler, PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result,
+    SemanticVersion, SharedString, Size, Task, WindowAppearance, WindowOptions, WindowParams,
 };
 
 use super::x11::X11Client;
@@ -737,10 +737,18 @@ impl Keystroke {
         let ime_key =
             (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
 
+        // FIXME
+        let ime_inputs = if let Some(ime_key) = ime_key {
+            smallvec::smallvec![ImeInput::InsertText(None, ime_key)]
+        } else {
+            smallvec::smallvec![]
+        };
+
         Keystroke {
             modifiers,
             key,
             ime_key,
+            ime_inputs,
         }
     }
 

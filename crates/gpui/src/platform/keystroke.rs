@@ -30,7 +30,6 @@ pub struct Keystroke {
     pub ime_key: Option<String>,
 
     /// ime_inputs are the instructions from the IME for this keystroke.
-    #[cfg(target_os = "macos")]
     pub ime_inputs: SmallVec<[ImeInput; 1]>,
 }
 
@@ -135,7 +134,6 @@ impl Keystroke {
             },
             key,
             ime_key,
-            #[cfg(target_os = "macos")]
             ime_inputs: SmallVec::new(),
         })
     }
@@ -143,21 +141,9 @@ impl Keystroke {
     /// Returns true if this keystroke left
     /// the ime system in an incomplete state.
     pub fn is_ime_in_progress(&self) -> bool {
-        #[cfg(not(target_os = "macos"))]
-        {
-            self.ime_key.is_none()
-                && (is_printable_key(&self.key) || self.key.is_empty())
-                && !(self.modifiers.platform
-                    || self.modifiers.control
-                    || self.modifiers.function
-                    || self.modifiers.alt)
-        }
-        #[cfg(target_os = "macos")]
-        {
-            self.ime_inputs
-                .last()
-                .is_some_and(|last| matches!(last, ImeInput::SetMarkedText(..)))
-        }
+        self.ime_inputs
+            .last()
+            .is_some_and(|last| matches!(last, ImeInput::SetMarkedText(..)))
     }
 
     /// Returns a new keystroke with the ime_key filled.
@@ -392,5 +378,110 @@ impl Modifiers {
             && (other.shift || !self.shift)
             && (other.platform || !self.platform)
             && (other.function || !self.function)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SimulatedImeState {
+    pub selected_range: Option<Range<usize>>,
+    pub marked_range: Option<Range<usize>>,
+    pub inputs: SmallVec<[ImeInput; 1]>,
+}
+
+impl SimulatedImeState {
+    pub fn insert_text(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
+        self.inputs.push(ImeInput::InsertText(
+            replacement_range.clone(),
+            text.to_string(),
+        ));
+
+        let Some(replacement_range) = replacement_range
+            .as_ref()
+            .or(self.marked_range.as_ref())
+            .or(self.selected_range.as_ref())
+        else {
+            return;
+        };
+        let end = replacement_range.start + text.encode_utf16().count();
+        self.selected_range = Some(end..end);
+        self.marked_range = None;
+    }
+
+    pub fn set_marked_text(
+        &mut self,
+        replacement_range: Option<Range<usize>>,
+        text: &str,
+        selected_range: Option<Range<usize>>,
+    ) {
+        self.inputs.push(ImeInput::SetMarkedText(
+            replacement_range.clone(),
+            text.to_string(),
+            selected_range.clone(),
+        ));
+
+        let Some(marked_range) = self.marked_range.as_ref().or(self.selected_range.as_ref()) else {
+            return;
+        };
+
+        let mut replacement_range = replacement_range.unwrap_or_else(|| 0..marked_range.len());
+        replacement_range.start += marked_range.start;
+        replacement_range.end += marked_range.start;
+
+        let text_count = text.encode_utf16().count();
+        self.marked_range = if text_count > 0 {
+            Some(replacement_range.start..replacement_range.start + text_count)
+        } else {
+            None
+        };
+
+        if let Some(selected_range) = selected_range {
+            let mut selected_range = selected_range;
+            selected_range.start += replacement_range.start;
+            selected_range.end += replacement_range.start;
+            self.selected_range = Some(selected_range);
+        } else {
+            let end = self.marked_range.as_ref().unwrap().end;
+            self.selected_range = Some(end..end);
+        }
+    }
+
+    pub fn unmark_text(&mut self) {
+        self.inputs.push(ImeInput::UnmarkText);
+
+        if self.selected_range.is_none() || self.marked_range.is_none() {
+            return;
+        }
+        let end = self.marked_range.as_ref().unwrap().end;
+        self.selected_range = Some(end..end);
+        self.marked_range = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simulated_ime_state_set_marked_text() {
+        let mut state = SimulatedImeState {
+            selected_range: Some(10..10),
+            marked_range: None,
+            inputs: SmallVec::new(),
+        };
+
+        state.set_marked_text(None, "あ", Some(1..1));
+
+        assert_eq!(
+            state,
+            SimulatedImeState {
+                selected_range: Some(11..11),
+                marked_range: Some(10..11),
+                inputs: smallvec::smallvec![ImeInput::SetMarkedText(
+                    None,
+                    "あ".to_string(),
+                    Some(1..1)
+                )],
+            }
+        )
     }
 }

@@ -37,7 +37,6 @@ use std::{
     cell::Cell,
     ffi::{c_void, CStr},
     mem,
-    ops::Range,
     path::PathBuf,
     ptr::{self, NonNull},
     rc::Rc,
@@ -324,7 +323,7 @@ struct MacWindowState {
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
-    input_handler: Option<MacInputHandler>,
+    input_handler: Option<PlatformInputHandler>,
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
@@ -838,19 +837,14 @@ impl PlatformWindow for MacWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.0.as_ref().lock().input_handler = Some(MacInputHandler::new(input_handler));
+        self.0.as_ref().lock().input_handler = Some(input_handler);
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        self.0
-            .as_ref()
-            .lock()
-            .input_handler
-            .take()
-            .map(|handler| handler.into_inner())
+        self.0.as_ref().lock().input_handler.take()
     }
 
-    fn discard_marked_text(&mut self) {
+    fn reset_ime_internal_state(&mut self) {
         unsafe {
             let view = self.0.as_ref().lock().native_view.as_mut();
             let input_context: id = msg_send![view, inputContext];
@@ -1141,191 +1135,6 @@ impl rwh::HasDisplayHandle for MacWindow {
     }
 }
 
-struct MacInputHandler {
-    handler: PlatformInputHandler,
-    simulated_ime_state: Option<SimulatedImeState>,
-}
-
-impl MacInputHandler {
-    fn new(handler: PlatformInputHandler) -> Self {
-        Self {
-            handler,
-            simulated_ime_state: None,
-        }
-    }
-
-    fn send(&mut self, input: ImeInput) {
-        match input {
-            ImeInput::InsertText(replacement_range, text) => {
-                self.insert_text(replacement_range, &text);
-            }
-            ImeInput::SetMarkedText(replacement_range, text, selected_range) => {
-                self.set_marked_text(replacement_range, &text, selected_range);
-            }
-            ImeInput::UnmarkText => {
-                self.unmark_text();
-            }
-        }
-    }
-
-    fn into_inner(self) -> PlatformInputHandler {
-        self.handler
-    }
-
-    fn start_new_simulation(&mut self) {
-        let marked_range = self.handler.marked_text_range();
-        let selected_range = self.handler.selected_text_range();
-        let ime_state = SimulatedImeState {
-            marked_range,
-            selected_range,
-            inputs: SmallVec::new(),
-        };
-        self.simulated_ime_state = Some(ime_state);
-    }
-
-    fn take_simulation_result(&mut self) -> Option<SimulatedImeState> {
-        self.simulated_ime_state.take()
-    }
-
-    fn selected_text_range(&mut self) -> Option<Range<usize>> {
-        if let Some(state) = &self.simulated_ime_state {
-            state.selected_range.clone()
-        } else {
-            self.handler.selected_text_range()
-        }
-    }
-
-    fn marked_text_range(&mut self) -> Option<Range<usize>> {
-        if let Some(state) = &self.simulated_ime_state {
-            state.marked_range.clone()
-        } else {
-            self.handler.marked_text_range()
-        }
-    }
-
-    fn has_marked_text(&mut self) -> bool {
-        if let Some(state) = &self.simulated_ime_state {
-            state.marked_range.is_some()
-        } else {
-            self.handler.marked_text_range().is_some()
-        }
-    }
-
-    fn insert_text(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
-        if let Some(state) = &mut self.simulated_ime_state {
-            state.insert_text(replacement_range, text)
-        } else {
-            self.handler.replace_text_in_range(replacement_range, text)
-        }
-    }
-
-    fn set_marked_text(
-        &mut self,
-        replacement_range: Option<Range<usize>>,
-        text: &str,
-        selected_range: Option<Range<usize>>,
-    ) {
-        if let Some(state) = &mut self.simulated_ime_state {
-            state.set_marked_text(replacement_range, text, selected_range)
-        } else {
-            self.handler
-                .replace_and_mark_text_in_range(replacement_range, text, selected_range)
-        }
-    }
-
-    fn unmark_text(&mut self) {
-        if let Some(state) = &mut self.simulated_ime_state {
-            state.unmark_text()
-        } else {
-            self.handler.unmark_text()
-        }
-    }
-
-    fn text_for_range(&mut self, range: Range<usize>) -> Option<String> {
-        self.handler.text_for_range(range.clone())
-    }
-
-    fn bounds_for_range(&mut self, range: Range<usize>) -> Option<Bounds<Pixels>> {
-        self.handler.bounds_for_range(range.clone())
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct SimulatedImeState {
-    selected_range: Option<Range<usize>>,
-    marked_range: Option<Range<usize>>,
-    inputs: SmallVec<[ImeInput; 1]>,
-}
-
-impl SimulatedImeState {
-    fn insert_text(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
-        self.inputs.push(ImeInput::InsertText(
-            replacement_range.clone(),
-            text.to_string(),
-        ));
-
-        let Some(replacement_range) = replacement_range
-            .as_ref()
-            .or(self.marked_range.as_ref())
-            .or(self.selected_range.as_ref())
-        else {
-            return;
-        };
-        let end = replacement_range.start + text.encode_utf16().count();
-        self.selected_range = Some(end..end);
-        self.marked_range = None;
-    }
-
-    fn set_marked_text(
-        &mut self,
-        replacement_range: Option<Range<usize>>,
-        text: &str,
-        selected_range: Option<Range<usize>>,
-    ) {
-        self.inputs.push(ImeInput::SetMarkedText(
-            replacement_range.clone(),
-            text.to_string(),
-            selected_range.clone(),
-        ));
-
-        let Some(marked_range) = self.marked_range.as_ref().or(self.selected_range.as_ref()) else {
-            return;
-        };
-
-        let mut replacement_range = replacement_range.unwrap_or_else(|| 0..marked_range.len());
-        replacement_range.start += marked_range.start;
-        replacement_range.end += marked_range.start;
-
-        let text_count = text.encode_utf16().count();
-        self.marked_range = if text_count > 0 {
-            Some(replacement_range.start..replacement_range.start + text_count)
-        } else {
-            None
-        };
-
-        if let Some(selected_range) = selected_range {
-            let mut selected_range = selected_range;
-            selected_range.start += replacement_range.start;
-            selected_range.end += replacement_range.start;
-            self.selected_range = Some(selected_range);
-        } else {
-            let end = self.marked_range.as_ref().unwrap().end;
-            self.selected_range = Some(end..end);
-        }
-    }
-
-    fn unmark_text(&mut self) {
-        self.inputs.push(ImeInput::UnmarkText);
-
-        if self.selected_range.is_none() || self.marked_range.is_none() {
-            return;
-        }
-        let end = self.marked_range.as_ref().unwrap().end;
-        self.selected_range = Some(end..end);
-        self.marked_range = None;
-    }
-}
-
 fn get_scale_factor(native_window: id) -> f32 {
     let factor = unsafe {
         let screen: id = msg_send![native_window, screen];
@@ -1409,7 +1218,7 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 //   - in vim mode `option-4`  should go to end of line (same as $)
 //  Japanese (Romaji) layout:
 //   - type `a i left down up enter enter` should create an unmarked text "愛"
-//   - In vim mode, with this keybinding:
+//   - (Currently does not work) In vim mode, with this keybinding:
 //     ```
 //        {
 //          "context": "vim_mode == insert",
@@ -1459,70 +1268,6 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
         let input_context: id = unsafe { msg_send![this, inputContext] };
 
-        let (
-            input_source_may_open_candidates_popup,
-            is_ime_handling_key,
-            is_propagatable_ime_handling_key,
-        ) = {
-            let key = event.keystroke.key.as_str();
-            let modifiers = event.keystroke.modifiers;
-
-            let input_source: id = unsafe { msg_send![input_context, selectedKeyboardInputSource] };
-            let input_source = unsafe { input_source.to_str() };
-
-            let is_simplified_chinese = input_source.starts_with("com.apple.inputmethod.SCIM");
-            let is_traditional_chinese = input_source.starts_with("com.apple.inputmethod.TCIM");
-            let is_japanese = input_source.starts_with("com.apple.inputmethod.Kotoeri");
-            let is_korean = input_source.starts_with("com.apple.inputmethod.Korean");
-
-            let input_source_may_open_candidates_popup =
-                is_simplified_chinese || is_traditional_chinese || is_japanese;
-
-            let is_ime_handling_key = if input_source_may_open_candidates_popup {
-                modifiers.control
-                    || matches!(
-                        key,
-                        "escape"
-                            | "enter"
-                            | "backspace"
-                            | "space"
-                            | "tab"
-                            | "left"
-                            | "right"
-                            | "up"
-                            | "down"
-                    )
-            } else if is_korean {
-                key == "backspace"
-            } else {
-                false
-            };
-
-            let is_propagatable_ime_handling_key = is_ime_handling_key
-                && if input_source_may_open_candidates_popup {
-                    modifiers.control || matches!(key, |"left"| "right" | "up" | "down")
-                } else if is_korean {
-                    key == "backspace"
-                } else {
-                    false
-                };
-
-            (
-                input_source_may_open_candidates_popup,
-                is_ime_handling_key,
-                is_propagatable_ime_handling_key,
-            )
-        };
-
-        if input_source_may_open_candidates_popup
-            && with_input_handler(this, |handler| handler.selected_text_range())
-                .flatten()
-                .is_none()
-        {
-            return send_new_event(window_state.as_ref(), PlatformInput::KeyDown(event))
-                .unwrap_or(false);
-        }
-
         // Send the event to the input context for IME handling, unless the `fn` modifier is
         // being pressed.
         // this will call back into `insert_text`, etc.
@@ -1534,10 +1279,11 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
             None
         };
 
-        let previously_ime_composing =
-            with_input_handler(this, |handler| handler.has_marked_text()).unwrap_or(false);
-
-        let now_ime_composing = simulated_ime_state
+        let previously_ime_had_nonempty_selected_range =
+            with_input_handler(this, |handler| handler.selected_text_range())
+                .flatten()
+                .is_some_and(|range| !range.is_empty());
+        let currently_ime_composing = simulated_ime_state
             .as_ref()
             .map_or(false, |state| state.marked_range.is_some());
 
@@ -1547,47 +1293,20 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
             event.keystroke.ime_key = Some(ime_key.clone());
         }
 
-        let platform_input = PlatformInput::KeyDown(event);
-
-        // If this event should be handled solely by the IME,
-        // send a dummy keystroke to replay any pending input up to that point.
-        let fake_platform_input = PlatformInput::KeyDown(KeyDownEvent {
-            keystroke: Keystroke::default(),
-            is_held: false,
-        });
-
         let mut handled = false;
 
-        if is_ime_handling_key && previously_ime_composing && !now_ime_composing {
-            if !simulated_inputs.is_empty() {
-                send_new_event(window_state.as_ref(), fake_platform_input);
-            }
+        if !currently_ime_composing && !previously_ime_had_nonempty_selected_range {
+            handled |= send_new_event(window_state.as_ref(), PlatformInput::KeyDown(event))
+                .unwrap_or(false);
+        }
 
+        if !handled {
             with_input_handler(this, |handler| {
                 for input in simulated_inputs {
-                    handler.send(input);
+                    handler.handle_ime_input(input);
                     handled |= true;
                 }
             });
-
-            if is_propagatable_ime_handling_key {
-                handled |= send_new_event(window_state.as_ref(), platform_input).unwrap_or(false)
-            }
-        } else {
-            if is_ime_handling_key && now_ime_composing {
-                send_new_event(window_state.as_ref(), fake_platform_input);
-            } else {
-                handled |= send_new_event(window_state.as_ref(), platform_input).unwrap_or(false);
-            }
-
-            if !handled {
-                with_input_handler(this, |handler| {
-                    for input in simulated_inputs {
-                        handler.send(input);
-                        handled |= true;
-                    }
-                });
-            }
         }
 
         handled as BOOL
@@ -1937,8 +1656,10 @@ extern "C" fn valid_attributes_for_marked_text(_: &Object, _: Sel) -> id {
 }
 
 extern "C" fn has_marked_text(this: &Object, _: Sel) -> BOOL {
-    let has_marked_text_result =
-        with_input_handler(this, |input_handler| input_handler.has_marked_text()).unwrap_or(false);
+    let has_marked_text_result = with_input_handler(this, |input_handler| {
+        input_handler.marked_text_range().is_some()
+    })
+    .unwrap_or(false);
 
     has_marked_text_result as BOOL
 }
@@ -2003,7 +1724,9 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
 
         let text = text.to_str();
         let replacement_range = replacement_range.to_range();
-        with_input_handler(this, |handler| handler.insert_text(replacement_range, text));
+        with_input_handler(this, |handler| {
+            handler.replace_text_in_range(replacement_range, text)
+        });
     }
 }
 
@@ -2027,7 +1750,7 @@ extern "C" fn set_marked_text(
         let text = text.to_str();
 
         with_input_handler(this, |handler| {
-            handler.set_marked_text(replacement_range, text, selected_range)
+            handler.replace_and_mark_text_in_range(replacement_range, text, selected_range)
         });
     }
 }
@@ -2199,7 +1922,7 @@ fn drag_event_position(window_state: &Mutex<MacWindowState>, dragging_info: id) 
 
 fn with_input_handler<F, R>(window: &Object, f: F) -> Option<R>
 where
-    F: FnOnce(&mut MacInputHandler) -> R,
+    F: FnOnce(&mut PlatformInputHandler) -> R,
 {
     let window_state = unsafe { get_window_state(window) };
     let mut lock = window_state.as_ref().lock();
@@ -2219,33 +1942,4 @@ unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
     let screen_number = device_description.objectForKey_(screen_number_key);
     let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
     screen_number as CGDirectDisplayID
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_simulated_ime_state_set_marked_text() {
-        let mut state = SimulatedImeState {
-            selected_range: Some(10..10),
-            marked_range: None,
-            inputs: SmallVec::new(),
-        };
-
-        state.set_marked_text(None, "あ", Some(1..1));
-
-        assert_eq!(
-            state,
-            SimulatedImeState {
-                selected_range: Some(11..11),
-                marked_range: Some(10..11),
-                inputs: smallvec::smallvec![ImeInput::SetMarkedText(
-                    None,
-                    "あ".to_string(),
-                    Some(1..1)
-                )],
-            }
-        )
-    }
 }

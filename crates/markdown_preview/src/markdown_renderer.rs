@@ -196,7 +196,6 @@ fn render_markdown_list_item(
                     key: "".to_string(),
                     modifiers: Modifiers::secondary_key(),
                     ime_key: None,
-                    #[cfg(target_os = "macos")]
                     ime_inputs: Default::default(),
                 };
                 Tooltip::text(

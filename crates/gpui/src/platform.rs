@@ -357,11 +357,11 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn reset_ime_internal_state(&mut self) {} // Currently only implemented on macOS
 
     // macOS specific methods
     fn set_edited(&mut self, _edited: bool) {}
     fn show_character_palette(&self) {}
-    fn discard_marked_text(&mut self) {}
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
@@ -518,14 +518,22 @@ impl From<TileId> for etagere::AllocId {
 pub(crate) struct PlatformInputHandler {
     cx: AsyncWindowContext,
     handler: Box<dyn InputHandler>,
+    simulated_ime_state: Option<SimulatedImeState>,
 }
 
 impl PlatformInputHandler {
     pub fn new(cx: AsyncWindowContext, handler: Box<dyn InputHandler>) -> Self {
-        Self { cx, handler }
+        Self {
+            cx,
+            handler,
+            simulated_ime_state: None,
+        }
     }
 
     fn selected_text_range(&mut self) -> Option<Range<usize>> {
+        if let Some(state) = &self.simulated_ime_state {
+            return state.selected_range.clone();
+        }
         self.cx
             .update(|cx| self.handler.selected_text_range(cx))
             .ok()
@@ -533,6 +541,9 @@ impl PlatformInputHandler {
     }
 
     fn marked_text_range(&mut self) -> Option<Range<usize>> {
+        if let Some(state) = &self.simulated_ime_state {
+            return state.marked_range.clone();
+        }
         self.cx
             .update(|cx| self.handler.marked_text_range(cx))
             .ok()
@@ -548,6 +559,9 @@ impl PlatformInputHandler {
     }
 
     fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
+        if let Some(state) = &mut self.simulated_ime_state {
+            return state.insert_text(replacement_range, text);
+        }
         self.cx
             .update(|cx| {
                 self.handler
@@ -562,6 +576,9 @@ impl PlatformInputHandler {
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
     ) {
+        if let Some(state) = &mut self.simulated_ime_state {
+            return state.set_marked_text(range_utf16, new_text, new_selected_range);
+        }
         self.cx
             .update(|cx| {
                 self.handler.replace_and_mark_text_in_range(
@@ -575,6 +592,9 @@ impl PlatformInputHandler {
     }
 
     fn unmark_text(&mut self) {
+        if let Some(state) = &mut self.simulated_ime_state {
+            return state.unmark_text();
+        }
         self.cx.update(|cx| self.handler.unmark_text(cx)).ok();
     }
 
@@ -585,12 +605,32 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    #[cfg(not(target_os = "macos"))]
-    pub(crate) fn dispatch_input(&mut self, input: &str, cx: &mut WindowContext) {
-        self.handler.replace_text_in_range(None, input, cx);
+    fn start_new_simulation(&mut self) {
+        self.simulated_ime_state = None;
+        let marked_range = self.marked_text_range();
+        let selected_range = self.selected_text_range();
+        let ime_state = SimulatedImeState {
+            marked_range,
+            selected_range,
+            inputs: SmallVec::new(),
+        };
+        self.simulated_ime_state = Some(ime_state);
     }
 
-    #[cfg(target_os = "macos")]
+    fn take_simulation_result(&mut self) -> Option<SimulatedImeState> {
+        self.simulated_ime_state.take()
+    }
+
+    fn handle_ime_input(&mut self, input: ImeInput) {
+        match input {
+            ImeInput::InsertText(range, text) => self.replace_text_in_range(range, &text),
+            ImeInput::SetMarkedText(range, text, marked_range) => {
+                self.replace_and_mark_text_in_range(range, &text, marked_range)
+            }
+            ImeInput::UnmarkText => self.unmark_text(),
+        }
+    }
+
     pub(crate) fn dispatch_input(&mut self, input: ImeInput, cx: &mut WindowContext) {
         match input {
             ImeInput::InsertText(range, text) => {

@@ -1324,6 +1324,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                                 modifiers: Modifiers::default(),
                                 key: commit_text.clone(),
                                 ime_key: Some(commit_text),
+                                ime_inputs: Default::default(), // FIXME
                             },
                             is_held: false,
                         }));

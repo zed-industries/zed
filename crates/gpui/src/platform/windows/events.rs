@@ -1135,6 +1135,7 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         modifiers,
         key,
         ime_key: None,
+        ime_inputs: Default::default(),
     })
 }
 
@@ -1181,6 +1182,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
                     modifiers,
                     key: format!("f{}", offset + 1),
                     ime_key: None,
+                    ime_inputs: Default::default(),
                 }));
             };
             return None;
@@ -1192,6 +1194,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
         modifiers,
         key,
         ime_key: None,
+        ime_inputs: Default::default(),
     }))
 }
 
@@ -1214,6 +1217,7 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
             modifiers,
             key,
             ime_key: Some(first_char.to_string()),
+            ime_inputs: Default::default(),
         })
     }
 }
@@ -1298,6 +1302,7 @@ fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> 
         modifiers,
         key,
         ime_key: None,
+        ime_inputs: Default::default(),
     })
 }
 
