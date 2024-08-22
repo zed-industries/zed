@@ -118,7 +118,7 @@ impl TerminalOutput {
         }
     }
 
-    pub fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem> {
+    pub fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
         let start = alacritty_terminal::index::Point::new(
             alacritty_terminal::index::Line(0),
             alacritty_terminal::index::Column(0),

@@ -154,6 +154,45 @@ impl TableView {
         Self { table, widths }
     }
 
+    pub fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem> {
+        let data = match &self.table.data {
+            Some(data) => data,
+            None => return None,
+        };
+        let schema = self.table.schema.clone();
+
+        let mut markdown = String::new();
+        for field in &self.table.schema.fields {
+            markdown.push_str(&format!("| {} ", field.name));
+        }
+        markdown.push_str("|\n");
+        markdown.push_str("|---");
+        for _ in 1..self.table.schema.fields.len() {
+            markdown.push_str("|---");
+        }
+        markdown.push_str("|\n");
+
+        let body = data
+            .iter()
+            .map(|record: &Value| {
+                let row_content = schema
+                    .fields
+                    .iter()
+                    .map(|field| record.get(&field.name).unwrap_or(&Value::Null).to_string())
+                    .collect::<Vec<_>>();
+
+                row_content.join(" | ")
+            })
+            .collect::<Vec<String>>();
+
+        for row in body {
+            markdown.push_str(&format!("| {} |", row));
+            markdown.push_str("\n");
+        }
+
+        Some(ClipboardItem::new_string(markdown))
+    }
+
     pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
         let data = match &self.table.data {
             Some(data) => data,
@@ -288,31 +327,39 @@ impl ErrorView {
 }
 
 pub struct MarkdownView {
+    raw_text: String,
     contents: Option<ParsedMarkdown>,
     parsing_markdown_task: Option<Task<Result<()>>>,
 }
 
 impl MarkdownView {
     pub fn from(text: String, cx: &mut ViewContext<Self>) -> Self {
-        let task = cx.spawn(|markdown, mut cx| async move {
+        let task = cx.spawn(|markdown_view, mut cx| {
             let text = text.clone();
             let parsed = cx
                 .background_executor()
                 .spawn(async move { parse_markdown(&text, None, None).await });
 
-            let content = parsed.await;
+            async move {
+                let content = parsed.await;
 
-            markdown.update(&mut cx, |markdown, cx| {
-                markdown.parsing_markdown_task.take();
-                markdown.contents = Some(content);
-                cx.notify();
-            })
+                markdown_view.update(&mut cx, |markdown, cx| {
+                    markdown.parsing_markdown_task.take();
+                    markdown.contents = Some(content);
+                    cx.notify();
+                })
+            }
         });
 
         Self {
+            raw_text: text.clone(),
             contents: None,
             parsing_markdown_task: Some(task),
         }
+    }
+
+    pub fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+        Some(ClipboardItem::new_string(self.raw_text.clone()))
     }
 }
 
@@ -364,10 +411,10 @@ impl Output {
             OutputContent::Plain(terminal) => terminal.clipboard_content(cx),
             OutputContent::Stream(terminal) => terminal.clipboard_content(cx),
             OutputContent::Image(_) => None,
-            OutputContent::ErrorOutput(_) => None,
+            OutputContent::ErrorOutput(error) => error.traceback.clipboard_content(cx),
             OutputContent::Message(_) => None,
-            OutputContent::Table(_) => None,
-            OutputContent::Markdown(_) => None,
+            OutputContent::Table(table) => table.clipboard_content(cx),
+            OutputContent::Markdown(markdown) => markdown.read(cx).clipboard_content(cx),
             OutputContent::ClearOutputWaitMarker => None,
         }
     }
