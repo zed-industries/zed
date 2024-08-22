@@ -546,14 +546,8 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("bf", "irst"), workspace::ActivateItem(0)),
         VimCommand::new(("br", "ewind"), workspace::ActivateItem(0)),
         VimCommand::new(("bl", "ast"), workspace::ActivateLastItem),
-        VimCommand::new(
-            ("new", ""),
-            workspace::NewFileInDirection(workspace::SplitDirection::Up),
-        ),
-        VimCommand::new(
-            ("vne", "w"),
-            workspace::NewFileInDirection(workspace::SplitDirection::Left),
-        ),
+        VimCommand::new(("new", ""), workspace::NewFileSplitHorizontal),
+        VimCommand::new(("vne", "w"), workspace::NewFileSplitVertical),
         VimCommand::new(("tabe", "dit"), workspace::NewFile),
         VimCommand::new(("tabnew", ""), workspace::NewFile),
         VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem).count(),

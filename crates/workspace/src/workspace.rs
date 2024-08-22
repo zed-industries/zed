@@ -136,6 +136,8 @@ actions!(
         FollowNextCollaborator,
         NewCenterTerminal,
         NewFile,
+        NewFileSplitVertical,
+        NewFileSplitHorizontal,
         NewSearch,
         NewTerminal,
         NewWindow,
@@ -167,9 +169,6 @@ pub struct ActivatePaneInDirection(pub SplitDirection);
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SwapPaneInDirection(pub SplitDirection);
-
-#[derive(Clone, Deserialize, PartialEq)]
-pub struct NewFileInDirection(pub SplitDirection);
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -220,7 +219,6 @@ impl_actions!(
         ActivatePaneInDirection,
         CloseAllItemsAndPanes,
         CloseInactiveTabsAndPanes,
-        NewFileInDirection,
         OpenTerminal,
         Reload,
         Save,

@@ -5,10 +5,7 @@ use crate::{
     },
     notifications::NotifyResultExt,
     toolbar::Toolbar,
-    workspace_settings::{
-        AutosaveSetting, PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, TabBarSettings,
-        WorkspaceSettings,
-    },
+    workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
     CloseWindow, CopyPath, CopyRelativePath, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
     OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
 };
@@ -2251,21 +2248,10 @@ impl Render for Pane {
             .on_action(cx.listener(|pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx)))
             .on_action(cx.listener(|pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)))
             .on_action(cx.listener(|pane, _: &SplitHorizontal, cx| {
-                let split_direction =
-                    WorkspaceSettings::get(None, cx).pane_split_direction_horizontal;
-                match split_direction {
-                    PaneSplitDirectionHorizontal::Down => pane.split(SplitDirection::Down, cx),
-                    _ => pane.split(SplitDirection::Up, cx),
-                }
+                pane.split(SplitDirection::horizontal(cx), cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitVertical, cx| {
-                let split_direction =
-                    WorkspaceSettings::get(None, cx).pane_split_direction_vertical;
-
-                match split_direction {
-                    PaneSplitDirectionVertical::Right => pane.split(SplitDirection::Right, cx),
-                    _ => pane.split(SplitDirection::Left, cx),
-                }
+                pane.split(SplitDirection::vertical(cx), cx)
             }))
             .on_action(
                 cx.listener(|pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx)),
