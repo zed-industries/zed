@@ -2038,18 +2038,9 @@ impl ProjectPanel {
             marked_selections: selections,
         };
 
-        let git_status = details.git_status.clone();
-
-        let git_symbol_enabled = match settings.git_symbol.enabled {
-            Some(enabled) => enabled,
-            None => false,
-        };
-
-        let git_symbol_colored = match settings.git_symbol.colored {
-            Some(colored) => colored,
-            None => true,
-        };
-
+        let git_status = details.git_status;
+        let git_symbol_enabled = settings.git_symbol.enabled.unwrap_or(false);
+        let git_symbol_colored = settings.git_symbol.colored.unwrap_or(true);
         let git_symbol_weight = match settings.git_symbol.weight {
             Some(weight) => weight,
             None => GitSymbolWeightSettings::Normal,
