@@ -2022,7 +2022,6 @@ impl Workspace {
         path: ResolvedPath,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-        println!("open_resolved_path. path: {:?}", path);
         match path {
             ResolvedPath::ProjectPath(project_path) => self.open_path(project_path, None, true, cx),
             ResolvedPath::AbsPath(path) => self.open_abs_path(path, false, cx),

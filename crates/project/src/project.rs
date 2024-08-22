@@ -7821,7 +7821,7 @@ impl Project {
         let mut candidates = vec![path.clone()];
 
         if let Some(file) = buffer.read(cx).file() {
-            if let Some(dir) = file.abs_path(cx).parent() {
+            if let Some(dir) = file.path().parent() {
                 let joined = dir.to_path_buf().join(path);
                 candidates.push(joined);
             }

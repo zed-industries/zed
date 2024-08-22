@@ -1488,30 +1488,75 @@ mod tests {
 
         cx.set_state(indoc! {"
             You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you wantˇ.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.ˇ
         "});
 
-        // Moving the mouse over a file that does not exist should not create a highlight
+        // File does not exist
         let screen_coord = cx.pixel_position(indoc! {"
             You can't go to a file that dˇoes_not_exist.txt.
             Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.
         "});
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
-        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
-            You can't go to a file that does_not_exist.txt.
-            Go to file2.rs if you want.
-        "});
+        // No highlight
+        cx.update_editor(|editor, cx| {
+            assert!(editor
+                .snapshot(cx)
+                .text_highlight_ranges::<HoveredLinkState>()
+                .unwrap_or_default()
+                .1
+                .is_empty());
+        });
 
-        // Moving the mouse over a file that does exist should
+        // Moving the mouse over a file that does exist should highlight it.
         let screen_coord = cx.pixel_position(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to fˇile2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.
         "});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to «file2.rsˇ» if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.
+        "});
+
+        // Moving the mouse over a relative path that does exist should highlight it
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/fˇile2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.
+        "});
+
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to «../dir/file2.rsˇ» if you want.
+            Or go to /root/dir/file2.rs if project is local.
+        "});
+
+        // Moving the mouse over an absolute path that does exist should highlight it
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/diˇr/file2.rs if project is local.
+        "});
+
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to «/root/dir/file2.rsˇ» if project is local.
         "});
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
