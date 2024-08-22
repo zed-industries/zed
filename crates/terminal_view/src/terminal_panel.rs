@@ -5,7 +5,7 @@ use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
+    actions, Action, AnchorCorner, AnyView, AppContext, AsyncWindowContext, Entity, EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement, Pixels, Render,
     Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -20,7 +20,7 @@ use terminal::{
     Terminal,
 };
 use ui::{
-    h_flex, ButtonCommon, Clickable, ContextMenu, FluentBuilder, IconButton, IconSize, Selectable,
+    h_flex, ButtonCommon, Clickable, ContextMenu, IconButton, IconSize, PopoverMenu, Selectable,
     Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
@@ -173,47 +173,42 @@ impl TerminalPanel {
         let additional_buttons = self.additional_tab_bar_buttons.clone();
         self.pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                if !pane.has_focus(cx) {
+                if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
                     return (None, None);
                 }
+                let focus_handle = pane.focus_handle(cx);
                 let right_children = h_flex()
                     .gap_2()
                     .children(additional_buttons.clone())
                     .child(
-                        IconButton::new("plus", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                let focus_handle = pane.focus_handle(cx);
+                        PopoverMenu::new("terminal-tab-bar-popover-menu")
+                            .trigger(
+                                IconButton::new("plus", IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|cx| Tooltip::text("New...", cx)),
+                            )
+                            .anchor(AnchorCorner::TopRight)
+                            .with_handle(pane.new_item_context_menu_handle.clone())
+                            .menu(move |cx| {
+                                let focus_handle = focus_handle.clone();
                                 let menu = ContextMenu::build(cx, |menu, _| {
-                                    menu.action(
-                                        "New Terminal",
-                                        workspace::NewTerminal.boxed_clone(),
-                                    )
-                                    .entry(
-                                        "Spawn task",
-                                        Some(tasks_ui::Spawn::modal().boxed_clone()),
-                                        move |cx| {
-                                            // We want the focus to go back to terminal panel once task modal is dismissed,
-                                            // hence we focus that first. Otherwise, we'd end up without a focused element, as
-                                            // context menu will be gone the moment we spawn the modal.
-                                            cx.focus(&focus_handle);
-                                            cx.dispatch_action(
-                                                tasks_ui::Spawn::modal().boxed_clone(),
-                                            );
-                                        },
-                                    )
+                                    menu.context(focus_handle.clone())
+                                        .action(
+                                            "New Terminal",
+                                            workspace::NewTerminal.boxed_clone(),
+                                        )
+                                        // We want the focus to go back to terminal panel once task modal is dismissed,
+                                        // hence we focus that first. Otherwise, we'd end up without a focused element, as
+                                        // context menu will be gone the moment we spawn the modal.
+                                        .action(
+                                            "Spawn task",
+                                            tasks_ui::Spawn::modal().boxed_clone(),
+                                        )
                                 });
-                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
-                                    pane.new_item_menu = None;
-                                })
-                                .detach();
-                                pane.new_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("New...", cx)),
+
+                                Some(menu)
+                            }),
                     )
-                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
-                        el.child(Pane::render_menu_overlay(new_item_menu))
-                    })
                     .child({
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)
