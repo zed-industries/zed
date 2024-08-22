@@ -28,7 +28,6 @@ pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,
     active_item: Option<Box<dyn ItemHandle>>,
     buffer_search_bar: View<BufferSearchBar>,
-    repl_menu: Option<View<ContextMenu>>,
     show: bool,
     toggle_selections_handle: PopoverMenuHandle<ContextMenu>,
     toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
@@ -45,7 +44,6 @@ impl QuickActionBar {
             _inlay_hints_enabled_subscription: None,
             active_item: None,
             buffer_search_bar,
-            repl_menu: None,
             show: true,
             toggle_selections_handle: Default::default(),
             toggle_settings_handle: Default::default(),
@@ -79,17 +77,6 @@ impl QuickActionBar {
         } else {
             ToolbarItemLocation::Hidden
         }
-    }
-
-    fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
-        div().absolute().bottom_0().right_0().size_0().child(
-            deferred(
-                anchored()
-                    .anchor(AnchorCorner::TopRight)
-                    .child(menu.clone()),
-            )
-            .with_priority(1),
-        )
     }
 }
 
@@ -322,9 +309,6 @@ impl Render for QuickActionBar {
             )
             .children(editor_selections_dropdown)
             .child(editor_settings_dropdown)
-            .when_some(self.repl_menu.as_ref(), |el, repl_menu| {
-                el.child(Self::render_menu_overlay(repl_menu))
-            })
     }
 }
 
