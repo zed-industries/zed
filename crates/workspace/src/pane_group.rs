@@ -1,4 +1,8 @@
-use crate::{pane_group::element::pane_axis, AppState, FollowerState, Pane, Workspace};
+use crate::{
+    pane_group::element::pane_axis,
+    workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
+    AppState, FollowerState, Pane, Workspace, WorkspaceSettings,
+};
 use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use client::proto::PeerId;
@@ -10,6 +14,7 @@ use gpui::{
 use parking_lot::Mutex;
 use project::Project;
 use serde::Deserialize;
+use settings::Settings;
 use std::sync::Arc;
 use ui::prelude::*;
 
@@ -559,6 +564,20 @@ impl std::fmt::Display for SplitDirection {
 impl SplitDirection {
     pub fn all() -> [Self; 4] {
         [Self::Up, Self::Down, Self::Left, Self::Right]
+    }
+
+    pub fn vertical(cx: &WindowContext) -> Self {
+        match WorkspaceSettings::get_global(cx).pane_split_direction_vertical {
+            PaneSplitDirectionVertical::Left => SplitDirection::Left,
+            PaneSplitDirectionVertical::Right => SplitDirection::Right,
+        }
+    }
+
+    pub fn horizontal(cx: &WindowContext) -> Self {
+        match WorkspaceSettings::get_global(cx).pane_split_direction_horizontal {
+            PaneSplitDirectionHorizontal::Down => SplitDirection::Down,
+            PaneSplitDirectionHorizontal::Up => SplitDirection::Up,
+        }
     }
 
     pub fn edge(&self, rect: Bounds<Pixels>) -> Pixels {

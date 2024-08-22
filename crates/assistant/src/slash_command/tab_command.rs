@@ -197,6 +197,7 @@ fn tab_items_for_queries(
                     }
 
                     let mut timestamps_by_entity_id = HashMap::default();
+                    let mut visited_buffers = HashSet::default();
                     let mut open_buffers = Vec::new();
 
                     for pane in workspace.panes() {
@@ -211,9 +212,11 @@ fn tab_items_for_queries(
                             if let Some(timestamp) =
                                 timestamps_by_entity_id.get(&editor.entity_id())
                             {
-                                let snapshot = buffer.read(cx).snapshot();
-                                let full_path = snapshot.resolve_file_path(cx, true);
-                                open_buffers.push((full_path, snapshot, *timestamp));
+                                if visited_buffers.insert(buffer.read(cx).remote_id()) {
+                                    let snapshot = buffer.read(cx).snapshot();
+                                    let full_path = snapshot.resolve_file_path(cx, true);
+                                    open_buffers.push((full_path, snapshot, *timestamp));
+                                }
                             }
                         }
                     }

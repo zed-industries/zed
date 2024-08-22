@@ -377,4 +377,14 @@ impl Database {
         })
         .await
     }
+
+    pub async fn get_users_missing_github_user_created_at(&self) -> Result<Vec<user::Model>> {
+        self.transaction(|tx| async move {
+            Ok(user::Entity::find()
+                .filter(user::Column::GithubUserCreatedAt.is_null())
+                .all(&*tx)
+                .await?)
+        })
+        .await
+    }
 }

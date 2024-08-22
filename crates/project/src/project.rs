@@ -62,8 +62,8 @@ use log::error;
 use lsp::{
     CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, Edit, FileSystemWatcher, InsertTextFormat, LanguageServer,
-    LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem, OneOf,
-    ServerHealthStatus, ServerStatus, TextEdit, WorkDoneProgressCancelParams,
+    LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem, MessageType,
+    OneOf, ServerHealthStatus, ServerStatus, TextEdit, WorkDoneProgressCancelParams,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -309,10 +309,16 @@ impl PartialEq for LanguageServerPromptRequest {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum LanguageServerLogType {
+    Log(MessageType),
+    Trace(Option<String>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     LanguageServerAdded(LanguageServerId),
     LanguageServerRemoved(LanguageServerId),
-    LanguageServerLog(LanguageServerId, String),
+    LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
     Notification(String),
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Model<Buffer>),
@@ -649,16 +655,17 @@ impl DirectoryLister {
         };
         "~/".to_string()
     }
-    pub fn list_directory(&self, query: String, cx: &mut AppContext) -> Task<Result<Vec<PathBuf>>> {
+
+    pub fn list_directory(&self, path: String, cx: &mut AppContext) -> Task<Result<Vec<PathBuf>>> {
         match self {
             DirectoryLister::Project(project) => {
-                project.update(cx, |project, cx| project.list_directory(query, cx))
+                project.update(cx, |project, cx| project.list_directory(path, cx))
             }
             DirectoryLister::Local(fs) => {
                 let fs = fs.clone();
                 cx.background_executor().spawn(async move {
                     let mut results = vec![];
-                    let expanded = shellexpand::tilde(&query);
+                    let expanded = shellexpand::tilde(&path);
                     let query = Path::new(expanded.as_ref());
                     let mut response = fs.read_dir(query).await?;
                     while let Some(path) = response.next().await {
@@ -2300,6 +2307,7 @@ impl Project {
 
         buffer.update(cx, |buffer, cx| {
             let worktree_id = old_file.worktree_id(cx);
+
             let ids = &self.language_server_ids;
 
             if let Some(language) = buffer.language().cloned() {
@@ -2620,7 +2628,7 @@ impl Project {
                 let worktree_id = file.worktree_id(cx);
                 let abs_path = file.as_local()?.abs_path(cx);
                 let text_document = lsp::TextDocumentIdentifier {
-                    uri: lsp::Url::from_file_path(abs_path).unwrap(),
+                    uri: lsp::Url::from_file_path(abs_path).log_err()?,
                 };
 
                 for (_, _, server) in self.language_servers_for_worktree(worktree_id) {
@@ -3651,17 +3659,56 @@ impl Project {
             })
             .detach();
         language_server
-            .on_notification::<lsp::notification::Progress, _>(move |params, mut cx| {
-                if let Some(this) = project.upgrade() {
-                    this.update(&mut cx, |this, cx| {
-                        this.on_lsp_progress(
-                            params,
-                            server_id,
-                            disk_based_diagnostics_progress_token.clone(),
-                            cx,
-                        );
-                    })
-                    .ok();
+            .on_notification::<lsp::notification::Progress, _>({
+                let project = project.clone();
+                move |params, mut cx| {
+                    if let Some(this) = project.upgrade() {
+                        this.update(&mut cx, |this, cx| {
+                            this.on_lsp_progress(
+                                params,
+                                server_id,
+                                disk_based_diagnostics_progress_token.clone(),
+                                cx,
+                            );
+                        })
+                        .ok();
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_notification::<lsp::notification::LogMessage, _>({
+                let project = project.clone();
+                move |params, mut cx| {
+                    if let Some(this) = project.upgrade() {
+                        this.update(&mut cx, |_, cx| {
+                            cx.emit(Event::LanguageServerLog(
+                                server_id,
+                                LanguageServerLogType::Log(params.typ),
+                                params.message,
+                            ));
+                        })
+                        .ok();
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_notification::<lsp::notification::LogTrace, _>({
+                let project = project.clone();
+                move |params, mut cx| {
+                    if let Some(this) = project.upgrade() {
+                        this.update(&mut cx, |_, cx| {
+                            cx.emit(Event::LanguageServerLog(
+                                server_id,
+                                LanguageServerLogType::Trace(params.verbose),
+                                params.message,
+                            ));
+                        })
+                        .ok();
+                    }
                 }
             })
             .detach();
@@ -3673,9 +3720,16 @@ impl Project {
             (None, override_options) => initialization_options = override_options,
             _ => {}
         }
+
         let language_server = cx
             .update(|cx| language_server.initialize(initialization_options, cx))?
-            .await?;
+            .await
+            .inspect_err(|_| {
+                if let Some(this) = project.upgrade() {
+                    this.update(cx, |_, cx| cx.emit(Event::LanguageServerRemoved(server_id)))
+                        .ok();
+                }
+            })?;
 
         language_server
             .notify::<lsp::notification::DidChangeConfiguration>(
@@ -7768,6 +7822,88 @@ impl Project {
         }
     }
 
+    // Returns the resolved version of `path`, that was found in `buffer`, if it exists.
+    pub fn resolve_existing_file_path(
+        &self,
+        path: &str,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<ResolvedPath>> {
+        // TODO: ssh based remoting.
+        if self.ssh_session.is_some() {
+            return Task::ready(None);
+        }
+
+        if self.is_local() {
+            let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
+
+            if expanded.is_absolute() {
+                let fs = self.fs.clone();
+                cx.background_executor().spawn(async move {
+                    let path = expanded.as_path();
+                    let exists = fs.is_file(path).await;
+
+                    exists.then(|| ResolvedPath::AbsPath(expanded))
+                })
+            } else {
+                self.resolve_path_in_worktrees(expanded, buffer, cx)
+            }
+        } else {
+            let path = PathBuf::from(path);
+            if path.is_absolute() || path.starts_with("~") {
+                return Task::ready(None);
+            }
+
+            self.resolve_path_in_worktrees(path, buffer, cx)
+        }
+    }
+
+    fn resolve_path_in_worktrees(
+        &self,
+        path: PathBuf,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<ResolvedPath>> {
+        let mut candidates = vec![path.clone()];
+
+        if let Some(file) = buffer.read(cx).file() {
+            if let Some(dir) = file.path().parent() {
+                let joined = dir.to_path_buf().join(path);
+                candidates.push(joined);
+            }
+        }
+
+        let worktrees = self.worktrees(cx).collect::<Vec<_>>();
+        cx.spawn(|_, mut cx| async move {
+            for worktree in worktrees {
+                for candidate in candidates.iter() {
+                    let path = worktree
+                        .update(&mut cx, |worktree, _| {
+                            let root_entry_path = &worktree.root_entry().unwrap().path;
+
+                            let resolved = resolve_path(&root_entry_path, candidate);
+
+                            let stripped =
+                                resolved.strip_prefix(&root_entry_path).unwrap_or(&resolved);
+
+                            worktree.entry_for_path(stripped).map(|entry| {
+                                ResolvedPath::ProjectPath(ProjectPath {
+                                    worktree_id: worktree.id(),
+                                    path: entry.path.clone(),
+                                })
+                            })
+                        })
+                        .ok()?;
+
+                    if path.is_some() {
+                        return path;
+                    }
+                }
+            }
+            None
+        })
+    }
+
     pub fn list_directory(
         &self,
         query: String,
@@ -11227,6 +11363,14 @@ fn resolve_path(base: &Path, path: &Path) -> PathBuf {
         }
     }
     result
+}
+
+/// ResolvedPath is a path that has been resolved to either a ProjectPath
+/// or an AbsPath and that *exists*.
+#[derive(Debug, Clone)]
+pub enum ResolvedPath {
+    ProjectPath(ProjectPath),
+    AbsPath(PathBuf),
 }
 
 impl Item for Buffer {
