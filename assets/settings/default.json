@@ -510,6 +510,8 @@
   //      "soft_wrap": "editor_width",
   // 4. Soft wrap lines at the preferred line length.
   //      "soft_wrap": "preferred_line_length",
+  // 5. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
+  //      "soft_wrap": "bounded",
   "soft_wrap": "prefer_line",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
