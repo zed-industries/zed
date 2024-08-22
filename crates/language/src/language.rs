@@ -159,6 +159,24 @@ pub struct CachedLspAdapter {
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
 }
 
+impl Debug for CachedLspAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedLspAdapter")
+            .field("name", &self.name)
+            .field(
+                "disk_based_diagnostic_sources",
+                &self.disk_based_diagnostic_sources,
+            )
+            .field(
+                "disk_based_diagnostics_progress_token",
+                &self.disk_based_diagnostics_progress_token,
+            )
+            .field("language_ids", &self.language_ids)
+            .field("reinstall_attempt_count", &self.reinstall_attempt_count)
+            .finish_non_exhaustive()
+    }
+}
+
 impl CachedLspAdapter {
     pub fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
         let name = adapter.name();
