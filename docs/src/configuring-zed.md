@@ -1264,6 +1264,7 @@ List of `integer` column numbers
     "font_family": null,
     "font_features": null,
     "font_size": null,
+    "line_height": "comfortable",
     "option_as_meta": true,
     "button": false,
     "shell": {},
@@ -1442,6 +1443,46 @@ See Buffer Font Features
     "font_features": {
       "calt": false,
       // See Buffer Font Features for more features
+    },
+  },
+}
+```
+
+### Terminal: Line Height
+
+- Description: Set the terminal's line height.
+- Setting: `line_height`
+- Default: `comfortable`
+
+**Options**
+
+1. Use a line height that's `comfortable` for reading, 1.618. (default)
+
+```jsonc
+{
+  "terminal": {
+    "line_height": "comfortable",
+  },
+}
+```
+
+2. Use a `standard` line height, 1.3. This option is useful for TUIs, particularly if they use box characters
+
+```jsonc
+{
+  "terminal": {
+    "line_height": "standard",
+  },
+}
+```
+
+3.  Use a custom line height.
+
+```jsonc
+{
+  "terminal": {
+    "line_height": {
+      "custom": 2,
     },
   },
 }
