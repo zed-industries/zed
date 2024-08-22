@@ -343,6 +343,7 @@ mod test {
             },
             key: "🖖🏻".to_string(), //2 char string
             ime_key: None,
+            ime_inputs: Default::default(),
         };
         assert_eq!(to_esc_str(&ks, &TermMode::NONE, false), None);
     }

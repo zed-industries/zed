@@ -738,7 +738,7 @@ impl Keystroke {
             (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
 
         // FIXME
-        let ime_inputs = if let Some(ime_key) = ime_key {
+        let ime_inputs = if let Some(ime_key) = ime_key.clone() {
             smallvec::smallvec![ImeInput::InsertText(None, ime_key)]
         } else {
             smallvec::smallvec![]
