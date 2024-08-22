@@ -5,9 +5,9 @@ use super::{
 };
 use gpui::{AppContext, Context, Font, LineWrapper, Model, ModelContext, Pixels, Task};
 use language::{Chunk, Point};
-use lazy_static::lazy_static;
 use multi_buffer::MultiBufferSnapshot;
 use smol::future::yield_now;
+use std::sync::LazyLock;
 use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::Patch;
@@ -887,14 +887,12 @@ impl Transform {
     }
 
     fn wrap(indent: u32) -> Self {
-        lazy_static! {
-            static ref WRAP_TEXT: String = {
-                let mut wrap_text = String::new();
-                wrap_text.push('\n');
-                wrap_text.extend((0..LineWrapper::MAX_INDENT as usize).map(|_| ' '));
-                wrap_text
-            };
-        }
+        static WRAP_TEXT: LazyLock<String> = LazyLock::new(|| {
+            let mut wrap_text = String::new();
+            wrap_text.push('\n');
+            wrap_text.extend((0..LineWrapper::MAX_INDENT as usize).map(|_| ' '));
+            wrap_text
+        });
 
         Self {
             summary: TransformSummary {

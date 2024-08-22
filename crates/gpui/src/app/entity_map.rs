@@ -642,10 +642,8 @@ impl<T> PartialEq<Model<T>> for WeakModel<T> {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-lazy_static::lazy_static! {
-    static ref LEAK_BACKTRACE: bool =
-        std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty());
-}
+static LEAK_BACKTRACE: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty()));
 
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]

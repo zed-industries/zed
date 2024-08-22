@@ -420,6 +420,7 @@ pub enum ExecutionStatus {
     ShuttingDown,
     Shutdown,
     KernelErrored(String),
+    Restarting,
 }
 
 pub struct ExecutionView {
@@ -611,6 +612,9 @@ impl Render for ExecutionView {
                 .color(Color::Muted)
                 .into_any_element(),
             ExecutionStatus::ShuttingDown => Label::new("Kernel shutting down...")
+                .color(Color::Muted)
+                .into_any_element(),
+            ExecutionStatus::Restarting => Label::new("Kernel restarting...")
                 .color(Color::Muted)
                 .into_any_element(),
             ExecutionStatus::Shutdown => Label::new("Kernel shutdown")

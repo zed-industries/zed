@@ -1789,7 +1789,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 - Description: Whether to fold directories automatically when directory has only one directory inside.
 - Setting: `auto_fold_dirs`
-- Default: `false`
+- Default: `true`
 
 **Options**
 
@@ -1900,6 +1900,27 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   // Share your project when you are the first to join a channel
   "share_on_join": false
 },
+```
+
+## Unnecessary Code Fade
+
+- Description: How much to fade out unused code.
+- Setting: `unnecessary_code_fade`
+- Default: `0.3`
+
+**Options**
+
+Float values between `0.0` and `0.9`, where:
+
+- `0.0` means no fading (unused code looks the same as used code)
+- `0.9` means maximum fading (unused code is very faint but still visible)
+
+**Example**
+
+```json
+{
+  "unnecessary_code_fade": 0.5
+}
 ```
 
 ## An example configuration:

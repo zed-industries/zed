@@ -87,6 +87,7 @@ pub enum KernelStatus {
     Error,
     ShuttingDown,
     Shutdown,
+    Restarting,
 }
 
 impl KernelStatus {
@@ -107,6 +108,7 @@ impl ToString for KernelStatus {
             KernelStatus::Error => "Error".to_string(),
             KernelStatus::ShuttingDown => "Shutting Down".to_string(),
             KernelStatus::Shutdown => "Shutdown".to_string(),
+            KernelStatus::Restarting => "Restarting".to_string(),
         }
     }
 }
@@ -122,6 +124,7 @@ impl From<&Kernel> for KernelStatus {
             Kernel::ErroredLaunch(_) => KernelStatus::Error,
             Kernel::ShuttingDown => KernelStatus::ShuttingDown,
             Kernel::Shutdown => KernelStatus::Shutdown,
+            Kernel::Restarting => KernelStatus::Restarting,
         }
     }
 }
@@ -133,6 +136,7 @@ pub enum Kernel {
     ErroredLaunch(String),
     ShuttingDown,
     Shutdown,
+    Restarting,
 }
 
 impl Kernel {
@@ -160,7 +164,7 @@ impl Kernel {
 
     pub fn is_shutting_down(&self) -> bool {
         match self {
-            Kernel::ShuttingDown => true,
+            Kernel::Restarting | Kernel::ShuttingDown => true,
             Kernel::RunningKernel(_)
             | Kernel::StartingKernel(_)
             | Kernel::ErroredLaunch(_)
@@ -324,7 +328,7 @@ impl RunningKernel {
                     _control_task: control_task,
                     _routing_task: routing_task,
                     connection_path,
-                    execution_state: ExecutionState::Busy,
+                    execution_state: ExecutionState::Idle,
                     kernel_info: None,
                 },
                 messages_rx,
