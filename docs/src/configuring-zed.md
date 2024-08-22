@@ -1693,6 +1693,11 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "file_icons": true,
     "folder_icons": true,
     "git_status": true,
+    "git_symbol": {
+      "enabled": false,
+      "colored": true,
+      "weight": "normal"
+    },
     "indent_size": 20,
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
@@ -1748,6 +1753,38 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 ```json
 {
   "git_status": false
+}
+```
+
+### Git Symbol
+
+- Description: Show git symbols in the project panel
+- Setting: `git_symbol`
+- Default:
+
+```json
+"git_symbol": {
+  "enabled": false,
+  "colored": true,
+  "weight": "normal"
+}
+```
+
+**Options**
+
+1. Enable git symbol
+
+```json
+"git_symbol": {
+  "enabled": true
+}
+```
+
+2. Disable git symbol
+
+```json
+"git_symbol": {
+  "enabled": false
 }
 ```
 

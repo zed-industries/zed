@@ -19,10 +19,51 @@ pub struct ProjectPanelSettings {
     pub file_icons: bool,
     pub folder_icons: bool,
     pub git_status: bool,
+    pub git_symbol: GitSymbolSettings,
     pub indent_size: f32,
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum GitSymbolWeightSettings {
+    #[default]
+    Normal,
+    Bold,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
+pub struct GitSymbolSettings {
+    /// Whether to show git symbols in the project panel.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// Whether to color the git symbols.
+    ///
+    /// Default: true
+    pub colored: Option<bool>,
+    /// Font weight of the symbol.
+    ///
+    /// Default: normal
+    pub weight: Option<GitSymbolWeightSettings>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct GitSymbolSettingsContent {
+    /// Whether to show git symbols in the project panel.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// Whether to color the git symbols.
+    ///
+    /// Default: true
+    pub colored: Option<bool>,
+    /// Font weight of the symbol.
+    ///
+    /// Default: normal
+    pub weight: Option<GitSymbolWeightSettings>,
 }
 
 /// When to show the scrollbar in the project panel.
@@ -80,6 +121,7 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub git_status: Option<bool>,
+    pub git_symbol: Option<GitSymbolSettings>,
     /// Amount of indentation (in pixels) for nested items.
     ///
     /// Default: 20

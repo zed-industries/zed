@@ -312,6 +312,14 @@
     "folder_icons": true,
     // Whether to show the git status in the project panel.
     "git_status": true,
+    "git_symbol": {
+      // Whether to show git symbols in the project panel.
+      "enabled": false,
+      // Whether to color the git symbols.
+      "colored": true,
+      // Font weight of the git symbol.
+      "weight": "normal"
+    },
     // Amount of indentation for nested items.
     "indent_size": 20,
     // Whether to reveal it in the project panel automatically,

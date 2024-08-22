@@ -18,14 +18,16 @@ use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
     AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, DragMoveEvent,
-    EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement, KeyContext,
-    ListSizingBehavior, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext as _, WeakView, WindowContext,
+    EventEmitter, ExternalPaths, FocusHandle, FocusableView, FontWeight, InteractiveElement,
+    KeyContext, ListSizingBehavior, Model, MouseButton, MouseDownEvent, ParentElement, Pixels,
+    Point, PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
+    View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
-use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowScrollbar};
+use project_panel_settings::{
+    GitSymbolWeightSettings, ProjectPanelDockPosition, ProjectPanelSettings, ShowScrollbar,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     cell::{Cell, OnceCell},
@@ -2035,6 +2037,24 @@ impl ProjectPanel {
             active_selection: selection,
             marked_selections: selections,
         };
+
+        let git_status = details.git_status.clone();
+
+        let git_symbol_enabled = match settings.git_symbol.enabled {
+            Some(enabled) => enabled,
+            None => false,
+        };
+
+        let git_symbol_colored = match settings.git_symbol.colored {
+            Some(colored) => colored,
+            None => true,
+        };
+
+        let git_symbol_weight = match settings.git_symbol.weight {
+            Some(weight) => weight,
+            None => GitSymbolWeightSettings::Normal,
+        };
+
         div()
             .id(entry_id.to_proto() as usize)
             .on_drag_move::<ExternalPaths>(cx.listener(
@@ -2107,6 +2127,49 @@ impl ProjectPanel {
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_marked || is_active)
+                    .when(git_symbol_enabled, |this| {
+                        this.when_some(git_status, |this, git_status| {
+                            this.end_slot::<AnyElement>(
+                                div()
+                                    .id("git_symbol")
+                                    .pr_3()
+                                    .tooltip(move |cx| {
+                                        Tooltip::text(
+                                            match git_status {
+                                                GitFileStatus::Added => "Added",
+                                                GitFileStatus::Modified => "Modified",
+                                                GitFileStatus::Conflict => "Conflict",
+                                            },
+                                            cx,
+                                        )
+                                    })
+                                    .child(
+                                        Label::new(match git_status {
+                                            GitFileStatus::Added => "A",
+                                            GitFileStatus::Modified => "M",
+                                            GitFileStatus::Conflict => "C",
+                                        })
+                                        .size(LabelSize::Small)
+                                        .weight(match git_symbol_weight {
+                                            GitSymbolWeightSettings::Normal => FontWeight::NORMAL,
+                                            GitSymbolWeightSettings::Bold => FontWeight::BOLD,
+                                        })
+                                        .color(
+                                            if git_symbol_colored {
+                                                match git_status {
+                                                    GitFileStatus::Added => Color::Created,
+                                                    GitFileStatus::Modified => Color::Modified,
+                                                    GitFileStatus::Conflict => Color::Conflict,
+                                                }
+                                            } else {
+                                                Color::Muted
+                                            },
+                                        ),
+                                    )
+                                    .into_any_element(),
+                            )
+                        })
+                    })
                     .when_some(canonical_path, |this, path| {
                         this.end_slot::<AnyElement>(
                             div()
