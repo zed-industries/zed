@@ -46,11 +46,11 @@ main() {
         }
     elif which wget >/dev/null 2>&1; then
         curl () {
-    	    wget -O- "$@"
+            wget -O- "$@"
         }
     else
-    	echo "Could not find 'curl' or 'wget' in your path"
-    	exit 1
+        echo "Could not find 'curl' or 'wget' in your path"
+        exit 1
     fi
 
     "$platform" "$@"
@@ -77,7 +77,7 @@ main() {
 
         echo "To run Zed now, '~/.local/bin/zed'"
     else
-	    echo "Uninstall completed."
+        echo "Uninstall completed."
     fi
 }
 
