@@ -25,5 +25,5 @@ enable = false
 "/assistant.html" = "/docs/assistant/assistant.html"
 
 [preprocessor.zed-docs-preprocessor]
-command = "cargo run --manifest-path=docs-preprocessor/Cargo.toml --"
+command = "cargo run --manifest-path=../crates/docs-preprocessor/Cargo.toml --"
 renderer = ["html"]
