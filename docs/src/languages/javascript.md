@@ -15,7 +15,7 @@ For example, if you have Prettier installed and on your `PATH`, you can use it t
 {
   "languages": {
     "JavaScript": {
-      "format_on_save": {
+      "formatter": {
         "external": {
           "command": "prettier",
           "arguments": ["--stdin-filepath", "{buffer_path}"]
