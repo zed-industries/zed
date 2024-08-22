@@ -23,7 +23,7 @@ mod windows;
 use crate::{
     point, Action, AnyWindowHandle, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds,
     DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
-    GPUSpecs, GlyphId, ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point,
+    GPUSpecs, GlyphId, ImageId, ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point,
     RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, SharedString, Size,
     SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
 };
@@ -1013,6 +1013,19 @@ impl ClipboardItem {
             entries: vec![ClipboardEntry::String(
                 ClipboardString::new(text).with_json_metadata(metadata),
             )],
+        }
+    }
+
+    /// Create a new ClipboardItem::Image with the given image with no associated metadata
+    pub fn new_image_from_bytes(bytes: Vec<u8>, format: ImageFormat, id: ImageId) -> Self {
+        let image = Image {
+            bytes,
+            format,
+            id: id.0 as u64,
+        };
+
+        Self {
+            entries: vec![ClipboardEntry::Image(image)],
         }
     }
 

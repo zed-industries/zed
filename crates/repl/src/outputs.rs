@@ -5,8 +5,8 @@ use crate::stdio::TerminalOutput;
 use anyhow::Result;
 use base64::prelude::*;
 use gpui::{
-    img, percentage, Animation, AnimationExt, AnyElement, ClipboardItem, FontWeight, Render,
-    RenderImage, Task, TextRun, Transformation, View,
+    img, percentage, Animation, AnimationExt, AnyElement, ClipboardItem, FontWeight, ImageFormat,
+    Render, RenderImage, Task, TextRun, Transformation, View,
 };
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
@@ -36,6 +36,7 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
 
 /// ImageView renders an image inline in an editor, adapting to the line height to fit the image.
 pub struct ImageView {
+    clipboard_content: ClipboardItem,
     height: u32,
     width: u32,
     image: Arc<RenderImage>,
@@ -78,11 +79,31 @@ impl ImageView {
 
         let gpui_image_data = RenderImage::new(vec![image::Frame::new(data)]);
 
+        let format = match format {
+            image::ImageFormat::Png => ImageFormat::Png,
+            image::ImageFormat::Jpeg => ImageFormat::Jpeg,
+            image::ImageFormat::Gif => ImageFormat::Gif,
+            image::ImageFormat::WebP => ImageFormat::Webp,
+            image::ImageFormat::Tiff => ImageFormat::Tiff,
+            image::ImageFormat::Bmp => ImageFormat::Bmp,
+            _ => {
+                return Err(anyhow::anyhow!("unsupported image format"));
+            }
+        };
+
+        let clipboard_content =
+            ClipboardItem::new_image_from_bytes(bytes, format, gpui_image_data.id);
+
         return Ok(ImageView {
+            clipboard_content,
             height,
             width,
             image: Arc::new(gpui_image_data),
         });
+    }
+
+    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+        Some(self.clipboard_content.clone())
     }
 }
 
@@ -437,7 +458,7 @@ impl Output {
         match &self.content {
             OutputContent::Plain(terminal) => terminal.clipboard_content(cx),
             OutputContent::Stream(terminal) => terminal.clipboard_content(cx),
-            OutputContent::Image(_) => None,
+            OutputContent::Image(image) => image.clipboard_content(cx),
             OutputContent::ErrorOutput(error) => error.traceback.clipboard_content(cx),
             OutputContent::Message(_) => None,
             OutputContent::Table(table) => table.clipboard_content(cx),
