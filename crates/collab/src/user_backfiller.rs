@@ -75,8 +75,8 @@ impl UserBackfiller {
         for user in users_missing_github_user_created_at {
             match self
                 .fetch_github_user(&format!(
-                    "https://api.github.com/users/{}",
-                    user.github_login
+                    "https://api.github.com/user/{}",
+                    user.github_user_id
                 ))
                 .await
             {
