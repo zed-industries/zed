@@ -1,8 +1,8 @@
+use anyhow::{Context, Result};
 use clap::{Arg, ArgMatches, Command};
 use docs_preprocessor::ZedDocsPreprocessor;
-use mdbook::errors::Error;
 use mdbook::preprocess::{CmdPreprocessor, Preprocessor};
-use std::io;
+use std::io::{self, Read, Write};
 use std::process;
 
 pub fn make_app() -> Command {
@@ -15,30 +15,30 @@ pub fn make_app() -> Command {
         )
 }
 
-fn main() {
+fn main() -> Result<()> {
     let matches = make_app().get_matches();
 
-    // Create the preprocessor
-    let preprocessor = match ZedDocsPreprocessor::new() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Error creating preprocessor: {}", e);
-            process::exit(1);
-        }
-    };
+    let preprocessor =
+        ZedDocsPreprocessor::new().context("Failed to create ZedDocsPreprocessor")?;
 
     if let Some(sub_args) = matches.subcommand_matches("supports") {
         handle_supports(&preprocessor, sub_args);
-    } else if let Err(e) = handle_preprocessing(&preprocessor) {
-        eprintln!("{}", e);
-        process::exit(1);
+    } else {
+        handle_preprocessing(&preprocessor)?;
     }
+
+    Ok(())
 }
 
-fn handle_preprocessing(pre: &dyn Preprocessor) -> Result<(), Error> {
-    let (ctx, book) = CmdPreprocessor::parse_input(io::stdin())?;
+fn handle_preprocessing(pre: &dyn Preprocessor) -> Result<()> {
+    let mut stdin = io::stdin();
+    let mut input = String::new();
+    stdin.read_to_string(&mut input)?;
+
+    let (ctx, book) = CmdPreprocessor::parse_input(input.as_bytes())?;
 
     let processed_book = pre.run(&ctx, book)?;
+
     serde_json::to_writer(io::stdout(), &processed_book)?;
 
     Ok(())
@@ -50,7 +50,6 @@ fn handle_supports(pre: &dyn Preprocessor, sub_args: &ArgMatches) -> ! {
         .expect("Required argument");
     let supported = pre.supports_renderer(renderer);
 
-    // Signal whether the renderer is supported by exiting with 1 or 0.
     if supported {
         process::exit(0);
     } else {

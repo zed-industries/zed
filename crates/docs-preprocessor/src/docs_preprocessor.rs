@@ -1,34 +1,36 @@
 use anyhow::Result;
 use mdbook::book::{Book, BookItem};
 use mdbook::errors::Error;
-use mdbook::preprocess::{Preprocessor, PreprocessorContext};
-use regex::Regex;
-use settings::{KeymapFile, SettingsAssets};
+use mdbook::preprocess::{Preprocessor, PreprocessorContext as MdBookContext};
+use settings::KeymapFile;
+use std::sync::Arc;
 use util::asset_str;
 
-/// A preprocessor for the Zed documentation.
-pub struct ZedDocsPreprocessor {
-    macos_keymap: KeymapFile,
-    linux_keymap: KeymapFile,
+mod templates;
+use templates::{KeybindingTemplate, Template};
+
+pub struct PreprocessorContext {
+    macos_keymap: Arc<KeymapFile>,
+    linux_keymap: Arc<KeymapFile>,
 }
 
-impl ZedDocsPreprocessor {
+impl PreprocessorContext {
     pub fn new() -> Result<Self> {
-        let macos_keymap = Self::load_keymap("keymaps/default-macos.json")?;
-        let linux_keymap = Self::load_keymap("keymaps/default-linux.json")?;
-
+        let macos_keymap = Arc::new(load_keymap("keymaps/default-macos.json")?);
+        let linux_keymap = Arc::new(load_keymap("keymaps/default-linux.json")?);
         Ok(Self {
             macos_keymap,
             linux_keymap,
         })
     }
 
-    fn load_keymap(asset_path: &str) -> Result<KeymapFile> {
-        let content = asset_str::<SettingsAssets>(asset_path);
-        KeymapFile::parse(content.as_ref())
-    }
+    pub fn find_binding(&self, os: &str, action: &str) -> Option<String> {
+        let keymap = match os {
+            "macos" => &self.macos_keymap,
+            "linux" => &self.linux_keymap,
+            _ => return None,
+        };
 
-    fn find_binding(&self, keymap: &KeymapFile, action: &str) -> Option<String> {
         keymap.blocks().iter().find_map(|block| {
             block.bindings().iter().find_map(|(keystroke, a)| {
                 if a.to_string() == action {
@@ -39,23 +41,34 @@ impl ZedDocsPreprocessor {
             })
         })
     }
+}
 
-    fn process_keybindings(&self, content: &str) -> String {
-        let keybinding_regex = Regex::new(r"\{\{#keybinding key: (.+?)\}\}").unwrap();
+fn load_keymap(asset_path: &str) -> Result<KeymapFile> {
+    let content = asset_str::<settings::SettingsAssets>(asset_path);
+    KeymapFile::parse(content.as_ref())
+}
 
-        keybinding_regex
-            .replace_all(content, |caps: &regex::Captures| {
-                let action = &caps[1];
-                let macos_binding = self
-                    .find_binding(&self.macos_keymap, action)
-                    .unwrap_or_default();
-                let linux_binding = self
-                    .find_binding(&self.linux_keymap, action)
-                    .unwrap_or_default();
+pub struct ZedDocsPreprocessor {
+    context: PreprocessorContext,
+    templates: Vec<Box<dyn Template>>,
+}
 
-                format!("<kbd class=\"keybinding\">{macos_binding}|{linux_binding}</kbd>")
-            })
-            .to_string()
+impl ZedDocsPreprocessor {
+    pub fn new() -> Result<Self> {
+        let context = PreprocessorContext::new()?;
+        let templates: Vec<Box<dyn Template>> = vec![
+            Box::new(KeybindingTemplate::new()),
+            // Add more templates here as needed
+        ];
+        Ok(Self { context, templates })
+    }
+
+    fn process_content(&self, content: &str) -> String {
+        let mut processed = content.to_string();
+        for template in &self.templates {
+            processed = template.process(&self.context, &processed);
+        }
+        processed
     }
 }
 
@@ -64,13 +77,12 @@ impl Preprocessor for ZedDocsPreprocessor {
         "zed-docs-preprocessor"
     }
 
-    fn run(&self, _ctx: &PreprocessorContext, mut book: Book) -> Result<Book, Error> {
+    fn run(&self, _ctx: &MdBookContext, mut book: Book) -> Result<Book, Error> {
         book.for_each_mut(|item| {
             if let BookItem::Chapter(chapter) = item {
-                chapter.content = self.process_keybindings(&chapter.content);
+                chapter.content = self.process_content(&chapter.content);
             }
         });
-
         Ok(book)
     }
 
