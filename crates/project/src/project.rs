@@ -7829,7 +7829,44 @@ impl Project {
                     .map(|(path, _)| path.clone())
             })
         } else {
-            Task::ready(None)
+            let path = PathBuf::from(path);
+            if path.is_absolute() || path.starts_with("~") {
+                return Task::ready(None);
+            }
+
+            let mut candidates = vec![path.clone()];
+
+            if let Some(file) = buffer.read(cx).file() {
+                if let Some(dir) = file.abs_path(cx).parent() {
+                    let joined = dir.to_path_buf().join(path);
+                    candidates.push(joined);
+                }
+            }
+
+            let worktrees = self.worktrees(cx).collect::<Vec<_>>();
+            cx.spawn(|_, mut cx| async move {
+                for worktree in worktrees {
+                    for candidate in candidates.iter() {
+                        let exists = worktree
+                            .update(&mut cx, |worktree, _| {
+                                let root_entry_path = &worktree.root_entry().unwrap().path;
+
+                                let resolved = resolve_path(&root_entry_path, candidate);
+
+                                let stripped =
+                                    resolved.strip_prefix(&root_entry_path).unwrap_or(&resolved);
+
+                                worktree.entry_for_path(stripped).is_some()
+                            })
+                            .ok()?;
+
+                        if exists {
+                            return Some(candidate.clone());
+                        }
+                    }
+                }
+                None
+            })
         }
     }
 
