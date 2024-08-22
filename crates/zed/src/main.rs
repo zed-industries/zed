@@ -269,7 +269,6 @@ fn init_ui(
     settings_ui::init(cx);
     extensions_ui::init(cx);
     performance::init(cx);
-    // TODO init indexer, which kicks off an initial indexing
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
