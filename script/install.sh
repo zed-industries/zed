@@ -12,6 +12,12 @@ main() {
     channel="${ZED_CHANNEL:-stable}"
     temp="$(mktemp -d "/tmp/zed-XXXXXX")"
 
+    [ "$operation" = install ] || [ "$operation" = uninstall ] || {
+        echo "Unknown operation '$operation'"
+        echo "Available operations: 'install' 'uninstall'"
+        exit 1
+    }
+
     if [ "$platform" = "Darwin" ]; then
         platform="macos"
     elif [ "$platform" = "Linux" ]; then
