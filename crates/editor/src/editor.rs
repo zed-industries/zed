@@ -9242,7 +9242,6 @@ impl Editor {
                     if let Some(workspace) = self.workspace() {
                         cx.spawn(|_, mut cx| async move {
                             let open_paths_task = workspace.update(&mut cx, |workspace, cx| {
-                                // let a = workspace.open_abs_paths(vec![]);
                                 let pane = workspace.active_pane().clone().downgrade();
                                 workspace.open_paths(vec![path], OpenVisible::All, Some(pane), cx)
                             })?;

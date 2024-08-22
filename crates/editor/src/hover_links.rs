@@ -718,7 +718,7 @@ pub(crate) async fn find_file(
 
     let existing_path = project
         .update(cx, |project, cx| {
-            project.file_exists_in(&candidate_file_path, &buffer, cx)
+            project.resolve_existing_file_path(&candidate_file_path, &buffer, cx)
         })
         .ok()?
         .await?;

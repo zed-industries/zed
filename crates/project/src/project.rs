@@ -7777,12 +7777,17 @@ impl Project {
     }
 
     // Returns the expanded version of `path`, that was found in `buffer`, if it exists.
-    pub fn file_exists_in(
+    pub fn resolve_existing_file_path(
         &self,
         path: &str,
         buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Option<PathBuf>> {
+        // TODO: ssh based remoting.
+        if self.ssh_session.is_some() {
+            return Task::ready(None);
+        }
+
         if self.is_local() {
             let mut search_paths = vec![];
 
