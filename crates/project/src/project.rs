@@ -7776,7 +7776,7 @@ impl Project {
         }
     }
 
-    // Returns the expanded version of `path`, that was found in `buffer`, if it exists.
+    // Returns the resolved version of `path`, that was found in `buffer`, if it exists.
     pub fn resolve_existing_file_path(
         &self,
         path: &str,
@@ -7789,91 +7789,73 @@ impl Project {
         }
 
         if self.is_local() {
-            let mut search_paths = vec![];
+            let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
 
-            // The buffers parent dir should be first in the search path
-            if let Some(file) = buffer.read(cx).file() {
-                if let Some(dir) = file.abs_path(cx).parent() {
-                    search_paths.push(dir.to_path_buf());
-                }
+            if expanded.is_absolute() {
+                let fs = self.fs.clone();
+                cx.background_executor().spawn(async move {
+                    let path = expanded.as_path();
+                    let exists = fs.is_file(path).await;
+
+                    exists.then(|| ResolvedPath::AbsPath(expanded))
+                })
+            } else {
+                self.resolve_path_in_worktrees(expanded, buffer, cx)
             }
-
-            search_paths.extend(
-                self.worktrees(cx)
-                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf()),
-            );
-
-            let expanded = shellexpand::tilde(&path).into_owned();
-
-            let fs = self.fs.clone();
-            cx.background_executor().spawn(async move {
-                let candidate_paths = search_paths
-                    .into_iter()
-                    .map(|search_path| search_path.join(PathBuf::from(&expanded)));
-
-                let tasks = candidate_paths
-                    .map(|candidate_path| {
-                        let fs = fs.clone();
-                        async move {
-                            let path = Path::new(&candidate_path);
-                            let exists = fs.is_file(path).await;
-                            (candidate_path, exists)
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                futures::future::join_all(tasks)
-                    .await
-                    .into_iter()
-                    .find(|(_, exists)| *exists)
-                    // TODO: If we have a worktree, we need to return that
-                    .map(|(path, _)| ResolvedPath::AbsPath(path.clone()))
-            })
         } else {
             let path = PathBuf::from(path);
             if path.is_absolute() || path.starts_with("~") {
                 return Task::ready(None);
             }
 
-            let mut candidates = vec![path.clone()];
+            self.resolve_path_in_worktrees(path, buffer, cx)
+        }
+    }
 
-            if let Some(file) = buffer.read(cx).file() {
-                if let Some(dir) = file.abs_path(cx).parent() {
-                    let joined = dir.to_path_buf().join(path);
-                    candidates.push(joined);
-                }
+    fn resolve_path_in_worktrees(
+        &self,
+        path: PathBuf,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<ResolvedPath>> {
+        let mut candidates = vec![path.clone()];
+
+        if let Some(file) = buffer.read(cx).file() {
+            if let Some(dir) = file.abs_path(cx).parent() {
+                let joined = dir.to_path_buf().join(path);
+                candidates.push(joined);
             }
+        }
 
-            let worktrees = self.worktrees(cx).collect::<Vec<_>>();
-            cx.spawn(|_, mut cx| async move {
-                for worktree in worktrees {
-                    for candidate in candidates.iter() {
-                        let path = worktree
-                            .update(&mut cx, |worktree, _| {
-                                let root_entry_path = &worktree.root_entry().unwrap().path;
+        let worktrees = self.worktrees(cx).collect::<Vec<_>>();
+        cx.spawn(|_, mut cx| async move {
+            for worktree in worktrees {
+                for candidate in candidates.iter() {
+                    let path = worktree
+                        .update(&mut cx, |worktree, _| {
+                            let root_entry_path = &worktree.root_entry().unwrap().path;
 
-                                let resolved = resolve_path(&root_entry_path, candidate);
+                            let resolved = resolve_path(&root_entry_path, candidate);
 
-                                let stripped =
-                                    resolved.strip_prefix(&root_entry_path).unwrap_or(&resolved);
+                            let stripped =
+                                resolved.strip_prefix(&root_entry_path).unwrap_or(&resolved);
 
-                                worktree.entry_for_path(stripped).map(|entry| {
-                                    ResolvedPath::ProjectPath(ProjectPath {
-                                        worktree_id: worktree.id(),
-                                        path: entry.path.clone(),
-                                    })
+                            worktree.entry_for_path(stripped).map(|entry| {
+                                ResolvedPath::ProjectPath(ProjectPath {
+                                    worktree_id: worktree.id(),
+                                    path: entry.path.clone(),
                                 })
                             })
-                            .ok()?;
+                        })
+                        .ok()?;
 
-                        if path.is_some() {
-                            return path;
-                        }
+                    if path.is_some() {
+                        return path;
                     }
                 }
-                None
-            })
-        }
+            }
+            None
+        })
     }
 
     pub fn list_directory(
