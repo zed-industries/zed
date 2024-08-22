@@ -2351,6 +2351,7 @@ dependencies = [
  "thiserror",
  "time",
  "tiny_http",
+ "tokio-socks",
  "url",
  "util",
  "windows 0.58.0",
@@ -11347,6 +11348,18 @@ checksum = "c28327cf380ac148141087fbfb9de9d7bd4e84ab5d2c28fbc911d753de8a7081"
 dependencies = [
  "rustls",
  "tokio",
+]
+
+[[package]]
+name = "tokio-socks"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d4770b8024672c1101b3f6733eab95b18007dbe0847a8afe341fcf79e06043f"
+dependencies = [
+ "either",
+ "futures-io",
+ "futures-util",
+ "thiserror",
 ]
 
 [[package]]
