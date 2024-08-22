@@ -325,6 +325,7 @@ struct MacWindowState {
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
     last_key_equivalent: Option<KeyDownEvent>,
+    last_ime_inputs: Option<SmallVec<[ImeInput; 1]>>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     previous_modifiers_changed_event: Option<PlatformInput>,
@@ -601,6 +602,7 @@ impl MacWindow {
                 appearance_changed_callback: None,
                 input_handler: None,
                 last_key_equivalent: None,
+                last_ime_inputs: None,
                 synthetic_drag_counter: 0,
                 traffic_light_position: titlebar
                     .as_ref()
@@ -1218,7 +1220,7 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 //   - in vim mode `option-4`  should go to end of line (same as $)
 //  Japanese (Romaji) layout:
 //   - type `a i left down up enter enter` should create an unmarked text "愛"
-//   - (Currently does not work) In vim mode, with this keybinding:
+//   - In vim mode, with this keybinding:
 //     ```
 //        {
 //          "context": "vim_mode == insert",
@@ -1241,7 +1243,7 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 //   - In vim's normal mode, typing `r r` should change the character under the cursor to "к".
 //     (Currently vim mode does not work in the Russian layout)
 //  Chinese (Pinyin - Simplified/Traditional) layout:
-//   - In vim's normal/visual mode, typing should not open the IME's candidate list.
+//   - In vim's normal/visual mode, typing should not open the IME's candidate list. (Currently not working)
 //  Vim mode (especially check for 2-Set-Korean, Russian, and U.S. layout)
 //   - In vim's normal mode, commands `h`, `j`, `k`, `l`, `^`, `$`, `A`, `I` should work correctly.
 //   - In vim's normal mode, typing `d i b` should delete the contents inside the parentheses.
@@ -1264,6 +1266,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         } else if lock.last_key_equivalent.take().as_ref() == Some(&event) {
             return NO;
         }
+        let last_ime_inputs = lock.last_ime_inputs.take();
         drop(lock);
 
         let input_context: id = unsafe { msg_send![this, inputContext] };
@@ -1279,15 +1282,29 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
             None
         };
 
-        let previously_ime_had_nonempty_selected_range =
-            with_input_handler(this, |handler| handler.selected_text_range())
+        let skip_event_handling = {
+            let previous_key_may_closed_candidates_list =
+                last_ime_inputs.is_some_and(|inputs| inputs.is_empty());
+
+            let previously_ime_had_nonempty_replacement_range =
+                with_input_handler(this, |handler| {
+                    Option::zip(handler.selected_text_range(), handler.marked_text_range())
+                })
                 .flatten()
-                .is_some_and(|range| !range.is_empty());
-        let currently_ime_composing = simulated_ime_state
-            .as_ref()
-            .map_or(false, |state| state.marked_range.is_some());
+                .is_some_and(|(selected, marked)| usize::max(selected.len(), marked.len()) > 0);
+
+            let currently_ime_composing = simulated_ime_state
+                .as_ref()
+                .is_some_and(|state| state.marked_range.is_some());
+
+            currently_ime_composing
+                || (previously_ime_had_nonempty_replacement_range
+                    && previous_key_may_closed_candidates_list)
+        };
 
         let simulated_inputs = simulated_ime_state.map_or(SmallVec::new(), |state| state.inputs);
+        window_state.lock().last_ime_inputs = Some(simulated_inputs.clone());
+
         event.keystroke.ime_inputs = simulated_inputs.clone();
         if let Some(ImeInput::InsertText(None, ime_key)) = simulated_inputs.last() {
             event.keystroke.ime_key = Some(ime_key.clone());
@@ -1295,7 +1312,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
         let mut handled = false;
 
-        if !currently_ime_composing && !previously_ime_had_nonempty_selected_range {
+        if !skip_event_handling {
             handled |= send_new_event(window_state.as_ref(), PlatformInput::KeyDown(event))
                 .unwrap_or(false);
         }
