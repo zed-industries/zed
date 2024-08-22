@@ -301,7 +301,7 @@ impl DirectWriteState {
                         continue;
                     };
                     if fonts.GetFontCount() == 0 {
-                        log::error!("No mathcing font find for {}", family_name);
+                        log::error!("No matching font found for {}", family_name);
                         continue;
                     }
                     let font = fonts.GetFontFaceReference(0)?.CreateFontFace()?;

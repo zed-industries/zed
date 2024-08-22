@@ -131,7 +131,7 @@ message Envelope {
         UpdateUserPlan update_user_plan = 234;
         UpdateDiffBase update_diff_base = 104;
         AcceptTermsOfService accept_terms_of_service = 239;
-        AcceptTermsOfServiceResponse accept_terms_of_service_response = 240; // current max
+        AcceptTermsOfServiceResponse accept_terms_of_service_response = 240;
 
         OnTypeFormatting on_type_formatting = 105;
         OnTypeFormattingResponse on_type_formatting_response = 106;
@@ -264,15 +264,18 @@ message Envelope {
 
         GetSignatureHelp get_signature_help = 217;
         GetSignatureHelpResponse get_signature_help_response = 218;
+
         ListRemoteDirectory list_remote_directory = 219;
         ListRemoteDirectoryResponse list_remote_directory_response = 220;
         UpdateDevServerProject update_dev_server_project = 221;
-
         AddWorktree add_worktree = 222;
         AddWorktreeResponse add_worktree_response = 223;
 
         GetLlmToken get_llm_token = 235;
         GetLlmTokenResponse get_llm_token_response = 236;
+
+        LspExtSwitchSourceHeader lsp_ext_switch_source_header = 241;
+        LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242; // current max
     }
 
     reserved 158 to 161;
@@ -2074,6 +2077,15 @@ message LspExtExpandMacro {
 message LspExtExpandMacroResponse {
     string name = 1;
     string expansion = 2;
+}
+
+message LspExtSwitchSourceHeader {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message LspExtSwitchSourceHeaderResponse {
+    string target_file = 1;
 }
 
 message SetRoomParticipantRole {
