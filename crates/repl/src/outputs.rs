@@ -5,8 +5,8 @@ use crate::stdio::TerminalOutput;
 use anyhow::Result;
 use base64::prelude::*;
 use gpui::{
-    img, percentage, Animation, AnimationExt, AnyElement, FontWeight, Render, RenderImage, Task,
-    TextRun, Transformation, View,
+    img, percentage, Animation, AnimationExt, AnyElement, ClipboardItem, FontWeight, Render,
+    RenderImage, Task, TextRun, Transformation, View,
 };
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
@@ -358,6 +358,19 @@ impl Output {
             display_id: None,
         }
     }
+
+    pub fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem> {
+        match &self.content {
+            OutputContent::Plain(terminal) => terminal.clipboard_content(cx),
+            OutputContent::Stream(terminal) => terminal.clipboard_content(cx),
+            OutputContent::Image(_) => None,
+            OutputContent::ErrorOutput(_) => None,
+            OutputContent::Message(_) => None,
+            OutputContent::Table(_) => None,
+            OutputContent::Markdown(_) => None,
+            OutputContent::ClearOutputWaitMarker => None,
+        }
+    }
 }
 
 pub enum OutputContent {
@@ -638,11 +651,35 @@ impl Render for ExecutionView {
 
         div()
             .w_full()
-            .children(
-                self.outputs
-                    .iter()
-                    .filter_map(|output| output.content.render(cx)),
-            )
+            .children(self.outputs.iter().enumerate().map(|(index, output)| {
+                let clipboard_content = output.clipboard_content(cx);
+
+                div()
+                    .relative()
+                    .w_full()
+                    .child(
+                        output
+                            .content
+                            .render(cx)
+                            .unwrap_or_else(|| div().into_any_element()),
+                    )
+                    .when_some(clipboard_content, |el, clipboard_content| {
+                        el.child(
+                            div().child(
+                                Button::new(
+                                    ElementId::Name(format!("copy-output-{}", index).into()),
+                                    "Copy",
+                                )
+                                .style(ButtonStyle::Transparent)
+                                .on_click(cx.listener(
+                                    move |_, _, cx| {
+                                        cx.write_to_clipboard(clipboard_content.clone());
+                                    },
+                                )),
+                            ),
+                        )
+                    })
+            }))
             .children(match self.status {
                 ExecutionStatus::Executing => vec![status],
                 ExecutionStatus::Queued => vec![status],
