@@ -529,8 +529,8 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
             save_intent: Some(SaveIntent::Overwrite),
         }),
         VimCommand::new(("cq", "uit"), zed_actions::Quit),
-        VimCommand::new(("sp", "lit"), workspace::SplitUp),
-        VimCommand::new(("vs", "plit"), workspace::SplitLeft),
+        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal),
+        VimCommand::new(("vs", "plit"), workspace::SplitVertical),
         VimCommand::new(
             ("bd", "elete"),
             workspace::CloseActiveItem {
