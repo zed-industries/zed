@@ -36,7 +36,7 @@ use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrev};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
 use project::{File, Fs, Item, Project};
-use search::ProjectSearchView;
+use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use theme::SyntaxTheme;
@@ -106,6 +106,7 @@ pub struct OutlinePanel {
     cached_entries_with_depth: Vec<CachedEntry>,
     filter_editor: View<Editor>,
     mode: ItemsDisplayMode,
+    search_query: Option<String>,
 }
 
 #[derive(Debug)]
@@ -442,6 +443,7 @@ impl OutlinePanel {
                 filter_editor,
                 fs_entries: Vec::new(),
                 search_matches: Vec::new(),
+                search_query: None,
                 fs_entries_depth: HashMap::default(),
                 fs_children_count: HashMap::default(),
                 collapsed_entries: HashSet::default(),
@@ -2076,6 +2078,7 @@ impl OutlinePanel {
         self.excerpts.clear();
         self.cached_entries_with_depth = Vec::new();
         self.search_matches.clear();
+        self.search_query = None;
         self.pinned = false;
     }
 
@@ -2904,10 +2907,21 @@ impl OutlinePanel {
 
     fn update_search_matches(&mut self, cx: &mut ViewContext<OutlinePanel>) {
         let active_editor = self.active_editor();
-        let project_search_matches = self
-            .active_project_search(active_editor.as_ref(), cx)
+        let project_search = self.active_project_search(active_editor.as_ref(), cx);
+        let project_search_matches = project_search
+            .as_ref()
             .map(|project_search| project_search.read(cx).get_matches(cx))
             .unwrap_or_default();
+
+        let buffer_search = active_editor
+            .as_ref()
+            .and_then(|active_editor| self.workspace.read(cx).pane_for(active_editor))
+            .and_then(|pane| {
+                pane.read(cx)
+                    .toolbar()
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>()
+            });
         let buffer_search_matches = active_editor
             .map(|active_editor| active_editor.update(cx, |editor, cx| editor.get_matches(cx)))
             .unwrap_or_default();
@@ -2915,14 +2929,19 @@ impl OutlinePanel {
         let mut update_cached_entries = false;
         if buffer_search_matches.is_empty() && project_search_matches.is_empty() {
             self.search_matches.clear();
+            self.search_query = None;
             if self.mode == ItemsDisplayMode::Search {
                 self.mode = ItemsDisplayMode::Outline;
                 update_cached_entries = true;
             }
         } else {
             let new_search_matches = if buffer_search_matches.is_empty() {
+                self.search_query = project_search
+                    .map(|project_search| project_search.read(cx).search_query_text(cx));
                 project_search_matches
             } else {
+                self.search_query =
+                    buffer_search.map(|buffer_search| buffer_search.read(cx).query(cx));
                 buffer_search_matches
             };
             update_cached_entries = self.mode != ItemsDisplayMode::Search
@@ -3353,72 +3372,84 @@ impl Render for OutlinePanel {
                     ),
             )
         } else {
-            outline_panel.child({
-                let items_len = self.cached_entries_with_depth.len();
-                uniform_list(cx.view().clone(), "entries", items_len, {
-                    move |outline_panel, range, cx| {
-                        let entries = outline_panel.cached_entries_with_depth.get(range);
-                        entries
-                            .map(|entries| entries.to_vec())
-                            .unwrap_or_default()
-                            .into_iter()
-                            .filter_map(|cached_entry| match cached_entry.entry {
-                                PanelEntry::Fs(entry) => Some(outline_panel.render_entry(
-                                    &entry,
-                                    cached_entry.depth,
-                                    cached_entry.string_match.as_ref(),
-                                    cx,
-                                )),
-                                PanelEntry::FoldedDirs(worktree_id, entries) => {
-                                    Some(outline_panel.render_folded_dirs(
-                                        worktree_id,
-                                        &entries,
+            outline_panel
+                .when_some(self.search_query.as_ref(), |outline_panel, search_query| {
+                    outline_panel.child(
+                        div()
+                            .mx_2()
+                            .child(
+                                Label::new(format!("Searching: '{search_query}'"))
+                                    .color(Color::Muted),
+                            )
+                            .child(horizontal_separator(cx)),
+                    )
+                })
+                .child({
+                    let items_len = self.cached_entries_with_depth.len();
+                    uniform_list(cx.view().clone(), "entries", items_len, {
+                        move |outline_panel, range, cx| {
+                            let entries = outline_panel.cached_entries_with_depth.get(range);
+                            entries
+                                .map(|entries| entries.to_vec())
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter_map(|cached_entry| match cached_entry.entry {
+                                    PanelEntry::Fs(entry) => Some(outline_panel.render_entry(
+                                        &entry,
                                         cached_entry.depth,
                                         cached_entry.string_match.as_ref(),
                                         cx,
-                                    ))
-                                }
-                                PanelEntry::Outline(OutlineEntry::Excerpt(
-                                    buffer_id,
-                                    excerpt_id,
-                                    excerpt,
-                                )) => outline_panel.render_excerpt(
-                                    buffer_id,
-                                    excerpt_id,
-                                    &excerpt,
-                                    cached_entry.depth,
-                                    cx,
-                                ),
-                                PanelEntry::Outline(OutlineEntry::Outline(
-                                    buffer_id,
-                                    excerpt_id,
-                                    outline,
-                                )) => Some(outline_panel.render_outline(
-                                    buffer_id,
-                                    excerpt_id,
-                                    &outline,
-                                    cached_entry.depth,
-                                    cached_entry.string_match.as_ref(),
-                                    cx,
-                                )),
-                                PanelEntry::Search(match_range, search_data) => outline_panel
-                                    .init_search_data(&match_range, &search_data, cx)
-                                    .map(|search_data| {
-                                        outline_panel.render_search_match(
-                                            &match_range,
-                                            search_data,
+                                    )),
+                                    PanelEntry::FoldedDirs(worktree_id, entries) => {
+                                        Some(outline_panel.render_folded_dirs(
+                                            worktree_id,
+                                            &entries,
                                             cached_entry.depth,
                                             cached_entry.string_match.as_ref(),
                                             cx,
-                                        )
-                                    }),
-                            })
-                            .collect()
-                    }
+                                        ))
+                                    }
+                                    PanelEntry::Outline(OutlineEntry::Excerpt(
+                                        buffer_id,
+                                        excerpt_id,
+                                        excerpt,
+                                    )) => outline_panel.render_excerpt(
+                                        buffer_id,
+                                        excerpt_id,
+                                        &excerpt,
+                                        cached_entry.depth,
+                                        cx,
+                                    ),
+                                    PanelEntry::Outline(OutlineEntry::Outline(
+                                        buffer_id,
+                                        excerpt_id,
+                                        outline,
+                                    )) => Some(outline_panel.render_outline(
+                                        buffer_id,
+                                        excerpt_id,
+                                        &outline,
+                                        cached_entry.depth,
+                                        cached_entry.string_match.as_ref(),
+                                        cx,
+                                    )),
+                                    PanelEntry::Search(match_range, search_data) => outline_panel
+                                        .init_search_data(&match_range, &search_data, cx)
+                                        .map(|search_data| {
+                                            outline_panel.render_search_match(
+                                                &match_range,
+                                                search_data,
+                                                cached_entry.depth,
+                                                cached_entry.string_match.as_ref(),
+                                                cx,
+                                            )
+                                        }),
+                                })
+                                .collect()
+                        }
+                    })
+                    .size_full()
+                    .track_scroll(self.scroll_handle.clone())
                 })
-                .size_full()
-                .track_scroll(self.scroll_handle.clone())
-            })
         }
         .children(self.context_menu.as_ref().map(|(menu, position, _)| {
             deferred(
@@ -3430,35 +3461,27 @@ impl Render for OutlinePanel {
             .with_priority(1)
         }))
         .child(
-            v_flex()
-                .child(div().mx_2().border_primary(cx).border_t_1())
-                .child(
-                    h_flex().p_2().child(self.filter_editor.clone()).child(
-                        div().border_1().child(
-                            IconButton::new(
-                                "outline-panel-menu",
-                                if pinned {
-                                    IconName::Unpin
-                                } else {
-                                    IconName::Pin
-                                },
-                            )
-                            .tooltip(move |cx| {
-                                Tooltip::text(
-                                    if pinned { "Unpin" } else { "Pin active editor" },
-                                    cx,
-                                )
-                            })
-                            .shape(IconButtonShape::Square)
-                            .on_click(cx.listener(
-                                |outline_panel, _, cx| {
-                                    outline_panel
-                                        .toggle_active_editor_pin(&ToggleActiveEditorPin, cx);
-                                },
-                            )),
-                        ),
+            v_flex().child(horizontal_separator(cx)).child(
+                h_flex().p_2().child(self.filter_editor.clone()).child(
+                    div().border_1().child(
+                        IconButton::new(
+                            "outline-panel-menu",
+                            if pinned {
+                                IconName::Unpin
+                            } else {
+                                IconName::Pin
+                            },
+                        )
+                        .tooltip(move |cx| {
+                            Tooltip::text(if pinned { "Unpin" } else { "Pin active editor" }, cx)
+                        })
+                        .shape(IconButtonShape::Square)
+                        .on_click(cx.listener(|outline_panel, _, cx| {
+                            outline_panel.toggle_active_editor_pin(&ToggleActiveEditorPin, cx);
+                        })),
                     ),
                 ),
+            ),
         )
     }
 }
@@ -3520,4 +3543,8 @@ fn empty_icon() -> AnyElement {
         .invisible()
         .flex_none()
         .into_any_element()
+}
+
+fn horizontal_separator(cx: &mut WindowContext) -> Div {
+    div().mx_2().border_primary(cx).border_t_1()
 }

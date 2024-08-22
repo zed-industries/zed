@@ -840,6 +840,10 @@ impl ProjectSearchView {
         }
     }
 
+    pub fn search_query_text(&self, cx: &WindowContext) -> String {
+        self.query_editor.read(cx).text(cx)
+    }
+
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
         let text = self.query_editor.read(cx).text(cx);
