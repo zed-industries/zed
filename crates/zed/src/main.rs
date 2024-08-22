@@ -396,9 +396,7 @@ fn main() {
     );
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
-        app.background_executor().spawn(async {
-            load_login_shell_environment().await.log_err();
-        })
+        Task::ready(())
     } else {
         app.background_executor().spawn(async {
             #[cfg(unix)]
@@ -1026,7 +1024,6 @@ async fn load_login_shell_environment() -> Result<()> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    println!("{}", stdout);
     if let Some(env_output_start) = stdout.find(marker) {
         let env_output = &stdout[env_output_start + marker.len()..];
 
