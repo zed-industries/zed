@@ -84,7 +84,7 @@ impl UserBackfiller {
                     self.db
                         .get_or_create_user_by_github_account(
                             &user.github_login,
-                            Some(github_user.id),
+                            github_user.id,
                             user.email_address.as_deref(),
                             Some(github_user.created_at),
                             initial_channel_id,
