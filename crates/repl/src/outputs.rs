@@ -14,7 +14,7 @@ use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
 use serde_json::Value;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
+use ui::{div, prelude::*, v_flex, IntoElement, Styled, Tooltip, ViewContext};
 
 use markdown_preview::{
     markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,
@@ -789,30 +789,34 @@ impl Render for ExecutionView {
         div()
             .w_full()
             .children(self.outputs.iter().enumerate().map(|(index, output)| {
-                div()
-                    .relative()
+                h_flex()
                     .w_full()
+                    .items_start()
                     .child(
-                        output
-                            .content
-                            .render(cx)
-                            .unwrap_or_else(|| div().into_any_element()),
+                        div().flex_1().child(
+                            output
+                                .content
+                                .render(cx)
+                                .unwrap_or_else(|| div().into_any_element()),
+                        ),
                     )
                     .when(output.has_clipboard_content(cx), |el| {
                         let clipboard_content = output.clipboard_content(cx);
 
                         el.child(
-                            div().child(
-                                Button::new(
+                            div().pl_1().child(
+                                IconButton::new(
                                     ElementId::Name(format!("copy-output-{}", index).into()),
-                                    "Copy",
+                                    IconName::Copy,
                                 )
                                 .style(ButtonStyle::Transparent)
+                                .tooltip(move |cx| Tooltip::text("Copy Output", cx))
                                 .on_click(cx.listener(
                                     move |_, _, cx| {
                                         if let Some(clipboard_content) = clipboard_content.as_ref()
                                         {
                                             cx.write_to_clipboard(clipboard_content.clone());
+                                            // todo!(): let the user know that the content was copied
                                         }
                                     },
                                 )),
