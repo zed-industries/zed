@@ -1461,7 +1461,7 @@ See Buffer Font Features
 ```jsonc
 {
   "terminal": {
-    "line_height": "comfortable"
+    "line_height": "comfortable",
   },
 }
 ```
@@ -1471,17 +1471,19 @@ See Buffer Font Features
 ```jsonc
 {
   "terminal": {
-    "line_height": "standard"
+    "line_height": "standard",
   },
 }
 ```
 
- 3. Use a custom line height.
+3.  Use a custom line height.
 
 ```jsonc
 {
   "terminal": {
-    "custom": 2
+    "line_height": {
+      "custom": 2,
+    },
   },
 }
 ```
