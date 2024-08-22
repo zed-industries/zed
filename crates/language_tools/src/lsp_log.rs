@@ -876,7 +876,6 @@ fn log_filter<T: Message>(line: &T, cmp: <T as Message>::Level) -> Option<&str> 
 }
 
 fn log_contents<T: Message>(lines: &VecDeque<T>, cmp: <T as Message>::Level) -> String {
-    println!("{cmp:?}");
     let (a, b) = lines.as_slices();
     let a = a.into_iter().filter_map(move |v| log_filter(v, cmp));
     let b = b.into_iter().filter_map(move |v| log_filter(v, cmp));
