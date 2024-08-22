@@ -698,10 +698,11 @@ impl Element for MarkdownElement {
                     _ => log::error!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {
-                    let (safe_text, start_index) =
-                        safe_markdown_slice(&parsed_markdown.source, range.clone());
-
-                    builder.push_text(safe_text, start_index);
+                    if let Some((safe_text, start_index)) =
+                        safe_markdown_slice(&parsed_markdown.source, range.clone())
+                    {
+                        builder.push_text(safe_text, start_index);
+                    }
                 }
                 MarkdownEvent::Code => {
                     builder.push_text_style(self.style.inline_code.clone());

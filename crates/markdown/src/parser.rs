@@ -123,10 +123,10 @@ pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
     events
 }
 
-pub fn safe_markdown_slice(source: &str, range: std::ops::Range<usize>) -> (&str, usize) {
+pub fn safe_markdown_slice(source: &str, range: std::ops::Range<usize>) -> Option<(&str, usize)> {
     let source_len = source.len();
     if range.start >= source_len {
-        return ("", source_len);
+        return None;
     }
 
     let adjusted_end = if range.end > source_len {
@@ -139,10 +139,10 @@ pub fn safe_markdown_slice(source: &str, range: std::ops::Range<usize>) -> (&str
 
     if source.is_char_boundary(adjusted_range.start) && source.is_char_boundary(adjusted_range.end)
     {
-        (&source[adjusted_range.clone()], adjusted_range.start)
-    } else {
-        ("", adjusted_range.start)
+        return Some((&source[adjusted_range.clone()], adjusted_range.start));
     }
+
+    None
 }
 
 /// A static-lifetime equivalent of pulldown_cmark::Event so we can cache the
