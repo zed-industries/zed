@@ -45,7 +45,7 @@ use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{EditorState, Mode, Operator, RecordedSelection, Register, WorkspaceState};
 use std::{ops::Range, sync::Arc};
 use surrounds::{add_surrounds, change_surrounds, delete_surrounds, SurroundsType};
-use ui::{BorrowAppContext, Context};
+use ui::BorrowAppContext;
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
 
@@ -1042,8 +1042,6 @@ impl Vim {
         }
         editor.remove_keymap_context_layer::<Self>(cx)
     }
-
-    fn d(&self) {}
 }
 
 impl Settings for VimModeSetting {
