@@ -2266,6 +2266,7 @@ dependencies = [
  "plist",
  "release_channel",
  "serde",
+ "tempfile",
  "util",
 ]
 
