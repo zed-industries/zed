@@ -372,7 +372,7 @@ pub enum SoftWrap {
     PreferLine,
     EditorWidth,
     Column(u32),
-    Smart(u32),
+    Bounded(u32),
 }
 
 #[derive(Clone)]
@@ -10410,7 +10410,7 @@ impl Editor {
         if settings.show_wrap_guides {
             if let SoftWrap::Column(soft_wrap) = self.soft_wrap_mode(cx) {
                 wrap_guides.push((soft_wrap as usize, true));
-            } else if let SoftWrap::Smart(soft_wrap) = self.soft_wrap_mode(cx) {
+            } else if let SoftWrap::Bounded(soft_wrap) = self.soft_wrap_mode(cx) {
                 wrap_guides.push((soft_wrap as usize, true));
             }
             wrap_guides.extend(settings.wrap_guides.iter().map(|guide| (*guide, false)))
@@ -10431,7 +10431,9 @@ impl Editor {
             language_settings::SoftWrap::PreferredLineLength => {
                 SoftWrap::Column(settings.preferred_line_length)
             }
-            language_settings::SoftWrap::Bounded => SoftWrap::Smart(settings.preferred_line_length),
+            language_settings::SoftWrap::Bounded => {
+                SoftWrap::Bounded(settings.preferred_line_length)
+            }
         }
     }
 
@@ -10473,7 +10475,7 @@ impl Editor {
         } else {
             let soft_wrap = match self.soft_wrap_mode(cx) {
                 SoftWrap::None | SoftWrap::PreferLine => language_settings::SoftWrap::EditorWidth,
-                SoftWrap::EditorWidth | SoftWrap::Column(_) | SoftWrap::Smart(_) => {
+                SoftWrap::EditorWidth | SoftWrap::Column(_) | SoftWrap::Bounded(_) => {
                     language_settings::SoftWrap::PreferLine
                 }
             };

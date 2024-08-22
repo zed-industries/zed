@@ -379,11 +379,11 @@ pub enum SoftWrap {
     None,
     /// Prefer a single line generally, unless an overly long line is encountered.
     PreferLine,
-    /// Soft wrap lines that overflow the editor
+    /// Soft wrap lines that exceed the editor width
     EditorWidth,
     /// Soft wrap lines at the preferred line length
     PreferredLineLength,
-    /// EditorWidth and PreferredLineLength min value
+    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller)
     Bounded,
 }
 

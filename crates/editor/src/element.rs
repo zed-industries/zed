@@ -4995,7 +4995,7 @@ impl Element for EditorElement {
                                 }
                                 SoftWrap::EditorWidth => Some(editor_width),
                                 SoftWrap::Column(column) => Some(column as f32 * em_advance),
-                                SoftWrap::Smart(column) => {
+                                SoftWrap::Bounded(column) => {
                                     Some(editor_width.min(column as f32 * em_advance))
                                 }
                             };
