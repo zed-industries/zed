@@ -165,7 +165,7 @@ members = [
     # Tooling
     #
 
-    "tooling/xtask",
+    "tooling/xtask", "docs/docs-preprocessor",
 ]
 default-members = ["crates/zed"]
 
