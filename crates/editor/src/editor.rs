@@ -298,7 +298,8 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace.register_action(Editor::new_file);
-            workspace.register_action(Editor::new_file_in_direction);
+            workspace.register_action(Editor::new_file_vertical);
+            workspace.register_action(Editor::new_file_horizontal);
         },
     )
     .detach();
@@ -2068,14 +2069,29 @@ impl Editor {
         })
     }
 
-    pub fn new_file_in_direction(
+    fn new_file_vertical(
         workspace: &mut Workspace,
-        action: &workspace::NewFileInDirection,
+        _: &workspace::NewFileSplitVertical,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        Self::new_file_in_direction(workspace, SplitDirection::vertical(cx), cx)
+    }
+
+    fn new_file_horizontal(
+        workspace: &mut Workspace,
+        _: &workspace::NewFileSplitHorizontal,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        Self::new_file_in_direction(workspace, SplitDirection::horizontal(cx), cx)
+    }
+
+    fn new_file_in_direction(
+        workspace: &mut Workspace,
+        direction: SplitDirection,
         cx: &mut ViewContext<Workspace>,
     ) {
         let project = workspace.project().clone();
         let create = project.update(cx, |project, cx| project.create_buffer(cx));
-        let direction = action.0;
 
         cx.spawn(|workspace, mut cx| async move {
             let buffer = create.await?;
