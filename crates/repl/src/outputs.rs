@@ -91,6 +91,7 @@ impl ImageView {
 pub struct TableView {
     pub table: TabularDataResource,
     pub widths: Vec<Pixels>,
+    cached_clipboard_content: ClipboardItem,
 }
 
 fn cell_content(row: &Value, field: &str) -> String {
@@ -151,23 +152,46 @@ impl TableView {
             widths.push(width)
         }
 
-        Self { table, widths }
+        let cached_clipboard_content = Self::create_clipboard_content(&table);
+
+        Self {
+            table,
+            widths,
+            cached_clipboard_content: ClipboardItem::new_string(cached_clipboard_content),
+        }
     }
 
-    pub fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem> {
-        let data = match &self.table.data {
-            Some(data) => data,
-            None => return None,
-        };
-        let schema = self.table.schema.clone();
+    fn escape_markdown(s: &str) -> String {
+        s.replace('|', "\\|")
+            .replace('*', "\\*")
+            .replace('_', "\\_")
+            .replace('`', "\\`")
+            .replace('[', "\\[")
+            .replace(']', "\\]")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    }
 
-        let mut markdown = String::new();
-        for field in &self.table.schema.fields {
-            markdown.push_str(&format!("| {} ", field.name));
-        }
-        markdown.push_str("|\n");
+    fn create_clipboard_content(table: &TabularDataResource) -> String {
+        let data = match table.data.as_ref() {
+            Some(data) => data,
+            None => &Vec::new(),
+        };
+        let schema = table.schema.clone();
+
+        let mut markdown = format!(
+            "| {} |\n",
+            table
+                .schema
+                .fields
+                .iter()
+                .map(|field| field.name.clone())
+                .collect::<Vec<_>>()
+                .join(" | ")
+        );
+
         markdown.push_str("|---");
-        for _ in 1..self.table.schema.fields.len() {
+        for _ in 1..table.schema.fields.len() {
             markdown.push_str("|---");
         }
         markdown.push_str("|\n");
@@ -178,7 +202,7 @@ impl TableView {
                 let row_content = schema
                     .fields
                     .iter()
-                    .map(|field| record.get(&field.name).unwrap_or(&Value::Null).to_string())
+                    .map(|field| Self::escape_markdown(&cell_content(record, &field.name)))
                     .collect::<Vec<_>>();
 
                 row_content.join(" | ")
@@ -186,11 +210,14 @@ impl TableView {
             .collect::<Vec<String>>();
 
         for row in body {
-            markdown.push_str(&format!("| {} |", row));
-            markdown.push_str("\n");
+            markdown.push_str(&format!("| {} |\n", row));
         }
 
-        Some(ClipboardItem::new_string(markdown))
+        markdown
+    }
+
+    pub fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+        Some(self.cached_clipboard_content.clone())
     }
 
     pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
