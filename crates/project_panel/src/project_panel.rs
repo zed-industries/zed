@@ -461,7 +461,7 @@ impl ProjectPanel {
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
             let worktree_id = worktree.id();
             let is_read_only = project.is_read_only();
-            let is_remote = project.is_remote() && project.dev_server_project_id().is_none();
+            let is_remote = project.is_via_collab() && project.dev_server_project_id().is_none();
 
             let context_menu = ContextMenu::build(cx, |menu, cx| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
@@ -2491,7 +2491,7 @@ impl Render for ProjectPanel {
                             }
                         }))
                 })
-                .when(project.is_local(), |el| {
+                .when(project.is_local_or_ssh(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
                         .on_action(cx.listener(Self::open_in_terminal))
                 })

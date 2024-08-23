@@ -1494,7 +1494,7 @@ impl Workspace {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<Option<ProjectPath>> {
-        if self.project.read(cx).is_remote()
+        if self.project.read(cx).is_via_collab()
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
@@ -1576,7 +1576,7 @@ impl Workspace {
         T: 'static,
         F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
-        if self.project.read(cx).is_local() {
+        if self.project.read(cx).is_local_or_ssh() {
             Task::Ready(Some(Ok(callback(self, cx))))
         } else {
             let task = Self::new_local(Vec::new(), self.app_state.clone(), None, cx);
@@ -1889,7 +1889,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let window = cx.window_handle().downcast::<Self>();
-        let is_remote = self.project.read(cx).is_remote();
+        let is_remote = self.project.read(cx).is_via_collab();
         let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
 
@@ -2028,7 +2028,7 @@ impl Workspace {
 
     fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
         let project = self.project.read(cx);
-        if project.is_remote() && project.dev_server_project_id().is_none() {
+        if project.is_via_collab() && project.dev_server_project_id().is_none() {
             self.show_error(
                 &anyhow!("You cannot add folders to someone else's project"),
                 cx,
@@ -3388,7 +3388,7 @@ impl Workspace {
             title = "empty project".to_string();
         }
 
-        if project.is_remote() {
+        if project.is_via_collab() {
             title.push_str(" ↙");
         } else if project.is_shared() {
             title.push_str(" ↗");
@@ -3912,7 +3912,7 @@ impl Workspace {
     fn local_paths(&self, cx: &AppContext) -> Option<Vec<Arc<Path>>> {
         let project = self.project().read(cx);
 
-        if project.is_local() {
+        if project.is_local_or_ssh() {
             Some(
                 project
                     .visible_worktrees(cx)
@@ -5104,7 +5104,7 @@ async fn join_channel_internal(
                         return None;
                     }
 
-                    if (project.is_local() || is_dev_server)
+                    if (project.is_local_or_ssh() || is_dev_server)
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()
@@ -5258,7 +5258,7 @@ pub fn local_workspace_windows(cx: &AppContext) -> Vec<WindowHandle<Workspace>> 
         .filter(|workspace| {
             workspace
                 .read(cx)
-                .is_ok_and(|workspace| workspace.project.read(cx).is_local())
+                .is_ok_and(|workspace| workspace.project.read(cx).is_local_or_ssh())
         })
         .collect()
 }
@@ -5316,7 +5316,7 @@ pub fn open_paths(
                     for window in local_workspace_windows(cx) {
                         if let Ok(workspace) = window.read(cx) {
                             let project = workspace.project().read(cx);
-                            if project.is_remote() {
+                            if project.is_via_collab() {
                                 continue;
                             }
                             existing = Some(window);

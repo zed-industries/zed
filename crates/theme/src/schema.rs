@@ -162,7 +162,7 @@ pub struct ThemeColorsContent {
     #[serde(rename = "border.disabled")]
     pub border_disabled: Option<String>,
 
-    /// Border color. Used for elevated surfaces, like a context menu, popup, or dialog.
+    /// Background color. Used for elevated surfaces, like a context menu, popup, or dialog.
     #[serde(rename = "elevated_surface.background")]
     pub elevated_surface_background: Option<String>,
 

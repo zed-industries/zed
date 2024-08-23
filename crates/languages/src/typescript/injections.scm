@@ -17,8 +17,8 @@
 
 (call_expression
   function: (identifier) @_name (#eq? @_name "html")
-  arguments: (template_string (string_fragment) @content
-                              (#set! "language" "html"))
+  arguments: (template_string) @content
+                              (#set! "language" "html")
 )
 
 (call_expression
@@ -50,4 +50,3 @@
   arguments: (template_string (string_fragment) @content
                               (#set! "language" "yaml"))
 )
-

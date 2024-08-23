@@ -80,6 +80,7 @@
 "case" @keyword
 "catch" @keyword
 "class" @keyword
+"clone" @keyword
 "const" @keyword
 "continue" @keyword
 "declare" @keyword
@@ -99,6 +100,7 @@
 "readonly" @keyword
 "finally" @keyword
 "foreach" @keyword
+"fn" @keyword
 "function" @keyword
 "global" @keyword
 "if" @keyword
@@ -107,6 +109,7 @@
 "include" @keyword
 "insteadof" @keyword
 "interface" @keyword
+"match" @keyword
 "namespace" @keyword
 "new" @keyword
 "private" @keyword
@@ -123,3 +126,4 @@
 "use" @keyword
 "while" @keyword
 "yield" @keyword
+"yield from" @keyword
