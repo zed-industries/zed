@@ -99,7 +99,7 @@ use language::{point_to_lsp, BufferRow, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
-use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
+use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
 pub use lsp::CompletionContext;
 use lsp::{
     CompletionItemKind, CompletionTriggerKind, DiagnosticSeverity, InsertTextFormat,
@@ -298,7 +298,8 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace.register_action(Editor::new_file);
-            workspace.register_action(Editor::new_file_in_direction);
+            workspace.register_action(Editor::new_file_vertical);
+            workspace.register_action(Editor::new_file_horizontal);
         },
     )
     .detach();
@@ -374,6 +375,7 @@ pub enum SoftWrap {
     PreferLine,
     EditorWidth,
     Column(u32),
+    Bounded(u32),
 }
 
 #[derive(Clone)]
@@ -2068,14 +2070,29 @@ impl Editor {
         })
     }
 
-    pub fn new_file_in_direction(
+    fn new_file_vertical(
         workspace: &mut Workspace,
-        action: &workspace::NewFileInDirection,
+        _: &workspace::NewFileSplitVertical,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        Self::new_file_in_direction(workspace, SplitDirection::vertical(cx), cx)
+    }
+
+    fn new_file_horizontal(
+        workspace: &mut Workspace,
+        _: &workspace::NewFileSplitHorizontal,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        Self::new_file_in_direction(workspace, SplitDirection::horizontal(cx), cx)
+    }
+
+    fn new_file_in_direction(
+        workspace: &mut Workspace,
+        direction: SplitDirection,
         cx: &mut ViewContext<Workspace>,
     ) {
         let project = workspace.project().clone();
         let create = project.update(cx, |project, cx| project.create_buffer(cx));
-        let direction = action.0;
 
         cx.spawn(|workspace, mut cx| async move {
             let buffer = create.await?;
@@ -2201,7 +2218,7 @@ impl Editor {
                 }),
                 provider: Arc::new(provider),
             });
-        self.refresh_inline_completion(false, cx);
+        self.refresh_inline_completion(false, false, cx);
     }
 
     pub fn placeholder_text(&self, _cx: &WindowContext) -> Option<&str> {
@@ -2999,6 +3016,17 @@ impl Editor {
             if start_offset > buffer_snapshot.len() || end_offset > buffer_snapshot.len() {
                 continue;
             }
+            if self.selections.disjoint_anchor_ranges().iter().any(|s| {
+                if s.start.buffer_id != selection.start.buffer_id
+                    || s.end.buffer_id != selection.end.buffer_id
+                {
+                    return false;
+                }
+                TO::to_offset(&s.start.text_anchor, &buffer_snapshot) <= end_offset
+                    && TO::to_offset(&s.end.text_anchor, &buffer_snapshot) >= start_offset
+            }) {
+                continue;
+            }
             let start = buffer_snapshot.anchor_after(start_offset);
             let end = buffer_snapshot.anchor_after(end_offset);
             linked_edits
@@ -3319,7 +3347,7 @@ impl Editor {
             let trigger_in_words = !had_active_inline_completion;
             this.trigger_completion_on_input(&text, trigger_in_words, cx);
             linked_editing_ranges::refresh_linked_ranges(this, cx);
-            this.refresh_inline_completion(true, cx);
+            this.refresh_inline_completion(true, false, cx);
         });
     }
 
@@ -3505,7 +3533,7 @@ impl Editor {
                 .collect();
 
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
-            this.refresh_inline_completion(true, cx);
+            this.refresh_inline_completion(true, false, cx);
         });
     }
 
@@ -4053,7 +4081,7 @@ impl Editor {
         // hence we do LSP request & edit on host side only — add formats to host's history.
         let push_to_lsp_host_history = true;
         // If this is not the host, append its history with new edits.
-        let push_to_client_history = project.read(cx).is_remote();
+        let push_to_client_history = project.read(cx).is_via_collab();
 
         let on_type_formatting = project.update(cx, |project, cx| {
             project.on_type_format(
@@ -4393,7 +4421,7 @@ impl Editor {
                 })
             }
 
-            this.refresh_inline_completion(true, cx);
+            this.refresh_inline_completion(true, false, cx);
         });
 
         let show_new_completions_on_confirm = completion
@@ -4893,17 +4921,19 @@ impl Editor {
         None
     }
 
-    fn refresh_inline_completion(
+    pub fn refresh_inline_completion(
         &mut self,
         debounce: bool,
+        user_requested: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<()> {
         let provider = self.inline_completion_provider()?;
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-        if !self.show_inline_completions
-            || !provider.is_enabled(&buffer, cursor_buffer_position, cx)
+        if !user_requested
+            && (!self.show_inline_completions
+                || !provider.is_enabled(&buffer, cursor_buffer_position, cx))
         {
             self.discard_inline_completion(false, cx);
             return None;
@@ -4937,7 +4967,7 @@ impl Editor {
 
     pub fn show_inline_completion(&mut self, _: &ShowInlineCompletion, cx: &mut ViewContext<Self>) {
         if !self.has_active_inline_completion(cx) {
-            self.refresh_inline_completion(false, cx);
+            self.refresh_inline_completion(false, true, cx);
             return;
         }
 
@@ -4966,7 +4996,7 @@ impl Editor {
         if self.has_active_inline_completion(cx) {
             self.cycle_inline_completion(Direction::Next, cx);
         } else {
-            let is_copilot_disabled = self.refresh_inline_completion(false, cx).is_none();
+            let is_copilot_disabled = self.refresh_inline_completion(false, true, cx).is_none();
             if is_copilot_disabled {
                 cx.propagate();
             }
@@ -4981,7 +5011,7 @@ impl Editor {
         if self.has_active_inline_completion(cx) {
             self.cycle_inline_completion(Direction::Prev, cx);
         } else {
-            let is_copilot_disabled = self.refresh_inline_completion(false, cx).is_none();
+            let is_copilot_disabled = self.refresh_inline_completion(false, true, cx).is_none();
             if is_copilot_disabled {
                 cx.propagate();
             }
@@ -5009,7 +5039,7 @@ impl Editor {
             self.change_selections(None, cx, |s| s.select_ranges([range]))
         }
         self.insert_with_autoindent_mode(&completion.text.to_string(), None, cx);
-        self.refresh_inline_completion(true, cx);
+        self.refresh_inline_completion(true, true, cx);
         cx.notify();
     }
 
@@ -5045,7 +5075,7 @@ impl Editor {
                 }
                 self.insert_with_autoindent_mode(&partial_completion, None, cx);
 
-                self.refresh_inline_completion(true, cx);
+                self.refresh_inline_completion(true, true, cx);
                 cx.notify();
             }
         }
@@ -5511,7 +5541,7 @@ impl Editor {
                     this.edit(edits, None, cx);
                 })
             }
-            this.refresh_inline_completion(true, cx);
+            this.refresh_inline_completion(true, false, cx);
             linked_editing_ranges::refresh_linked_ranges(this, cx);
         });
     }
@@ -5530,7 +5560,7 @@ impl Editor {
                 })
             });
             this.insert("", cx);
-            this.refresh_inline_completion(true, cx);
+            this.refresh_inline_completion(true, false, cx);
         });
     }
 
@@ -5617,7 +5647,7 @@ impl Editor {
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
-            this.refresh_inline_completion(true, cx);
+            this.refresh_inline_completion(true, false, cx);
         });
     }
 
@@ -6785,7 +6815,7 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
-            self.refresh_inline_completion(true, cx);
+            self.refresh_inline_completion(true, false, cx);
             cx.emit(EditorEvent::Edited { transaction_id });
             cx.emit(EditorEvent::TransactionUndone { transaction_id });
         }
@@ -6806,7 +6836,7 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
-            self.refresh_inline_completion(true, cx);
+            self.refresh_inline_completion(true, false, cx);
             cx.emit(EditorEvent::Edited { transaction_id });
         }
     }
@@ -8575,7 +8605,7 @@ impl Editor {
             let hide_runnables = project
                 .update(&mut cx, |project, cx| {
                     // Do not display any test indicators in non-dev server remote projects.
-                    project.is_remote() && project.ssh_connection_string(cx).is_none()
+                    project.is_via_collab() && project.ssh_connection_string(cx).is_none()
                 })
                 .unwrap_or(true);
             if hide_runnables {
@@ -9177,6 +9207,38 @@ impl Editor {
         .detach();
     }
 
+    pub fn open_file(&mut self, _: &OpenFile, cx: &mut ViewContext<Self>) {
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+
+        let position = self.selections.newest_anchor().head();
+
+        let Some((buffer, buffer_position)) =
+            self.buffer.read(cx).text_anchor_for_position(position, cx)
+        else {
+            return;
+        };
+
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+
+        cx.spawn(|_, mut cx| async move {
+            let result = find_file(&buffer, project, buffer_position, &mut cx).await;
+
+            if let Some((_, path)) = result {
+                workspace
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.open_resolved_path(path, cx)
+                    })?
+                    .await?;
+            }
+            anyhow::Ok(())
+        })
+        .detach();
+    }
+
     pub(crate) fn navigate_to_hover_links(
         &mut self,
         kind: Option<GotoDefinitionKind>,
@@ -9187,21 +9249,49 @@ impl Editor {
         // If there is one definition, just open it directly
         if definitions.len() == 1 {
             let definition = definitions.pop().unwrap();
+
+            enum TargetTaskResult {
+                Location(Option<Location>),
+                AlreadyNavigated,
+            }
+
             let target_task = match definition {
-                HoverLink::Text(link) => Task::Ready(Some(Ok(Some(link.target)))),
+                HoverLink::Text(link) => {
+                    Task::ready(anyhow::Ok(TargetTaskResult::Location(Some(link.target))))
+                }
                 HoverLink::InlayHint(lsp_location, server_id) => {
-                    self.compute_target_location(lsp_location, server_id, cx)
+                    let computation = self.compute_target_location(lsp_location, server_id, cx);
+                    cx.background_executor().spawn(async move {
+                        let location = computation.await?;
+                        Ok(TargetTaskResult::Location(location))
+                    })
                 }
                 HoverLink::Url(url) => {
                     cx.open_url(&url);
-                    Task::ready(Ok(None))
+                    Task::ready(Ok(TargetTaskResult::AlreadyNavigated))
+                }
+                HoverLink::File(path) => {
+                    if let Some(workspace) = self.workspace() {
+                        cx.spawn(|_, mut cx| async move {
+                            workspace
+                                .update(&mut cx, |workspace, cx| {
+                                    workspace.open_resolved_path(path, cx)
+                                })?
+                                .await
+                                .map(|_| TargetTaskResult::AlreadyNavigated)
+                        })
+                    } else {
+                        Task::ready(Ok(TargetTaskResult::Location(None)))
+                    }
                 }
             };
             cx.spawn(|editor, mut cx| async move {
-                let target = target_task.await.context("target resolution task")?;
-                let Some(target) = target else {
-                    return Ok(Navigated::No);
+                let target = match target_task.await.context("target resolution task")? {
+                    TargetTaskResult::AlreadyNavigated => return Ok(Navigated::Yes),
+                    TargetTaskResult::Location(None) => return Ok(Navigated::No),
+                    TargetTaskResult::Location(Some(target)) => target,
                 };
+
                 editor.update(&mut cx, |editor, cx| {
                     let Some(workspace) = editor.workspace() else {
                         return Navigated::No;
@@ -9279,6 +9369,7 @@ impl Editor {
                                 }),
                                 HoverLink::InlayHint(_, _) => None,
                                 HoverLink::Url(_) => None,
+                                HoverLink::File(_) => None,
                             })
                             .unwrap_or(tab_kind.to_string());
                         let location_tasks = definitions
@@ -9289,6 +9380,7 @@ impl Editor {
                                     editor.compute_target_location(lsp_location, server_id, cx)
                                 }
                                 HoverLink::Url(_) => Task::ready(Ok(None)),
+                                HoverLink::File(_) => Task::ready(Ok(None)),
                             })
                             .collect::<Vec<_>>();
                         (title, location_tasks, editor.workspace().clone())
@@ -10411,6 +10503,8 @@ impl Editor {
         if settings.show_wrap_guides {
             if let SoftWrap::Column(soft_wrap) = self.soft_wrap_mode(cx) {
                 wrap_guides.push((soft_wrap as usize, true));
+            } else if let SoftWrap::Bounded(soft_wrap) = self.soft_wrap_mode(cx) {
+                wrap_guides.push((soft_wrap as usize, true));
             }
             wrap_guides.extend(settings.wrap_guides.iter().map(|guide| (*guide, false)))
         }
@@ -10429,6 +10523,9 @@ impl Editor {
             language_settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
             language_settings::SoftWrap::PreferredLineLength => {
                 SoftWrap::Column(settings.preferred_line_length)
+            }
+            language_settings::SoftWrap::Bounded => {
+                SoftWrap::Bounded(settings.preferred_line_length)
             }
         }
     }
@@ -10471,7 +10568,7 @@ impl Editor {
         } else {
             let soft_wrap = match self.soft_wrap_mode(cx) {
                 SoftWrap::None | SoftWrap::PreferLine => language_settings::SoftWrap::EditorWidth,
-                SoftWrap::EditorWidth | SoftWrap::Column(_) => {
+                SoftWrap::EditorWidth | SoftWrap::Column(_) | SoftWrap::Bounded(_) => {
                     language_settings::SoftWrap::PreferLine
                 }
             };
@@ -11333,7 +11430,7 @@ impl Editor {
                             .filter_map(|buffer| {
                                 let buffer = buffer.read(cx);
                                 let language = buffer.language()?;
-                                if project.is_local()
+                                if project.is_local_or_ssh()
                                     && project.language_servers_for_buffer(buffer, cx).count() == 0
                                 {
                                     None
@@ -11420,7 +11517,7 @@ impl Editor {
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         self.tasks_update_task = Some(self.refresh_runnables(cx));
-        self.refresh_inline_completion(true, cx);
+        self.refresh_inline_completion(true, false, cx);
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
                 self.selections.newest_anchor().head(),

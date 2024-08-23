@@ -331,6 +331,7 @@ impl EditorElement {
                 .detach_and_log_err(cx);
         });
         register_action(view, cx, Editor::open_url);
+        register_action(view, cx, Editor::open_file);
         register_action(view, cx, Editor::fold);
         register_action(view, cx, Editor::fold_at);
         register_action(view, cx, Editor::unfold_lines);
@@ -4995,7 +4996,8 @@ impl Element for EditorElement {
                                     Some((MAX_LINE_LEN / 2) as f32 * em_advance)
                                 }
                                 SoftWrap::EditorWidth => Some(editor_width),
-                                SoftWrap::Column(column) => {
+                                SoftWrap::Column(column) => Some(column as f32 * em_advance),
+                                SoftWrap::Bounded(column) => {
                                     Some(editor_width.min(column as f32 * em_advance))
                                 }
                             };
