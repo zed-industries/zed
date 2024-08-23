@@ -1,6 +1,4 @@
 use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::Arc;
 
 use gpui::*;
 use std::fs;
@@ -32,9 +30,7 @@ impl AssetSource for Assets {
     }
 }
 
-struct SvgExample {
-    text: SharedString,
-}
+struct SvgExample;
 
 impl Render for SvgExample {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -80,11 +76,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |cx| {
-                    cx.new_view(|_cx| SvgExample {
-                        text: "World".into(),
-                    })
-                },
+                |cx| cx.new_view(|_cx| SvgExample),
             )
             .unwrap();
         });
