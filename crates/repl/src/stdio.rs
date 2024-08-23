@@ -45,6 +45,7 @@ pub fn text_style(cx: &mut WindowContext) -> TextStyle {
         line_height: cx.line_height().into(),
         background_color: Some(theme.colors().terminal_background),
         white_space: WhiteSpace::Normal,
+        truncate: None,
         // These are going to be overridden per-cell
         underline: None,
         strikethrough: None,

@@ -247,6 +247,7 @@ pub struct ThemeSettingsContent {
     pub ui_font_family: Option<String>,
     /// The font fallbacks to use for rendering in the UI.
     #[serde(default)]
+    #[schemars(default = "default_font_fallbacks")]
     pub ui_font_fallbacks: Option<Vec<String>>,
     /// The OpenType features to enable for text in the UI.
     #[serde(default)]
@@ -260,6 +261,7 @@ pub struct ThemeSettingsContent {
     pub buffer_font_family: Option<String>,
     /// The font fallbacks to use for rendering in text buffers.
     #[serde(default)]
+    #[schemars(default = "default_font_fallbacks")]
     pub buffer_font_fallbacks: Option<Vec<String>>,
     /// The default font size for rendering in text buffers.
     #[serde(default)]
@@ -297,6 +299,10 @@ pub struct ThemeSettingsContent {
 
 fn default_font_features() -> Option<FontFeatures> {
     Some(FontFeatures::default())
+}
+
+fn default_font_fallbacks() -> Option<FontFallbacks> {
+    Some(FontFallbacks::default())
 }
 
 impl ThemeSettingsContent {
