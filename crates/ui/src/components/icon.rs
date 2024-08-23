@@ -496,16 +496,12 @@ impl Icon {
 
 impl RenderOnce for Icon {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let svg = svg()
+        svg()
             .with_transformation(self.transformation)
             .size(self.size)
             .flex_none()
-            .path(self.path);
-        if self.color == Color::default() {
-            svg.with_polychrome()
-        } else {
-            svg.text_color(self.color.color(cx))
-        }
+            .path(self.path)
+            .text_color(self.color.color(cx))
     }
 }
 
