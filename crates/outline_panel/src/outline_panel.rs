@@ -1508,7 +1508,7 @@ impl OutlinePanel {
             .child(
                 ListItem::new(item_id)
                     .indent_level(depth)
-                    .indent_step_size(px(settings.indent_size))
+                    .indent_step_size(settings.indent_size)
                     .selected(is_active)
                     .when_some(icon_element, |list_item, icon_element| {
                         list_item.child(h_flex().child(icon_element))
