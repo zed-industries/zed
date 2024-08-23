@@ -417,7 +417,7 @@ fn render_markdown_text_image(parsed: &ParsedMarkdownText, _: &mut RenderContext
             image_ranges.push(range.clone());
         }
     }
-    div().flex_grow().children(images).size_full().into_any()
+    div().flex().children(images).size_full().into_any()
 }
 
 fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
