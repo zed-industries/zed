@@ -251,6 +251,10 @@ impl Vim {
 
         editor.register_addon(VimAddon { view: vim.clone() });
 
+        if VimSettings::get_global(cx).toggle_relative_line_numbers {
+            editor.set_relative_line_number(Some(true), cx)
+        }
+
         vim.update(cx, |_, cx| {
             Vim::action(editor, cx, |vim, action: &SwitchMode, cx| {
                 vim.switch_mode(action.0, false, cx)
@@ -296,7 +300,9 @@ impl Vim {
         editor.set_autoindent(true);
         editor.selections.line_mode = false;
         editor.unregister_addon::<VimAddon>();
-        editor.set_relative_line_number(None, cx)
+        if VimSettings::get_global(cx).toggle_relative_line_numbers {
+            editor.set_relative_line_number(None, cx)
+        }
     }
 
     /// Register an action on the editor.
@@ -424,6 +430,17 @@ impl Vim {
 
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
+
+        if VimSettings::get_global(cx).toggle_relative_line_numbers {
+            if self.mode != self.last_mode {
+                if self.mode == Mode::Insert || self.last_mode == Mode::Insert {
+                    self.update_editor(cx, |vim, editor, cx| {
+                        let is_relative = vim.mode != Mode::Insert;
+                        editor.set_relative_line_number(Some(is_relative), cx)
+                    });
+                }
+            }
+        }
 
         if leave_selections {
             return;
@@ -625,9 +642,6 @@ impl Vim {
         self.clear_operator(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.set_cursor_shape(language::CursorShape::Hollow, cx);
-            if VimSettings::get_global(cx).toggle_relative_line_numbers {
-                editor.set_relative_line_number(Some(false), cx)
-            }
         });
     }
 
@@ -1012,12 +1026,6 @@ impl Vim {
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
-            if VimSettings::get_global(cx).toggle_relative_line_numbers {
-                let is_relative = vim.mode != Mode::Insert;
-                editor.set_relative_line_number(Some(is_relative), cx)
-            } else {
-                editor.set_relative_line_number(None, cx)
-            }
         });
         cx.notify()
     }
