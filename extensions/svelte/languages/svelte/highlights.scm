@@ -3,7 +3,7 @@
 
 ; TODO:
 (tag_name) @tag
-(attribute_name) @property
+(attribute_name) @attribute
 (erroneous_end_tag_name) @keyword
 (comment) @comment
 
@@ -26,17 +26,17 @@
 [
   "{"
   "}"
+  "<"
+  ">"
+  "</"
+  "/>"
 ] @punctuation.bracket
 
 "=" @operator
 
 [
-  "<"
-  ">"
-  "</"
-  "/>"
   "#"
   ":"
   "/"
   "@"
-] @tag.delimiter
+] @punctuation.delimiter
