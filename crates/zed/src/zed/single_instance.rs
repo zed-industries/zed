@@ -21,11 +21,7 @@ pub fn check_single_instance() -> bool {
         return true;
     }
 
-    if !check_single_instance_event() {
-        return false;
-    }
-
-    true
+    check_single_instance_event()
 }
 
 fn check_single_instance_event() -> bool {
