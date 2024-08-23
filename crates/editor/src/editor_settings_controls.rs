@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{AppContext, FontFeatures, FontWeight};
-use project::project_settings::{InlineBlameSettings, ProjectSettings};
+use project::project_settings::ProjectSettings;
 use settings::{EditableSettingControl, Settings};
 use theme::{FontFamilyCache, ThemeSettings};
 use ui::{
