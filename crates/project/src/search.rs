@@ -487,7 +487,6 @@ enum SearchMatchCandidate {
     Path {
         worktree_id: WorktreeId,
         is_ignored: bool,
-        is_file: bool,
         path: Arc<Path>,
     },
 }
@@ -835,7 +834,6 @@ async fn search_ignored_entry(
                                 .expect("scanning worktree-related files"),
                         ),
                         is_ignored: true,
-                        is_file: ignored_entry.is_file(),
                     };
                     if counter_tx.send(project_path).await.is_err() {
                         return;
@@ -913,7 +911,6 @@ async fn search_snapshots(
                         worktree_id: snapshot.id(),
                         path: entry.path.clone(),
                         is_ignored: entry.is_ignored,
-                        is_file: entry.is_file(),
                     };
                     if results_tx.send(project_path).await.is_err() {
                         return;
@@ -955,22 +952,14 @@ fn sort_search_matches(search_matches: &mut Vec<SearchMatchCandidate>, cx: &AppC
             SearchMatchCandidate::OpenBuffer {
                 path: Some(path_a), ..
             },
-            SearchMatchCandidate::Path {
-                is_file: is_file_b,
-                path: path_b,
-                ..
-            },
-        ) => compare_paths((path_a.as_ref(), true), (path_b.as_ref(), *is_file_b)),
+            SearchMatchCandidate::Path { path: path_b, .. },
+        ) => compare_paths((path_a.as_ref(), true), (path_b.as_ref(), true)),
         (
-            SearchMatchCandidate::Path {
-                is_file: is_file_a,
-                path: path_a,
-                ..
-            },
+            SearchMatchCandidate::Path { path: path_a, .. },
             SearchMatchCandidate::OpenBuffer {
                 path: Some(path_b), ..
             },
-        ) => compare_paths((path_a.as_ref(), *is_file_a), (path_b.as_ref(), true)),
+        ) => compare_paths((path_a.as_ref(), true), (path_b.as_ref(), true)),
         (
             SearchMatchCandidate::OpenBuffer {
                 path: Some(path_a), ..
@@ -982,18 +971,16 @@ fn sort_search_matches(search_matches: &mut Vec<SearchMatchCandidate>, cx: &AppC
         (
             SearchMatchCandidate::Path {
                 worktree_id: worktree_id_a,
-                is_file: is_file_a,
                 path: path_a,
                 ..
             },
             SearchMatchCandidate::Path {
                 worktree_id: worktree_id_b,
-                is_file: is_file_b,
                 path: path_b,
                 ..
             },
-        ) => worktree_id_a.cmp(&worktree_id_b).then_with(|| {
-            compare_paths((path_a.as_ref(), *is_file_a), (path_b.as_ref(), *is_file_b))
-        }),
+        ) => worktree_id_a
+            .cmp(&worktree_id_b)
+            .then_with(|| compare_paths((path_a.as_ref(), true), (path_b.as_ref(), true))),
     });
 }

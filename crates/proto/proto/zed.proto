@@ -1236,6 +1236,16 @@ message SearchProjectResponse {
     bool limit_reached = 2;
 }
 
+message FindMatchCandidates {
+    uint64 search_id = 1;
+    SearchProject search_project = 2;
+    repeated string open_buffers = 3;
+}
+
+message MatchCandidateFound {
+    uint64 search_id = 1;
+}
+
 message CodeAction {
     uint64 server_id = 1;
     Anchor start = 2;

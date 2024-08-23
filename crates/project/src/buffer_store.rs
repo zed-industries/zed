@@ -710,10 +710,12 @@ impl BufferStore {
     ) -> Task<Result<Model<Buffer>>> {
         let buffer = self.get(id);
         if let Some(buffer) = buffer {
+            dbg!("got {id}");
             return Task::ready(Ok(buffer));
         }
         let (tx, rx) = oneshot::channel();
         self.remote_buffer_listeners.entry(id).or_default().push(tx);
+        dbg!("waiting...", id);
         cx.background_executor().spawn(async move { rx.await? })
     }
 

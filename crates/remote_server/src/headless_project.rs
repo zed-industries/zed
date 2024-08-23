@@ -199,10 +199,12 @@ impl HeadlessProject {
         let mut locations = Vec::new();
         let mut limit_reached = false;
         while let Some(result) = receiver.next().await {
+            dbg!("result!");
             match result {
                 SearchResult::Buffer { buffer, ranges } => {
                     let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id())?;
                     let this = this.clone();
+
                     cx.spawn(|mut cx| async move {
                         let Some((buffer_store, session)) = this
                             .update(&mut cx, |this, _| {
@@ -238,6 +240,7 @@ impl HeadlessProject {
             }
         }
 
+        dbg!("done!");
         // TODO: it would be nice to return results to the client as they arrive instead of waiting until we have them all. Before its worth doing that we to fix search result rendering being slow.
         Ok(proto::SearchProjectResponse {
             locations,
