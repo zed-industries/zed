@@ -285,7 +285,7 @@ impl SearchData {
         ];
 
         let mut left_whitespaces_count = 0;
-        let mut non_whitespace_symbol_occured = false;
+        let mut non_whitespace_symbol_occurred = false;
         let mut offset = entire_row_offset_range.start;
         let mut entire_row_text = String::new();
         let mut highlight_ranges = Vec::new();
@@ -293,12 +293,12 @@ impl SearchData {
             entire_row_offset_range.start..entire_row_offset_range.end,
             true,
         ) {
-            if !non_whitespace_symbol_occured {
+            if !non_whitespace_symbol_occurred {
                 for c in chunk.text.chars() {
                     if c.is_whitespace() {
                         left_whitespaces_count += 1;
                     } else {
-                        non_whitespace_symbol_occured = true;
+                        non_whitespace_symbol_occurred = true;
                         break;
                     }
                 }
@@ -3283,7 +3283,7 @@ impl OutlinePanel {
         }
     }
 
-    fn init_search_data<'d>(
+    fn init_search_data(
         &self,
         previous_search_entry: Option<&mut SearchEntry>,
         new_search_entry: &mut SearchEntry,
@@ -3324,10 +3324,10 @@ impl OutlinePanel {
                 if previous_search_data.context_range == new_search_data.context_range {
                     previous_search_data
                         .highlight_ranges
-                        .extend(new_search_data.highlight_ranges.drain(..));
+                        .append(&mut new_search_data.highlight_ranges);
                     previous_search_data
                         .search_match_indices
-                        .extend(new_search_data.search_match_indices.drain(..));
+                        .append(&mut new_search_data.search_match_indices);
                     false
                 } else {
                     true
