@@ -24,7 +24,7 @@ members = [
     "crates/db",
     "crates/dev_server_projects",
     "crates/diagnostics",
-    "crates/docs-preprocessor",
+    "crates/docs_preprocessor",
     "crates/editor",
     "crates/extension",
     "crates/extension_api",

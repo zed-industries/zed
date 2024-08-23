@@ -24,6 +24,6 @@ enable = false
 "/language-model-integration.html" = "/docs/assistant/assistant.html"
 "/assistant.html" = "/docs/assistant/assistant.html"
 
-[preprocessor.zed-docs-preprocessor]
-command = "cargo run --manifest-path=../crates/docs-preprocessor/Cargo.toml --"
+[preprocessor.zed_docs_preprocessor]
+command = "cargo run --manifest-path=../crates/docs_preprocessor/Cargo.toml --"
 renderer = ["html"]

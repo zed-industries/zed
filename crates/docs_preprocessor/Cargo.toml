@@ -1,5 +1,5 @@
 [package]
-name = "docs-preprocessor"
+name = "docs_preprocessor"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -22,5 +22,5 @@ workspace = true
 path = "src/docs_preprocessor.rs"
 
 [[bin]]
-name = "docs-preprocessor"
+name = "docs_preprocessor"
 path = "src/main.rs"

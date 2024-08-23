@@ -3499,7 +3499,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "docs-preprocessor"
+name = "docs_preprocessor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
