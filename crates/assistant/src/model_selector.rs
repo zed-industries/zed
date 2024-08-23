@@ -1,15 +1,16 @@
 use feature_flags::ZedPro;
+use gpui::Action;
 use gpui::DismissEvent;
+
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
+use workspace::ShowConfiguration;
 
 use std::sync::Arc;
 use ui::ListItemSpacing;
 
 use crate::assistant_settings::AssistantSettings;
-use crate::ShowConfiguration;
 use fs::Fs;
-use gpui::Action;
 use gpui::SharedString;
 use gpui::Task;
 use picker::{Picker, PickerDelegate};
@@ -36,7 +37,7 @@ pub struct ModelPickerDelegate {
 #[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
-    provider_icon: IconName,
+    icon: IconName,
     availability: LanguageModelAvailability,
     is_selected: bool,
 }
@@ -149,6 +150,8 @@ impl PickerDelegate for ModelPickerDelegate {
         use feature_flags::FeatureFlagAppExt;
         let model_info = self.filtered_models.get(ix)?;
         let show_badges = cx.has_flag::<ZedPro>();
+        let provider_name: String = model_info.model.provider_name().0.into();
+
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -156,7 +159,7 @@ impl PickerDelegate for ModelPickerDelegate {
                 .selected(selected)
                 .start_slot(
                     div().pr_1().child(
-                        Icon::new(model_info.provider_icon)
+                        Icon::new(model_info.icon)
                             .color(Color::Muted)
                             .size(IconSize::Medium),
                     ),
@@ -166,11 +169,16 @@ impl PickerDelegate for ModelPickerDelegate {
                         .w_full()
                         .justify_between()
                         .font_buffer(cx)
-                        .min_w(px(200.))
+                        .min_w(px(240.))
                         .child(
                             h_flex()
                                 .gap_2()
                                 .child(Label::new(model_info.model.name().0.clone()))
+                                .child(
+                                    Label::new(provider_name)
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
                                 .children(match model_info.availability {
                                     LanguageModelAvailability::Public => None,
                                     LanguageModelAvailability::RequiresPlan(Plan::Free) => None,
@@ -261,16 +269,17 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
             .iter()
             .flat_map(|provider| {
                 let provider_id = provider.id();
-                let provider_icon = provider.icon();
+                let icon = provider.icon();
                 let selected_model = selected_model.clone();
                 let selected_provider = selected_provider.clone();
 
                 provider.provided_models(cx).into_iter().map(move |model| {
                     let model = model.clone();
+                    let icon = model.icon().unwrap_or(icon);
 
                     ModelInfo {
                         model: model.clone(),
-                        provider_icon,
+                        icon,
                         availability: model.availability(),
                         is_selected: selected_model.as_ref() == Some(&model.id())
                             && selected_provider.as_ref() == Some(&provider_id),
@@ -295,5 +304,6 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
             .menu(move |_cx| Some(picker_view.clone()))
             .trigger(self.trigger)
             .attach(gpui::AnchorCorner::BottomLeft)
+            .when_some(self.handle, |menu, handle| menu.with_handle(handle))
     }
 }

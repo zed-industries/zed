@@ -15,6 +15,35 @@ pub fn init(cx: &mut AppContext) {
     SlashCommandRegistry::default_global(cx);
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AfterCompletion {
+    /// Run the command
+    Run,
+    /// Continue composing the current argument, doesn't add a space
+    Compose,
+    /// Continue the command composition, adds a space
+    Continue,
+}
+
+impl From<bool> for AfterCompletion {
+    fn from(value: bool) -> Self {
+        if value {
+            AfterCompletion::Run
+        } else {
+            AfterCompletion::Continue
+        }
+    }
+}
+
+impl AfterCompletion {
+    pub fn run(&self) -> bool {
+        match self {
+            AfterCompletion::Run => true,
+            AfterCompletion::Compose | AfterCompletion::Continue => false,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ArgumentCompletion {
     /// The label to display for this completion.
@@ -22,7 +51,7 @@ pub struct ArgumentCompletion {
     /// The new text that should be inserted into the command when this completion is accepted.
     pub new_text: String,
     /// Whether the command should be run when accepting this completion.
-    pub run_command: bool,
+    pub after_completion: AfterCompletion,
     /// Whether to replace the all arguments, or whether to treat this as an independent argument.
     pub replace_previous_arguments: bool,
 }
@@ -42,6 +71,9 @@ pub trait SlashCommand: 'static + Send + Sync {
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>>;
     fn requires_argument(&self) -> bool;
+    fn accepts_arguments(&self) -> bool {
+        self.requires_argument()
+    }
     fn run(
         self: Arc<Self>,
         arguments: &[String],

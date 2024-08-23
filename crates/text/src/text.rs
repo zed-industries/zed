@@ -19,7 +19,6 @@ use operation_queue::OperationQueue;
 pub use patch::Patch;
 use postage::{oneshot, prelude::*};
 
-use lazy_static::lazy_static;
 use regex::Regex;
 pub use rope::*;
 pub use selection::*;
@@ -32,7 +31,7 @@ use std::{
     num::NonZeroU64,
     ops::{self, Deref, Range, Sub},
     str,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 pub use subscription::*;
@@ -44,9 +43,9 @@ use util::ResultExt;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 
-lazy_static! {
-    static ref LINE_SEPARATORS_REGEX: Regex = Regex::new("\r\n|\r|\u{2028}|\u{2029}").unwrap();
-}
+static LINE_SEPARATORS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\r\n|\r|\u{2028}|\u{2029}").expect("Failed to create LINE_SEPARATORS_REGEX")
+});
 
 pub type TransactionId = clock::Lamport;
 

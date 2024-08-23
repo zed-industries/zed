@@ -12,11 +12,10 @@ use language::{
     language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
     LanguageServerId, ToOffset,
 };
-use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use project::{search::SearchQuery, Completion};
 use settings::Settings;
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc, sync::LazyLock, time::Duration};
 use theme::ThemeSettings;
 use ui::{prelude::*, TextSize};
 
@@ -24,17 +23,17 @@ use crate::panel_settings::MessageEditorSettings;
 
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
-lazy_static! {
-    static ref MENTIONS_SEARCH: SearchQuery = SearchQuery::regex(
+static MENTIONS_SEARCH: LazyLock<SearchQuery> = LazyLock::new(|| {
+    SearchQuery::regex(
         "@[-_\\w]+",
         false,
         false,
         false,
         Default::default(),
-        Default::default()
+        Default::default(),
     )
-    .unwrap();
-}
+    .unwrap()
+});
 
 pub struct MessageEditor {
     pub editor: View<Editor>,
@@ -314,7 +313,6 @@ impl MessageEditor {
                     server_id: LanguageServerId(0), // TODO: Make this optional or something?
                     lsp_completion: Default::default(), // TODO: Make this optional or something?
                     confirm: None,
-                    show_new_completions_on_confirm: false,
                 }
             })
             .collect()
@@ -400,8 +398,8 @@ impl MessageEditor {
         end_anchor: Anchor,
         cx: &mut ViewContext<Self>,
     ) -> Option<(Anchor, String, &'static [StringMatchCandidate])> {
-        lazy_static! {
-            static ref EMOJI_FUZZY_MATCH_CANDIDATES: Vec<StringMatchCandidate> = {
+        static EMOJI_FUZZY_MATCH_CANDIDATES: LazyLock<Vec<StringMatchCandidate>> =
+            LazyLock::new(|| {
                 let emojis = emojis::iter()
                     .flat_map(|s| s.shortcodes())
                     .map(|emoji| StringMatchCandidate {
@@ -411,8 +409,7 @@ impl MessageEditor {
                     })
                     .collect::<Vec<_>>();
                 emojis
-            };
-        }
+            });
 
         let end_offset = end_anchor.to_offset(buffer.read(cx));
 

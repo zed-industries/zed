@@ -11,9 +11,9 @@ use crate::{
     PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
     Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
     SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
+    TimeToFirstWindowDraw, TransformationMatrix, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -544,6 +544,8 @@ pub struct Window {
     hovered: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    /// We assign this to be notified when the platform graphics backend fires the next completion callback for drawing the window.
+    present_completed: RefCell<Option<oneshot::Sender<()>>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
     pub(crate) draw_phase: DrawPhase,
@@ -820,6 +822,7 @@ impl Window {
             hovered,
             dirty,
             needs_present,
+            present_completed: RefCell::default(),
             last_input_timestamp,
             refreshing: false,
             draw_phase: DrawPhase::None,
@@ -1489,13 +1492,29 @@ impl<'a> WindowContext<'a> {
         self.window.refreshing = false;
         self.window.draw_phase = DrawPhase::None;
         self.window.needs_present.set(true);
+
+        if let Some(TimeToFirstWindowDraw::Pending(start)) = self.app.time_to_first_window_draw {
+            let (tx, rx) = oneshot::channel();
+            *self.window.present_completed.borrow_mut() = Some(tx);
+            self.spawn(|mut cx| async move {
+                rx.await.ok();
+                cx.update(|cx| {
+                    let duration = start.elapsed();
+                    cx.time_to_first_window_draw = Some(TimeToFirstWindowDraw::Done(duration));
+                    log::info!("time to first window draw: {:?}", duration);
+                    cx.push_effect(Effect::Refresh);
+                })
+            })
+            .detach();
+        }
     }
 
     #[profiling::function]
     fn present(&self) {
+        let on_complete = self.window.present_completed.take();
         self.window
             .platform_window
-            .draw(&self.window.rendered_frame.scene);
+            .draw(&self.window.rendered_frame.scene, on_complete);
         self.window.needs_present.set(false);
         profiling::finish_frame!();
     }
@@ -3717,6 +3736,12 @@ impl<'a> WindowContext<'a> {
     /// Currently returns None on Mac and Windows.
     pub fn gpu_specs(&self) -> Option<GPUSpecs> {
         self.window.platform_window.gpu_specs()
+    }
+
+    /// Get the current FPS (frames per second) of the window.
+    /// This is only supported on macOS currently.
+    pub fn fps(&self) -> Option<f32> {
+        self.window.platform_window.fps()
     }
 }
 

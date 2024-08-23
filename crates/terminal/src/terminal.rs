@@ -18,7 +18,7 @@ use alacritty_terminal::{
         Config, RenderableCursor, TermMode,
     },
     tty::{self, setup_env},
-    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode, Rgb},
+    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode},
     Term,
 };
 use anyhow::{bail, Result};
@@ -127,7 +127,6 @@ pub enum MaybeNavigationTarget {
 
 #[derive(Clone)]
 enum InternalEvent {
-    ColorRequest(usize, Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>),
     Resize(TerminalSize),
     Clear,
     // FocusNextMatch,
@@ -688,9 +687,19 @@ impl Terminal {
                     cx.emit(Event::TitleChanged);
                 }
             }
-            AlacTermEvent::ColorRequest(idx, fun_ptr) => {
-                self.events
-                    .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
+            AlacTermEvent::ColorRequest(index, format) => {
+                // It's important that the color request is processed here to retain relative order
+                // with other PTY writes. Otherwise applications might witness out-of-order
+                // responses to requests. For example: An application sending `OSC 11 ; ? ST`
+                // (color request) followed by `CSI c` (request device attributes) would receive
+                // the response to `CSI c` first.
+                // Instead of locking, we could store the colors in `self.last_content`. But then
+                // we might respond with out of date value if a "set color" sequence is immediately
+                // followed by a color request sequence.
+                let color = self.term.lock().colors()[*index].unwrap_or_else(|| {
+                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
+                });
+                self.write_to_pty(format(color));
             }
             AlacTermEvent::ChildExit(error_code) => {
                 self.register_task_finished(Some(*error_code), cx);
@@ -714,12 +723,6 @@ impl Terminal {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            InternalEvent::ColorRequest(index, format) => {
-                let color = term.colors()[*index].unwrap_or_else(|| {
-                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
-                });
-                self.write_to_pty(format(color))
-            }
             InternalEvent::Resize(mut new_size) => {
                 new_size.size.height = cmp::max(new_size.line_height, new_size.height());
                 new_size.size.width = cmp::max(new_size.cell_width, new_size.width());
@@ -849,37 +852,26 @@ impl Terminal {
                     let url_match = min_index..=max_index;
 
                     Some((url, true, url_match))
+                } else if let Some(url_match) = regex_match_at(term, point, &mut self.url_regex) {
+                    let url = term.bounds_to_string(*url_match.start(), *url_match.end());
+                    Some((url, true, url_match))
                 } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
-                    let maybe_url_or_path =
-                        term.bounds_to_string(*word_match.start(), *word_match.end());
-                    let original_match = word_match.clone();
+                    let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
+
                     let (sanitized_match, sanitized_word) =
-                        if maybe_url_or_path.starts_with('[') && maybe_url_or_path.ends_with(']') {
+                        if file_path.starts_with('[') && file_path.ends_with(']') {
                             (
                                 Match::new(
                                     word_match.start().add(term, Boundary::Cursor, 1),
                                     word_match.end().sub(term, Boundary::Cursor, 1),
                                 ),
-                                maybe_url_or_path[1..maybe_url_or_path.len() - 1].to_owned(),
+                                file_path[1..file_path.len() - 1].to_owned(),
                             )
                         } else {
-                            (word_match, maybe_url_or_path)
+                            (word_match, file_path)
                         };
 
-                    let is_url = match regex_match_at(term, point, &mut self.url_regex) {
-                        Some(url_match) => {
-                            // `]` is a valid symbol in the `file://` URL, so the regex match will include it
-                            // consider that when ensuring that the URL match is the same as the original word
-                            if sanitized_match == original_match {
-                                url_match == sanitized_match
-                            } else {
-                                url_match.start() == sanitized_match.start()
-                                    && url_match.end() == original_match.end()
-                            }
-                        }
-                        None => false,
-                    };
-                    Some((sanitized_word, is_url, sanitized_match))
+                    Some((sanitized_word, false, sanitized_match))
                 } else {
                     None
                 };

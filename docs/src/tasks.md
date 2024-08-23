@@ -94,7 +94,7 @@ The same task modal opened via `task: spawn` supports arbitrary bash-like comman
 
 Task modal will persist list of those command for current Zed session, `task: rerun` will also rerun such tasks if they were the last ones spawned.
 
-You can also adjust currently selected task in a modal (`tab` is a default key binding). Doing so will put it's command into a prompt that can then be edited & spawned as an oneshot task.
+You can also adjust currently selected task in a modal (`tab` is a default key binding). Doing so will put its command into a prompt that can then be edited & spawned as an oneshot task.
 
 ### Ephemeral tasks
 

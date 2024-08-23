@@ -5,8 +5,8 @@ use crate::stdio::TerminalOutput;
 use anyhow::Result;
 use base64::prelude::*;
 use gpui::{
-    img, percentage, Animation, AnimationExt, AnyElement, FontWeight, Render, RenderImage, Task,
-    TextRun, Transformation, View,
+    img, percentage, Animation, AnimationExt, AnyElement, ClipboardItem, FontWeight, Image,
+    ImageFormat, Render, RenderImage, Task, TextRun, Transformation, View,
 };
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
@@ -14,7 +14,7 @@ use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
 use serde_json::Value;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
+use ui::{div, prelude::*, v_flex, IntoElement, Styled, Tooltip, ViewContext};
 
 use markdown_preview::{
     markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,
@@ -34,8 +34,14 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
     }
 }
 
+pub(crate) trait SupportsClipboard {
+    fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem>;
+    fn has_clipboard_content(&self, cx: &WindowContext) -> bool;
+}
+
 /// ImageView renders an image inline in an editor, adapting to the line height to fit the image.
 pub struct ImageView {
+    clipboard_image: Arc<Image>,
     height: u32,
     width: u32,
     image: Arc<RenderImage>,
@@ -78,11 +84,41 @@ impl ImageView {
 
         let gpui_image_data = RenderImage::new(vec![image::Frame::new(data)]);
 
+        let format = match format {
+            image::ImageFormat::Png => ImageFormat::Png,
+            image::ImageFormat::Jpeg => ImageFormat::Jpeg,
+            image::ImageFormat::Gif => ImageFormat::Gif,
+            image::ImageFormat::WebP => ImageFormat::Webp,
+            image::ImageFormat::Tiff => ImageFormat::Tiff,
+            image::ImageFormat::Bmp => ImageFormat::Bmp,
+            _ => {
+                return Err(anyhow::anyhow!("unsupported image format"));
+            }
+        };
+
+        // Convert back to a GPUI image for use with the clipboard
+        let clipboard_image = Arc::new(Image {
+            format,
+            bytes,
+            id: gpui_image_data.id.0 as u64,
+        });
+
         return Ok(ImageView {
+            clipboard_image,
             height,
             width,
             image: Arc::new(gpui_image_data),
         });
+    }
+}
+
+impl SupportsClipboard for ImageView {
+    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+        Some(ClipboardItem::new_image(self.clipboard_image.as_ref()))
+    }
+
+    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+        true
     }
 }
 
@@ -91,6 +127,7 @@ impl ImageView {
 pub struct TableView {
     pub table: TabularDataResource,
     pub widths: Vec<Pixels>,
+    cached_clipboard_content: ClipboardItem,
 }
 
 fn cell_content(row: &Value, field: &str) -> String {
@@ -151,7 +188,68 @@ impl TableView {
             widths.push(width)
         }
 
-        Self { table, widths }
+        let cached_clipboard_content = Self::create_clipboard_content(&table);
+
+        Self {
+            table,
+            widths,
+            cached_clipboard_content: ClipboardItem::new_string(cached_clipboard_content),
+        }
+    }
+
+    fn escape_markdown(s: &str) -> String {
+        s.replace('|', "\\|")
+            .replace('*', "\\*")
+            .replace('_', "\\_")
+            .replace('`', "\\`")
+            .replace('[', "\\[")
+            .replace(']', "\\]")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    }
+
+    fn create_clipboard_content(table: &TabularDataResource) -> String {
+        let data = match table.data.as_ref() {
+            Some(data) => data,
+            None => &Vec::new(),
+        };
+        let schema = table.schema.clone();
+
+        let mut markdown = format!(
+            "| {} |\n",
+            table
+                .schema
+                .fields
+                .iter()
+                .map(|field| field.name.clone())
+                .collect::<Vec<_>>()
+                .join(" | ")
+        );
+
+        markdown.push_str("|---");
+        for _ in 1..table.schema.fields.len() {
+            markdown.push_str("|---");
+        }
+        markdown.push_str("|\n");
+
+        let body = data
+            .iter()
+            .map(|record: &Value| {
+                let row_content = schema
+                    .fields
+                    .iter()
+                    .map(|field| Self::escape_markdown(&cell_content(record, &field.name)))
+                    .collect::<Vec<_>>();
+
+                row_content.join(" | ")
+            })
+            .collect::<Vec<String>>();
+
+        for row in body {
+            markdown.push_str(&format!("| {} |\n", row));
+        }
+
+        markdown
     }
 
     pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
@@ -242,6 +340,16 @@ impl TableView {
     }
 }
 
+impl SupportsClipboard for TableView {
+    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+        Some(self.cached_clipboard_content.clone())
+    }
+
+    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+        true
+    }
+}
+
 /// Userspace error from the kernel
 pub struct ErrorView {
     pub ename: String,
@@ -250,55 +358,83 @@ pub struct ErrorView {
 }
 
 impl ErrorView {
-    fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
+    fn render(&self, cx: &mut ViewContext<ExecutionView>) -> Option<AnyElement> {
         let theme = cx.theme();
 
         let padding = cx.line_height() / 2.;
 
         Some(
             v_flex()
-                .w_full()
-                .px(padding)
-                .py(padding)
-                .border_1()
-                .border_color(theme.status().error_border)
+                .gap_3()
                 .child(
                     h_flex()
-                        .font_weight(FontWeight::BOLD)
-                        .child(format!("{}: {}", self.ename, self.evalue)),
+                        .font_buffer(cx)
+                        .child(
+                            Label::new(format!("{}: ", self.ename.clone()))
+                                // .size(LabelSize::Large)
+                                .color(Color::Error)
+                                .weight(FontWeight::BOLD),
+                        )
+                        .child(
+                            Label::new(self.evalue.clone())
+                                // .size(LabelSize::Large)
+                                .weight(FontWeight::BOLD),
+                        ),
                 )
-                .child(self.traceback.render(cx))
+                .child(
+                    div()
+                        .w_full()
+                        .px(padding)
+                        .py(padding)
+                        .border_l_1()
+                        .border_color(theme.status().error_border)
+                        .child(self.traceback.render(cx)),
+                )
                 .into_any_element(),
         )
     }
 }
 
 pub struct MarkdownView {
+    raw_text: String,
     contents: Option<ParsedMarkdown>,
     parsing_markdown_task: Option<Task<Result<()>>>,
 }
 
 impl MarkdownView {
     pub fn from(text: String, cx: &mut ViewContext<Self>) -> Self {
-        let task = cx.spawn(|markdown, mut cx| async move {
+        let task = cx.spawn(|markdown_view, mut cx| {
             let text = text.clone();
             let parsed = cx
                 .background_executor()
                 .spawn(async move { parse_markdown(&text, None, None).await });
 
-            let content = parsed.await;
+            async move {
+                let content = parsed.await;
 
-            markdown.update(&mut cx, |markdown, cx| {
-                markdown.parsing_markdown_task.take();
-                markdown.contents = Some(content);
-                cx.notify();
-            })
+                markdown_view.update(&mut cx, |markdown, cx| {
+                    markdown.parsing_markdown_task.take();
+                    markdown.contents = Some(content);
+                    cx.notify();
+                })
+            }
         });
 
         Self {
+            raw_text: text.clone(),
             contents: None,
             parsing_markdown_task: Some(task),
         }
+    }
+}
+
+impl SupportsClipboard for MarkdownView {
+    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+        Some(ClipboardItem::new_string(self.raw_text.clone()))
+    }
+
+    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+        true
     }
 }
 
@@ -346,6 +482,34 @@ impl Output {
     }
 }
 
+impl SupportsClipboard for Output {
+    fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem> {
+        match &self.content {
+            OutputContent::Plain(terminal) => terminal.clipboard_content(cx),
+            OutputContent::Stream(terminal) => terminal.clipboard_content(cx),
+            OutputContent::Image(image) => image.clipboard_content(cx),
+            OutputContent::ErrorOutput(error) => error.traceback.clipboard_content(cx),
+            OutputContent::Message(_) => None,
+            OutputContent::Table(table) => table.clipboard_content(cx),
+            OutputContent::Markdown(markdown) => markdown.read(cx).clipboard_content(cx),
+            OutputContent::ClearOutputWaitMarker => None,
+        }
+    }
+
+    fn has_clipboard_content(&self, cx: &WindowContext) -> bool {
+        match &self.content {
+            OutputContent::Plain(terminal) => terminal.has_clipboard_content(cx),
+            OutputContent::Stream(terminal) => terminal.has_clipboard_content(cx),
+            OutputContent::Image(image) => image.has_clipboard_content(cx),
+            OutputContent::ErrorOutput(error) => error.traceback.has_clipboard_content(cx),
+            OutputContent::Message(_) => false,
+            OutputContent::Table(table) => table.has_clipboard_content(cx),
+            OutputContent::Markdown(markdown) => markdown.read(cx).has_clipboard_content(cx),
+            OutputContent::ClearOutputWaitMarker => false,
+        }
+    }
+}
+
 pub enum OutputContent {
     Plain(TerminalOutput),
     Stream(TerminalOutput),
@@ -358,7 +522,7 @@ pub enum OutputContent {
 }
 
 impl OutputContent {
-    fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
+    fn render(&self, cx: &mut ViewContext<ExecutionView>) -> Option<AnyElement> {
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
@@ -406,6 +570,7 @@ pub enum ExecutionStatus {
     ShuttingDown,
     Shutdown,
     KernelErrored(String),
+    Restarting,
 }
 
 pub struct ExecutionView {
@@ -599,6 +764,9 @@ impl Render for ExecutionView {
             ExecutionStatus::ShuttingDown => Label::new("Kernel shutting down...")
                 .color(Color::Muted)
                 .into_any_element(),
+            ExecutionStatus::Restarting => Label::new("Kernel restarting...")
+                .color(Color::Muted)
+                .into_any_element(),
             ExecutionStatus::Shutdown => Label::new("Kernel shutdown")
                 .color(Color::Muted)
                 .into_any_element(),
@@ -620,11 +788,42 @@ impl Render for ExecutionView {
 
         div()
             .w_full()
-            .children(
-                self.outputs
-                    .iter()
-                    .filter_map(|output| output.content.render(cx)),
-            )
+            .children(self.outputs.iter().enumerate().map(|(index, output)| {
+                h_flex()
+                    .w_full()
+                    .items_start()
+                    .child(
+                        div().flex_1().child(
+                            output
+                                .content
+                                .render(cx)
+                                .unwrap_or_else(|| div().into_any_element()),
+                        ),
+                    )
+                    .when(output.has_clipboard_content(cx), |el| {
+                        let clipboard_content = output.clipboard_content(cx);
+
+                        el.child(
+                            div().pl_1().child(
+                                IconButton::new(
+                                    ElementId::Name(format!("copy-output-{}", index).into()),
+                                    IconName::Copy,
+                                )
+                                .style(ButtonStyle::Transparent)
+                                .tooltip(move |cx| Tooltip::text("Copy Output", cx))
+                                .on_click(cx.listener(
+                                    move |_, _, cx| {
+                                        if let Some(clipboard_content) = clipboard_content.as_ref()
+                                        {
+                                            cx.write_to_clipboard(clipboard_content.clone());
+                                            // todo!(): let the user know that the content was copied
+                                        }
+                                    },
+                                )),
+                            ),
+                        )
+                    })
+            }))
             .children(match self.status {
                 ExecutionStatus::Executing => vec![status],
                 ExecutionStatus::Queued => vec![status],

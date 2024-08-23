@@ -7,14 +7,17 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsSources};
 
-use crate::provider::{
-    self,
-    anthropic::AnthropicSettings,
-    cloud::{self, ZedDotDevSettings},
-    copilot_chat::CopilotChatSettings,
-    google::GoogleSettings,
-    ollama::OllamaSettings,
-    open_ai::OpenAiSettings,
+use crate::{
+    provider::{
+        self,
+        anthropic::AnthropicSettings,
+        cloud::{self, ZedDotDevSettings},
+        copilot_chat::CopilotChatSettings,
+        google::GoogleSettings,
+        ollama::OllamaSettings,
+        open_ai::OpenAiSettings,
+    },
+    LanguageModelCacheConfiguration,
 };
 
 /// Initializes the language model settings.
@@ -91,12 +94,24 @@ impl AnthropicSettingsContent {
                             .filter_map(|model| match model {
                                 anthropic::Model::Custom {
                                     name,
+                                    display_name,
                                     max_tokens,
                                     tool_override,
+                                    cache_configuration,
+                                    max_output_tokens,
                                 } => Some(provider::anthropic::AvailableModel {
                                     name,
+                                    display_name,
                                     max_tokens,
                                     tool_override,
+                                    cache_configuration: cache_configuration.as_ref().map(
+                                        |config| LanguageModelCacheConfiguration {
+                                            max_cache_anchors: config.max_cache_anchors,
+                                            should_speculate: config.should_speculate,
+                                            min_total_token: config.min_total_token,
+                                        },
+                                    ),
+                                    max_output_tokens,
                                 }),
                                 _ => None,
                             })
@@ -157,9 +172,15 @@ impl OpenAiSettingsContent {
                         models
                             .into_iter()
                             .filter_map(|model| match model {
-                                open_ai::Model::Custom { name, max_tokens } => {
-                                    Some(provider::open_ai::AvailableModel { name, max_tokens })
-                                }
+                                open_ai::Model::Custom {
+                                    name,
+                                    max_tokens,
+                                    max_output_tokens,
+                                } => Some(provider::open_ai::AvailableModel {
+                                    name,
+                                    max_tokens,
+                                    max_output_tokens,
+                                }),
                                 _ => None,
                             })
                             .collect()

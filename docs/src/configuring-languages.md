@@ -336,7 +336,7 @@ This configuration changes the color of function names in Python files.
 
 Change your theme:
 
-1. Use the theme selector (Cmd+K Cmd+T on macOS, Ctrl+K Ctrl+T on Linux)
+1. Use the theme selector (<kbd>cmd-k cmd-t|ctrl-k ctrl-t</kbd>)
 2. Or set it in your `settings.json`:
 
 ```json
@@ -351,7 +351,7 @@ Create custom themes by creating a JSON file in `~/.config/zed/themes/`. Zed wil
 
 ### Using Theme Extensions
 
-Zed supports theme extensions. Browse and install theme extensions from the Extensions panel (Cmd+Shift+E).
+Zed supports theme extensions. Browse and install theme extensions from the Extensions panel (<kbd>cmd-shift-e|ctrl-shift-e</kbd>).
 
 To create your own theme extension, refer to the [Developing Theme Extensions](./extensions/themes.md) guide.
 
@@ -380,16 +380,16 @@ Code actions provide quick fixes and refactoring options. Access code actions us
 
 Use these commands to navigate your codebase:
 
-- `editor: Go to Definition` (F12)
-- `editor: Go to Type Definition` (Cmd+F12 on macOS, Ctrl+F12 on Linux)
-- `editor: Find All References` (Shift+F12)
+- `editor: Go to Definition` (<kbd>f12|f12</kbd>)
+- `editor: Go to Type Definition` (<kbd>cmd-f12|ctrl-f12</kbd>)
+- `editor: Find All References` (<kbd>shift-f12|shift-f12</kbd>)
 
 ### Rename Symbol
 
 To rename a symbol across your project:
 
 1. Place your cursor on the symbol
-2. Use the `editor: Rename Symbol` command (F2)
+2. Use the `editor: Rename Symbol` command (<kbd>f2|f2</kbd>)
 3. Enter the new name and press Enter
 
 These features depend on the capabilities of the language server for each language.
@@ -406,7 +406,7 @@ The `workspace: Open Symbol` command allows you to search for symbols (functions
 
 ### Code Completion
 
-Zed provides intelligent code completion suggestions as you type. You can manually trigger completion with the `editor: Show Completions` command. Use Tab or Enter to accept suggestions.
+Zed provides intelligent code completion suggestions as you type. You can manually trigger completion with the `editor: Show Completions` command. Use <kbd>tab|tab</kbd> or <kbd>enter|enter</kbd> to accept suggestions.
 
 ### Diagnostics
 

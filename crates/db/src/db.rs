@@ -6,7 +6,6 @@ pub use anyhow;
 use anyhow::Context;
 use gpui::AppContext;
 pub use indoc::indoc;
-pub use lazy_static;
 pub use paths::database_dir;
 pub use smol;
 pub use sqlez;
@@ -17,9 +16,11 @@ pub use release_channel::RELEASE_CHANNEL;
 use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
+use std::env;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::LazyLock;
 use util::{maybe, ResultExt};
 
 const CONNECTION_INITIALIZE_QUERY: &str = sql!(
@@ -37,10 +38,10 @@ const FALLBACK_DB_NAME: &str = "FALLBACK_MEMORY_DB";
 
 const DB_FILE_NAME: &str = "db.sqlite";
 
-lazy_static::lazy_static! {
-    pub static ref ZED_STATELESS: bool = std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty());
-    pub static ref ALL_FILE_DB_FAILED: AtomicBool = AtomicBool::new(false);
-}
+pub static ZED_STATELESS: LazyLock<bool> =
+    LazyLock::new(|| env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty()));
+
+pub static ALL_FILE_DB_FAILED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
 /// Open or create a database at the given directory path.
 /// This will retry a couple times if there are failures. If opening fails once, the db directory
@@ -138,15 +139,16 @@ macro_rules! define_connection {
             }
         }
 
+        use std::sync::LazyLock;
         #[cfg(any(test, feature = "test-support"))]
-        $crate::lazy_static::lazy_static! {
-            pub static ref $id: $t = $t($crate::smol::block_on($crate::open_test_db(stringify!($id))));
-        }
+        pub static $id: LazyLock<$t> = LazyLock::new(|| {
+            $t($crate::smol::block_on($crate::open_test_db(stringify!($id))))
+        });
 
         #[cfg(not(any(test, feature = "test-support")))]
-        $crate::lazy_static::lazy_static! {
-            pub static ref $id: $t = $t($crate::smol::block_on($crate::open_db($crate::database_dir(), &$crate::RELEASE_CHANNEL)));
-        }
+        pub static $id: LazyLock<$t> = LazyLock::new(|| {
+            $t($crate::smol::block_on($crate::open_db($crate::database_dir(), &$crate::RELEASE_CHANNEL)))
+        });
     };
     (pub static ref $id:ident: $t:ident<$($d:ty),+> = $migrations:expr;) => {
         pub struct $t($crate::sqlez::thread_safe_connection::ThreadSafeConnection<( $($d),+, $t )>);
@@ -170,14 +172,14 @@ macro_rules! define_connection {
         }
 
         #[cfg(any(test, feature = "test-support"))]
-        $crate::lazy_static::lazy_static! {
-            pub static ref $id: $t = $t($crate::smol::block_on($crate::open_test_db(stringify!($id))));
-        }
+        pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
+            $t($crate::smol::block_on($crate::open_test_db(stringify!($id))))
+        });
 
         #[cfg(not(any(test, feature = "test-support")))]
-        $crate::lazy_static::lazy_static! {
-            pub static ref $id: $t = $t($crate::smol::block_on($crate::open_db($crate::database_dir(), &$crate::RELEASE_CHANNEL)));
-        }
+        pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
+            $t($crate::smol::block_on($crate::open_db($crate::database_dir(), &$crate::RELEASE_CHANNEL)))
+        });
     };
 }
 
