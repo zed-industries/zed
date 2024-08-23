@@ -54,7 +54,7 @@ let
 
 in
 rustPlatform.buildRustPackage rec {
-  pname = "zed";
+  pname = "zed-editor";
   inherit version src;
 
   cargoLock = workspaceLock;

@@ -21,19 +21,19 @@
       in
       {
         packages = {
-          zed = pkgs.callPackage ./nix/build.nix { inherit toolchain; };
-          default = self.packages.${system}.zed;
+          zed-editor = pkgs.callPackage ./nix/build.nix { inherit toolchain; };
+          default = self.packages.${system}.zed-editor;
         };
 
         devShells.default = import ./nix/shell.nix { inherit pkgs; };
 
         overlays.default = final: prev: {
-          zed = final.callPackage ./nix/build.nix { inherit toolchain; };
+          zed-editor = final.callPackage ./nix/build.nix { inherit toolchain; };
         };
       }
     ) // {
       overlays.default = final: prev: {
-        zed = final.callPackage ./nix/build.nix { toolchain = final.fenix.stable.toolchain; };
+        zed-editor = final.callPackage ./nix/build.nix { toolchain = final.fenix.stable.toolchain; };
       };
     };
 }
