@@ -18,11 +18,7 @@ impl Template for ActionTemplate {
     }
 
     fn regex(&self) -> Regex {
-        Regex::new(&format!(
-            "\\{{\\s*#{}\\s+name=\"(.*?)\"\\s*\\}}",
-            self.key()
-        ))
-        .unwrap()
+        Regex::new(&format!(r"\{{#{}(.*?)\}}", self.key())).unwrap()
     }
 
     fn parse_args(&self, args: &str) -> HashMap<String, String> {
@@ -32,12 +28,13 @@ impl Template for ActionTemplate {
     }
 
     fn render(&self, _context: &PreprocessorContext, args: &HashMap<String, String>) -> String {
-        let name = args.get("name").map(|s| s.to_string()).unwrap_or_default();
-        
+        let name = args.get("name").map(String::as_str).unwrap_or_default();
+
         let formatted_name = name
             .chars()
-            .map(|c| {
-                if c.is_uppercase() {
+            .enumerate()
+            .map(|(i, c)| {
+                if i > 0 && c.is_uppercase() {
                     format!(" {}", c.to_lowercase())
                 } else {
                     c.to_string()
@@ -46,7 +43,7 @@ impl Template for ActionTemplate {
             .collect::<String>()
             .trim()
             .to_string();
-        
+
         format!("<code class=\"hljs\">{}</code>", formatted_name)
     }
 }
