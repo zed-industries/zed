@@ -3,29 +3,37 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs?ref=nixos-unstable";
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    utils.url = "github:numtide/flake-utils";
   };
 
-  outputs =
-    { self, nixpkgs }:
-    let
-      inherit (self) outputs;
-      systems = [
-        "aarch64-linux"
-        "x86_64-linux"
-        "aarch64-darwin"
-        "x86_64-darwin"
-      ];
-      forAllSystems = nixpkgs.lib.genAttrs systems;
-    in
-    {
-      devShells = forAllSystems (
-        system:
-        let
-          pkgs = import nixpkgs { inherit system; };
-        in
-        {
-          default = import ./shell.nix { inherit pkgs; };
-        }
-      );
+  outputs = { self, nixpkgs, fenix, utils }:
+    utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ fenix.overlays.default ];
+        };
+        toolchain = pkgs.fenix.stable.toolchain;
+      in
+      {
+        packages = {
+          zed = pkgs.callPackage ./nix/build.nix { inherit toolchain; };
+          default = self.packages.${system}.zed;
+        };
+
+        devShells.default = import ./nix/shell.nix { inherit pkgs; };
+
+        overlays.default = final: prev: {
+          zed = final.callPackage ./nix/build.nix { inherit toolchain; };
+        };
+      }
+    ) // {
+      overlays.default = final: prev: {
+        zed = final.callPackage ./nix/build.nix { toolchain = final.fenix.stable.toolchain; };
+      };
     };
 }
