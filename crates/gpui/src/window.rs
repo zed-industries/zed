@@ -2563,8 +2563,7 @@ impl<'a> WindowContext<'a> {
             return Ok(());
         };
         let content_mask = self.content_mask().scale(scale_factor);
-
-        let sized_bounds = bounds
+        let bounds = bounds
             .map_origin(|origin| origin.floor())
             .map_size(|size| size.ceil());
 
@@ -2576,7 +2575,7 @@ impl<'a> WindowContext<'a> {
                     .insert_primitive(MonochromeSprite {
                         order: 0,
                         pad: 0,
-                        bounds: sized_bounds,
+                        bounds,
                         content_mask,
                         color,
                         tile,
@@ -2589,7 +2588,7 @@ impl<'a> WindowContext<'a> {
                     .scene
                     .insert_primitive(PolychromeSprite {
                         order: 0,
-                        bounds: sized_bounds,
+                        bounds,
                         content_mask,
                         tile,
                         grayscale: false,
