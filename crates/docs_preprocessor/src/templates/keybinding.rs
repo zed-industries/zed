@@ -14,20 +14,16 @@ impl KeybindingTemplate {
 
 impl Template for KeybindingTemplate {
     fn key(&self) -> &'static str {
-        "keybinding"
+        "kb"
     }
 
     fn regex(&self) -> Regex {
-        Regex::new(&format!(
-            "\\{{\\s*#{}\\s+action=\"(.*?)\"\\s*\\}}",
-            self.key()
-        ))
-        .unwrap()
+        Regex::new(&format!(r"\{{#{}(.*?)\}}", self.key())).unwrap()
     }
 
     fn parse_args(&self, args: &str) -> HashMap<String, String> {
         let mut map = HashMap::new();
-        map.insert("action".to_string(), args.to_string());
+        map.insert("action".to_string(), args.trim().to_string());
         map
     }
 
