@@ -318,6 +318,16 @@ fn init_ui(
 }
 
 fn main() {
+    let args = Args::parse();
+
+    #[cfg(target_os = "windows")]
+    if cfg!(not(debug_assertions)) && args.win_console {
+        // create output console on windows in release mode.
+        // this must be done as soon as possible so as
+        // to catch any output.
+        win_try_alloc_console().log_err();
+    }
+
     let start_time = std::time::Instant::now();
     menu::init();
     zed_actions::init();
@@ -490,7 +500,6 @@ fn main() {
         reliability::init(client.http_client(), installation_id, cx);
         let prompt_builder = init_common(app_state.clone(), cx);
 
-        let args = Args::parse();
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
@@ -1058,6 +1067,11 @@ struct Args {
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
+
+    /// Spawns a console on windows. Is a no-op if compiled in debug mode.
+    #[cfg(target_os = "windows")]
+    #[arg(long)]
+    win_console: bool,
 }
 
 fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
@@ -1228,3 +1242,52 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 
 #[cfg(not(debug_assertions))]
 fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut AppContext) {}
+
+/// when compiled in release mode for windows, windows_subsystem is set to "windows"
+/// which means we lose all terminal output, even if we ran this from a terminal
+///
+/// we allocsonsole and output there. the reason we allocconsole instead of using attachconsole, is because
+/// attachconsole is bugged. it interleaves output with everything else
+/// in the terminal, which is undesirable.
+#[cfg(target_os = "windows")]
+fn win_try_alloc_console() -> Result<()> {
+    use windows::{
+        core::w,
+        Win32::System::Console::{
+            AllocConsole, GetStdHandle, SetConsoleMode, SetConsoleTitleW, ENABLE_PROCESSED_OUTPUT,
+            ENABLE_VIRTUAL_TERMINAL_PROCESSING, ENABLE_WRAP_AT_EOL_OUTPUT, STD_ERROR_HANDLE,
+            STD_OUTPUT_HANDLE,
+        },
+    };
+
+    unsafe {
+        AllocConsole()?;
+    }
+
+    let stdout = unsafe { GetStdHandle(STD_OUTPUT_HANDLE)? };
+    let stderr = unsafe { GetStdHandle(STD_ERROR_HANDLE)? };
+
+    unsafe {
+        SetConsoleMode(
+            stdout,
+            ENABLE_PROCESSED_OUTPUT
+                | ENABLE_WRAP_AT_EOL_OUTPUT
+                | ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+        )?;
+    }
+
+    unsafe {
+        SetConsoleMode(
+            stderr,
+            ENABLE_PROCESSED_OUTPUT
+                | ENABLE_WRAP_AT_EOL_OUTPUT
+                | ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+        )?;
+    }
+
+    unsafe {
+        SetConsoleTitleW(w!("Zed"))?;
+    }
+
+    Ok(())
+}
