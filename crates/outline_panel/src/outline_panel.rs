@@ -1239,6 +1239,9 @@ impl OutlinePanel {
         editor: &View<Editor>,
         cx: &mut ViewContext<'_, Self>,
     ) {
+        if !self.active {
+            return;
+        }
         if !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
             return;
         }
@@ -2545,6 +2548,10 @@ impl OutlinePanel {
         debounce: Option<Duration>,
         cx: &mut ViewContext<OutlinePanel>,
     ) {
+        if !self.active {
+            return;
+        }
+
         let is_singleton = self.is_singleton_active(cx);
         let query = self.query(cx);
         self.cached_entries_update_task = cx.spawn(|outline_panel, mut cx| async move {
@@ -3008,12 +3015,20 @@ impl OutlinePanel {
     }
 
     fn update_non_fs_items(&mut self, cx: &mut ViewContext<OutlinePanel>) {
+        if !self.active {
+            return;
+        }
+
         self.update_search_matches(cx);
         self.fetch_outdated_outlines(cx);
         self.autoscroll(cx);
     }
 
     fn update_search_matches(&mut self, cx: &mut ViewContext<OutlinePanel>) {
+        if !self.active {
+            return;
+        }
+
         let active_editor = self.active_editor();
         let project_search = self.active_project_search(active_editor.as_ref(), cx);
         let project_search_matches = project_search
