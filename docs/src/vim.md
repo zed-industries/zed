@@ -258,6 +258,8 @@ There are also a few Zed settings that you may also enjoy if you use vim mode:
   "relative_line_numbers": true,
   // hide the scroll bar
   "scrollbar": { "show": "never" },
+  // prevent the buffer from scrolling beyond the last line
+  "scroll_beyond_last_line": "off",
   // allow cursor to reach edges of screen
   "vertical_scroll_margin": 0,
   "gutter": {
