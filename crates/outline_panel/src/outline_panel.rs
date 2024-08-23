@@ -20,12 +20,12 @@ use editor::{
 use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, anchored, deferred, div, px, uniform_list, Action, AnyElement, AppContext,
-    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EntityId,
-    EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, KeyContext, Model,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext,
-    WeakView, WindowContext,
+    actions, anchored, deferred, div, uniform_list, Action, AnyElement, AppContext, AssetSource,
+    AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId, EntityId, EventEmitter,
+    FocusHandle, FocusableView, InteractiveElement, IntoElement, KeyContext, Model, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -2790,7 +2790,7 @@ impl Panel for OutlinePanel {
                     DockPosition::Left | DockPosition::Bottom => OutlinePanelDockPosition::Left,
                     DockPosition::Right => OutlinePanelDockPosition::Right,
                 };
-                settings.dock = Some(dock);
+                settings.dock = dock;
             },
         );
     }

@@ -11,7 +11,7 @@ pub enum OutlinePanelDockPosition {
     Right,
 }
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, JsonSchema)]
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, JsonSchema)]
 pub struct OutlinePanelSettings {
     /// Whether to show the outline panel button in the status bar.
     pub button: bool,
