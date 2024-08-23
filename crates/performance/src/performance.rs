@@ -18,16 +18,12 @@ const SHOW_STARTUP_TIME_DURATION: std::time::Duration = std::time::Duration::fro
 pub fn init(cx: &mut AppContext) {
     PerformanceSettings::register(cx);
 
-    let mut enabled = PerformanceSettings::get_global(cx)
-        .show_in_status_bar
-        .unwrap_or(false);
+    let mut enabled = PerformanceSettings::get_global(cx).show_in_status_bar;
     let start_time = Instant::now();
     let mut _observe_workspaces = toggle_status_bar_items(enabled, start_time, cx);
 
     cx.observe_global::<SettingsStore>(move |cx| {
-        let new_value = PerformanceSettings::get_global(cx)
-            .show_in_status_bar
-            .unwrap_or(false);
+        let new_value = PerformanceSettings::get_global(cx).show_in_status_bar;
         if new_value != enabled {
             enabled = new_value;
             _observe_workspaces = toggle_status_bar_items(enabled, start_time, cx);
