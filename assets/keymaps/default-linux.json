@@ -475,7 +475,7 @@
     "context": "!Terminal",
     "bindings": {
       "ctrl-shift-c": "collab_panel::ToggleFocus",
-      "ctrl-f": "buffer_search::Deploy"
+      "ctrl-shift-f": "buffer_search::Deploy"
     }
   },
   {
