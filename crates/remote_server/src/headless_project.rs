@@ -49,6 +49,7 @@ impl HeadlessProject {
         session.add_request_handler(this.clone(), Self::handle_list_remote_directory);
         session.add_request_handler(this.clone(), Self::handle_add_worktree);
         session.add_request_handler(this.clone(), Self::handle_open_buffer_by_path);
+        session.add_request_handler(this.clone(), Self::handle_project_search);
 
         session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_blame_buffer);
         session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_update_buffer);
@@ -176,6 +177,13 @@ impl HeadlessProject {
             }
         }
         Ok(proto::ListRemoteDirectoryResponse { entries })
+    }
+
+    pub async fn handle_project_search(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::SearchProject>,
+        cx: AsyncAppContext,
+    ) -> Result<proto::SearchProjectResponse> {
     }
 
     pub fn on_buffer_store_event(
