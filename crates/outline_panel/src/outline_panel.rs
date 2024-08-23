@@ -230,8 +230,8 @@ enum SearchKind {
 
 #[derive(Clone, Debug)]
 struct SearchData {
-    entire_row_range: Range<editor::Anchor>,
-    entire_row_text: String,
+    context_range: Range<editor::Anchor>,
+    context_text: String,
     highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
     search_match_indices: Vec<Range<usize>>,
 }
@@ -263,6 +263,7 @@ impl Eq for PanelEntry {}
 
 impl SearchData {
     fn new(
+        kind: SearchKind,
         match_range: &Range<editor::Anchor>,
         multi_buffer_snapshot: &MultiBufferSnapshot,
         theme: &SyntaxTheme,
@@ -277,11 +278,13 @@ impl SearchData {
             (entire_row_range_start..entire_row_range_end).to_anchors(&multi_buffer_snapshot);
         let entire_row_offset_range = entire_row_range.to_offset(&multi_buffer_snapshot);
         let match_offset_range = match_range.to_offset(&multi_buffer_snapshot);
-        let search_match_indices = vec![
+        let mut search_match_indices = vec![
             match_offset_range.start - entire_row_offset_range.start
                 ..match_offset_range.end - entire_row_offset_range.start,
         ];
 
+        let mut left_whitespaces_count = 0;
+        let mut non_whitespace_symbol_occured = false;
         let mut offset = entire_row_offset_range.start;
         let mut entire_row_text = String::new();
         let mut highlight_ranges = Vec::new();
@@ -289,6 +292,17 @@ impl SearchData {
             entire_row_offset_range.start..entire_row_offset_range.end,
             true,
         ) {
+            if !non_whitespace_symbol_occured {
+                for c in chunk.text.chars() {
+                    if c.is_whitespace() {
+                        left_whitespaces_count += 1;
+                    } else {
+                        non_whitespace_symbol_occured = true;
+                        break;
+                    }
+                }
+            }
+
             if chunk.text.len() > entire_row_offset_range.end - offset {
                 chunk.text = &chunk.text[0..(entire_row_offset_range.end - offset)];
                 offset = entire_row_offset_range.end;
@@ -309,11 +323,25 @@ impl SearchData {
             }
         }
 
+        if let SearchKind::Buffer = kind {
+            left_whitespaces_count = 0;
+        }
+        highlight_ranges.iter_mut().for_each(|(range, _)| {
+            range.start = range.start.saturating_sub(left_whitespaces_count);
+            range.end = range.end.saturating_sub(left_whitespaces_count);
+        });
+        search_match_indices.iter_mut().for_each(|range| {
+            range.start = range.start.saturating_sub(left_whitespaces_count);
+            range.end = range.end.saturating_sub(left_whitespaces_count);
+        });
+        let trimmed_row_offset_range =
+            entire_row_offset_range.start + left_whitespaces_count..entire_row_offset_range.end;
+        let trimmed_text = entire_row_text[left_whitespaces_count..].to_owned();
         Self {
             highlight_ranges,
             search_match_indices,
-            entire_row_range,
-            entire_row_text,
+            context_range: trimmed_row_offset_range.to_anchors(&multi_buffer_snapshot),
+            context_text: trimmed_text,
         }
     }
 }
@@ -1636,12 +1664,12 @@ impl OutlinePanel {
         let label_element = language::render_item(
             &OutlineItem {
                 depth,
-                range: search_data.entire_row_range.clone(),
-                text: search_data.entire_row_text.clone(),
                 annotation_range: None,
+                range: search_data.context_range.clone(),
+                text: search_data.context_text.clone(),
                 highlight_ranges: search_data.highlight_ranges.clone(),
                 name_ranges: search_data.search_match_indices.clone(),
-                body_range: Some(search_data.entire_row_range.clone()),
+                body_range: Some(search_data.context_range.clone()),
             },
             match_ranges.into_iter().cloned(),
             cx,
@@ -2932,8 +2960,8 @@ impl OutlinePanel {
                     {
                         match_candidates.push(StringMatchCandidate {
                             id,
-                            char_bag: search_data.entire_row_text.chars().collect(),
-                            string: search_data.entire_row_text.clone(),
+                            char_bag: search_data.context_text.chars().collect(),
+                            string: search_data.context_text.clone(),
                         });
                     }
                 }
@@ -3225,12 +3253,11 @@ impl OutlinePanel {
         };
         let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
         let theme = cx.theme().syntax().clone();
-        // TODO kb trim left whitespaces during project search matching,
-
         let previous_search_data = previous_search_entry.and_then(|previous_search_entry| {
             let previous_search_data = previous_search_entry.render_data.as_mut()?;
             previous_search_data.get_or_init(|| {
                 SearchData::new(
+                    new_search_entry.kind,
                     &previous_search_entry.match_range,
                     &multi_buffer_snapshot,
                     &theme,
@@ -3241,6 +3268,7 @@ impl OutlinePanel {
         let new_search_data = new_search_entry.render_data.as_mut().and_then(|data| {
             data.get_or_init(|| {
                 SearchData::new(
+                    new_search_entry.kind,
                     &new_search_entry.match_range,
                     &multi_buffer_snapshot,
                     &theme,
@@ -3252,7 +3280,7 @@ impl OutlinePanel {
             (_, None) => false,
             (None, Some(_)) => true,
             (Some(previous_search_data), Some(new_search_data)) => {
-                if previous_search_data.entire_row_range == new_search_data.entire_row_range {
+                if previous_search_data.context_range == new_search_data.context_range {
                     previous_search_data
                         .highlight_ranges
                         .extend(new_search_data.highlight_ranges.drain(..));
