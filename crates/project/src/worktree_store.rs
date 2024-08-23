@@ -6,7 +6,7 @@ use rpc::{
     TypedEnvelope,
 };
 use text::ReplicaId;
-use worktree::{ProjectEntryId, Worktree, WorktreeId};
+use worktree::{Entry, ProjectEntryId, Worktree, WorktreeId};
 
 pub struct WorktreeStore {
     is_shared: bool,
@@ -59,6 +59,15 @@ impl WorktreeStore {
     ) -> Option<Model<Worktree>> {
         self.worktrees()
             .find(|worktree| worktree.read(cx).contains_entry(entry_id))
+    }
+
+    pub fn entry_for_id<'a>(
+        &'a self,
+        entry_id: ProjectEntryId,
+        cx: &'a AppContext,
+    ) -> Option<&'a Entry> {
+        self.worktrees()
+            .find_map(|worktree| worktree.read(cx).entry_for_id(entry_id))
     }
 
     pub fn add(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
