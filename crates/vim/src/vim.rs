@@ -46,6 +46,8 @@ use crate::state::ReplayableAction;
 /// Whether or not to enable Vim mode.
 ///
 /// Default: false
+#[derive(Copy, Clone, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(default, transparent)]
 pub struct VimModeSetting(pub bool);
 
 /// An Action to Switch between modes
@@ -1016,12 +1018,10 @@ impl Vim {
 impl Settings for VimModeSetting {
     const KEY: Option<&'static str> = Some("vim_mode");
 
-    type FileContent = Option<bool>;
+    type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
-        Ok(Self(sources.user.copied().flatten().unwrap_or(
-            sources.default.ok_or_else(Self::missing_default)?,
-        )))
+        Ok(sources.user.copied().unwrap_or(*sources.default))
     }
 }
 
@@ -1037,7 +1037,8 @@ pub enum UseSystemClipboard {
     OnYank,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 struct VimSettings {
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
@@ -1045,18 +1046,21 @@ struct VimSettings {
     pub custom_digraphs: HashMap<String, Arc<str>>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-struct VimSettingsContent {
-    pub use_system_clipboard: Option<UseSystemClipboard>,
-    pub use_multiline_find: Option<bool>,
-    pub use_smartcase_find: Option<bool>,
-    pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
+impl Default for VimSettings {
+    fn default() -> Self {
+        Self {
+            use_system_clipboard: UseSystemClipboard::Always,
+            use_multiline_find: false,
+            use_smartcase_find: false,
+            custom_digraphs: Default::default(),
+        }
+    }
 }
 
 impl Settings for VimSettings {
     const KEY: Option<&'static str> = Some("vim");
 
-    type FileContent = VimSettingsContent;
+    type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()
