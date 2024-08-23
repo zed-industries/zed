@@ -187,6 +187,8 @@ impl fmt::Display for PeerId {
 }
 
 messages!(
+    (AcceptTermsOfService, Foreground),
+    (AcceptTermsOfServiceResponse, Foreground),
     (Ack, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
@@ -239,6 +241,8 @@ messages!(
     (GetCompletionsResponse, Background),
     (GetDefinition, Background),
     (GetDefinitionResponse, Background),
+    (GetDeclaration, Background),
+    (GetDeclarationResponse, Background),
     (GetDocumentHighlights, Background),
     (GetDocumentHighlightsResponse, Background),
     (GetHover, Background),
@@ -259,6 +263,8 @@ messages!(
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
     (GetImplementationResponse, Background),
+    (GetLlmToken, Background),
+    (GetLlmTokenResponse, Background),
     (GetUsers, Foreground),
     (Hello, Foreground),
     (IncomingCall, Foreground),
@@ -294,8 +300,8 @@ messages!(
     (PrepareRename, Background),
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
-    (QueryLanguageModel, Background),
-    (QueryLanguageModelResponse, Background),
+    (CountLanguageModelTokens, Background),
+    (CountLanguageModelTokensResponse, Background),
     (RefreshInlayHints, Foreground),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -355,6 +361,7 @@ messages!(
     (UpdateParticipantLocation, Foreground),
     (UpdateProject, Foreground),
     (UpdateProjectCollaborator, Foreground),
+    (UpdateUserPlan, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
     (UsersResponse, Foreground),
@@ -394,14 +401,19 @@ messages!(
     (AdvertiseContexts, Foreground),
     (OpenContext, Foreground),
     (OpenContextResponse, Foreground),
+    (CreateContext, Foreground),
+    (CreateContextResponse, Foreground),
     (UpdateContext, Foreground),
     (SynchronizeContexts, Foreground),
     (SynchronizeContextsResponse, Foreground),
+    (LspExtSwitchSourceHeader, Background),
+    (LspExtSwitchSourceHeaderResponse, Background),
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
 );
 
 request_messages!(
+    (AcceptTermsOfService, AcceptTermsOfServiceResponse),
     (ApplyCodeAction, ApplyCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
@@ -428,9 +440,11 @@ request_messages!(
     (GetCodeActions, GetCodeActionsResponse),
     (GetCompletions, GetCompletionsResponse),
     (GetDefinition, GetDefinitionResponse),
+    (GetDeclaration, GetDeclarationResponse),
     (GetImplementation, GetImplementationResponse),
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
     (GetHover, GetHoverResponse),
+    (GetLlmToken, GetLlmTokenResponse),
     (GetNotifications, GetNotificationsResponse),
     (GetPrivateUserInfo, GetPrivateUserInfoResponse),
     (GetProjectSymbols, GetProjectSymbolsResponse),
@@ -463,7 +477,7 @@ request_messages!(
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
     (PrepareRename, PrepareRenameResponse),
-    (QueryLanguageModel, QueryLanguageModelResponse),
+    (CountLanguageModelTokens, CountLanguageModelTokensResponse),
     (RefreshInlayHints, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),
     (RejoinRoom, RejoinRoomResponse),
@@ -514,7 +528,9 @@ request_messages!(
     (RenameDevServer, Ack),
     (RestartLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
+    (CreateContext, CreateContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
+    (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
 );
 
@@ -535,6 +551,7 @@ entity_messages!(
     GetCodeActions,
     GetCompletions,
     GetDefinition,
+    GetDeclaration,
     GetImplementation,
     GetDocumentHighlights,
     GetHover,
@@ -580,8 +597,10 @@ entity_messages!(
     LspExtExpandMacro,
     AdvertiseContexts,
     OpenContext,
+    CreateContext,
     UpdateContext,
     SynchronizeContexts,
+    LspExtSwitchSourceHeader
 );
 
 entity_messages!(

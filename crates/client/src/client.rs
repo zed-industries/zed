@@ -1,6 +1,7 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+mod socks;
 pub mod telemetry;
 pub mod user;
 
@@ -22,7 +23,6 @@ use gpui::{
     actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
-use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
 use proto::ProtoClient;
@@ -32,6 +32,7 @@ use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, Requ
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use socks::connect_socks_proxy_stream;
 use std::fmt;
 use std::pin::Pin;
 use std::{
@@ -43,7 +44,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Weak,
+        Arc, LazyLock, Weak,
     },
     time::{Duration, Instant},
 };
@@ -65,27 +66,35 @@ impl fmt::Display for DevServerToken {
     }
 }
 
-lazy_static! {
-    static ref ZED_SERVER_URL: Option<String> = std::env::var("ZED_SERVER_URL").ok();
-    static ref ZED_RPC_URL: Option<String> = std::env::var("ZED_RPC_URL").ok();
-    /// An environment variable whose presence indicates that the development auth
-    /// provider should be used.
-    ///
-    /// Only works in development. Setting this environment variable in other release
-    /// channels is a no-op.
-    pub static ref ZED_DEVELOPMENT_AUTH: bool =
-        std::env::var("ZED_DEVELOPMENT_AUTH").map_or(false, |value| !value.is_empty());
-    pub static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
+static ZED_SERVER_URL: LazyLock<Option<String>> =
+    LazyLock::new(|| std::env::var("ZED_SERVER_URL").ok());
+static ZED_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZED_RPC_URL").ok());
+
+/// An environment variable whose presence indicates that the development auth
+/// provider should be used.
+///
+/// Only works in development. Setting this environment variable in other release
+/// channels is a no-op.
+pub static ZED_DEVELOPMENT_AUTH: LazyLock<bool> = LazyLock::new(|| {
+    std::env::var("ZED_DEVELOPMENT_AUTH").map_or(false, |value| !value.is_empty())
+});
+pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
+    std::env::var("ZED_IMPERSONATE")
         .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) });
-    pub static ref ADMIN_API_TOKEN: Option<String> = std::env::var("ZED_ADMIN_API_TOKEN")
+        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+});
+
+pub static ADMIN_API_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| {
+    std::env::var("ZED_ADMIN_API_TOKEN")
         .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) });
-    pub static ref ZED_APP_PATH: Option<PathBuf> =
-        std::env::var("ZED_APP_PATH").ok().map(PathBuf::from);
-    pub static ref ZED_ALWAYS_ACTIVE: bool =
-        std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty());
-}
+        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+});
+
+pub static ZED_APP_PATH: LazyLock<Option<PathBuf>> =
+    LazyLock::new(|| std::env::var("ZED_APP_PATH").ok().map(PathBuf::from));
+
+pub static ZED_ALWAYS_ACTIVE: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty()));
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
 pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);
@@ -541,9 +550,16 @@ impl Client {
     }
 
     pub fn production(cx: &mut AppContext) -> Arc<Self> {
+        let user_agent = format!(
+            "Zed/{} ({}; {})",
+            AppVersion::global(cx),
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
         let clock = Arc::new(clock::RealSystemClock);
         let http = Arc::new(HttpClientWithUrl::new(
             &ClientSettings::get_global(cx).server_url,
+            Some(user_agent),
             ProxySettings::get_global(cx).proxy.clone(),
         ));
         Self::new(clock, http.clone(), cx)
@@ -1163,6 +1179,7 @@ impl Client {
             .unwrap_or_default();
 
         let http = self.http.clone();
+        let proxy = http.proxy().cloned();
         let credentials = credentials.clone();
         let rpc_url = self.rpc_url(http, release_channel);
         cx.background_executor().spawn(async move {
@@ -1184,7 +1201,7 @@ impl Client {
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
                 .ok_or_else(|| anyhow!("missing host in rpc url"))?;
-            let stream = smol::net::TcpStream::connect(rpc_host).await?;
+            let stream = connect_socks_proxy_stream(proxy.as_ref(), rpc_host).await?;
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 

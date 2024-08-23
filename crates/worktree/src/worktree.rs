@@ -743,8 +743,29 @@ impl Worktree {
             Worktree::Local(this) => this.delete_entry(entry_id, trash, cx),
             Worktree::Remote(this) => this.delete_entry(entry_id, trash, cx),
         }?;
-        cx.emit(Event::DeletedEntry(entry_id));
+
+        let entry = match self {
+            Worktree::Local(ref this) => this.entry_for_id(entry_id),
+            Worktree::Remote(ref this) => this.entry_for_id(entry_id),
+        }?;
+
+        let mut ids = vec![entry_id];
+        let path = &*entry.path;
+
+        self.get_children_ids_recursive(path, &mut ids);
+
+        for id in ids {
+            cx.emit(Event::DeletedEntry(id));
+        }
         Some(task)
+    }
+
+    fn get_children_ids_recursive(&self, path: &Path, ids: &mut Vec<ProjectEntryId>) {
+        let children_iter = self.child_entries(path);
+        for child in children_iter {
+            ids.push(child.id);
+            self.get_children_ids_recursive(&child.path, ids);
+        }
     }
 
     pub fn rename_entry(
@@ -2118,6 +2139,24 @@ impl Snapshot {
         Ok(())
     }
 
+    pub fn entry_count(&self) -> usize {
+        self.entries_by_path.summary().count
+    }
+
+    pub fn visible_entry_count(&self) -> usize {
+        self.entries_by_path.summary().non_ignored_count
+    }
+
+    pub fn dir_count(&self) -> usize {
+        let summary = self.entries_by_path.summary();
+        summary.count - summary.file_count
+    }
+
+    pub fn visible_dir_count(&self) -> usize {
+        let summary = self.entries_by_path.summary();
+        summary.non_ignored_count - summary.non_ignored_file_count
+    }
+
     pub fn file_count(&self) -> usize {
         self.entries_by_path.summary().file_count
     }
@@ -3146,6 +3185,7 @@ pub struct Entry {
     pub git_status: Option<GitFileStatus>,
     /// Whether this entry is considered to be a `.env` file.
     pub is_private: bool,
+    pub char_bag: CharBag,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -3153,7 +3193,7 @@ pub enum EntryKind {
     UnloadedDir,
     PendingDir,
     Dir,
-    File(CharBag),
+    File,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -3188,12 +3228,13 @@ impl Entry {
         root_char_bag: CharBag,
         canonical_path: Option<Box<Path>>,
     ) -> Self {
+        let char_bag = char_bag_for_path(root_char_bag, &path);
         Self {
             id: ProjectEntryId::new(next_entry_id),
             kind: if metadata.is_dir {
                 EntryKind::PendingDir
             } else {
-                EntryKind::File(char_bag_for_path(root_char_bag, &path))
+                EntryKind::File
             },
             path,
             inode: metadata.inode,
@@ -3204,6 +3245,7 @@ impl Entry {
             is_external: false,
             is_private: false,
             git_status: None,
+            char_bag,
         }
     }
 
@@ -3237,7 +3279,7 @@ impl EntryKind {
     }
 
     pub fn is_file(&self) -> bool {
-        matches!(self, EntryKind::File(_))
+        matches!(self, EntryKind::File)
     }
 }
 
@@ -5075,11 +5117,10 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
         let kind = if entry.is_dir {
             EntryKind::Dir
         } else {
-            let mut char_bag = *root_char_bag;
-            char_bag.extend(entry.path.chars().map(|c| c.to_ascii_lowercase()));
-            EntryKind::File(char_bag)
+            EntryKind::File
         };
         let path: Arc<Path> = PathBuf::from(entry.path).into();
+        let char_bag = char_bag_for_path(*root_char_bag, &path);
         Ok(Entry {
             id: ProjectEntryId::from_proto(entry.id),
             kind,
@@ -5092,6 +5133,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             git_status: git_status_from_proto(entry.git_status),
             is_private: false,
             is_symlink: entry.is_symlink,
+            char_bag,
         })
     }
 }

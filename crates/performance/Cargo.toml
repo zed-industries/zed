@@ -1,0 +1,36 @@
+[package]
+name = "performance"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/performance.rs"
+doctest = false
+
+[features]
+test-support = [
+    "collections/test-support",
+    "gpui/test-support",
+    "workspace/test-support",
+]
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+log.workspace = true
+schemars.workspace = true
+serde.workspace = true
+settings.workspace = true
+workspace.workspace = true
+
+[dev-dependencies]
+collections = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

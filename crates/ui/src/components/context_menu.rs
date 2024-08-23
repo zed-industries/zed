@@ -16,7 +16,7 @@ enum ContextMenuItem {
     Header(SharedString),
     Label(SharedString),
     Entry {
-        toggled: Option<bool>,
+        toggle: Option<(IconPosition, bool)>,
         label: SharedString,
         icon: Option<IconName>,
         handler: Rc<dyn Fn(Option<&FocusHandle>, &mut WindowContext)>,
@@ -97,7 +97,7 @@ impl ContextMenu {
         handler: impl Fn(&mut WindowContext) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry {
-            toggled: None,
+            toggle: None,
             label: label.into(),
             handler: Rc::new(move |_, cx| handler(cx)),
             icon: None,
@@ -110,11 +110,12 @@ impl ContextMenu {
         mut self,
         label: impl Into<SharedString>,
         toggled: bool,
+        position: IconPosition,
         action: Option<Box<dyn Action>>,
         handler: impl Fn(&mut WindowContext) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry {
-            toggled: Some(toggled),
+            toggle: Some((position, toggled)),
             label: label.into(),
             handler: Rc::new(move |_, cx| handler(cx)),
             icon: None,
@@ -155,7 +156,7 @@ impl ContextMenu {
 
     pub fn action(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
         self.items.push(ContextMenuItem::Entry {
-            toggled: None,
+            toggle: None,
             label: label.into(),
             action: Some(action.boxed_clone()),
 
@@ -172,7 +173,7 @@ impl ContextMenu {
 
     pub fn link(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
         self.items.push(ContextMenuItem::Entry {
-            toggled: None,
+            toggle: None,
             label: label.into(),
 
             action: Some(action.boxed_clone()),
@@ -354,7 +355,7 @@ impl Render for ContextMenu {
                                     .child(Label::new(label.clone()))
                                     .into_any_element(),
                                 ContextMenuItem::Entry {
-                                    toggled,
+                                    toggle,
                                     label,
                                     handler,
                                     icon,
@@ -376,8 +377,8 @@ impl Render for ContextMenu {
                                     ListItem::new(ix)
                                         .inset(true)
                                         .selected(Some(ix) == self.selected_index)
-                                        .when_some(*toggled, |list_item, toggled| {
-                                            list_item.start_slot(if toggled {
+                                        .when_some(*toggle, |list_item, (position, toggled)| {
+                                            let contents = if toggled {
                                                 v_flex().flex_none().child(
                                                     Icon::new(IconName::Check).color(Color::Accent),
                                                 )
@@ -385,7 +386,13 @@ impl Render for ContextMenu {
                                                 v_flex()
                                                     .flex_none()
                                                     .size(IconSize::default().rems())
-                                            })
+                                            };
+                                            match position {
+                                                IconPosition::Start => {
+                                                    list_item.start_slot(contents)
+                                                }
+                                                IconPosition::End => list_item.end_slot(contents),
+                                            }
                                         })
                                         .child(
                                             h_flex()

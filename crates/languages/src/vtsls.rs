@@ -5,7 +5,7 @@ use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
-use project::project_settings::ProjectSettings;
+use project::project_settings::{BinarySettings, ProjectSettings};
 use serde_json::{json, Value};
 use settings::Settings;
 use std::{
@@ -67,6 +67,48 @@ impl LspAdapter for VtslsLspAdapter {
                 .npm_package_latest_version("@vtsls/language-server")
                 .await?,
         }) as Box<_>)
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let configured_binary = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .lsp
+                .get(SERVER_NAME)
+                .and_then(|s| s.binary.clone())
+        });
+
+        match configured_binary {
+            Ok(Some(BinarySettings {
+                path: Some(path),
+                arguments,
+                ..
+            })) => Some(LanguageServerBinary {
+                path: path.into(),
+                arguments: arguments
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|arg| arg.into())
+                    .collect(),
+                env: None,
+            }),
+            Ok(Some(BinarySettings {
+                path_lookup: Some(false),
+                ..
+            })) => None,
+            _ => {
+                let env = delegate.shell_env().await;
+                let path = delegate.which(SERVER_NAME.as_ref()).await?;
+                Some(LanguageServerBinary {
+                    path: path.clone(),
+                    arguments: typescript_server_binary_arguments(&path),
+                    env: Some(env),
+                })
+            }
+        }
     }
 
     async fn fetch_server_binary(

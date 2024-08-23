@@ -13,7 +13,6 @@ anyhow.workspace = true
 collections.workspace = true
 futures.workspace = true
 indoc.workspace = true
-lazy_static.workspace = true
 libsqlite3-sys = { version = "0.26", features = ["bundled"] }
 parking_lot.workspace = true
 smol.workspace = true

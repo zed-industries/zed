@@ -18,7 +18,7 @@ use alacritty_terminal::{
         Config, RenderableCursor, TermMode,
     },
     tty::{self, setup_env},
-    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode, Rgb},
+    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode},
     Term,
 };
 use anyhow::{bail, Result};
@@ -127,7 +127,6 @@ pub enum MaybeNavigationTarget {
 
 #[derive(Clone)]
 enum InternalEvent {
-    ColorRequest(usize, Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>),
     Resize(TerminalSize),
     Clear,
     // FocusNextMatch,
@@ -142,7 +141,7 @@ enum InternalEvent {
 
 ///A translation struct for Alacritty to communicate with us from their event loop
 #[derive(Clone)]
-pub struct ZedListener(UnboundedSender<AlacTermEvent>);
+pub struct ZedListener(pub UnboundedSender<AlacTermEvent>);
 
 impl EventListener for ZedListener {
     fn send_event(&self, event: AlacTermEvent) {
@@ -427,7 +426,10 @@ impl TerminalBuilder {
         let _io_thread = event_loop.spawn(); // DANGER
 
         let url_regex = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
-        let word_regex = RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~]+"#).unwrap();
+        // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
+        // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
+        let word_regex =
+            RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~]+(?:\((?:\d+|\d+,\d+)\))?"#).unwrap();
 
         let terminal = Terminal {
             task,
@@ -653,13 +655,17 @@ impl Terminal {
                 cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ClipboardStore(_, data) => {
-                cx.write_to_clipboard(ClipboardItem::new(data.to_string()))
+                cx.write_to_clipboard(ClipboardItem::new_string(data.to_string()))
             }
-            AlacTermEvent::ClipboardLoad(_, format) => self.write_to_pty(format(
-                &cx.read_from_clipboard()
-                    .map(|ci| ci.text().to_string())
-                    .unwrap_or_else(|| "".to_string()),
-            )),
+            AlacTermEvent::ClipboardLoad(_, format) => {
+                self.write_to_pty(
+                    match &cx.read_from_clipboard().and_then(|item| item.text()) {
+                        // The terminal only supports pasting strings, not images.
+                        Some(text) => format(text),
+                        _ => format(""),
+                    },
+                )
+            }
             AlacTermEvent::PtyWrite(out) => self.write_to_pty(out.clone()),
             AlacTermEvent::TextAreaSizeRequest(format) => {
                 self.write_to_pty(format(self.last_content.size.into()))
@@ -681,9 +687,19 @@ impl Terminal {
                     cx.emit(Event::TitleChanged);
                 }
             }
-            AlacTermEvent::ColorRequest(idx, fun_ptr) => {
-                self.events
-                    .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
+            AlacTermEvent::ColorRequest(index, format) => {
+                // It's important that the color request is processed here to retain relative order
+                // with other PTY writes. Otherwise applications might witness out-of-order
+                // responses to requests. For example: An application sending `OSC 11 ; ? ST`
+                // (color request) followed by `CSI c` (request device attributes) would receive
+                // the response to `CSI c` first.
+                // Instead of locking, we could store the colors in `self.last_content`. But then
+                // we might respond with out of date value if a "set color" sequence is immediately
+                // followed by a color request sequence.
+                let color = self.term.lock().colors()[*index].unwrap_or_else(|| {
+                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
+                });
+                self.write_to_pty(format(color));
             }
             AlacTermEvent::ChildExit(error_code) => {
                 self.register_task_finished(Some(*error_code), cx);
@@ -707,12 +723,6 @@ impl Terminal {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            InternalEvent::ColorRequest(index, format) => {
-                let color = term.colors()[*index].unwrap_or_else(|| {
-                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
-                });
-                self.write_to_pty(format(color))
-            }
             InternalEvent::Resize(mut new_size) => {
                 new_size.size.height = cmp::max(new_size.line_height, new_size.height());
                 new_size.size.width = cmp::max(new_size.cell_width, new_size.width());
@@ -764,7 +774,7 @@ impl Terminal {
 
                 #[cfg(target_os = "linux")]
                 if let Some(selection_text) = term.selection_to_string() {
-                    cx.write_to_primary(ClipboardItem::new(selection_text));
+                    cx.write_to_primary(ClipboardItem::new_string(selection_text));
                 }
 
                 if let Some((_, head)) = selection {
@@ -785,7 +795,7 @@ impl Terminal {
 
                     #[cfg(target_os = "linux")]
                     if let Some(selection_text) = term.selection_to_string() {
-                        cx.write_to_primary(ClipboardItem::new(selection_text));
+                        cx.write_to_primary(ClipboardItem::new_string(selection_text));
                     }
 
                     self.selection_head = Some(point);
@@ -795,7 +805,7 @@ impl Terminal {
 
             InternalEvent::Copy => {
                 if let Some(txt) = term.selection_to_string() {
-                    cx.write_to_clipboard(ClipboardItem::new(txt))
+                    cx.write_to_clipboard(ClipboardItem::new_string(txt))
                 }
             }
             InternalEvent::ScrollToAlacPoint(point) => {
@@ -1339,7 +1349,7 @@ impl Terminal {
                 #[cfg(target_os = "linux")]
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
-                        let text = item.text().to_string();
+                        let text = item.text().unwrap_or_default().to_string();
                         self.input(text);
                     }
                 }

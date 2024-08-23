@@ -2,13 +2,11 @@
   // Standard Linux bindings
   {
     "bindings": {
-      "up": "menu::SelectPrev",
       "shift-tab": "menu::SelectPrev",
       "home": "menu::SelectFirst",
       "pageup": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
       "ctrl-p": "menu::SelectPrev",
-      "down": "menu::SelectNext",
       "tab": "menu::SelectNext",
       "end": "menu::SelectLast",
       "pagedown": "menu::SelectLast",
@@ -31,6 +29,20 @@
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
       "f11": "zed::ToggleFullScreen"
+    }
+  },
+  {
+    "context": "Picker || menu",
+    "bindings": {
+      "up": "menu::SelectPrev",
+      "down": "menu::SelectNext"
+    }
+  },
+  {
+    "context": "Prompt",
+    "bindings": {
+      "left": "menu::SelectPrev",
+      "right": "menu::SelectNext"
     }
   },
   {
@@ -121,7 +133,7 @@
     "bindings": {
       "alt-]": "editor::NextInlineCompletion",
       "alt-[": "editor::PreviousInlineCompletion",
-      "alt-right": "editor::AcceptPartialInlineCompletion"
+      "ctrl-right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {
@@ -149,7 +161,9 @@
     "bindings": {
       "ctrl-g": "search::SelectNextMatch",
       "ctrl-shift-g": "search::SelectPrevMatch",
-      "alt-m": "assistant::ToggleModelSelector"
+      "alt-m": "assistant::ToggleModelSelector",
+      "ctrl-k h": "assistant::DeployHistory",
+      "ctrl-k l": "assistant::DeployPromptLibrary"
     }
   },
   {
@@ -242,13 +256,6 @@
       "alt-ctrl-f": "project_search::ToggleFilters",
       "ctrl-alt-shift-r": "search::ToggleRegex",
       "ctrl-alt-shift-x": "search::ToggleRegex"
-    }
-  },
-  {
-    "context": "Terminal",
-    "bindings": {
-      "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
-      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"]
     }
   },
   // Bindings from VS Code
@@ -430,7 +437,7 @@
     "context": "Editor && showing_completions",
     "bindings": {
       "enter": "editor::ConfirmCompletion",
-      "tab": "editor::ConfirmCompletion"
+      "tab": "editor::ComposeCompletion"
     }
   },
   {
@@ -460,10 +467,14 @@
   {
     "bindings": {
       "ctrl-alt-shift-f": "workspace::FollowNextCollaborator",
-      // TODO: Move this to a dock open action
-      "ctrl-shift-c": "collab_panel::ToggleFocus",
       "ctrl-alt-i": "zed::DebugElements",
       "ctrl-:": "editor::ToggleInlayHints"
+    }
+  },
+  {
+    "context": "!Terminal",
+    "bindings": {
+      "ctrl-shift-c": "collab_panel::ToggleFocus"
     }
   },
   {
@@ -480,7 +491,8 @@
   {
     "context": "Editor && jupyter && !ContextEditor",
     "bindings": {
-      "ctrl-shift-enter": "repl::Run"
+      "ctrl-shift-enter": "repl::Run",
+      "ctrl-alt-enter": "repl::RunInPlace"
     }
   },
   {
@@ -599,12 +611,14 @@
     "context": "Terminal",
     "bindings": {
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
-      "shift-ctrl-c": "terminal::Copy",
+      "ctrl-shift-c": "terminal::Copy",
       "ctrl-insert": "terminal::Copy",
-      "ctrl-a": "editor::SelectAll",
-      "shift-ctrl-v": "terminal::Paste",
+      // "ctrl-a": "editor::SelectAll", // conflicts with readline
+      "ctrl-shift-v": "terminal::Paste",
       "shift-insert": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",
+      "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "up": ["terminal::SendKeystroke", "up"],
       "pageup": ["terminal::SendKeystroke", "pageup"],
       "down": ["terminal::SendKeystroke", "down"],

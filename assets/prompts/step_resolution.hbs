@@ -1,0 +1,496 @@
+<overview>
+Your task is to map a step from a workflow to locations in source code where code needs to be changed to fulfill that step.
+Given a workflow containing background context plus a series of <step> tags, you will resolve *one* of these step tags to resolve to one or more locations in the code.
+With each location, you will produce a brief, one-line description of the changes to be made.
+
+<guidelines>
+- There's no need to describe *what* to do, just *where* to do it.
+- Only reference locations that actually exist (unless you're creating a file).
+- If creating a file, assume any subsequent updates are included at the time of creation.
+- Don't create and then update a file. Always create new files in shot.
+- Prefer updating symbols lower in the syntax tree if possible.
+- Never include suggestions on a parent symbol and one of its children in the same suggestions block.
+- Never nest an operation with another operation or include CDATA or other content. All suggestions are leaf nodes.
+- Descriptions are required for all suggestions except delete.
+- When generating multiple suggestions, ensure the descriptions are specific to each individual operation.
+- Avoid referring to the location in the description. Focus on the change to be made, not the location where it's made. That's implicit with the symbol you provide.
+- Don't generate multiple suggestions at the same location. Instead, combine them together in a single operation with a succinct combined description.
+- To add imports respond with a suggestion where the `"symbol"` key is set to `"#imports"`
+</guidelines>
+</overview>
+
+<examples>
+<example>
+<workflow_context>
+<message role="user">
+```rs src/rectangle.rs
+struct Rectangle {
+    width: f64,
+    height: f64,
+}
+
+impl Rectangle {
+    fn new(width: f64, height: f64) -> Self {
+        Rectangle { width, height }
+    }
+}
+```
+
+We need to add methods to calculate the area and perimeter of the rectangle. Can you help with that?
+</message>
+<message role="assistant">
+Sure, I can help with that!
+
+<step>Add new methods 'calculate_area' and 'calculate_perimeter' to the Rectangle struct</step>
+<step>Implement the 'Display' trait for the Rectangle struct</step>
+</message>
+</workflow_context>
+
+<step_to_resolve>
+Add new methods 'calculate_area' and 'calculate_perimeter' to the Rectangle struct
+</step_to_resolve>
+
+<incorrect_output reason="NEVER append multiple children at the same location.">
+{
+  "title": "Add Rectangle methods",
+  "suggestions": [
+    {
+      "kind": "AppendChild",
+      "path": "src/shapes.rs",
+      "symbol": "impl Rectangle",
+      "description": "Add calculate_area method"
+    },
+    {
+      "kind": "AppendChild",
+      "path": "src/shapes.rs",
+      "symbol": "impl Rectangle",
+      "description": "Add calculate_perimeter method"
+    }
+  ]
+}
+</incorrect_output>
+
+<correct_output>
+{
+  "title": "Add Rectangle methods",
+  "suggestions": [
+    {
+      "kind": "AppendChild",
+      "path": "src/shapes.rs",
+      "symbol": "impl Rectangle",
+      "description": "Add calculate area and perimeter methods"
+    }
+  ]
+}
+</correct_output>
+
+<step_to_resolve>
+Implement the 'Display' trait for the Rectangle struct
+</step_to_resolve>
+
+<output>
+{
+  "title": "Implement Display for Rectangle",
+  "suggestions": [
+    {
+      "kind": "InsertSiblingAfter",
+      "path": "src/shapes.rs",
+      "symbol": "impl Rectangle",
+      "description": "Implement Display trait for Rectangle"
+    }
+  ]
+}
+</output>
+
+<example>
+<workflow_context>
+<message role="user">
+```rs src/user.rs
+struct User {
+    pub name: String,
+    age: u32,
+    email: String,
+}
+
+impl User {
+    fn new(name: String, age: u32, email: String) -> Self {
+        User { name, age, email }
+    }
+
+    pub fn print_info(&self) {
+        println!("Name: {}, Age: {}, Email: {}", self.name, self.age, self.email);
+    }
+}
+```
+</message>
+<message role="assistant">
+Certainly!
+<step>Update the 'print_info' method to use formatted output</step>
+<step>Remove the 'email' field from the User struct</step>
+</message>
+</workflow_context>
+
+<step_to_resolve>
+Update the 'print_info' method to use formatted output
+</step_to_resolve>
+
+<output>
+{
+  "title": "Use formatted output",
+  "suggestions": [
+    {
+      "kind": "Update",
+      "path": "src/user.rs",
+      "symbol": "impl User pub fn print_info",
+      "description": "Use formatted output"
+    }
+  ]
+}
+</output>
+
+<step_to_resolve>
+Remove the 'email' field from the User struct
+</step_to_resolve>
+
+<output>
+{
+  "title": "Remove email field",
+  "suggestions": [
+      {
+        "kind": "Delete",
+        "path": "src/user.rs",
+        "symbol": "struct User email"
+      }
+    ]
+}
+</output>
+</example>
+
+<example>
+<workflow_context>
+<message role="user">
+```rs src/vehicle.rs
+struct Vehicle {
+    make: String,
+    model: String,
+    year: u32,
+}
+
+impl Vehicle {
+    fn new(make: String, model: String, year: u32) -> Self {
+        Vehicle { make, model, year }
+    }
+
+    fn print_year(&self) {
+        println!("Year: {}", self.year);
+    }
+}
+```
+</message>
+<message role="assistant">
+<step>Add a 'use std::fmt;' statement at the beginning of the file</step>
+<step>Add a new method 'start_engine' in the Vehicle impl block</step>
+</message>
+</workflow_context>
+
+<step_to_resolve>
+Add a 'use std::fmt;' statement at the beginning of the file
+</step_to_resolve>
+
+<output>
+{
+  "title": "Add use std::fmt statement",
+  "suggestions": [
+    {
+      "kind": "PrependChild",
+      "path": "src/vehicle.rs",
+      "symbol": "#imports",
+      "description": "Add 'use std::fmt' statement"
+    }
+  ]
+}
+</output>
+
+<step_to_resolve>
+Add a new method 'start_engine' in the Vehicle impl block
+</step_to_resolve>
+
+<output>
+{
+  "title": "Add start_engine method",
+  "suggestions": [
+    {
+      "kind": "InsertSiblingAfter",
+      "path": "src/vehicle.rs",
+      "symbol": "impl Vehicle fn new",
+      "description": "Add start_engine method"
+    }
+  ]
+}
+</output>
+</example>
+
+<example>
+<workflow_context>
+<message role="user">
+```rs src/employee.rs
+struct Employee {
+    name: String,
+    position: String,
+    salary: u32,
+    department: String,
+}
+
+impl Employee {
+    fn new(name: String, position: String, salary: u32, department: String) -> Self {
+        Employee { name, position, salary, department }
+    }
+
+    fn print_details(&self) {
+        println!("Name: {}, Position: {}, Salary: {}, Department: {}",
+                  self.name, self.position, self.salary, self.department);
+    }
+
+    fn give_raise(&mut self, amount: u32) {
+        self.salary += amount;
+    }
+}
+```
+</message>
+<message role="assistant">
+<step>Make salary an f32</step>
+<step>Remove the 'department' field and update the 'print_details' method</step>
+</message>
+</workflow_context>
+
+<step_to_resolve>
+Make salary an f32
+</step_to_resolve>
+
+<incorrect_output reason="NEVER include suggestions on a parent symbol and one of its children in the same suggestions block.">
+{
+  "title": "Change salary to f32",
+  "suggestions": [
+    {
+      "kind": "Update",
+      "path": "src/employee.rs",
+      "symbol": "struct Employee",
+      "description": "Change the type of salary to an f32"
+    },
+    {
+      "kind": "Update",
+      "path": "src/employee.rs",
+      "symbol": "struct Employee salary",
+      "description": "Change the type to an f32"
+    }
+  ]
+}
+</incorrect_output>
+
+<correct_output>
+{
+  "title": "Change salary to f32",
+  "suggestions": [
+    {
+      "kind": "Update",
+      "path": "src/employee.rs",
+      "symbol": "struct Employee salary",
+      "description": "Change the type to an f32"
+    }
+  ]
+}
+</correct_output>
+
+<step_to_resolve>
+Remove the 'department' field and update the 'print_details' method
+</step_to_resolve>
+
+<output>
+{
+  "title": "Remove department",
+  "suggestions": [
+    {
+      "kind": "Delete",
+      "path": "src/employee.rs",
+      "symbol": "struct Employee department"
+    },
+    {
+      "kind": "Update",
+      "path": "src/employee.rs",
+      "symbol": "impl Employee fn print_details",
+      "description": "Don't print the 'department' field"
+    }
+  ]
+}
+</output>
+</example>
+
+<example>
+<workflow_context>
+<message role="user">
+```rs src/game.rs
+struct Player {
+    name: String,
+    health: i32,
+    pub score: u32,
+}
+
+impl Player {
+    pub fn new(name: String) -> Self {
+        Player { name, health: 100, score: 0 }
+    }
+}
+
+struct Game {
+    players: Vec<Player>,
+}
+
+impl Game {
+    fn new() -> Self {
+        Game { players: Vec::new() }
+    }
+}
+```
+</message>
+<message role="assistant">
+<step>Add a 'level' field to Player and update the 'new' method</step>
+</message>
+</workflow_context>
+
+<step_to_resolve>
+Add a 'level' field to Player and update the 'new' method
+</step_to_resolve>
+
+<output>
+{
+  "title": "Add level field to Player",
+  "suggestions": [
+    {
+      "kind": "InsertSiblingAfter",
+      "path": "src/game.rs",
+      "symbol": "struct Player pub score",
+      "description": "Add level field to Player"
+    },
+    {
+      "kind": "Update",
+      "path": "src/game.rs",
+      "symbol": "impl Player pub fn new",
+      "description": "Initialize level in new method"
+    }
+  ]
+}
+</output>
+</example>
+
+<example>
+<workflow_context>
+<message role="user">
+```rs src/config.rs
+use std::collections::HashMap;
+
+struct Config {
+    settings: HashMap<String, String>,
+}
+
+impl Config {
+    fn new() -> Self {
+        Config { settings: HashMap::new() }
+    }
+}
+```
+</message>
+<message role="assistant">
+<step>Add a 'load_from_file' method to Config and import necessary modules</step>
+</message>
+</workflow_context>
+
+<step_to_resolve>
+Add a 'load_from_file' method to Config and import necessary modules
+</step_to_resolve>
+
+<output>
+{
+  "title": "Add load_from_file method",
+  "suggestions": [
+    {
+      "kind": "PrependChild",
+      "path": "src/config.rs",
+      "symbol": "#imports",
+      "description": "Import std::fs and std::io modules"
+    },
+    {
+      "kind": "AppendChild",
+      "path": "src/config.rs",
+      "symbol": "impl Config",
+      "description": "Add load_from_file method"
+    }
+  ]
+}
+</output>
+</example>
+
+<example>
+<workflow_context>
+<message role="user">
+```rs src/database.rs
+pub(crate) struct Database {
+    connection: Connection,
+}
+
+impl Database {
+    fn new(url: &str) -> Result<Self, Error> {
+        let connection = Connection::connect(url)?;
+        Ok(Database { connection })
+    }
+
+    async fn query(&self, sql: &str) -> Result<Vec<Row>, Error> {
+        self.connection.query(sql, &[])
+    }
+}
+```
+</message>
+<message role="assistant">
+<step>Add error handling to the 'query' method and create a custom error type</step>
+</message>
+</workflow_context>
+
+<step_to_resolve>
+Add error handling to the 'query' method and create a custom error type
+</step_to_resolve>
+
+<output>
+{
+  "title": "Add error handling to query",
+  "suggestions": [
+    {
+      "kind": "PrependChild",
+      "path": "src/database.rs",
+      "description": "Import necessary error handling modules"
+    },
+    {
+      "kind": "InsertSiblingBefore",
+      "path": "src/database.rs",
+      "symbol": "pub(crate) struct Database",
+      "description": "Define custom DatabaseError enum"
+    },
+    {
+      "kind": "Update",
+      "path": "src/database.rs",
+      "symbol": "impl Database async fn query",
+      "description": "Implement error handling in query method"
+    }
+  ]
+}
+</output>
+</example>
+</examples>
+
+Now generate the suggestions for the following step:
+
+<workflow_context>
+{{{workflow_context}}}
+</workflow_context>
+
+<step_to_resolve>
+{{{step_to_resolve}}}
+</step_to_resolve>

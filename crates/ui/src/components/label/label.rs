@@ -156,6 +156,20 @@ impl LabelCommon for Label {
         self.base = self.base.italic(italic);
         self
     }
+
+    /// Sets the alpha property of the color of label.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ui::prelude::*;
+    ///
+    /// let my_label = Label::new("Hello, World!").alpha(0.5);
+    /// ```
+    fn alpha(mut self, alpha: f32) -> Self {
+        self.base = self.base.alpha(alpha);
+        self
+    }
 }
 
 impl RenderOnce for Label {

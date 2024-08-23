@@ -39,7 +39,7 @@ use ui::{
     RadioWithLabel, Tooltip,
 };
 use ui_input::{FieldLabelLayout, TextField};
-use util::paths::PathLikeWithPosition;
+use util::paths::PathWithPosition;
 use util::ResultExt;
 use workspace::notifications::NotifyResultExt;
 use workspace::OpenOptions;
@@ -991,7 +991,7 @@ impl DevServerProjects {
                         project
                             .paths
                             .into_iter()
-                            .map(|path| PathLikeWithPosition::from_path(PathBuf::from(path)))
+                            .map(|path| PathWithPosition::from_path(PathBuf::from(path)))
                             .collect(),
                         app_state,
                         OpenOptions::default(),

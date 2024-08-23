@@ -5,8 +5,8 @@ use crate::stdio::TerminalOutput;
 use anyhow::Result;
 use base64::prelude::*;
 use gpui::{
-    img, percentage, Animation, AnimationExt, AnyElement, FontWeight, ImageData, Render, TextRun,
-    Transformation, View,
+    img, percentage, Animation, AnimationExt, AnyElement, ClipboardItem, FontWeight, Image,
+    ImageFormat, Render, RenderImage, Task, TextRun, Transformation, View,
 };
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
@@ -14,13 +14,12 @@ use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
 use serde_json::Value;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
+use ui::{div, prelude::*, v_flex, IntoElement, Styled, Tooltip, ViewContext};
 
-/// Given these outputs are destined for the editor with the block decorations API, all of them must report
-/// how many lines they will take up in the editor.
-pub trait LineHeight: Sized {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8;
-}
+use markdown_preview::{
+    markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,
+    markdown_renderer::render_markdown_block,
+};
 
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
@@ -35,11 +34,17 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
     }
 }
 
+pub(crate) trait SupportsClipboard {
+    fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem>;
+    fn has_clipboard_content(&self, cx: &WindowContext) -> bool;
+}
+
 /// ImageView renders an image inline in an editor, adapting to the line height to fit the image.
 pub struct ImageView {
+    clipboard_image: Arc<Image>,
     height: u32,
     width: u32,
-    image: Arc<ImageData>,
+    image: Arc<RenderImage>,
 }
 
 impl ImageView {
@@ -77,9 +82,29 @@ impl ImageView {
         let height = data.height();
         let width = data.width();
 
-        let gpui_image_data = ImageData::new(vec![image::Frame::new(data)]);
+        let gpui_image_data = RenderImage::new(vec![image::Frame::new(data)]);
+
+        let format = match format {
+            image::ImageFormat::Png => ImageFormat::Png,
+            image::ImageFormat::Jpeg => ImageFormat::Jpeg,
+            image::ImageFormat::Gif => ImageFormat::Gif,
+            image::ImageFormat::WebP => ImageFormat::Webp,
+            image::ImageFormat::Tiff => ImageFormat::Tiff,
+            image::ImageFormat::Bmp => ImageFormat::Bmp,
+            _ => {
+                return Err(anyhow::anyhow!("unsupported image format"));
+            }
+        };
+
+        // Convert back to a GPUI image for use with the clipboard
+        let clipboard_image = Arc::new(Image {
+            format,
+            bytes,
+            id: gpui_image_data.id.0 as u64,
+        });
 
         return Ok(ImageView {
+            clipboard_image,
             height,
             width,
             image: Arc::new(gpui_image_data),
@@ -87,16 +112,13 @@ impl ImageView {
     }
 }
 
-impl LineHeight for ImageView {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        let line_height = cx.line_height();
+impl SupportsClipboard for ImageView {
+    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+        Some(ClipboardItem::new_image(self.clipboard_image.as_ref()))
+    }
 
-        let lines = self.height as f32 / line_height.0;
-
-        if lines > u8::MAX as f32 {
-            return u8::MAX;
-        }
-        lines as u8
+    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+        true
     }
 }
 
@@ -105,6 +127,7 @@ impl LineHeight for ImageView {
 pub struct TableView {
     pub table: TabularDataResource,
     pub widths: Vec<Pixels>,
+    cached_clipboard_content: ClipboardItem,
 }
 
 fn cell_content(row: &Value, field: &str) -> String {
@@ -165,7 +188,68 @@ impl TableView {
             widths.push(width)
         }
 
-        Self { table, widths }
+        let cached_clipboard_content = Self::create_clipboard_content(&table);
+
+        Self {
+            table,
+            widths,
+            cached_clipboard_content: ClipboardItem::new_string(cached_clipboard_content),
+        }
+    }
+
+    fn escape_markdown(s: &str) -> String {
+        s.replace('|', "\\|")
+            .replace('*', "\\*")
+            .replace('_', "\\_")
+            .replace('`', "\\`")
+            .replace('[', "\\[")
+            .replace(']', "\\]")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    }
+
+    fn create_clipboard_content(table: &TabularDataResource) -> String {
+        let data = match table.data.as_ref() {
+            Some(data) => data,
+            None => &Vec::new(),
+        };
+        let schema = table.schema.clone();
+
+        let mut markdown = format!(
+            "| {} |\n",
+            table
+                .schema
+                .fields
+                .iter()
+                .map(|field| field.name.clone())
+                .collect::<Vec<_>>()
+                .join(" | ")
+        );
+
+        markdown.push_str("|---");
+        for _ in 1..table.schema.fields.len() {
+            markdown.push_str("|---");
+        }
+        markdown.push_str("|\n");
+
+        let body = data
+            .iter()
+            .map(|record: &Value| {
+                let row_content = schema
+                    .fields
+                    .iter()
+                    .map(|field| Self::escape_markdown(&cell_content(record, &field.name)))
+                    .collect::<Vec<_>>();
+
+                row_content.join(" | ")
+            })
+            .collect::<Vec<String>>();
+
+        for row in body {
+            markdown.push_str(&format!("| {} |\n", row));
+        }
+
+        markdown
     }
 
     pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
@@ -256,18 +340,13 @@ impl TableView {
     }
 }
 
-impl LineHeight for TableView {
-    fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
-        let num_rows = match &self.table.data {
-            // Rows + header
-            Some(data) => data.len() + 1,
-            // We don't support Path based data sources, however we
-            // still render the header and padding
-            None => 1 + 1,
-        };
+impl SupportsClipboard for TableView {
+    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+        Some(self.cached_clipboard_content.clone())
+    }
 
-        let num_lines = num_rows as f32 * (1.0 + TABLE_Y_PADDING_MULTIPLE) + 1.0;
-        num_lines.ceil() as u8
+    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+        true
     }
 }
 
@@ -279,56 +358,176 @@ pub struct ErrorView {
 }
 
 impl ErrorView {
-    fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
+    fn render(&self, cx: &mut ViewContext<ExecutionView>) -> Option<AnyElement> {
         let theme = cx.theme();
 
         let padding = cx.line_height() / 2.;
 
         Some(
             v_flex()
-                .w_full()
-                .px(padding)
-                .py(padding)
-                .border_1()
-                .border_color(theme.status().error_border)
+                .gap_3()
                 .child(
                     h_flex()
-                        .font_weight(FontWeight::BOLD)
-                        .child(format!("{}: {}", self.ename, self.evalue)),
+                        .font_buffer(cx)
+                        .child(
+                            Label::new(format!("{}: ", self.ename.clone()))
+                                // .size(LabelSize::Large)
+                                .color(Color::Error)
+                                .weight(FontWeight::BOLD),
+                        )
+                        .child(
+                            Label::new(self.evalue.clone())
+                                // .size(LabelSize::Large)
+                                .weight(FontWeight::BOLD),
+                        ),
                 )
-                .child(self.traceback.render(cx))
+                .child(
+                    div()
+                        .w_full()
+                        .px(padding)
+                        .py(padding)
+                        .border_l_1()
+                        .border_color(theme.status().error_border)
+                        .child(self.traceback.render(cx)),
+                )
                 .into_any_element(),
         )
     }
 }
 
-impl LineHeight for ErrorView {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        let mut height: u8 = 1; // Start at 1 to account for the y padding
-        height = height.saturating_add(self.ename.lines().count() as u8);
-        height = height.saturating_add(self.evalue.lines().count() as u8);
-        height = height.saturating_add(self.traceback.num_lines(cx));
-        height
+pub struct MarkdownView {
+    raw_text: String,
+    contents: Option<ParsedMarkdown>,
+    parsing_markdown_task: Option<Task<Result<()>>>,
+}
+
+impl MarkdownView {
+    pub fn from(text: String, cx: &mut ViewContext<Self>) -> Self {
+        let task = cx.spawn(|markdown_view, mut cx| {
+            let text = text.clone();
+            let parsed = cx
+                .background_executor()
+                .spawn(async move { parse_markdown(&text, None, None).await });
+
+            async move {
+                let content = parsed.await;
+
+                markdown_view.update(&mut cx, |markdown, cx| {
+                    markdown.parsing_markdown_task.take();
+                    markdown.contents = Some(content);
+                    cx.notify();
+                })
+            }
+        });
+
+        Self {
+            raw_text: text.clone(),
+            contents: None,
+            parsing_markdown_task: Some(task),
+        }
     }
 }
 
-pub enum OutputType {
+impl SupportsClipboard for MarkdownView {
+    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+        Some(ClipboardItem::new_string(self.raw_text.clone()))
+    }
+
+    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+        true
+    }
+}
+
+impl Render for MarkdownView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let Some(parsed) = self.contents.as_ref() else {
+            return div().into_any_element();
+        };
+
+        let mut markdown_render_context =
+            markdown_preview::markdown_renderer::RenderContext::new(None, cx);
+
+        v_flex()
+            .gap_3()
+            .py_4()
+            .children(parsed.children.iter().map(|child| {
+                div().relative().child(
+                    div()
+                        .relative()
+                        .child(render_markdown_block(child, &mut markdown_render_context)),
+                )
+            }))
+            .into_any_element()
+    }
+}
+
+pub struct Output {
+    content: OutputContent,
+    display_id: Option<String>,
+}
+
+impl Output {
+    pub fn new(data: &MimeBundle, display_id: Option<String>, cx: &mut WindowContext) -> Self {
+        Self {
+            content: OutputContent::new(data, cx),
+            display_id,
+        }
+    }
+
+    pub fn from(content: OutputContent) -> Self {
+        Self {
+            content,
+            display_id: None,
+        }
+    }
+}
+
+impl SupportsClipboard for Output {
+    fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem> {
+        match &self.content {
+            OutputContent::Plain(terminal) => terminal.clipboard_content(cx),
+            OutputContent::Stream(terminal) => terminal.clipboard_content(cx),
+            OutputContent::Image(image) => image.clipboard_content(cx),
+            OutputContent::ErrorOutput(error) => error.traceback.clipboard_content(cx),
+            OutputContent::Message(_) => None,
+            OutputContent::Table(table) => table.clipboard_content(cx),
+            OutputContent::Markdown(markdown) => markdown.read(cx).clipboard_content(cx),
+            OutputContent::ClearOutputWaitMarker => None,
+        }
+    }
+
+    fn has_clipboard_content(&self, cx: &WindowContext) -> bool {
+        match &self.content {
+            OutputContent::Plain(terminal) => terminal.has_clipboard_content(cx),
+            OutputContent::Stream(terminal) => terminal.has_clipboard_content(cx),
+            OutputContent::Image(image) => image.has_clipboard_content(cx),
+            OutputContent::ErrorOutput(error) => error.traceback.has_clipboard_content(cx),
+            OutputContent::Message(_) => false,
+            OutputContent::Table(table) => table.has_clipboard_content(cx),
+            OutputContent::Markdown(markdown) => markdown.read(cx).has_clipboard_content(cx),
+            OutputContent::ClearOutputWaitMarker => false,
+        }
+    }
+}
+
+pub enum OutputContent {
     Plain(TerminalOutput),
     Stream(TerminalOutput),
     Image(ImageView),
     ErrorOutput(ErrorView),
     Message(String),
     Table(TableView),
+    Markdown(View<MarkdownView>),
     ClearOutputWaitMarker,
 }
 
-impl OutputType {
-    fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
+impl OutputContent {
+    fn render(&self, cx: &mut ViewContext<ExecutionView>) -> Option<AnyElement> {
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
             Self::Plain(stdio) => Some(stdio.render(cx)),
-            // Self::Markdown(markdown) => Some(markdown.render(theme)),
+            Self::Markdown(markdown) => Some(markdown.clone().into_any_element()),
             Self::Stream(stdio) => Some(stdio.render(cx)),
             Self::Image(image) => Some(image.render(cx)),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
@@ -342,30 +541,20 @@ impl OutputType {
 
     pub fn new(data: &MimeBundle, cx: &mut WindowContext) -> Self {
         match data.richest(rank_mime_type) {
-            Some(MimeType::Plain(text)) => OutputType::Plain(TerminalOutput::from(text)),
-            Some(MimeType::Markdown(text)) => OutputType::Plain(TerminalOutput::from(text)),
+            Some(MimeType::Plain(text)) => OutputContent::Plain(TerminalOutput::from(text, cx)),
+            Some(MimeType::Markdown(text)) => {
+                let view = cx.new_view(|cx| MarkdownView::from(text.clone(), cx));
+                OutputContent::Markdown(view)
+            }
             Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
-                Ok(view) => OutputType::Image(view),
-                Err(error) => OutputType::Message(format!("Failed to load image: {}", error)),
+                Ok(view) => OutputContent::Image(view),
+                Err(error) => OutputContent::Message(format!("Failed to load image: {}", error)),
             },
-            Some(MimeType::DataTable(data)) => OutputType::Table(TableView::new(data.clone(), cx)),
+            Some(MimeType::DataTable(data)) => {
+                OutputContent::Table(TableView::new(data.clone(), cx))
+            }
             // Any other media types are not supported
-            _ => OutputType::Message("Unsupported media type".to_string()),
-        }
-    }
-}
-
-impl LineHeight for OutputType {
-    /// Calculates the expected number of lines
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        match self {
-            Self::Plain(stdio) => stdio.num_lines(cx),
-            Self::Stream(stdio) => stdio.num_lines(cx),
-            Self::Image(image) => image.num_lines(cx),
-            Self::Message(message) => message.lines().count() as u8,
-            Self::Table(table) => table.num_lines(cx),
-            Self::ErrorOutput(error_view) => error_view.num_lines(cx),
-            Self::ClearOutputWaitMarker => 0,
+            _ => OutputContent::Message("Unsupported media type".to_string()),
         }
     }
 }
@@ -381,10 +570,11 @@ pub enum ExecutionStatus {
     ShuttingDown,
     Shutdown,
     KernelErrored(String),
+    Restarting,
 }
 
 pub struct ExecutionView {
-    pub outputs: Vec<OutputType>,
+    pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
 }
 
@@ -398,27 +588,32 @@ impl ExecutionView {
 
     /// Accept a Jupyter message belonging to this execution
     pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ViewContext<Self>) {
-        let output: OutputType = match message {
-            JupyterMessageContent::ExecuteResult(result) => OutputType::new(&result.data, cx),
-            JupyterMessageContent::DisplayData(result) => OutputType::new(&result.data, cx),
+        let output: Output = match message {
+            JupyterMessageContent::ExecuteResult(result) => Output::new(
+                &result.data,
+                result.transient.as_ref().and_then(|t| t.display_id.clone()),
+                cx,
+            ),
+            JupyterMessageContent::DisplayData(result) => {
+                Output::new(&result.data, result.transient.display_id.clone(), cx)
+            }
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
-                if let Some(new_terminal) = self.apply_terminal_text(&result.text) {
-                    new_terminal
+                if let Some(new_terminal) = self.apply_terminal_text(&result.text, cx) {
+                    Output::from(new_terminal)
                 } else {
-                    cx.notify();
                     return;
                 }
             }
             JupyterMessageContent::ErrorOutput(result) => {
-                let mut terminal = TerminalOutput::new();
+                let mut terminal = TerminalOutput::new(cx);
                 terminal.append_text(&result.traceback.join("\n"));
 
-                OutputType::ErrorOutput(ErrorView {
+                Output::from(OutputContent::ErrorOutput(ErrorView {
                     ename: result.ename.clone(),
                     evalue: result.evalue.clone(),
                     traceback: terminal,
-                })
+                }))
             }
             JupyterMessageContent::ExecuteReply(reply) => {
                 for payload in reply.payload.iter() {
@@ -426,7 +621,7 @@ impl ExecutionView {
                         // Pager data comes in via `?` at the end of a statement in Python, used for showing documentation.
                         // Some UI will show this as a popup. For ease of implementation, it's included as an output here.
                         runtimelib::Payload::Page { data, .. } => {
-                            let output = OutputType::new(data, cx);
+                            let output = Output::new(data, None, cx);
                             self.outputs.push(output);
                         }
 
@@ -459,7 +654,7 @@ impl ExecutionView {
                 }
 
                 // Create a marker to clear the output after we get in a new output
-                OutputType::ClearOutputWaitMarker
+                Output::from(OutputContent::ClearOutputWaitMarker)
             }
             JupyterMessageContent::Status(status) => {
                 match status.execution_state {
@@ -477,8 +672,10 @@ impl ExecutionView {
         };
 
         // Check for a clear output marker as the previous output, so we can clear it out
-        if let Some(OutputType::ClearOutputWaitMarker) = self.outputs.last() {
-            self.outputs.clear();
+        if let Some(output) = self.outputs.last() {
+            if let OutputContent::ClearOutputWaitMarker = output.content {
+                self.outputs.clear();
+            }
         }
 
         self.outputs.push(output);
@@ -486,16 +683,43 @@ impl ExecutionView {
         cx.notify();
     }
 
-    fn apply_terminal_text(&mut self, text: &str) -> Option<OutputType> {
+    pub fn update_display_data(
+        &mut self,
+        data: &MimeBundle,
+        display_id: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let mut any = false;
+
+        self.outputs.iter_mut().for_each(|output| {
+            if let Some(other_display_id) = output.display_id.as_ref() {
+                if other_display_id == display_id {
+                    output.content = OutputContent::new(data, cx);
+                    any = true;
+                }
+            }
+        });
+
+        if any {
+            cx.notify();
+        }
+    }
+
+    fn apply_terminal_text(
+        &mut self,
+        text: &str,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<OutputContent> {
         if let Some(last_output) = self.outputs.last_mut() {
-            match last_output {
-                OutputType::Stream(last_stream) => {
+            match &mut last_output.content {
+                OutputContent::Stream(last_stream) => {
                     last_stream.append_text(text);
                     // Don't need to add a new output, we already have a terminal output
+                    cx.notify();
                     return None;
                 }
                 // Edge case note: a clear output marker
-                OutputType::ClearOutputWaitMarker => {
+                OutputContent::ClearOutputWaitMarker => {
                     // Edge case note: a clear output marker is handled by the caller
                     // since we will return a new output at the end here as a new terminal output
                 }
@@ -505,9 +729,9 @@ impl ExecutionView {
             }
         }
 
-        let mut new_terminal = TerminalOutput::new();
+        let mut new_terminal = TerminalOutput::new(cx);
         new_terminal.append_text(text);
-        Some(OutputType::Stream(new_terminal))
+        Some(OutputContent::Stream(new_terminal))
     }
 }
 
@@ -540,6 +764,9 @@ impl Render for ExecutionView {
             ExecutionStatus::ShuttingDown => Label::new("Kernel shutting down...")
                 .color(Color::Muted)
                 .into_any_element(),
+            ExecutionStatus::Restarting => Label::new("Kernel restarting...")
+                .color(Color::Muted)
+                .into_any_element(),
             ExecutionStatus::Shutdown => Label::new("Kernel shutdown")
                 .color(Color::Muted)
                 .into_any_element(),
@@ -561,43 +788,47 @@ impl Render for ExecutionView {
 
         div()
             .w_full()
-            .children(self.outputs.iter().filter_map(|output| output.render(cx)))
+            .children(self.outputs.iter().enumerate().map(|(index, output)| {
+                h_flex()
+                    .w_full()
+                    .items_start()
+                    .child(
+                        div().flex_1().child(
+                            output
+                                .content
+                                .render(cx)
+                                .unwrap_or_else(|| div().into_any_element()),
+                        ),
+                    )
+                    .when(output.has_clipboard_content(cx), |el| {
+                        let clipboard_content = output.clipboard_content(cx);
+
+                        el.child(
+                            div().pl_1().child(
+                                IconButton::new(
+                                    ElementId::Name(format!("copy-output-{}", index).into()),
+                                    IconName::Copy,
+                                )
+                                .style(ButtonStyle::Transparent)
+                                .tooltip(move |cx| Tooltip::text("Copy Output", cx))
+                                .on_click(cx.listener(
+                                    move |_, _, cx| {
+                                        if let Some(clipboard_content) = clipboard_content.as_ref()
+                                        {
+                                            cx.write_to_clipboard(clipboard_content.clone());
+                                            // todo!(): let the user know that the content was copied
+                                        }
+                                    },
+                                )),
+                            ),
+                        )
+                    })
+            }))
             .children(match self.status {
                 ExecutionStatus::Executing => vec![status],
                 ExecutionStatus::Queued => vec![status],
                 _ => vec![],
             })
             .into_any_element()
-    }
-}
-
-impl LineHeight for ExecutionView {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        if self.outputs.is_empty() {
-            return 1; // For the status message if outputs are not there
-        }
-
-        let num_lines = self
-            .outputs
-            .iter()
-            .map(|output| output.num_lines(cx))
-            .fold(0_u8, |acc, additional_height| {
-                acc.saturating_add(additional_height)
-            })
-            .max(1);
-
-        let num_lines = match self.status {
-            // Account for the status message if the execution is still ongoing
-            ExecutionStatus::Executing => num_lines.saturating_add(1),
-            ExecutionStatus::Queued => num_lines.saturating_add(1),
-            _ => num_lines,
-        };
-        num_lines
-    }
-}
-
-impl LineHeight for View<ExecutionView> {
-    fn num_lines(&self, cx: &mut WindowContext) -> u8 {
-        self.update(cx, |execution_view, cx| execution_view.num_lines(cx))
     }
 }

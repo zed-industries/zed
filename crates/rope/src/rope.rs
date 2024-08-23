@@ -615,6 +615,11 @@ impl<'a> Chunks<'a> {
         self.offset = offset;
     }
 
+    pub fn set_range(&mut self, range: Range<usize>) {
+        self.range = range.clone();
+        self.seek(range.start);
+    }
+
     /// Moves this cursor to the start of the next line in the rope.
     ///
     /// This method advances the cursor to the beginning of the next line.

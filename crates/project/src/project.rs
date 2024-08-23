@@ -12,6 +12,7 @@ pub mod worktree_store;
 
 #[cfg(test)]
 mod project_tests;
+
 pub mod search_history;
 mod yarn;
 
@@ -32,7 +33,7 @@ use futures::{
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt,
 };
-use fuzzy::CharBag;
+
 use git::{blame::Blame, repository::GitRepository};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
@@ -61,8 +62,8 @@ use log::error;
 use lsp::{
     CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, Edit, FileSystemWatcher, InsertTextFormat, LanguageServer,
-    LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem, OneOf,
-    ServerHealthStatus, ServerStatus, TextEdit, WorkDoneProgressCancelParams,
+    LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem, MessageType,
+    OneOf, ServerHealthStatus, ServerStatus, TextEdit, WorkDoneProgressCancelParams,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -114,10 +115,9 @@ use task::{
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
-use unicase::UniCase;
 use util::{
-    debug_panic, defer, maybe, merge_json_value_into, parse_env_output, post_inc,
-    NumericPrefixWithSuffix, ResultExt, TryFutureExt as _,
+    debug_panic, defer, maybe, merge_json_value_into, parse_env_output, paths::compare_paths,
+    post_inc, ResultExt, TryFutureExt as _,
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
@@ -232,6 +232,7 @@ pub struct Project {
     cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
 }
 
+#[derive(Debug)]
 pub enum LanguageServerToQuery {
     Primary,
     Other(LanguageServerId),
@@ -308,10 +309,16 @@ impl PartialEq for LanguageServerPromptRequest {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum LanguageServerLogType {
+    Log(MessageType),
+    Trace(Option<String>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     LanguageServerAdded(LanguageServerId),
     LanguageServerRemoved(LanguageServerId),
-    LanguageServerLog(LanguageServerId, String),
+    LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
     Notification(String),
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Model<Buffer>),
@@ -413,6 +420,28 @@ pub struct InlayHint {
     pub resolve_state: ResolveState,
 }
 
+/// The user's intent behind a given completion confirmation
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
+pub enum CompletionIntent {
+    /// The user intends to 'commit' this result, if possible
+    /// completion confirmations should run side effects
+    Complete,
+    /// The user intends to continue 'composing' this completion
+    /// completion confirmations should not run side effects and
+    /// let the user continue composing their action
+    Compose,
+}
+
+impl CompletionIntent {
+    pub fn is_complete(&self) -> bool {
+        self == &Self::Complete
+    }
+
+    pub fn is_compose(&self) -> bool {
+        self == &Self::Compose
+    }
+}
+
 /// A completion provided by a language server
 #[derive(Clone)]
 pub struct Completion {
@@ -429,9 +458,10 @@ pub struct Completion {
     /// The raw completion provided by the language server.
     pub lsp_completion: lsp::CompletionItem,
     /// An optional callback to invoke when this completion is confirmed.
-    pub confirm: Option<Arc<dyn Send + Sync + Fn(&mut WindowContext)>>,
-    /// If true, the editor will show a new completion menu after this completion is confirmed.
-    pub show_new_completions_on_confirm: bool,
+    /// Returns, whether new completions should be retriggered after the current one.
+    /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
+    /// if no confirmation is provided or `false` is returned, the completion will be committed.
+    pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut WindowContext) -> bool>>,
 }
 
 impl std::fmt::Debug for Completion {
@@ -625,16 +655,17 @@ impl DirectoryLister {
         };
         "~/".to_string()
     }
-    pub fn list_directory(&self, query: String, cx: &mut AppContext) -> Task<Result<Vec<PathBuf>>> {
+
+    pub fn list_directory(&self, path: String, cx: &mut AppContext) -> Task<Result<Vec<PathBuf>>> {
         match self {
             DirectoryLister::Project(project) => {
-                project.update(cx, |project, cx| project.list_directory(query, cx))
+                project.update(cx, |project, cx| project.list_directory(path, cx))
             }
             DirectoryLister::Local(fs) => {
                 let fs = fs.clone();
                 cx.background_executor().spawn(async move {
                     let mut results = vec![];
-                    let expanded = shellexpand::tilde(&query);
+                    let expanded = shellexpand::tilde(&path);
                     let query = Path::new(expanded.as_ref());
                     let mut response = fs.read_dir(query).await?;
                     while let Some(path) = response.next().await {
@@ -714,6 +745,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_lsp_command::<GetCompletions>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetHover>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetDefinition>);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetDeclaration>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetTypeDefinition>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetReferences>);
@@ -2275,6 +2307,7 @@ impl Project {
 
         buffer.update(cx, |buffer, cx| {
             let worktree_id = old_file.worktree_id(cx);
+
             let ids = &self.language_server_ids;
 
             if let Some(language) = buffer.language().cloned() {
@@ -2595,7 +2628,7 @@ impl Project {
                 let worktree_id = file.worktree_id(cx);
                 let abs_path = file.as_local()?.abs_path(cx);
                 let text_document = lsp::TextDocumentIdentifier {
-                    uri: lsp::Url::from_file_path(abs_path).unwrap(),
+                    uri: lsp::Url::from_file_path(abs_path).log_err()?,
                 };
 
                 for (_, _, server) in self.language_servers_for_worktree(worktree_id) {
@@ -2999,9 +3032,18 @@ impl Project {
                 .join(", ")
         );
 
-        for adapter in enabled_lsp_adapters {
-            self.start_language_server(worktree, adapter, language.clone(), cx);
+        for adapter in &enabled_lsp_adapters {
+            self.start_language_server(worktree, adapter.clone(), language.clone(), cx);
         }
+
+        // After starting all the language servers, reorder them to reflect the desired order
+        // based on the settings.
+        //
+        // This is done, in part, to ensure that language servers loaded at different points
+        // (e.g., native vs extension) still end up in the right order at the end, rather than
+        // it being based on which language server happened to be loaded in first.
+        self.languages()
+            .reorder_language_servers(&language, enabled_lsp_adapters);
     }
 
     fn start_language_server(
@@ -3617,17 +3659,56 @@ impl Project {
             })
             .detach();
         language_server
-            .on_notification::<lsp::notification::Progress, _>(move |params, mut cx| {
-                if let Some(this) = project.upgrade() {
-                    this.update(&mut cx, |this, cx| {
-                        this.on_lsp_progress(
-                            params,
-                            server_id,
-                            disk_based_diagnostics_progress_token.clone(),
-                            cx,
-                        );
-                    })
-                    .ok();
+            .on_notification::<lsp::notification::Progress, _>({
+                let project = project.clone();
+                move |params, mut cx| {
+                    if let Some(this) = project.upgrade() {
+                        this.update(&mut cx, |this, cx| {
+                            this.on_lsp_progress(
+                                params,
+                                server_id,
+                                disk_based_diagnostics_progress_token.clone(),
+                                cx,
+                            );
+                        })
+                        .ok();
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_notification::<lsp::notification::LogMessage, _>({
+                let project = project.clone();
+                move |params, mut cx| {
+                    if let Some(this) = project.upgrade() {
+                        this.update(&mut cx, |_, cx| {
+                            cx.emit(Event::LanguageServerLog(
+                                server_id,
+                                LanguageServerLogType::Log(params.typ),
+                                params.message,
+                            ));
+                        })
+                        .ok();
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_notification::<lsp::notification::LogTrace, _>({
+                let project = project.clone();
+                move |params, mut cx| {
+                    if let Some(this) = project.upgrade() {
+                        this.update(&mut cx, |_, cx| {
+                            cx.emit(Event::LanguageServerLog(
+                                server_id,
+                                LanguageServerLogType::Trace(params.verbose),
+                                params.message,
+                            ));
+                        })
+                        .ok();
+                    }
                 }
             })
             .detach();
@@ -3639,9 +3720,16 @@ impl Project {
             (None, override_options) => initialization_options = override_options,
             _ => {}
         }
+
         let language_server = cx
             .update(|cx| language_server.initialize(initialization_options, cx))?
-            .await?;
+            .await
+            .inspect_err(|_| {
+                if let Some(this) = project.upgrade() {
+                    this.update(cx, |_, cx| cx.emit(Event::LanguageServerRemoved(server_id)))
+                        .ok();
+                }
+            })?;
 
         language_server
             .notify::<lsp::notification::DidChangeConfiguration>(
@@ -5452,6 +5540,30 @@ impl Project {
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.definition_impl(buffer, position, cx)
+    }
+
+    fn declaration_impl(
+        &self,
+        buffer: &Model<Buffer>,
+        position: PointUtf16,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::Primary,
+            GetDeclaration { position },
+            cx,
+        )
+    }
+
+    pub fn declaration<T: ToPointUtf16>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.declaration_impl(buffer, position, cx)
     }
 
     fn type_definition_impl(
@@ -7710,6 +7822,88 @@ impl Project {
         }
     }
 
+    // Returns the resolved version of `path`, that was found in `buffer`, if it exists.
+    pub fn resolve_existing_file_path(
+        &self,
+        path: &str,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<ResolvedPath>> {
+        // TODO: ssh based remoting.
+        if self.ssh_session.is_some() {
+            return Task::ready(None);
+        }
+
+        if self.is_local() {
+            let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
+
+            if expanded.is_absolute() {
+                let fs = self.fs.clone();
+                cx.background_executor().spawn(async move {
+                    let path = expanded.as_path();
+                    let exists = fs.is_file(path).await;
+
+                    exists.then(|| ResolvedPath::AbsPath(expanded))
+                })
+            } else {
+                self.resolve_path_in_worktrees(expanded, buffer, cx)
+            }
+        } else {
+            let path = PathBuf::from(path);
+            if path.is_absolute() || path.starts_with("~") {
+                return Task::ready(None);
+            }
+
+            self.resolve_path_in_worktrees(path, buffer, cx)
+        }
+    }
+
+    fn resolve_path_in_worktrees(
+        &self,
+        path: PathBuf,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<ResolvedPath>> {
+        let mut candidates = vec![path.clone()];
+
+        if let Some(file) = buffer.read(cx).file() {
+            if let Some(dir) = file.path().parent() {
+                let joined = dir.to_path_buf().join(path);
+                candidates.push(joined);
+            }
+        }
+
+        let worktrees = self.worktrees(cx).collect::<Vec<_>>();
+        cx.spawn(|_, mut cx| async move {
+            for worktree in worktrees {
+                for candidate in candidates.iter() {
+                    let path = worktree
+                        .update(&mut cx, |worktree, _| {
+                            let root_entry_path = &worktree.root_entry().unwrap().path;
+
+                            let resolved = resolve_path(&root_entry_path, candidate);
+
+                            let stripped =
+                                resolved.strip_prefix(&root_entry_path).unwrap_or(&resolved);
+
+                            worktree.entry_for_path(stripped).map(|entry| {
+                                ResolvedPath::ProjectPath(ProjectPath {
+                                    worktree_id: worktree.id(),
+                                    path: entry.path.clone(),
+                                })
+                            })
+                        })
+                        .ok()?;
+
+                    if path.is_some() {
+                        return path;
+                    }
+                }
+            }
+            None
+        })
+    }
+
     pub fn list_directory(
         &self,
         query: String,
@@ -8341,36 +8535,47 @@ impl Project {
         })
     }
 
-    /// Attempts to find a `ProjectPath` corresponding to the given full path.
+    /// Attempts to find a `ProjectPath` corresponding to the given path. If the path
+    /// is a *full path*, meaning it starts with the root name of a worktree, we'll locate
+    /// it in that worktree. Otherwise, we'll attempt to find it as a relative path in
+    /// the first visible worktree that has an entry for that relative path.
     ///
-    /// This method iterates through all worktrees in the project, trying to match
-    /// the given full path against each worktree's root name. If a match is found,
-    /// it returns a `ProjectPath` containing the worktree ID and the relative path
-    /// within that worktree.
+    /// We use this to resolve edit steps, when there's a chance an LLM may omit the workree
+    /// root name from paths.
     ///
     /// # Arguments
     ///
-    /// * `full_path` - A reference to a `Path` representing the full path to resolve.
+    /// * `path` - A full path that starts with a worktree root name, or alternatively a
+    ///            relative path within a visible worktree.
     /// * `cx` - A reference to the `AppContext`.
     ///
     /// # Returns
     ///
     /// Returns `Some(ProjectPath)` if a matching worktree is found, otherwise `None`.
-    pub fn project_path_for_full_path(
-        &self,
-        full_path: &Path,
-        cx: &AppContext,
-    ) -> Option<ProjectPath> {
-        self.worktree_store.read_with(cx, |worktree_store, cx| {
-            worktree_store.worktrees().find_map(|worktree| {
-                let worktree_root_name = worktree.read(cx).root_name();
-                let relative_path = full_path.strip_prefix(worktree_root_name).ok()?;
-                Some(ProjectPath {
+    pub fn find_project_path(&self, path: &Path, cx: &AppContext) -> Option<ProjectPath> {
+        let worktree_store = self.worktree_store.read(cx);
+
+        for worktree in worktree_store.visible_worktrees(cx) {
+            let worktree_root_name = worktree.read(cx).root_name();
+            if let Ok(relative_path) = path.strip_prefix(worktree_root_name) {
+                return Some(ProjectPath {
                     worktree_id: worktree.read(cx).id(),
                     path: relative_path.into(),
-                })
-            })
-        })
+                });
+            }
+        }
+
+        for worktree in worktree_store.visible_worktrees(cx) {
+            let worktree = worktree.read(cx);
+            if let Some(entry) = worktree.entry_for_path(path) {
+                return Some(ProjectPath {
+                    worktree_id: worktree.id(),
+                    path: entry.path.clone(),
+                });
+            }
+        }
+
+        None
     }
 
     pub fn get_workspace_root(
@@ -9062,7 +9267,6 @@ impl Project {
                         filter_range: Default::default(),
                     },
                     confirm: None,
-                    show_new_completions_on_confirm: false,
                 },
                 false,
                 cx,
@@ -10236,8 +10440,10 @@ impl Project {
         buffer: &Buffer,
         cx: &AppContext,
     ) -> Option<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
-        self.language_servers_for_buffer(buffer, cx)
-            .find(|s| s.0.is_primary)
+        // The list of language servers is ordered based on the `language_servers` setting
+        // for each language, thus we can consider the first one in the list to be the
+        // primary one.
+        self.language_servers_for_buffer(buffer, cx).next()
     }
 
     pub fn language_server_for_buffer(
@@ -10697,7 +10903,6 @@ async fn populate_labels_for_completions(
             documentation,
             lsp_completion,
             confirm: None,
-            show_new_completions_on_confirm: false,
         })
     }
 }
@@ -10906,10 +11111,30 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
     }
 
     fn len(&self) -> usize {
-        if self.include_ignored {
-            self.snapshot.file_count()
-        } else {
-            self.snapshot.visible_file_count()
+        match self.candidates {
+            Candidates::Files => {
+                if self.include_ignored {
+                    self.snapshot.file_count()
+                } else {
+                    self.snapshot.visible_file_count()
+                }
+            }
+
+            Candidates::Directories => {
+                if self.include_ignored {
+                    self.snapshot.dir_count()
+                } else {
+                    self.snapshot.visible_dir_count()
+                }
+            }
+
+            Candidates::Entries => {
+                if self.include_ignored {
+                    self.snapshot.entry_count()
+                } else {
+                    self.snapshot.visible_entry_count()
+                }
+            }
         }
     }
 
@@ -10942,17 +11167,13 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
     type Item = fuzzy::PathMatchCandidate<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.traversal.next().map(|entry| match entry.kind {
-            EntryKind::Dir => fuzzy::PathMatchCandidate {
+        self.traversal
+            .next()
+            .map(|entry| fuzzy::PathMatchCandidate {
+                is_dir: entry.kind.is_dir(),
                 path: &entry.path,
-                char_bag: CharBag::from_iter(entry.path.to_string_lossy().to_lowercase().chars()),
-            },
-            EntryKind::File(char_bag) => fuzzy::PathMatchCandidate {
-                path: &entry.path,
-                char_bag,
-            },
-            EntryKind::UnloadedDir | EntryKind::PendingDir => unreachable!(),
-        })
+                char_bag: entry.char_bag,
+            })
     }
 }
 
@@ -11142,6 +11363,14 @@ fn resolve_path(base: &Path, path: &Path) -> PathBuf {
         }
     }
     result
+}
+
+/// ResolvedPath is a path that has been resolved to either a ProjectPath
+/// or an AbsPath and that *exists*.
+#[derive(Debug, Clone)]
+pub enum ResolvedPath {
+    ProjectPath(ProjectPath),
+    AbsPath(PathBuf),
 }
 
 impl Item for Buffer {
@@ -11497,87 +11726,4 @@ fn sort_search_matches(search_matches: &mut Vec<SearchMatchCandidate>, cx: &AppC
             compare_paths((path_a.as_ref(), *is_file_a), (path_b.as_ref(), *is_file_b))
         }),
     });
-}
-
-pub fn compare_paths(
-    (path_a, a_is_file): (&Path, bool),
-    (path_b, b_is_file): (&Path, bool),
-) -> cmp::Ordering {
-    let mut components_a = path_a.components().peekable();
-    let mut components_b = path_b.components().peekable();
-    loop {
-        match (components_a.next(), components_b.next()) {
-            (Some(component_a), Some(component_b)) => {
-                let a_is_file = components_a.peek().is_none() && a_is_file;
-                let b_is_file = components_b.peek().is_none() && b_is_file;
-                let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                    let maybe_numeric_ordering = maybe!({
-                        let path_a = Path::new(component_a.as_os_str());
-                        let num_and_remainder_a = if a_is_file {
-                            path_a.file_stem()
-                        } else {
-                            path_a.file_name()
-                        }
-                        .and_then(|s| s.to_str())
-                        .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
-
-                        let path_b = Path::new(component_b.as_os_str());
-                        let num_and_remainder_b = if b_is_file {
-                            path_b.file_stem()
-                        } else {
-                            path_b.file_name()
-                        }
-                        .and_then(|s| s.to_str())
-                        .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
-
-                        num_and_remainder_a.partial_cmp(&num_and_remainder_b)
-                    });
-
-                    maybe_numeric_ordering.unwrap_or_else(|| {
-                        let name_a = UniCase::new(component_a.as_os_str().to_string_lossy());
-                        let name_b = UniCase::new(component_b.as_os_str().to_string_lossy());
-
-                        name_a.cmp(&name_b)
-                    })
-                });
-                if !ordering.is_eq() {
-                    return ordering;
-                }
-            }
-            (Some(_), None) => break cmp::Ordering::Greater,
-            (None, Some(_)) => break cmp::Ordering::Less,
-            (None, None) => break cmp::Ordering::Equal,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn compare_paths_with_dots() {
-        let mut paths = vec![
-            (Path::new("test_dirs"), false),
-            (Path::new("test_dirs/1.46"), false),
-            (Path::new("test_dirs/1.46/bar_1"), true),
-            (Path::new("test_dirs/1.46/bar_2"), true),
-            (Path::new("test_dirs/1.45"), false),
-            (Path::new("test_dirs/1.45/foo_2"), true),
-            (Path::new("test_dirs/1.45/foo_1"), true),
-        ];
-        paths.sort_by(|&a, &b| compare_paths(a, b));
-        assert_eq!(
-            paths,
-            vec![
-                (Path::new("test_dirs"), false),
-                (Path::new("test_dirs/1.45"), false),
-                (Path::new("test_dirs/1.45/foo_1"), true),
-                (Path::new("test_dirs/1.45/foo_2"), true),
-                (Path::new("test_dirs/1.46"), false),
-                (Path::new("test_dirs/1.46/bar_1"), true),
-                (Path::new("test_dirs/1.46/bar_2"), true),
-            ]
-        );
-    }
 }

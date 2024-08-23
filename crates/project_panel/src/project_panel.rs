@@ -1356,20 +1356,47 @@ impl ProjectPanel {
     }
 
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
-            cx.write_to_clipboard(ClipboardItem::new(
-                worktree
-                    .abs_path()
-                    .join(&entry.path)
-                    .to_string_lossy()
-                    .to_string(),
-            ));
+        let abs_file_paths = {
+            let project = self.project.read(cx);
+            self.marked_entries()
+                .into_iter()
+                .filter_map(|entry| {
+                    let entry_path = project.path_for_entry(entry.entry_id, cx)?.path;
+                    Some(
+                        project
+                            .worktree_for_id(entry.worktree_id, cx)?
+                            .read(cx)
+                            .abs_path()
+                            .join(entry_path)
+                            .to_string_lossy()
+                            .to_string(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        if !abs_file_paths.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(abs_file_paths.join("\n")));
         }
     }
 
     fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
-        if let Some((_, entry)) = self.selected_entry(cx) {
-            cx.write_to_clipboard(ClipboardItem::new(entry.path.to_string_lossy().to_string()));
+        let file_paths = {
+            let project = self.project.read(cx);
+            self.marked_entries()
+                .into_iter()
+                .filter_map(|entry| {
+                    Some(
+                        project
+                            .path_for_entry(entry.entry_id, cx)?
+                            .path
+                            .to_string_lossy()
+                            .to_string(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        if !file_paths.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(file_paths.join("\n")));
         }
     }
 
@@ -1610,7 +1637,7 @@ impl ProjectPanel {
                     new_entry_kind = if edit_state.is_dir {
                         EntryKind::Dir
                     } else {
-                        EntryKind::File(Default::default())
+                        EntryKind::File
                     };
                 }
             }
@@ -1650,6 +1677,7 @@ impl ProjectPanel {
                         git_status: entry.git_status,
                         canonical_path: entry.canonical_path.clone(),
                         is_symlink: entry.is_symlink,
+                        char_bag: entry.char_bag,
                     });
                 }
                 if expanded_dir_ids.binary_search(&entry.id).is_err()
@@ -1873,7 +1901,7 @@ impl ProjectPanel {
                     let status = git_status_setting.then(|| entry.git_status).flatten();
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
                     let icon = match entry.kind {
-                        EntryKind::File(_) => {
+                        EntryKind::File => {
                             if show_file_icons {
                                 FileIcons::get_icon(&entry.path, cx)
                             } else {
@@ -2108,6 +2136,7 @@ impl ProjectPanel {
                         this.end_slot::<AnyElement>(
                             div()
                                 .id("symlink_icon")
+                                .pr_3()
                                 .tooltip(move |cx| {
                                     Tooltip::text(format!("{path} • Symbolic Link"), cx)
                                 })
@@ -2144,6 +2173,8 @@ impl ProjectPanel {
                             return;
                         }
                         if !show_editor {
+                            cx.stop_propagation();
+
                             if let Some(selection) =
                                 this.selection.filter(|_| event.down.modifiers.shift)
                             {
@@ -2437,6 +2468,28 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
+                        .on_click(cx.listener(|this, event: &gpui::ClickEvent, cx| {
+                            if event.up.click_count > 1 {
+                                if let Some(entry_id) = this.last_worktree_root_id {
+                                    let project = this.project.read(cx);
+
+                                    let worktree_id = if let Some(worktree) =
+                                        project.worktree_for_entry(entry_id, cx)
+                                    {
+                                        worktree.read(cx).id()
+                                    } else {
+                                        return;
+                                    };
+
+                                    this.selection = Some(SelectedEntry {
+                                        worktree_id,
+                                        entry_id,
+                                    });
+
+                                    this.new_file(&NewFile, cx);
+                                }
+                            }
+                        }))
                 })
                 .when(project.is_local(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))

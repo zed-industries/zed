@@ -4,7 +4,6 @@
     "bindings": {
       "i": ["vim::PushOperator", { "Object": { "around": false } }],
       "a": ["vim::PushOperator", { "Object": { "around": true } }],
-      ":": "command_palette::Toggle",
       "h": "vim::Left",
       "left": "vim::Left",
       "backspace": "vim::Backspace",
@@ -89,9 +88,11 @@
       "g t": "pane::ActivateNextItem",
       "g shift-t": "pane::ActivatePrevItem",
       "g d": "editor::GoToDefinition",
-      "g shift-d": "editor::GoToTypeDefinition",
-      "g cmd-d": "editor::GoToImplementation",
+      "g shift-d": "editor::GoToDeclaration",
+      "g y": "editor::GoToTypeDefinition",
+      "g shift-i": "editor::GoToImplementation",
       "g x": "editor::OpenUrl",
+      "g f": "editor::OpenFile",
       "g n": "vim::SelectNextMatch",
       "g shift-n": "vim::SelectPreviousMatch",
       "g l": "vim::SelectNext",
@@ -176,19 +177,19 @@
       "ctrl-w ctrl-p": "workspace::ActivatePreviousPane",
       "ctrl-w shift-w": "workspace::ActivatePreviousPane",
       "ctrl-w ctrl-shift-w": "workspace::ActivatePreviousPane",
-      "ctrl-w v": "pane::SplitLeft",
-      "ctrl-w ctrl-v": "pane::SplitLeft",
-      "ctrl-w s": "pane::SplitUp",
-      "ctrl-w shift-s": "pane::SplitUp",
-      "ctrl-w ctrl-s": "pane::SplitUp",
+      "ctrl-w v": "pane::SplitVertical",
+      "ctrl-w ctrl-v": "pane::SplitVertical",
+      "ctrl-w s": "pane::SplitHorizontal",
+      "ctrl-w shift-s": "pane::SplitHorizontal",
+      "ctrl-w ctrl-s": "pane::SplitHorizontal",
       "ctrl-w c": "pane::CloseAllItems",
       "ctrl-w ctrl-c": "pane::CloseAllItems",
       "ctrl-w q": "pane::CloseAllItems",
       "ctrl-w ctrl-q": "pane::CloseAllItems",
       "ctrl-w o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
-      "ctrl-w n": ["workspace::NewFileInDirection", "Up"],
-      "ctrl-w ctrl-n": ["workspace::NewFileInDirection", "Up"],
+      "ctrl-w n": "workspace::NewFileSplitHorizontal",
+      "ctrl-w ctrl-n": "workspace::NewFileSplitHorizontal",
       "ctrl-w d": "editor::GoToDefinitionSplit",
       "ctrl-w g d": "editor::GoToDefinitionSplit",
       "ctrl-w shift-d": "editor::GoToTypeDefinitionSplit",
@@ -199,16 +200,11 @@
     }
   },
   {
-    "context": "VimControl && VimCount",
-    "bindings": {
-      "0": ["vim::Number", 0]
-    }
-  },
-  {
     "context": "vim_mode == normal",
     "bindings": {
       "escape": "editor::Cancel",
       "ctrl-[": "editor::Cancel",
+      ":": "command_palette::Toggle",
       ".": "vim::Repeat",
       "c": ["vim::PushOperator", "Change"],
       "shift-c": "vim::ChangeToEndOfLine",
@@ -257,8 +253,16 @@
     }
   },
   {
+    "context": "VimControl && VimCount",
+    "bindings": {
+      "0": ["vim::Number", 0],
+      ":": "vim::CountCommand"
+    }
+  },
+  {
     "context": "vim_mode == visual",
     "bindings": {
+      ":": "vim::VisualCommand",
       "u": "vim::ConvertToLowerCase",
       "U": "vim::ConvertToUpperCase",
       "o": "vim::OtherEnd",

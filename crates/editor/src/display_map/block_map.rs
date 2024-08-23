@@ -35,9 +35,9 @@ pub struct BlockMap {
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     transforms: RefCell<SumTree<Transform>>,
     show_excerpt_controls: bool,
-    buffer_header_height: u8,
-    excerpt_header_height: u8,
-    excerpt_footer_height: u8,
+    buffer_header_height: u32,
+    excerpt_header_height: u32,
+    excerpt_footer_height: u32,
 }
 
 pub struct BlockMapReader<'a> {
@@ -52,6 +52,9 @@ pub struct BlockSnapshot {
     wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
+    pub(super) buffer_header_height: u32,
+    pub(super) excerpt_header_height: u32,
+    pub(super) excerpt_footer_height: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -77,18 +80,20 @@ pub type RenderBlock = Box<dyn Send + FnMut(&mut BlockContext) -> AnyElement>;
 pub struct CustomBlock {
     id: CustomBlockId,
     position: Anchor,
-    height: u8,
+    height: u32,
     style: BlockStyle,
-    render: Mutex<RenderBlock>,
+    render: Arc<Mutex<RenderBlock>>,
     disposition: BlockDisposition,
+    priority: usize,
 }
 
 pub struct BlockProperties<P> {
     pub position: P,
-    pub height: u8,
+    pub height: u32,
     pub style: BlockStyle,
     pub render: RenderBlock,
     pub disposition: BlockDisposition,
+    pub priority: usize,
 }
 
 impl<P: Debug> Debug for BlockProperties<P> {
@@ -179,6 +184,7 @@ pub(crate) enum BlockType {
 pub(crate) trait BlockLike {
     fn block_type(&self) -> BlockType;
     fn disposition(&self) -> BlockDisposition;
+    fn priority(&self) -> usize;
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -189,14 +195,14 @@ pub enum Block {
         id: ExcerptId,
         buffer: BufferSnapshot,
         range: ExcerptRange<text::Anchor>,
-        height: u8,
+        height: u32,
         starts_new_buffer: bool,
         show_excerpt_controls: bool,
     },
     ExcerptFooter {
         id: ExcerptId,
         disposition: BlockDisposition,
-        height: u8,
+        height: u32,
     },
 }
 
@@ -211,6 +217,14 @@ impl BlockLike for Block {
 
     fn disposition(&self) -> BlockDisposition {
         self.disposition()
+    }
+
+    fn priority(&self) -> usize {
+        match self {
+            Block::Custom(block) => block.priority,
+            Block::ExcerptHeader { .. } => usize::MAX,
+            Block::ExcerptFooter { .. } => 0,
+        }
     }
 }
 
@@ -231,7 +245,7 @@ impl Block {
         }
     }
 
-    pub fn height(&self) -> u8 {
+    pub fn height(&self) -> u32 {
         match self {
             Block::Custom(block) => block.height,
             Block::ExcerptHeader { height, .. } => *height,
@@ -301,9 +315,9 @@ impl BlockMap {
     pub fn new(
         wrap_snapshot: WrapSnapshot,
         show_excerpt_controls: bool,
-        buffer_header_height: u8,
-        excerpt_header_height: u8,
-        excerpt_footer_height: u8,
+        buffer_header_height: u32,
+        excerpt_header_height: u32,
+        excerpt_footer_height: u32,
     ) -> Self {
         let row_count = wrap_snapshot.max_point().row() + 1;
         let map = Self {
@@ -336,6 +350,9 @@ impl BlockMap {
                 wrap_snapshot,
                 transforms: self.transforms.borrow().clone(),
                 custom_blocks_by_id: self.custom_blocks_by_id.clone(),
+                buffer_header_height: self.buffer_header_height,
+                excerpt_header_height: self.excerpt_header_height,
+                excerpt_footer_height: self.excerpt_footer_height,
             },
         }
     }
@@ -551,7 +568,7 @@ impl BlockMap {
         *transforms = new_transforms;
     }
 
-    pub fn replace_renderers(&mut self, mut renderers: HashMap<CustomBlockId, RenderBlock>) {
+    pub fn replace_blocks(&mut self, mut renderers: HashMap<CustomBlockId, RenderBlock>) {
         for block in &mut self.custom_blocks {
             if let Some(render) = renderers.remove(&block.id) {
                 *block.render.lock() = render;
@@ -565,9 +582,9 @@ impl BlockMap {
 
     pub fn header_and_footer_blocks<'a, 'b: 'a, 'c: 'a + 'b, R, T>(
         show_excerpt_controls: bool,
-        excerpt_footer_height: u8,
-        buffer_header_height: u8,
-        excerpt_header_height: u8,
+        excerpt_footer_height: u32,
+        buffer_header_height: u32,
+        excerpt_header_height: u32,
         buffer: &'b multi_buffer::MultiBufferSnapshot,
         range: R,
         wrap_snapshot: &'c WrapSnapshot,
@@ -654,7 +671,10 @@ impl BlockMap {
                         (BlockType::Header, BlockType::Header) => Ordering::Equal,
                         (BlockType::Header, _) => Ordering::Less,
                         (_, BlockType::Header) => Ordering::Greater,
-                        (BlockType::Custom(a_id), BlockType::Custom(b_id)) => a_id.cmp(&b_id),
+                        (BlockType::Custom(a_id), BlockType::Custom(b_id)) => block_b
+                            .priority()
+                            .cmp(&block_a.priority())
+                            .then_with(|| a_id.cmp(&b_id)),
                     })
             })
         });
@@ -793,9 +813,10 @@ impl<'a> BlockMapWriter<'a> {
                 id,
                 position,
                 height: block.height,
-                render: Mutex::new(block.render),
+                render: Arc::new(Mutex::new(block.render)),
                 disposition: block.disposition,
                 style: block.style,
+                priority: block.priority,
             });
             self.0.custom_blocks.insert(block_ix, new_block.clone());
             self.0.custom_blocks_by_id.insert(id, new_block);
@@ -810,25 +831,23 @@ impl<'a> BlockMapWriter<'a> {
         ids
     }
 
-    pub fn replace(
-        &mut self,
-        mut heights_and_renderers: HashMap<CustomBlockId, (u8, RenderBlock)>,
-    ) {
+    pub fn resize(&mut self, mut heights: HashMap<CustomBlockId, u32>) {
         let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
         let mut edits = Patch::default();
         let mut last_block_buffer_row = None;
 
         for block in &mut self.0.custom_blocks {
-            if let Some((new_height, render)) = heights_and_renderers.remove(&block.id) {
+            if let Some(new_height) = heights.remove(&block.id) {
                 if block.height != new_height {
                     let new_block = CustomBlock {
                         id: block.id,
                         position: block.position,
                         height: new_height,
                         style: block.style,
-                        render: Mutex::new(render),
+                        render: block.render.clone(),
                         disposition: block.disposition,
+                        priority: block.priority,
                     };
                     let new_block = Arc::new(new_block);
                     *block = new_block.clone();
@@ -969,11 +988,21 @@ impl BlockSnapshot {
 
     pub fn blocks_in_range(&self, rows: Range<u32>) -> impl Iterator<Item = (u32, &Block)> {
         let mut cursor = self.transforms.cursor::<BlockRow>();
-        cursor.seek(&BlockRow(rows.start), Bias::Right, &());
+        cursor.seek(&BlockRow(rows.start), Bias::Left, &());
+        while cursor.start().0 < rows.start && cursor.end(&()).0 <= rows.start {
+            cursor.next(&());
+        }
+
         std::iter::from_fn(move || {
             while let Some(transform) = cursor.item() {
                 let start_row = cursor.start().0;
-                if start_row >= rows.end {
+                if start_row > rows.end
+                    || (start_row == rows.end
+                        && transform
+                            .block
+                            .as_ref()
+                            .map_or(false, |block| block.height() > 0))
+                {
                     break;
                 }
                 if let Some(block) = &transform.block {
@@ -1174,7 +1203,7 @@ impl Transform {
         Self {
             summary: TransformSummary {
                 input_rows: 0,
-                output_rows: block.height() as u32,
+                output_rows: block.height(),
             },
             block: Some(block),
         }
@@ -1182,6 +1211,23 @@ impl Transform {
 
     fn is_isomorphic(&self) -> bool {
         self.block.is_none()
+    }
+}
+
+impl<'a> BlockChunks<'a> {
+    fn advance(&mut self) {
+        self.transforms.next(&());
+        while let Some(transform) = self.transforms.item() {
+            if transform
+                .block
+                .as_ref()
+                .map_or(false, |block| block.height() == 0)
+            {
+                self.transforms.next(&());
+            } else {
+                break;
+            }
+        }
     }
 }
 
@@ -1197,7 +1243,7 @@ impl<'a> Iterator for BlockChunks<'a> {
         if transform.block.is_some() {
             let block_start = self.transforms.start().0 .0;
             let mut block_end = self.transforms.end(&()).0 .0;
-            self.transforms.next(&());
+            self.advance();
             if self.transforms.item().is_none() {
                 block_end -= 1;
             }
@@ -1219,7 +1265,7 @@ impl<'a> Iterator for BlockChunks<'a> {
             } else {
                 self.output_row += 1;
                 if self.output_row < self.max_output_row {
-                    self.transforms.next(&());
+                    self.advance();
                     return Some(Chunk {
                         text: "\n",
                         ..Default::default()
@@ -1237,7 +1283,7 @@ impl<'a> Iterator for BlockChunks<'a> {
         let (mut prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
         self.input_chunk.text = suffix;
         if self.output_row == transform_end {
-            self.transforms.next(&());
+            self.advance();
         }
 
         if self.masked {
@@ -1267,6 +1313,18 @@ impl<'a> Iterator for BlockBufferRows<'a> {
 
         if self.output_row.0 >= self.transforms.end(&()).0 .0 {
             self.transforms.next(&());
+        }
+
+        while let Some(transform) = self.transforms.item() {
+            if transform
+                .block
+                .as_ref()
+                .map_or(false, |block| block.height() == 0)
+            {
+                self.transforms.next(&());
+            } else {
+                break;
+            }
         }
 
         let transform = self.transforms.item()?;
@@ -1421,6 +1479,7 @@ mod tests {
                 height: 1,
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1428,6 +1487,7 @@ mod tests {
                 height: 2,
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1435,6 +1495,7 @@ mod tests {
                 height: 3,
                 disposition: BlockDisposition::Below,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
         ]);
 
@@ -1445,7 +1506,7 @@ mod tests {
             .blocks_in_range(0..8)
             .map(|(start_row, block)| {
                 let block = block.as_custom().unwrap();
-                (start_row..start_row + block.height as u32, block.id)
+                (start_row..start_row + block.height, block.id)
             })
             .collect::<Vec<_>>();
 
@@ -1674,6 +1735,7 @@ mod tests {
                 height: 1,
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1681,6 +1743,7 @@ mod tests {
                 height: 2,
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1688,6 +1751,7 @@ mod tests {
                 height: 3,
                 disposition: BlockDisposition::Below,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
         ]);
 
@@ -1697,10 +1761,9 @@ mod tests {
 
             let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
 
-            let mut hash_map = HashMap::default();
-            let render: RenderBlock = Box::new(|_| div().into_any());
-            hash_map.insert(block_ids[0], (2_u8, render));
-            block_map_writer.replace(hash_map);
+            let mut new_heights = HashMap::default();
+            new_heights.insert(block_ids[0], 2);
+            block_map_writer.resize(new_heights);
             let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
             assert_eq!(snapshot.text(), "aaa\n\n\n\n\nbbb\nccc\nddd\n\n\n");
         }
@@ -1708,10 +1771,9 @@ mod tests {
         {
             let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
 
-            let mut hash_map = HashMap::default();
-            let render: RenderBlock = Box::new(|_| div().into_any());
-            hash_map.insert(block_ids[0], (1_u8, render));
-            block_map_writer.replace(hash_map);
+            let mut new_heights = HashMap::default();
+            new_heights.insert(block_ids[0], 1);
+            block_map_writer.resize(new_heights);
 
             let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
             assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
@@ -1720,10 +1782,9 @@ mod tests {
         {
             let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
 
-            let mut hash_map = HashMap::default();
-            let render: RenderBlock = Box::new(|_| div().into_any());
-            hash_map.insert(block_ids[0], (0_u8, render));
-            block_map_writer.replace(hash_map);
+            let mut new_heights = HashMap::default();
+            new_heights.insert(block_ids[0], 0);
+            block_map_writer.resize(new_heights);
 
             let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
             assert_eq!(snapshot.text(), "aaa\n\n\nbbb\nccc\nddd\n\n\n");
@@ -1732,10 +1793,9 @@ mod tests {
         {
             let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
 
-            let mut hash_map = HashMap::default();
-            let render: RenderBlock = Box::new(|_| div().into_any());
-            hash_map.insert(block_ids[0], (3_u8, render));
-            block_map_writer.replace(hash_map);
+            let mut new_heights = HashMap::default();
+            new_heights.insert(block_ids[0], 3);
+            block_map_writer.resize(new_heights);
 
             let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
             assert_eq!(snapshot.text(), "aaa\n\n\n\n\n\nbbb\nccc\nddd\n\n\n");
@@ -1744,10 +1804,9 @@ mod tests {
         {
             let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
 
-            let mut hash_map = HashMap::default();
-            let render: RenderBlock = Box::new(|_| div().into_any());
-            hash_map.insert(block_ids[0], (3_u8, render));
-            block_map_writer.replace(hash_map);
+            let mut new_heights = HashMap::default();
+            new_heights.insert(block_ids[0], 3);
+            block_map_writer.resize(new_heights);
 
             let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
             // Same height as before, should remain the same
@@ -1782,6 +1841,7 @@ mod tests {
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
                 height: 1,
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1789,6 +1849,7 @@ mod tests {
                 disposition: BlockDisposition::Below,
                 render: Box::new(|_| div().into_any()),
                 height: 1,
+                priority: 0,
             },
         ]);
 
@@ -1874,7 +1935,7 @@ mod tests {
                             } else {
                                 BlockDisposition::Below
                             };
-                            let height = rng.gen_range(1..5);
+                            let height = rng.gen_range(0..5);
                             log::info!(
                                 "inserting block {:?} {:?} with height {}",
                                 disposition,
@@ -1887,6 +1948,7 @@ mod tests {
                                 height,
                                 disposition,
                                 render: Box::new(|_| div().into_any()),
+                                priority: 0,
                             }
                         })
                         .collect::<Vec<_>>();
@@ -1907,6 +1969,7 @@ mod tests {
                             style: props.style,
                             render: Box::new(|_| div().into_any()),
                             disposition: props.disposition,
+                            priority: 0,
                         }));
                     for (block_id, props) in block_ids.into_iter().zip(block_properties) {
                         custom_blocks.push((block_id, props));
@@ -1977,6 +2040,7 @@ mod tests {
                         disposition: block.disposition,
                         id: *id,
                         height: block.height,
+                        priority: block.priority,
                     },
                 )
             }));
@@ -2085,7 +2149,9 @@ mod tests {
                     .blocks_in_range(0..(expected_row_count as u32))
                     .map(|(row, block)| (row, block.clone().into()))
                     .collect::<Vec<_>>(),
-                expected_block_positions
+                expected_block_positions,
+                "invalid blocks_in_range({:?})",
+                0..expected_row_count
             );
 
             for (_, expected_block) in
@@ -2185,17 +2251,18 @@ mod tests {
         #[derive(Debug, Eq, PartialEq)]
         enum ExpectedBlock {
             ExcerptHeader {
-                height: u8,
+                height: u32,
                 starts_new_buffer: bool,
             },
             ExcerptFooter {
-                height: u8,
+                height: u32,
                 disposition: BlockDisposition,
             },
             Custom {
                 disposition: BlockDisposition,
                 id: CustomBlockId,
-                height: u8,
+                height: u32,
+                priority: usize,
             },
         }
 
@@ -2211,10 +2278,18 @@ mod tests {
             fn disposition(&self) -> BlockDisposition {
                 self.disposition()
             }
+
+            fn priority(&self) -> usize {
+                match self {
+                    ExpectedBlock::Custom { priority, .. } => *priority,
+                    ExpectedBlock::ExcerptHeader { .. } => usize::MAX,
+                    ExpectedBlock::ExcerptFooter { .. } => 0,
+                }
+            }
         }
 
         impl ExpectedBlock {
-            fn height(&self) -> u8 {
+            fn height(&self) -> u32 {
                 match self {
                     ExpectedBlock::ExcerptHeader { height, .. } => *height,
                     ExpectedBlock::Custom { height, .. } => *height,
@@ -2238,6 +2313,7 @@ mod tests {
                         id: block.id,
                         disposition: block.disposition,
                         height: block.height,
+                        priority: block.priority,
                     },
                     Block::ExcerptHeader {
                         height,
