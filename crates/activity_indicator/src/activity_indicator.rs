@@ -403,8 +403,10 @@ impl Render for ActivityIndicator {
                 .anchor(gpui::AnchorCorner::BottomLeft)
                 .menu(move |cx| {
                     let strong_this = this.upgrade()?;
-                    ContextMenu::build(cx, |mut menu, cx| {
+                    let mut has_work = false;
+                    let menu = ContextMenu::build(cx, |mut menu, cx| {
                         for work in strong_this.read(cx).pending_language_server_work(cx) {
+                            has_work = true;
                             let this = this.clone();
                             let mut title = work
                                 .progress
@@ -451,8 +453,8 @@ impl Render for ActivityIndicator {
                             }
                         }
                         menu
-                    })
-                    .into()
+                    });
+                    has_work.then_some(menu)
                 }),
         )
     }
