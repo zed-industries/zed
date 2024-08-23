@@ -33,6 +33,20 @@ impl Template for ActionTemplate {
 
     fn render(&self, _context: &PreprocessorContext, args: &HashMap<String, String>) -> String {
         let name = args.get("name").map(|s| s.to_string()).unwrap_or_default();
-        format!("<code class=\"hljs\">{}</code>", name)
+        
+        let formatted_name = name
+            .chars()
+            .map(|c| {
+                if c.is_uppercase() {
+                    format!(" {}", c.to_lowercase())
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect::<String>()
+            .trim()
+            .to_string();
+        
+        format!("<code class=\"hljs\">{}</code>", formatted_name)
     }
 }

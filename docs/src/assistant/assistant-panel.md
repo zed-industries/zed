@@ -2,7 +2,7 @@
 
 The assistant panel provides you with a way to interact with large language models. The assistant is useful for various tasks, such as generating code, asking questions about existing code, and even writing plaintext, such as emails and documentation.
 
-To open the assistant panel, toggle the right dock by using the { #action name="workspace: toggle right dock" } action in the command palette or by using the
+To open the assistant panel, toggle the right dock by using the { #action name="workspace::ToggleRightDock" } action in the command palette or by using the
 { #keybinding name="workspace::ToggleRightDock" } shortcut.
 
 > **Note**: A custom [key binding](../key-bindings.md) can be set to toggle the right dock.
