@@ -106,6 +106,7 @@ pub struct OutlinePanel {
     updating_fs_entries: bool,
     fs_entries_update_task: Task<()>,
     cached_entries_update_task: Task<()>,
+    reveal_selection_task: Task<anyhow::Result<()>>,
     outline_fetch_tasks: HashMap<(BufferId, ExcerptId), Task<()>>,
     excerpts: HashMap<BufferId, HashMap<ExcerptId, Excerpt>>,
     cached_entries: Vec<CachedEntry>,
@@ -515,6 +516,7 @@ impl OutlinePanel {
                 updating_fs_entries: false,
                 fs_entries_update_task: Task::ready(()),
                 cached_entries_update_task: Task::ready(()),
+                reveal_selection_task: Task::ready(Ok(())),
                 outline_fetch_tasks: HashMap::default(),
                 excerpts: HashMap::default(),
                 cached_entries: Vec::new(),
@@ -1250,113 +1252,137 @@ impl OutlinePanel {
             cx.notify();
             return;
         };
-        let related_buffer_entry = match &entry_with_selection {
-            PanelEntry::Fs(FsEntry::File(worktree_id, _, buffer_id, _)) => {
-                let project = self.project.read(cx);
-                let entry_id = project
-                    .buffer_for_id(*buffer_id, cx)
-                    .and_then(|buffer| buffer.read(cx).entry_id(cx));
-                project
-                    .worktree_for_id(*worktree_id, cx)
-                    .zip(entry_id)
-                    .and_then(|(worktree, entry_id)| {
-                        let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
-                        Some((worktree, entry))
-                    })
-            }
-            PanelEntry::Outline(outline_entry) => {
-                let &(OutlineEntry::Outline(buffer_id, excerpt_id, _)
-                | OutlineEntry::Excerpt(buffer_id, excerpt_id, _)) = outline_entry;
-                self.collapsed_entries
-                    .remove(&CollapsedEntry::ExternalFile(buffer_id));
-                self.collapsed_entries
-                    .remove(&CollapsedEntry::Excerpt(buffer_id, excerpt_id));
-                let project = self.project.read(cx);
-                let entry_id = project
-                    .buffer_for_id(buffer_id, cx)
-                    .and_then(|buffer| buffer.read(cx).entry_id(cx));
 
-                entry_id.and_then(|entry_id| {
-                    project
-                        .worktree_for_entry(entry_id, cx)
-                        .and_then(|worktree| {
-                            let worktree_id = worktree.read(cx).id();
-                            self.collapsed_entries
-                                .remove(&CollapsedEntry::File(worktree_id, buffer_id));
-                            let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
-                            Some((worktree, entry))
-                        })
-                })
-            }
-            PanelEntry::Fs(FsEntry::ExternalFile(..)) => None,
-            PanelEntry::Search(SearchEntry { match_range, .. }) => match_range
-                .start
-                .buffer_id
-                .or(match_range.end.buffer_id)
-                .and_then(|buffer_id| {
-                    self.collapsed_entries
-                        .remove(&CollapsedEntry::ExternalFile(buffer_id));
-                    let project = self.project.read(cx);
-                    let entry_id = project
-                        .buffer_for_id(buffer_id, cx)
-                        .and_then(|buffer| buffer.read(cx).entry_id(cx));
-
-                    entry_id.and_then(|entry_id| {
+        let project = self.project.clone();
+        self.reveal_selection_task = cx.spawn(|outline_panel, mut cx| async move {
+            cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+            let related_buffer_entry = match &entry_with_selection {
+                PanelEntry::Fs(FsEntry::File(worktree_id, _, buffer_id, _)) => {
+                    project.update(&mut cx, |project, cx| {
+                        let entry_id = project
+                            .buffer_for_id(*buffer_id, cx)
+                            .and_then(|buffer| buffer.read(cx).entry_id(cx));
                         project
-                            .worktree_for_entry(entry_id, cx)
-                            .and_then(|worktree| {
-                                let worktree_id = worktree.read(cx).id();
-                                self.collapsed_entries
-                                    .remove(&CollapsedEntry::File(worktree_id, buffer_id));
+                            .worktree_for_id(*worktree_id, cx)
+                            .zip(entry_id)
+                            .and_then(|(worktree, entry_id)| {
                                 let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
                                 Some((worktree, entry))
                             })
-                    })
-                }),
-            _ => return,
-        };
-        if let Some((worktree, buffer_entry)) = related_buffer_entry {
-            let worktree_id = worktree.read(cx).id();
-            let mut dirs_to_expand = Vec::new();
-            {
-                let mut traversal = worktree.read(cx).traverse_from_path(
-                    true,
-                    true,
-                    true,
-                    buffer_entry.path.as_ref(),
-                );
-                let mut current_entry = buffer_entry;
-                loop {
-                    if current_entry.is_dir() {
-                        if self
-                            .collapsed_entries
-                            .remove(&CollapsedEntry::Dir(worktree_id, current_entry.id))
-                        {
-                            dirs_to_expand.push(current_entry.id);
-                        }
-                    }
-
-                    if traversal.back_to_parent() {
-                        if let Some(parent_entry) = traversal.entry() {
-                            current_entry = parent_entry.clone();
-                            continue;
-                        }
-                    }
-                    break;
+                    })?
                 }
-            }
-            for dir_to_expand in dirs_to_expand {
-                self.project
-                    .update(cx, |project, cx| {
-                        project.expand_entry(worktree_id, dir_to_expand, cx)
-                    })
-                    .unwrap_or_else(|| Task::ready(Ok(())))
-                    .detach_and_log_err(cx)
-            }
-        }
+                PanelEntry::Outline(outline_entry) => {
+                    let &(OutlineEntry::Outline(buffer_id, excerpt_id, _)
+                    | OutlineEntry::Excerpt(buffer_id, excerpt_id, _)) = outline_entry;
+                    outline_panel.update(&mut cx, |outline_panel, cx| {
+                        outline_panel
+                            .collapsed_entries
+                            .remove(&CollapsedEntry::ExternalFile(buffer_id));
+                        outline_panel
+                            .collapsed_entries
+                            .remove(&CollapsedEntry::Excerpt(buffer_id, excerpt_id));
+                        let project = outline_panel.project.read(cx);
+                        let entry_id = project
+                            .buffer_for_id(buffer_id, cx)
+                            .and_then(|buffer| buffer.read(cx).entry_id(cx));
 
-        self.select_entry(entry_with_selection, false, cx);
-        self.update_cached_entries(None, cx);
+                        entry_id.and_then(|entry_id| {
+                            project
+                                .worktree_for_entry(entry_id, cx)
+                                .and_then(|worktree| {
+                                    let worktree_id = worktree.read(cx).id();
+                                    outline_panel
+                                        .collapsed_entries
+                                        .remove(&CollapsedEntry::File(worktree_id, buffer_id));
+                                    let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
+                                    Some((worktree, entry))
+                                })
+                        })
+                    })?
+                }
+                PanelEntry::Fs(FsEntry::ExternalFile(..)) => None,
+                PanelEntry::Search(SearchEntry { match_range, .. }) => match_range
+                    .start
+                    .buffer_id
+                    .or(match_range.end.buffer_id)
+                    .map(|buffer_id| {
+                        outline_panel.update(&mut cx, |outline_panel, cx| {
+                            outline_panel
+                                .collapsed_entries
+                                .remove(&CollapsedEntry::ExternalFile(buffer_id));
+                            let project = project.read(cx);
+                            let entry_id = project
+                                .buffer_for_id(buffer_id, cx)
+                                .and_then(|buffer| buffer.read(cx).entry_id(cx));
+
+                            entry_id.and_then(|entry_id| {
+                                project
+                                    .worktree_for_entry(entry_id, cx)
+                                    .and_then(|worktree| {
+                                        let worktree_id = worktree.read(cx).id();
+                                        outline_panel
+                                            .collapsed_entries
+                                            .remove(&CollapsedEntry::File(worktree_id, buffer_id));
+                                        let entry =
+                                            worktree.read(cx).entry_for_id(entry_id)?.clone();
+                                        Some((worktree, entry))
+                                    })
+                            })
+                        })
+                    })
+                    .transpose()?
+                    .flatten(),
+                _ => return anyhow::Ok(()),
+            };
+            if let Some((worktree, buffer_entry)) = related_buffer_entry {
+                outline_panel.update(&mut cx, |outline_panel, cx| {
+                    let worktree_id = worktree.read(cx).id();
+                    let mut dirs_to_expand = Vec::new();
+                    {
+                        let mut traversal = worktree.read(cx).traverse_from_path(
+                            true,
+                            true,
+                            true,
+                            buffer_entry.path.as_ref(),
+                        );
+                        let mut current_entry = buffer_entry;
+                        loop {
+                            if current_entry.is_dir() {
+                                if outline_panel
+                                    .collapsed_entries
+                                    .remove(&CollapsedEntry::Dir(worktree_id, current_entry.id))
+                                {
+                                    dirs_to_expand.push(current_entry.id);
+                                }
+                            }
+
+                            if traversal.back_to_parent() {
+                                if let Some(parent_entry) = traversal.entry() {
+                                    current_entry = parent_entry.clone();
+                                    continue;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    for dir_to_expand in dirs_to_expand {
+                        project
+                            .update(cx, |project, cx| {
+                                project.expand_entry(worktree_id, dir_to_expand, cx)
+                            })
+                            .unwrap_or_else(|| Task::ready(Ok(())))
+                            .detach_and_log_err(cx)
+                    }
+                })?
+            }
+
+            outline_panel.update(&mut cx, |outline_panel, cx| {
+                outline_panel.select_entry(entry_with_selection, false, cx);
+                outline_panel.update_cached_entries(None, cx);
+            })?;
+
+            anyhow::Ok(())
+        });
     }
 
     fn render_excerpt(
