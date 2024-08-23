@@ -8,6 +8,8 @@ use settings::{Settings, SettingsSources};
 #[derive(Deserialize)]
 pub struct WorkspaceSettings {
     pub active_pane_magnification: f32,
+    pub pane_split_direction_horizontal: PaneSplitDirectionHorizontal,
+    pub pane_split_direction_vertical: PaneSplitDirectionVertical,
     pub centered_layout: CenteredLayoutSettings,
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
@@ -61,6 +63,14 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: `1.0`
     pub active_pane_magnification: Option<f32>,
+    // Direction to split horizontally.
+    //
+    // Default: "up"
+    pub pane_split_direction_horizontal: Option<PaneSplitDirectionHorizontal>,
+    // Direction to split vertically.
+    //
+    // Default: "left"
+    pub pane_split_direction_vertical: Option<PaneSplitDirectionVertical>,
     // Centered layout related settings.
     pub centered_layout: Option<CenteredLayoutSettings>,
     /// Whether or not to prompt the user to confirm before closing the application.
@@ -129,6 +139,20 @@ pub enum AutosaveSetting {
     OnFocusChange,
     /// Autosave when the active window changes.
     OnWindowChange,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneSplitDirectionHorizontal {
+    Up,
+    Down,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneSplitDirectionVertical {
+    Left,
+    Right,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]

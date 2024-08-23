@@ -12,11 +12,12 @@ pub fn authorize_access_to_language_model(
     model: &str,
 ) -> Result<()> {
     authorize_access_for_country(config, country_code, provider)?;
-    authorize_access_to_model(claims, provider, model)?;
+    authorize_access_to_model(config, claims, provider, model)?;
     Ok(())
 }
 
 fn authorize_access_to_model(
+    config: &Config,
     claims: &LlmTokenClaims,
     provider: LanguageModelProvider,
     model: &str,
@@ -25,13 +26,25 @@ fn authorize_access_to_model(
         return Ok(());
     }
 
-    match (provider, model) {
-        (LanguageModelProvider::Anthropic, "claude-3-5-sonnet") => Ok(()),
-        _ => Err(Error::http(
-            StatusCode::FORBIDDEN,
-            format!("access to model {model:?} is not included in your plan"),
-        ))?,
+    match provider {
+        LanguageModelProvider::Anthropic => {
+            if model == "claude-3-5-sonnet" {
+                return Ok(());
+            }
+
+            if claims.has_llm_closed_beta_feature_flag
+                && Some(model) == config.llm_closed_beta_model_name.as_deref()
+            {
+                return Ok(());
+            }
+        }
+        _ => {}
     }
+
+    Err(Error::http(
+        StatusCode::FORBIDDEN,
+        format!("access to model {model:?} is not included in your plan"),
+    ))
 }
 
 fn authorize_access_for_country(

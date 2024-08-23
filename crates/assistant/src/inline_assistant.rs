@@ -76,13 +76,31 @@ pub struct InlineAssistant {
     assists: HashMap<InlineAssistId, InlineAssist>,
     assists_by_editor: HashMap<WeakView<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
-    assist_observations:
-        HashMap<InlineAssistId, (async_watch::Sender<()>, async_watch::Receiver<()>)>,
+    assist_observations: HashMap<
+        InlineAssistId,
+        (
+            async_watch::Sender<AssistStatus>,
+            async_watch::Receiver<AssistStatus>,
+        ),
+    >,
     confirmed_assists: HashMap<InlineAssistId, Model<Codegen>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Option<Arc<Telemetry>>,
     fs: Arc<dyn Fs>,
+}
+
+pub enum AssistStatus {
+    Idle,
+    Started,
+    Stopped,
+    Finished,
+}
+
+impl AssistStatus {
+    pub fn is_done(&self) -> bool {
+        matches!(self, Self::Stopped | Self::Finished)
+    }
 }
 
 impl Global for InlineAssistant {}
@@ -925,7 +943,7 @@ impl InlineAssistant {
             .log_err();
 
         if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
-            tx.send(()).ok();
+            tx.send(AssistStatus::Started).ok();
         }
     }
 
@@ -939,7 +957,7 @@ impl InlineAssistant {
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
 
         if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
-            tx.send(()).ok();
+            tx.send(AssistStatus::Stopped).ok();
         }
     }
 
@@ -1141,11 +1159,14 @@ impl InlineAssistant {
         })
     }
 
-    pub fn observe_assist(&mut self, assist_id: InlineAssistId) -> async_watch::Receiver<()> {
+    pub fn observe_assist(
+        &mut self,
+        assist_id: InlineAssistId,
+    ) -> async_watch::Receiver<AssistStatus> {
         if let Some((_, rx)) = self.assist_observations.get(&assist_id) {
             rx.clone()
         } else {
-            let (tx, rx) = async_watch::channel(());
+            let (tx, rx) = async_watch::channel(AssistStatus::Idle);
             self.assist_observations.insert(assist_id, (tx, rx.clone()));
             rx
         }
@@ -2079,7 +2100,7 @@ impl InlineAssist {
                             if assist.decorations.is_none() {
                                 this.finish_assist(assist_id, false, cx);
                             } else if let Some(tx) = this.assist_observations.get(&assist_id) {
-                                tx.0.send(()).ok();
+                                tx.0.send(AssistStatus::Finished).ok();
                             }
                         }
                     })

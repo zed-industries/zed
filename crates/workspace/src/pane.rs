@@ -3,6 +3,7 @@ use crate::{
         ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings, TabContentParams,
         WeakItemHandle,
     },
+    notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
     CloseWindow, CopyPath, CopyRelativePath, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
@@ -13,9 +14,9 @@ use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
-    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, DismissEvent, Div, DragMoveEvent,
-    EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext,
-    Model, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
+    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId,
+    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
+    MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
     WindowContext,
 };
@@ -39,7 +40,7 @@ use theme::ThemeSettings;
 
 use ui::{
     prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconButtonShape, IconName,
-    IconSize, Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
+    IconSize, Indicator, Label, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_flex, ContextMenu};
 use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
@@ -151,6 +152,8 @@ actions!(
         SplitUp,
         SplitRight,
         SplitDown,
+        SplitHorizontal,
+        SplitVertical,
         TogglePreviewTab,
     ]
 );
@@ -244,8 +247,6 @@ pub struct Pane {
     last_focus_handle_by_item: HashMap<EntityId, WeakFocusHandle>,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
-    pub new_item_menu: Option<View<ContextMenu>>,
-    split_item_menu: Option<View<ContextMenu>>,
     pub(crate) workspace: WeakView<Workspace>,
     project: Model<Project>,
     drag_split_direction: Option<SplitDirection>,
@@ -263,6 +264,8 @@ pub struct Pane {
     display_nav_history_buttons: Option<bool>,
     double_click_dispatch_action: Box<dyn Action>,
     save_modals_spawned: HashSet<EntityId>,
+    pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 pub struct ActivationHistoryEntry {
@@ -363,8 +366,6 @@ impl Pane {
                 next_timestamp,
             }))),
             toolbar: cx.new_view(|_| Toolbar::new()),
-            new_item_menu: None,
-            split_item_menu: None,
             tab_bar_scroll_handle: ScrollHandle::new(),
             drag_split_direction: None,
             workspace,
@@ -374,7 +375,7 @@ impl Pane {
             can_split: true,
             should_display_tab_bar: Rc::new(|cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
-                if !pane.has_focus(cx) {
+                if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
                     return (None, None);
                 }
                 // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
@@ -383,10 +384,16 @@ impl Pane {
                     // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
                     .gap(Spacing::Small.rems(cx))
                     .child(
-                        IconButton::new("plus", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                let menu = ContextMenu::build(cx, |menu, _| {
+                        PopoverMenu::new("pane-tab-bar-popover-menu")
+                            .trigger(
+                                IconButton::new("plus", IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|cx| Tooltip::text("New...", cx)),
+                            )
+                            .anchor(AnchorCorner::TopRight)
+                            .with_handle(pane.new_item_context_menu_handle.clone())
+                            .menu(move |cx| {
+                                Some(ContextMenu::build(cx, |menu, _| {
                                     menu.action("New File", NewFile.boxed_clone())
                                         .action(
                                             "Open File",
@@ -406,37 +413,27 @@ impl Pane {
                                         )
                                         .separator()
                                         .action("New Terminal", NewTerminal.boxed_clone())
-                                });
-                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
-                                    pane.focus(cx);
-                                    pane.new_item_menu = None;
-                                })
-                                .detach();
-                                pane.new_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("New...", cx)),
+                                }))
+                            }),
                     )
-                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
-                        el.child(Self::render_menu_overlay(new_item_menu))
-                    })
                     .child(
-                        IconButton::new("split", IconName::Split)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                let menu = ContextMenu::build(cx, |menu, _| {
+                        PopoverMenu::new("pane-tab-bar-split")
+                            .trigger(
+                                IconButton::new("split", IconName::Split)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|cx| Tooltip::text("Split Pane", cx)),
+                            )
+                            .anchor(AnchorCorner::TopRight)
+                            .with_handle(pane.split_item_context_menu_handle.clone())
+                            .menu(move |cx| {
+                                ContextMenu::build(cx, |menu, _| {
                                     menu.action("Split Right", SplitRight.boxed_clone())
                                         .action("Split Left", SplitLeft.boxed_clone())
                                         .action("Split Up", SplitUp.boxed_clone())
                                         .action("Split Down", SplitDown.boxed_clone())
-                                });
-                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
-                                    pane.focus(cx);
-                                    pane.split_item_menu = None;
                                 })
-                                .detach();
-                                pane.split_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("Split Pane", cx)),
+                                .into()
+                            }),
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
@@ -455,9 +452,6 @@ impl Pane {
                                 )
                             })
                     })
-                    .when_some(pane.split_item_menu.as_ref(), |el, split_item_menu| {
-                        el.child(Self::render_menu_overlay(split_item_menu))
-                    })
                     .into_any_element()
                     .into();
                 (None, right_children)
@@ -468,6 +462,8 @@ impl Pane {
             _subscriptions: subscriptions,
             double_click_dispatch_action,
             save_modals_spawned: HashSet::default(),
+            split_item_context_menu_handle: Default::default(),
+            new_item_context_menu_handle: Default::default(),
         }
     }
 
@@ -551,11 +547,9 @@ impl Pane {
         }
     }
 
-    fn context_menu_focused(&self, cx: &mut ViewContext<Self>) -> bool {
-        self.new_item_menu
-            .as_ref()
-            .or(self.split_item_menu.as_ref())
-            .map_or(false, |menu| menu.focus_handle(cx).is_focused(cx))
+    pub fn context_menu_focused(&self, cx: &mut ViewContext<Self>) -> bool {
+        self.new_item_context_menu_handle.is_focused(cx)
+            || self.split_item_context_menu_handle.is_focused(cx)
     }
 
     fn focus_out(&mut self, _event: FocusOutEvent, cx: &mut ViewContext<Self>) {
@@ -920,7 +914,22 @@ impl Pane {
         cx: &AppContext,
     ) -> Option<Box<dyn ItemHandle>> {
         self.items.iter().find_map(|item| {
-            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
+            if item.is_singleton(cx) && (item.project_entry_ids(cx).as_slice() == [entry_id]) {
+                Some(item.boxed_clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn item_for_path(
+        &self,
+        project_path: ProjectPath,
+        cx: &AppContext,
+    ) -> Option<Box<dyn ItemHandle>> {
+        self.items.iter().find_map(move |item| {
+            if item.is_singleton(cx) && (item.project_path(cx).as_slice() == [project_path.clone()])
+            {
                 Some(item.boxed_clone())
             } else {
                 None
@@ -1485,8 +1494,13 @@ impl Pane {
                         })?;
                         match answer {
                             Ok(0) => {}
-                            Ok(1) => return Ok(true), // Don't save this file
-                            _ => return Ok(false),    // Cancel
+                            Ok(1) => {
+                                // Don't save this file
+                                pane.update(cx, |_, cx| item.discarded(project, cx))
+                                    .log_err();
+                                return Ok(true);
+                            }
+                            _ => return Ok(false), // Cancel
                         }
                     } else {
                         return Ok(false);
@@ -2089,13 +2103,32 @@ impl Pane {
                         .read(cx)
                         .path_for_entry(project_entry_id, cx)
                     {
-                        if let Some(split_direction) = split_direction {
-                            to_pane = workspace.split_pane(to_pane, split_direction, cx);
-                        }
-                        workspace
-                            .open_path(path, Some(to_pane.downgrade()), true, cx)
-                            .detach_and_log_err(cx);
-                    }
+                        let load_path_task = workspace.load_path(path, cx);
+                        cx.spawn(|workspace, mut cx| async move {
+                            if let Some((project_entry_id, build_item)) =
+                                load_path_task.await.notify_async_err(&mut cx)
+                            {
+                                workspace
+                                    .update(&mut cx, |workspace, cx| {
+                                        if let Some(split_direction) = split_direction {
+                                            to_pane =
+                                                workspace.split_pane(to_pane, split_direction, cx);
+                                        }
+                                        to_pane.update(cx, |pane, cx| {
+                                            pane.open_item(
+                                                project_entry_id,
+                                                true,
+                                                false,
+                                                cx,
+                                                build_item,
+                                            )
+                                        })
+                                    })
+                                    .log_err();
+                            }
+                        })
+                        .detach();
+                    };
                 });
             })
             .log_err();
@@ -2166,7 +2199,14 @@ impl Pane {
                         })
                         .ok()
                     {
-                        let _opened_items: Vec<_> = open_task.await;
+                        let opened_items: Vec<_> = open_task.await;
+                        _ = workspace.update(&mut cx, |workspace, cx| {
+                            for item in opened_items.into_iter().flatten() {
+                                if let Err(e) = item {
+                                    workspace.show_error(&e, cx);
+                                }
+                            }
+                        });
                     }
                 })
                 .detach();
@@ -2207,6 +2247,12 @@ impl Render for Pane {
             }))
             .on_action(cx.listener(|pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx)))
             .on_action(cx.listener(|pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)))
+            .on_action(cx.listener(|pane, _: &SplitHorizontal, cx| {
+                pane.split(SplitDirection::horizontal(cx), cx)
+            }))
+            .on_action(cx.listener(|pane, _: &SplitVertical, cx| {
+                pane.split(SplitDirection::vertical(cx), cx)
+            }))
             .on_action(
                 cx.listener(|pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx)),
             )

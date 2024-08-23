@@ -926,6 +926,7 @@ impl PromptLibrary {
                                                         color: Some(cx.theme().status().predictive),
                                                         ..HighlightStyle::default()
                                                     },
+                                                    ..EditorStyle::default()
                                                 },
                                             )),
                                     ),

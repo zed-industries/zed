@@ -1356,22 +1356,47 @@ impl ProjectPanel {
     }
 
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
-            cx.write_to_clipboard(ClipboardItem::new_string(
-                worktree
-                    .abs_path()
-                    .join(&entry.path)
-                    .to_string_lossy()
-                    .to_string(),
-            ));
+        let abs_file_paths = {
+            let project = self.project.read(cx);
+            self.marked_entries()
+                .into_iter()
+                .filter_map(|entry| {
+                    let entry_path = project.path_for_entry(entry.entry_id, cx)?.path;
+                    Some(
+                        project
+                            .worktree_for_id(entry.worktree_id, cx)?
+                            .read(cx)
+                            .abs_path()
+                            .join(entry_path)
+                            .to_string_lossy()
+                            .to_string(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        if !abs_file_paths.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(abs_file_paths.join("\n")));
         }
     }
 
     fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
-        if let Some((_, entry)) = self.selected_entry(cx) {
-            cx.write_to_clipboard(ClipboardItem::new_string(
-                entry.path.to_string_lossy().to_string(),
-            ));
+        let file_paths = {
+            let project = self.project.read(cx);
+            self.marked_entries()
+                .into_iter()
+                .filter_map(|entry| {
+                    Some(
+                        project
+                            .path_for_entry(entry.entry_id, cx)?
+                            .path
+                            .to_string_lossy()
+                            .to_string(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        if !file_paths.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(file_paths.join("\n")));
         }
     }
 

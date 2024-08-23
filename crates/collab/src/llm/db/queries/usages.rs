@@ -82,12 +82,13 @@ impl LlmDatabase {
             let tokens_per_minute = self.usage_measure_ids[&UsageMeasure::TokensPerMinute];
 
             let mut results = Vec::new();
-            for (provider, model) in self.models.keys().cloned() {
+            for ((provider, model_name), model) in self.models.iter() {
                 let mut usages = usage::Entity::find()
                     .filter(
                         usage::Column::Timestamp
                             .gte(past_minute.naive_utc())
                             .and(usage::Column::IsStaff.eq(false))
+                            .and(usage::Column::ModelId.eq(model.id))
                             .and(
                                 usage::Column::MeasureId
                                     .eq(requests_per_minute)
@@ -125,8 +126,8 @@ impl LlmDatabase {
                 }
 
                 results.push(ApplicationWideUsage {
-                    provider,
-                    model,
+                    provider: *provider,
+                    model: model_name.clone(),
                     requests_this_minute,
                     tokens_this_minute,
                 })
@@ -342,15 +343,27 @@ impl LlmDatabase {
         .await
     }
 
-    pub async fn get_active_user_count(&self, now: DateTimeUtc) -> Result<ActiveUserCount> {
+    /// Returns the active user count for the specified model.
+    pub async fn get_active_user_count(
+        &self,
+        provider: LanguageModelProvider,
+        model_name: &str,
+        now: DateTimeUtc,
+    ) -> Result<ActiveUserCount> {
         self.transaction(|tx| async move {
             let minute_since = now - Duration::minutes(5);
             let day_since = now - Duration::days(5);
 
+            let model = self
+                .models
+                .get(&(provider, model_name.to_string()))
+                .ok_or_else(|| anyhow!("unknown model {provider}:{model_name}"))?;
+
             let users_in_recent_minutes = usage::Entity::find()
                 .filter(
-                    usage::Column::Timestamp
-                        .gte(minute_since.naive_utc())
+                    usage::Column::ModelId
+                        .eq(model.id)
+                        .and(usage::Column::Timestamp.gte(minute_since.naive_utc()))
                         .and(usage::Column::IsStaff.eq(false)),
                 )
                 .select_only()
@@ -361,8 +374,9 @@ impl LlmDatabase {
 
             let users_in_recent_days = usage::Entity::find()
                 .filter(
-                    usage::Column::Timestamp
-                        .gte(day_since.naive_utc())
+                    usage::Column::ModelId
+                        .eq(model.id)
+                        .and(usage::Column::Timestamp.gte(day_since.naive_utc()))
                         .and(usage::Column::IsStaff.eq(false)),
                 )
                 .select_only()

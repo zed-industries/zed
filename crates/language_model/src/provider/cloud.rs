@@ -8,7 +8,7 @@ use anthropic::AnthropicError;
 use anyhow::{anyhow, Result};
 use client::{Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME};
 use collections::BTreeMap;
-use feature_flags::{FeatureFlagAppExt, ZedPro};
+use feature_flags::{FeatureFlagAppExt, LlmClosedBeta, ZedPro};
 use futures::{
     future::BoxFuture, stream::BoxStream, AsyncBufReadExt, FutureExt, Stream, StreamExt,
     TryStreamExt as _,
@@ -26,7 +26,10 @@ use smol::{
     io::{AsyncReadExt, BufReader},
     lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard},
 };
-use std::{future, sync::Arc};
+use std::{
+    future,
+    sync::{Arc, LazyLock},
+};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
@@ -36,6 +39,18 @@ use super::anthropic::count_anthropic_tokens;
 
 pub const PROVIDER_ID: &str = "zed.dev";
 pub const PROVIDER_NAME: &str = "Zed";
+
+const ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: Option<&str> =
+    option_env!("ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON");
+
+fn zed_cloud_provider_additional_models() -> &'static [AvailableModel] {
+    static ADDITIONAL_MODELS: LazyLock<Vec<AvailableModel>> = LazyLock::new(|| {
+        ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON
+            .map(|json| serde_json::from_str(json).unwrap())
+            .unwrap_or(Vec::new())
+    });
+    ADDITIONAL_MODELS.as_slice()
+}
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
@@ -200,45 +215,53 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             for model in ZedModel::iter() {
                 models.insert(model.id().to_string(), CloudModel::Zed(model));
             }
-
-            // Override with available models from settings
-            for model in &AllLanguageModelSettings::get_global(cx)
-                .zed_dot_dev
-                .available_models
-            {
-                let model = match model.provider {
-                    AvailableProvider::Anthropic => {
-                        CloudModel::Anthropic(anthropic::Model::Custom {
-                            name: model.name.clone(),
-                            display_name: model.display_name.clone(),
-                            max_tokens: model.max_tokens,
-                            tool_override: model.tool_override.clone(),
-                            cache_configuration: model.cache_configuration.as_ref().map(|config| {
-                                anthropic::AnthropicModelCacheConfiguration {
-                                    max_cache_anchors: config.max_cache_anchors,
-                                    should_speculate: config.should_speculate,
-                                    min_total_token: config.min_total_token,
-                                }
-                            }),
-                            max_output_tokens: model.max_output_tokens,
-                        })
-                    }
-                    AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
-                        name: model.name.clone(),
-                        max_tokens: model.max_tokens,
-                    }),
-                    AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
-                        name: model.name.clone(),
-                        max_tokens: model.max_tokens,
-                    }),
-                };
-                models.insert(model.id().to_string(), model.clone());
-            }
         } else {
             models.insert(
                 anthropic::Model::Claude3_5Sonnet.id().to_string(),
                 CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet),
             );
+        }
+
+        let llm_closed_beta_models = if cx.has_flag::<LlmClosedBeta>() {
+            zed_cloud_provider_additional_models()
+        } else {
+            &[]
+        };
+
+        // Override with available models from settings
+        for model in AllLanguageModelSettings::get_global(cx)
+            .zed_dot_dev
+            .available_models
+            .iter()
+            .chain(llm_closed_beta_models)
+            .cloned()
+        {
+            let model = match model.provider {
+                AvailableProvider::Anthropic => CloudModel::Anthropic(anthropic::Model::Custom {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    tool_override: model.tool_override.clone(),
+                    cache_configuration: model.cache_configuration.as_ref().map(|config| {
+                        anthropic::AnthropicModelCacheConfiguration {
+                            max_cache_anchors: config.max_cache_anchors,
+                            should_speculate: config.should_speculate,
+                            min_total_token: config.min_total_token,
+                        }
+                    }),
+                    max_output_tokens: model.max_output_tokens,
+                }),
+                AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
+                }),
+                AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                }),
+            };
+            models.insert(model.id().to_string(), model.clone());
         }
 
         models
@@ -422,6 +445,21 @@ impl LanguageModel for CloudLanguageModel {
         self.model.max_token_count()
     }
 
+    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
+        match &self.model {
+            CloudModel::Anthropic(model) => {
+                model
+                    .cache_configuration()
+                    .map(|cache| LanguageModelCacheConfiguration {
+                        max_cache_anchors: cache.max_cache_anchors,
+                        should_speculate: cache.should_speculate,
+                        min_total_token: cache.min_total_token,
+                    })
+            }
+            CloudModel::OpenAi(_) | CloudModel::Google(_) | CloudModel::Zed(_) => None,
+        }
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
@@ -491,7 +529,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
-                let request = request.into_open_ai(model.id().into());
+                let request = request.into_open_ai(model.id().into(), model.max_output_tokens());
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let response = Self::perform_llm_completion(
@@ -535,7 +573,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Zed(model) => {
                 let client = self.client.clone();
-                let mut request = request.into_open_ai(model.id().into());
+                let mut request = request.into_open_ai(model.id().into(), None);
                 request.max_tokens = Some(4000);
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
@@ -607,7 +645,8 @@ impl LanguageModel for CloudLanguageModel {
                     .boxed()
             }
             CloudModel::OpenAi(model) => {
-                let mut request = request.into_open_ai(model.id().into());
+                let mut request =
+                    request.into_open_ai(model.id().into(), model.max_output_tokens());
                 request.tool_choice = Some(open_ai::ToolChoice::Other(
                     open_ai::ToolDefinition::Function {
                         function: open_ai::FunctionDefinition {
@@ -654,7 +693,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Zed(model) => {
                 // All Zed models are OpenAI-based at the time of writing.
-                let mut request = request.into_open_ai(model.id().into());
+                let mut request = request.into_open_ai(model.id().into(), None);
                 request.tool_choice = Some(open_ai::ToolChoice::Other(
                     open_ai::ToolDefinition::Function {
                         function: open_ai::FunctionDefinition {

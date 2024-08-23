@@ -165,6 +165,7 @@ impl EditorElement {
         });
 
         crate::rust_analyzer_ext::apply_related_actions(view, cx);
+        crate::clangd_ext::apply_related_actions(view, cx);
         register_action(view, cx, Editor::move_left);
         register_action(view, cx, Editor::move_right);
         register_action(view, cx, Editor::move_down);
@@ -330,6 +331,7 @@ impl EditorElement {
                 .detach_and_log_err(cx);
         });
         register_action(view, cx, Editor::open_url);
+        register_action(view, cx, Editor::open_file);
         register_action(view, cx, Editor::fold);
         register_action(view, cx, Editor::fold_at);
         register_action(view, cx, Editor::unfold_lines);
@@ -4994,7 +4996,8 @@ impl Element for EditorElement {
                                     Some((MAX_LINE_LEN / 2) as f32 * em_advance)
                                 }
                                 SoftWrap::EditorWidth => Some(editor_width),
-                                SoftWrap::Column(column) => {
+                                SoftWrap::Column(column) => Some(column as f32 * em_advance),
+                                SoftWrap::Bounded(column) => {
                                     Some(editor_width.min(column as f32 * em_advance))
                                 }
                             };
@@ -5613,7 +5616,7 @@ impl Element for EditorElement {
         cx: &mut WindowContext,
     ) {
         let focus_handle = self.editor.focus_handle(cx);
-        let key_context = self.editor.read(cx).key_context(cx);
+        let key_context = self.editor.update(cx, |editor, cx| editor.key_context(cx));
         cx.set_key_context(key_context);
         cx.handle_input(
             &focus_handle,

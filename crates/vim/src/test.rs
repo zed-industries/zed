@@ -17,7 +17,7 @@ use indoc::indoc;
 use search::BufferSearchBar;
 use workspace::WorkspaceSettings;
 
-use crate::{insert::NormalBefore, motion, state::Mode, ModeIndicator};
+use crate::{insert::NormalBefore, motion, state::Mode};
 
 #[gpui::test]
 async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
@@ -51,7 +51,7 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("hjklˇ");
 
     // Selections aren't changed if editor is blurred but vim-mode is still disabled.
-    cx.set_state("«hjklˇ»", Mode::Normal);
+    cx.cx.set_state("«hjklˇ»");
     cx.assert_editor_state("«hjklˇ»");
     cx.update_editor(|_, cx| cx.blur());
     cx.assert_editor_state("«hjklˇ»");
@@ -277,59 +277,6 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
     cx.assert_state(indoc! {"aa\nbb\ncc\nˇcc\ncc\n"}, Mode::Normal);
     cx.simulate_keystrokes("shift-n");
     cx.assert_state(indoc! {"aa\nbb\nˇcc\ncc\ncc\n"}, Mode::Normal);
-}
-
-#[gpui::test]
-async fn test_status_indicator(cx: &mut gpui::TestAppContext) {
-    let mut cx = VimTestContext::new(cx, true).await;
-
-    let mode_indicator = cx.workspace(|workspace, cx| {
-        let status_bar = workspace.status_bar().read(cx);
-        let mode_indicator = status_bar.item_of_type::<ModeIndicator>();
-        assert!(mode_indicator.is_some());
-        mode_indicator.unwrap()
-    });
-
-    assert_eq!(
-        cx.workspace(|_, cx| mode_indicator.read(cx).mode),
-        Some(Mode::Normal)
-    );
-
-    // shows the correct mode
-    cx.simulate_keystrokes("i");
-    assert_eq!(
-        cx.workspace(|_, cx| mode_indicator.read(cx).mode),
-        Some(Mode::Insert)
-    );
-    cx.simulate_keystrokes("escape shift-r");
-    assert_eq!(
-        cx.workspace(|_, cx| mode_indicator.read(cx).mode),
-        Some(Mode::Replace)
-    );
-
-    // shows even in search
-    cx.simulate_keystrokes("escape v /");
-    assert_eq!(
-        cx.workspace(|_, cx| mode_indicator.read(cx).mode),
-        Some(Mode::Visual)
-    );
-
-    // hides if vim mode is disabled
-    cx.disable_vim();
-    cx.run_until_parked();
-    cx.workspace(|workspace, cx| {
-        let status_bar = workspace.status_bar().read(cx);
-        let mode_indicator = status_bar.item_of_type::<ModeIndicator>().unwrap();
-        assert!(mode_indicator.read(cx).mode.is_none());
-    });
-
-    cx.enable_vim();
-    cx.run_until_parked();
-    cx.workspace(|workspace, cx| {
-        let status_bar = workspace.status_bar().read(cx);
-        let mode_indicator = status_bar.item_of_type::<ModeIndicator>().unwrap();
-        assert!(mode_indicator.read(cx).mode.is_some());
-    });
 }
 
 #[gpui::test]
