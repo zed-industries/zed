@@ -2130,7 +2130,7 @@ impl ProjectPanel {
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
-                    .indent_step_size(px(settings.indent_size))
+                    .indent_step_size(settings.indent_size)
                     .selected(is_marked || is_active)
                     .when_some(canonical_path, |this, path| {
                         this.end_slot::<AnyElement>(
@@ -2589,7 +2589,7 @@ impl Render for DraggedProjectEntryView {
                 this.bg(cx.theme().colors().background).w(self.width).child(
                     ListItem::new(self.selection.entry_id.to_proto() as usize)
                         .indent_level(self.details.depth)
-                        .indent_step_size(px(settings.indent_size))
+                        .indent_step_size(settings.indent_size)
                         .child(if let Some(icon) = &self.details.icon {
                             div().child(Icon::from_path(icon.clone()))
                         } else {
@@ -2627,7 +2627,7 @@ impl Panel for ProjectPanel {
                     DockPosition::Left | DockPosition::Bottom => ProjectPanelDockPosition::Left,
                     DockPosition::Right => ProjectPanelDockPosition::Right,
                 };
-                settings.dock = Some(dock);
+                settings.dock = dock;
             },
         );
     }
