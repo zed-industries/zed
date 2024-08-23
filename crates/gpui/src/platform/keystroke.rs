@@ -124,6 +124,12 @@ impl Keystroke {
 
         let key = key.ok_or_else(|| anyhow!("Invalid keystroke `{}`", source))?;
 
+        let ime_inputs = if let Some(ime_key) = ime_key.clone() {
+            smallvec::smallvec![ImeInput::InsertText(None, ime_key)]
+        } else {
+            smallvec::smallvec![]
+        };
+
         Ok(Keystroke {
             modifiers: Modifiers {
                 control,
@@ -134,7 +140,7 @@ impl Keystroke {
             },
             key,
             ime_key,
-            ime_inputs: SmallVec::new(),
+            ime_inputs,
         })
     }
 
@@ -146,7 +152,7 @@ impl Keystroke {
             .is_some_and(|last| matches!(last, ImeInput::SetMarkedText(..)))
     }
 
-    /// Returns a new keystroke with the ime_key filled.
+    /// Returns a new keystroke with the ime_key and ime_inputs filled.
     /// This is used for dispatch_keystroke where we want users to
     /// be able to simulate typing "space", etc.
     pub fn with_simulated_ime(mut self) -> Self {
@@ -168,7 +174,11 @@ impl Keystroke {
                         Some(key.into())
                     }
                 }
-            }
+            };
+            self.ime_inputs = match self.ime_key.as_ref() {
+                Some(ime_key) => smallvec::smallvec![ImeInput::InsertText(None, ime_key.clone())],
+                None => smallvec::smallvec![],
+            };
         }
         self
     }
