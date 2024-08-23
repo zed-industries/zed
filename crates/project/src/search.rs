@@ -1,34 +1,21 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
-use collections::{HashMap, HashSet};
-use fs::Fs;
-use futures::StreamExt;
-use gpui::{AppContext, Model, Task};
+use gpui::{AppContext, Model};
 use language::{char_kind, proto::serialize_anchor, Buffer, BufferSnapshot};
 use regex::{Captures, Regex, RegexBuilder};
-use smol::{
-    channel::{Receiver, Sender},
-    future::yield_now,
-    lock::Semaphore,
-};
+use smol::future::yield_now;
 use std::{
     borrow::Cow,
-    cmp::{self, Ordering},
-    collections::VecDeque,
+    cmp::Ordering,
     io::{BufRead, BufReader, Read},
     ops::Range,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, OnceLock},
 };
 use text::Anchor;
-use util::{
-    paths::{compare_paths, PathMatcher},
-    ResultExt,
-};
-use worktree::WorktreeId;
-
-use crate::{buffer_store::BufferStore, worktree_store::WorktreeStore, Item, ProjectPath};
+use util::paths::{compare_paths, PathMatcher};
+use worktree::{ProjectEntryId, WorktreeId};
 
 static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: OnceLock<Regex> = OnceLock::new();
 
@@ -478,9 +465,10 @@ mod tests {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum SearchMatchCandidate {
+pub enum SearchMatchCandidate {
     OpenBuffer {
         buffer: Model<Buffer>,
+        entry_id: Option<ProjectEntryId>,
         // This might be an unnamed file without representation on filesystem
         path: Option<Arc<Path>>,
     },
@@ -491,10 +479,10 @@ pub(crate) enum SearchMatchCandidate {
 }
 
 impl SearchMatchCandidate {
-    pub(crate) fn path(&self) -> Option<Arc<Path>> {
+    pub fn entry_id(&self) -> Option<ProjectEntryId> {
         match self {
-            Self::OpenBuffer { path, .. } => path.clone(),
-            Self::Path { path, .. } => Some(path.clone()),
+            Self::OpenBuffer { entry_id, .. } => *entry_id,
+            _ => None,
         }
     }
 }
@@ -513,27 +501,18 @@ impl SearchResult {
     }
 }
 
-pub fn search(
-    query: SearchQuery,
-    buffer_store: Model<BufferStore>,
-    worktree_store: Model<WorktreeStore>,
-    fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
-) -> Receiver<SearchResult> {
-    let (result_tx, result_rx) = smol::channel::bounded(1024);
-    let query = Arc::new(query);
-}
-
-fn sort_search_matches(search_matches: &mut Vec<SearchMatchCandidate>, cx: &AppContext) {
+pub(crate) fn sort_search_matches(search_matches: &mut Vec<SearchMatchCandidate>, cx: &AppContext) {
     search_matches.sort_by(|entry_a, entry_b| match (entry_a, entry_b) {
         (
             SearchMatchCandidate::OpenBuffer {
                 buffer: buffer_a,
                 path: None,
+                ..
             },
             SearchMatchCandidate::OpenBuffer {
                 buffer: buffer_b,
                 path: None,
+                ..
             },
         ) => buffer_a
             .read(cx)

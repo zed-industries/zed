@@ -711,12 +711,10 @@ impl BufferStore {
     ) -> Task<Result<Model<Buffer>>> {
         let buffer = self.get(id);
         if let Some(buffer) = buffer {
-            dbg!("got {id}");
             return Task::ready(Ok(buffer));
         }
         let (tx, rx) = oneshot::channel();
         self.remote_buffer_listeners.entry(id).or_default().push(tx);
-        dbg!("waiting...", id);
         cx.background_executor().spawn(async move { rx.await? })
     }
 
@@ -782,7 +780,7 @@ impl BufferStore {
     }
 
     /// Returns open buffers filtered by filename
-    /// Does *not* match the buffer content, project search must do that.
+    /// Does *not* check the buffer content, the caller must do that
     pub(crate) fn find_seach_candidates(
         &self,
         query: &SearchQuery,
@@ -797,35 +795,41 @@ impl BufferStore {
             > 1;
         self.buffers()
             .filter_map(|buffer| {
-                let (is_ignored, snapshot) = buffer.read_with(cx, |buffer, cx| {
+                let handle = buffer.clone();
+                buffer.read_with(cx, |buffer, cx| {
                     let worktree_store = self.worktree_store.read(cx);
-                    let is_ignored = buffer
-                        .entry_id(cx)
+                    let entry_id = buffer.entry_id(cx);
+                    let is_ignored = entry_id
                         .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
                         .map_or(false, |entry| entry.is_ignored);
-                    (is_ignored, buffer.snapshot())
-                });
-                if is_ignored && !query.include_ignored() {
-                    return None;
-                }
-                if let Some(file) = snapshot.file() {
-                    let matched_path = if include_root {
-                        query.file_matches(Some(&file.full_path(cx)))
-                    } else {
-                        query.file_matches(Some(file.path()))
-                    };
 
-                    if matched_path {
-                        Some(SearchMatchCandidate::OpenBuffer {
-                            buffer,
-                            path: Some(file.path().clone()),
-                        })
-                    } else {
-                        None
+                    if is_ignored && !query.include_ignored() {
+                        return None;
                     }
-                } else {
-                    Some(SearchMatchCandidate::OpenBuffer { buffer, path: None })
-                }
+                    if let Some(file) = buffer.file() {
+                        let matched_path = if include_root {
+                            query.file_matches(Some(&file.full_path(cx)))
+                        } else {
+                            query.file_matches(Some(file.path()))
+                        };
+
+                        if matched_path {
+                            Some(SearchMatchCandidate::OpenBuffer {
+                                buffer: handle,
+                                entry_id,
+                                path: Some(file.path().clone()),
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        Some(SearchMatchCandidate::OpenBuffer {
+                            buffer: handle,
+                            entry_id,
+                            path: None,
+                        })
+                    }
+                })
             })
             .collect()
     }

@@ -1,16 +1,9 @@
-use std::{
-    cmp,
-    collections::VecDeque,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{cmp, collections::VecDeque, path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
 use fs::Fs;
-use gpui::{
-    AppContext, AsyncAppContext, EntityId, EventEmitter, Model, ModelContext, Task, WeakModel,
-};
+use gpui::{AppContext, AsyncAppContext, EntityId, EventEmitter, Model, ModelContext, WeakModel};
 use rpc::{
     proto::{self, AnyProtoClient},
     TypedEnvelope,
@@ -267,10 +260,10 @@ impl WorktreeStore {
 
     /// search over all worktrees (ignoring open buffers)
     /// the query is tested against the file on disk and matching files are returned.
-    pub(crate) fn find_search_candidates(
+    pub fn find_search_candidates(
         &self,
         query: SearchQuery,
-        open_buffers: HashSet<Arc<Path>>,
+        skip_entries: HashSet<ProjectEntryId>,
         fs: Arc<dyn Fs>,
         cx: &ModelContext<Self>,
     ) -> Receiver<SearchMatchCandidate> {
@@ -315,7 +308,7 @@ impl WorktreeStore {
                             let snapshots = snapshots.clone();
                             let worker_start_ix = worker_ix * paths_per_worker;
                             let worker_end_ix = worker_start_ix + paths_per_worker;
-                            let opened_buffers = open_buffers.clone();
+                            let skip_entries = skip_entries.clone();
                             let limiter = Arc::clone(&max_concurrent_workers);
                             scope.spawn({
                                 async move {
@@ -326,7 +319,7 @@ impl WorktreeStore {
                                         worker_end_ix,
                                         &query,
                                         &matching_paths_tx,
-                                        &opened_buffers,
+                                        &skip_entries,
                                         include_root,
                                         fs,
                                     )
@@ -363,13 +356,14 @@ impl WorktreeStore {
         return matching_paths_rx;
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn search_snapshots(
         snapshots: &Vec<(worktree::Snapshot, WorktreeSettings)>,
         worker_start_ix: usize,
         worker_end_ix: usize,
         query: &SearchQuery,
         results_tx: &Sender<SearchMatchCandidate>,
-        opened_buffers: &HashSet<Arc<Path>>,
+        skip_entries: &HashSet<ProjectEntryId>,
         include_root: bool,
         fs: &Arc<dyn Fs>,
     ) {
@@ -399,7 +393,7 @@ impl WorktreeStore {
                     if results_tx.is_closed() {
                         break;
                     }
-                    if opened_buffers.contains(&entry.path) {
+                    if skip_entries.contains(&entry.id) {
                         continue;
                     }
 

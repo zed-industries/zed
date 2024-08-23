@@ -410,6 +410,8 @@ messages!(
     (LspExtSwitchSourceHeaderResponse, Background),
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
+    (FindSearchCandidates, Foreground),
+    (FindSearchCandidatesResponse, Foreground)
 );
 
 request_messages!(
@@ -532,6 +534,7 @@ request_messages!(
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
+    (FindSearchCandidates, FindSearchCandidatesResponse),
 );
 
 entity_messages!(

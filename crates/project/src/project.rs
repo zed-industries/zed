@@ -78,7 +78,7 @@ use project_settings::{DirenvSettings, LspSettings, ProjectSettings};
 use rand::prelude::*;
 use remote::SshSession;
 use rpc::{proto::AddWorktree, ErrorCode};
-use search::{SearchMatchCandidate, SearchQuery, SearchResult};
+use search::{sort_search_matches, SearchMatchCandidate, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use serde::Serialize;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
@@ -7224,28 +7224,16 @@ impl Project {
         }
     }
 
-    #[allow(clippy::type_complexity)]
     pub fn search(
         &self,
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
     ) -> Receiver<SearchResult> {
-        if self.is_local() {
-            return self.search_local(query, cx);
+        if self.is_local_or_ssh() {
+            return self.search_local_or_ssh(query, cx);
         }
         let (tx, rx) = smol::channel::unbounded();
-        if self.is_via_ssh() {
-            let request = self
-                .ssh_session
-                .as_ref()
-                .unwrap()
-                .request(query.to_proto(0));
-            cx.spawn(move |this, cx| async move {
-                let response = request.await?;
-                Self::process_search_response(this, response, tx, cx).await
-            })
-            .detach_and_log_err(cx);
-        } else if let Some(project_id) = self.remote_id() {
+        if let Some(project_id) = self.remote_id() {
             let request = self.client.request(query.to_proto(project_id));
             cx.spawn(move |this, cx| async move {
                 let response = request.await?;
@@ -7296,42 +7284,39 @@ impl Project {
         anyhow::Ok(())
     }
 
-    pub fn search_local(
+    pub fn search_local_or_ssh(
         &self,
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
     ) -> Receiver<SearchResult> {
-        search::search(
-            query,
-            self.buffer_store.clone(),
-            self.worktree_store.clone(),
-            self.fs.clone(),
-            cx,
-        )
-
         let open_buffers: Vec<_> = self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.find_seach_candidates(&query, cx)
         });
-        let open_paths = open_buffers
+        let skip_entries: HashSet<_> = open_buffers
             .iter()
-            .filter_map(|candidate| candidate.path())
+            .filter_map(|candidate| candidate.entry_id())
             .collect();
 
-        let matching_paths_rx = if self.is_via_ssh() {
-            self.ssh_session.unwrap().
+        const MAX_SEARCH_RESULT_FILES: usize = 5_000;
+        const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
+        let limit = MAX_SEARCH_RESULT_FILES.saturating_sub(open_buffers.len());
 
+        let matching_paths_rx = if self.is_via_ssh() {
+            self.find_search_candidates_ssh(&query, limit, skip_entries, cx)
         } else {
             self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.find_search_candidates(query.clone(), open_paths, self.fs.clone(), cx)
-        });
+                worktree_store.find_search_candidates(
+                    query.clone(),
+                    skip_entries,
+                    self.fs.clone(),
+                    cx,
+                )
+            })
         };
 
+        let (result_tx, result_rx) = smol::channel::bounded(1024);
         let buffer_store = self.buffer_store.clone();
-        cx.spawn(|mut cx| async move {
-            const MAX_SEARCH_RESULT_FILES: usize = 5_000;
-            const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
-            let limit = MAX_SEARCH_RESULT_FILES.saturating_sub(open_buffers.len());
-
+        cx.spawn(|_, mut cx| async move {
             let mut matching_paths = open_buffers
                 .into_iter()
                 .chain(matching_paths_rx.take(limit + 1).collect::<Vec<_>>().await)
@@ -7419,6 +7404,43 @@ impl Project {
         .detach();
 
         result_rx
+    }
+
+    pub fn find_search_candidates_ssh(
+        &self,
+        query: &SearchQuery,
+        limit: usize,
+        skip_entries: HashSet<ProjectEntryId>,
+        cx: &mut ModelContext<Self>,
+    ) -> Receiver<SearchMatchCandidate> {
+        // todo: it'd be nice to stream these results.
+        let response = self
+            .ssh_session
+            .clone()
+            .unwrap()
+            .request(proto::FindSearchCandidates {
+                limit: limit as u64,
+                skip_entries: skip_entries.into_iter().map(|p| p.to_proto()).collect(),
+                query: Some(query.to_proto(0)),
+            });
+
+        let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
+        cx.background_executor()
+            .spawn(async move {
+                let response = response.await?;
+                for result in response.results {
+                    matching_paths_tx
+                        .send(SearchMatchCandidate::Path {
+                            worktree_id: WorktreeId::from_proto(result.worktree_id),
+                            path: PathBuf::from(result.path).into(),
+                        })
+                        .await?;
+                }
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        matching_paths_rx
     }
 
     pub fn request_lsp<R: LspCommand>(

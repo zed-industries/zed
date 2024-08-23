@@ -275,7 +275,10 @@ message Envelope {
         GetLlmTokenResponse get_llm_token_response = 236;
 
         LspExtSwitchSourceHeader lsp_ext_switch_source_header = 241;
-        LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242; // current max
+        LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
+
+        FindSearchCandidates find_search_candidates = 243;
+        FindSearchCandidatesResponse find_search_candidates_response = 244; // current max
     }
 
     reserved 158 to 161;
@@ -1236,16 +1239,14 @@ message SearchProjectResponse {
     bool limit_reached = 2;
 }
 
-message FindMatchCandidates {
-    uint64 search_id = 1;
-    SearchProject search_project = 2;
-    repeated string open_buffers = 3;
+message FindSearchCandidates {
+    SearchProject query = 1;
+    repeated uint64 skip_entries = 2;
+    uint64 limit = 3;
 }
 
-message MatchCandidatesFound {
-    uint64 search_id = 1;
-    bool is_last = 2;
-    repeated ProjectPath path = 3;
+message FindSearchCandidatesResponse {
+    repeated ProjectPath results = 1;
 }
 
 message CodeAction {
