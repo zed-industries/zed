@@ -13,7 +13,7 @@ Once you have [configured a provider](./configuration.md#providers), you can int
 
 To create a new context editor, press {#kb workspace::NewFile} or use the menu in the top right of the assistant panel and select the `New Context` option.
 
-In the context editor, select a model from one of the configured providers, type a message in the `You` block, and submit with <kbd>cmd-enter|ctrl-enter</kbd>.
+In the context editor, select a model from one of the configured providers, type a message in the `You` block, and submit with {#kb assistant::Assist}.
 
 ### Interacting with the Assistant
 
@@ -31,11 +31,11 @@ To begin, select a model and type a message in a `You` block.
 
 As you type, the remaining tokens count for the selected model is updated.
 
-Inserting text from an editor is as simple as highlighting the text and running `assistant: quote selection` (<kbd>cmd+shift+>|ctrl+shift+></kbd>); Zed will wrap it in a fenced code block if it is code.
+Inserting text from an editor is as simple as highlighting the text and running `assistant: quote selection` ({#kb assistant::QuoteSelection}); Zed will wrap it in a fenced code block if it is code.
 
 ![Quoting a selection](https://zed.dev/img/assistant/quoting-a-selection.png)
 
-To submit a message, use <kbd>cmd-enter|ctrl-enter</kbd> (`assistant: assist`). Unlike typical chat applications where pressing <kbd>enter</kbd> would submit the message, in the assistant editor, our goal was to make it feel as close to a regular editor as possible. So, pressing <kbd>enter</kbd> simply inserts a new line.
+To submit a message, use {#kb assistant::Assist}(`assistant: assist`). Unlike typical chat applications where pressing <kbd>enter</kbd> would submit the message, in the assistant editor, our goal was to make it feel as close to a regular editor as possible. So, pressing {#kb editor::Newline} simply inserts a new line.
 
 After submitting a message, the assistant's response will be streamed below, in an `Assistant` message block.
 
@@ -54,12 +54,12 @@ Simple back-and-forth conversations work well with the assistant. However, there
 The assistant gives you the flexibility to have control over the context. You can freely edit any previous text, including the responses from the assistant. If you want to remove a message block entirely, simply place your cursor at the beginning of the block and use the `delete` key. A typical workflow might involve making edits and adjustments throughout the context to refine your inquiry or provide additional information. Here's an example:
 
 1. Write text in a `You` block.
-2. Submit the message with <kbd>cmd-enter|ctrl-enter</kbd>.
+2. Submit the message with {#kb assistant::Assist}.
 3. Receive an `Assistant` response that doesn't meet your expectations.
 4. Cancel the response with <kbd>escape</kbd>.
 5. Erase the content of the `Assistant` message block and remove the block entirely.
 6. Add additional context to your original message.
-7. Submit the message with <kbd>cmd-enter|ctrl-enter</kbd>.
+7. Submit the message with {#kb assistant::Assist}.
 
 Being able to edit previous messages gives you control over how tokens are used. You don't need to start up a new context to correct a mistake or to add additional information, and you don't have to waste tokens by submitting follow-up corrections.
 
