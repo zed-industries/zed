@@ -7,6 +7,7 @@ use std::sync::Arc;
 use util::asset_str;
 
 mod templates;
+
 use templates::{ActionTemplate, KeybindingTemplate, Template};
 
 pub struct PreprocessorContext {
@@ -59,7 +60,6 @@ impl ZedDocsPreprocessor {
         let templates: Vec<Box<dyn Template>> = vec![
             Box::new(KeybindingTemplate::new()),
             Box::new(ActionTemplate::new()),
-            // Add more templates here as needed
         ];
         Ok(Self { context, templates })
     }
