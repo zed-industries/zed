@@ -377,34 +377,36 @@ impl Render for ActivityIndicator {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let content = self.content_to_render(cx);
 
-        let mut result = h_flex()
+        let result = h_flex()
             .id("activity-indicator")
             .on_action(cx.listener(Self::show_error_message))
             .on_action(cx.listener(Self::dismiss_error_message));
 
-        if let Some(on_click) = content.on_click {
-            result = result
-                .cursor(CursorStyle::PointingHand)
-                .on_click(cx.listener(move |this, _, cx| {
-                    on_click(this, cx);
-                }))
-        }
         let this = cx.view().downgrade();
         result.gap_2().child(
             PopoverMenu::new("activity-indicator-popover")
                 .trigger(
                     ButtonLike::new("activity-indicator-trigger").child(
                         h_flex()
+                            .id("activity-indicator-status")
                             .gap_2()
                             .children(content.icon)
-                            .child(Label::new(content.message).size(LabelSize::Small)),
+                            .child(Label::new(content.message).size(LabelSize::Small))
+                            .when_some(content.on_click, |this, handler| {
+                                this.on_click(cx.listener(move |this, _, cx| {
+                                    handler(this, cx);
+                                }))
+                                .cursor(CursorStyle::PointingHand)
+                            }),
                     ),
                 )
                 .anchor(gpui::AnchorCorner::BottomLeft)
                 .menu(move |cx| {
                     let strong_this = this.upgrade()?;
-                    ContextMenu::build(cx, |mut menu, cx| {
+                    let mut has_work = false;
+                    let menu = ContextMenu::build(cx, |mut menu, cx| {
                         for work in strong_this.read(cx).pending_language_server_work(cx) {
+                            has_work = true;
                             let this = this.clone();
                             let mut title = work
                                 .progress
@@ -451,8 +453,8 @@ impl Render for ActivityIndicator {
                             }
                         }
                         menu
-                    })
-                    .into()
+                    });
+                    has_work.then_some(menu)
                 }),
         )
     }
