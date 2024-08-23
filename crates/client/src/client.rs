@@ -133,6 +133,7 @@ impl Settings for ClientSettings {
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct ProxySettings {
     /// Set a proxy to use. The proxy protocol is specified by the URI scheme.
     ///

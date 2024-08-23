@@ -58,6 +58,7 @@ impl Default for ItemSettings {
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct PreviewTabsSettings {
     /// Whether to show opened editors as preview tabs.
     /// Preview tabs do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
