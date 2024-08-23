@@ -305,8 +305,8 @@ mod test {
         cx.shared_state().await.assert_matches();
 
         // ctrl-u from the last line
-        // cx.simulate_shared_keystrokes("shift-g").await;
-        // cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("shift-g").await;
+        cx.shared_state().await.assert_matches();
         cx.simulate_shared_keystrokes("ctrl-u").await;
         cx.shared_state().await.assert_matches();
     }
