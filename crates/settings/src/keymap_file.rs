@@ -36,17 +36,9 @@ impl KeymapBlock {
 #[serde(transparent)]
 pub struct KeymapAction(Value);
 
-impl ToString for KeymapAction {
-    fn to_string(&self) -> String {
-        match &self.0 {
-            Value::String(s) => s.clone(),
-            Value::Array(arr) => arr
-                .iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>()
-                .join(", "),
-            _ => self.0.to_string(),
-        }
+impl KeymapAction {
+    pub fn value(&self) -> &Value {
+        &self.0
     }
 }
 
