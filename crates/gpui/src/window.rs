@@ -2584,7 +2584,6 @@ impl<'a> WindowContext<'a> {
                     })
             }
             SvgColor::Polychrome => {
-                dbg!("render polychrome");
                 self.window
                     .next_frame
                     .scene
