@@ -282,6 +282,16 @@ pub enum WhiteSpace {
     Nowrap,
 }
 
+/// How to truncate text that overflows the width of the element
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Truncate {
+    /// Truncate the text without an ellipsis
+    #[default]
+    Truncate,
+    /// Truncate the text with an ellipsis
+    Ellipsis,
+}
+
 /// The properties that can be used to style text in GPUI
 #[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug)]
@@ -321,6 +331,9 @@ pub struct TextStyle {
 
     /// How to handle whitespace in the text
     pub white_space: WhiteSpace,
+
+    /// The text should be truncated if it overflows the width of the element
+    pub truncate: Option<Truncate>,
 }
 
 impl Default for TextStyle {
@@ -345,6 +358,7 @@ impl Default for TextStyle {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
+            truncate: None,
         }
     }
 }
