@@ -32,20 +32,21 @@ impl Template for ActionTemplate {
     }
 
     fn regex(&self) -> Regex {
-        Regex::new(&format!(r"\{{\s*#{}\s+(.+?)\s*}}", self.key())).unwrap()
+        Regex::new(&format!(
+            "\\{{\\s*#{}\\s+name=\"(.*?)\"\\s*\\}}",
+            self.key()
+        ))
+        .unwrap()
     }
 
     fn parse_args(&self, args: &str) -> HashMap<String, String> {
-        args.split_whitespace()
-            .filter_map(|arg| {
-                let mut parts = arg.splitn(2, '=');
-                Some((parts.next()?.to_string(), parts.next()?.to_string()))
-            })
-            .collect()
+        let mut map = HashMap::new();
+        map.insert("name".to_string(), args.trim().to_string());
+        map
     }
 
     fn render(&self, _context: &PreprocessorContext, args: &HashMap<String, String>) -> String {
-        let name = args.get("name").map(String::as_str).unwrap_or("");
+        let name = args.get("name").map(|s| s.to_string()).unwrap_or_default();
         format!("<code class=\"hljs\">{}</code>", name)
     }
 }
@@ -64,16 +65,17 @@ impl Template for KeybindingTemplate {
     }
 
     fn regex(&self) -> Regex {
-        Regex::new(&format!(r"\{{\s*#{}\s+(.+?)\s*}}", self.key())).unwrap()
+        Regex::new(&format!(
+            "\\{{\\s*#{}\\s+name=\"(.*?)\"\\s*\\}}",
+            self.key()
+        ))
+        .unwrap()
     }
 
     fn parse_args(&self, args: &str) -> HashMap<String, String> {
-        args.split_whitespace()
-            .filter_map(|arg| {
-                let mut parts = arg.splitn(2, '=');
-                Some((parts.next()?.to_string(), parts.next()?.to_string()))
-            })
-            .collect()
+        let mut map = HashMap::new();
+        map.insert("name".to_string(), args.to_string());
+        map
     }
 
     fn render(&self, context: &PreprocessorContext, args: &HashMap<String, String>) -> String {

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use util::asset_str;
 
 mod templates;
-use templates::{KeybindingTemplate, Template};
+use templates::{ActionTemplate, KeybindingTemplate, Template};
 
 pub struct PreprocessorContext {
     macos_keymap: Arc<KeymapFile>,
@@ -58,6 +58,7 @@ impl ZedDocsPreprocessor {
         let context = PreprocessorContext::new()?;
         let templates: Vec<Box<dyn Template>> = vec![
             Box::new(KeybindingTemplate::new()),
+            Box::new(ActionTemplate::new()),
             // Add more templates here as needed
         ];
         Ok(Self { context, templates })
