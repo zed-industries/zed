@@ -34,7 +34,7 @@ impl PreprocessorContext {
 
         keymap.blocks().iter().find_map(|block| {
             block.bindings().iter().find_map(|(keystroke, a)| {
-                if a.value().to_string() == action {
+                if a.to_string() == action {
                     Some(keystroke.to_string())
                 } else {
                     None

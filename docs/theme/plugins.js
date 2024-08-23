@@ -25,26 +25,26 @@ function detectOS() {
 var os = detectOS();
 console.log("Operating System:", os);
 
-(function updateKeybindings() {
-  const os = detectOS();
-  const isMac = os === "Mac" || os === "iOS";
+// (function updateKeybindings() {
+//   const os = detectOS();
+//   const isMac = os === "Mac" || os === "iOS";
 
-  function processKeybinding(element) {
-    const [macKeybinding, linuxKeybinding] = element.textContent.split("|");
-    element.textContent = isMac ? macKeybinding : linuxKeybinding;
-    element.classList.add("keybinding");
-  }
+//   function processKeybinding(element) {
+//     const [macKeybinding, linuxKeybinding] = element.textContent.split("|");
+//     element.textContent = isMac ? macKeybinding : linuxKeybinding;
+//     element.classList.add("keybinding");
+//   }
 
-  function walkDOM(node) {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      if (node.tagName.toLowerCase() === "kbd") {
-        processKeybinding(node);
-      } else {
-        Array.from(node.children).forEach(walkDOM);
-      }
-    }
-  }
+//   function walkDOM(node) {
+//     if (node.nodeType === Node.ELEMENT_NODE) {
+//       if (node.tagName.toLowerCase() === "kbd") {
+//         processKeybinding(node);
+//       } else {
+//         Array.from(node.children).forEach(walkDOM);
+//       }
+//     }
+//   }
 
-  // Start the process from the body
-  walkDOM(document.body);
-})();
+//   // Start the process from the body
+//   walkDOM(document.body);
+// })();
