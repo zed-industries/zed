@@ -60,15 +60,15 @@ pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
 
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
-            workspace.register_action(|workspace, _: &NewJournalEntry, cx| {
-                new_journal_entry(workspace.app_state().clone(), cx);
+            workspace.register_action(|mut workspace, _: &NewJournalEntry, cx| {
+                new_journal_entry(&mut workspace, cx);
             });
         },
     )
     .detach();
 }
 
-pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut WindowContext) {
+pub fn new_journal_entry(workspace: &mut Workspace, cx: &mut WindowContext) {
     let settings = JournalSettings::get_global(cx);
     let journal_dir = match journal_dir(settings.path.as_ref().unwrap()) {
         Some(journal_dir) => journal_dir,
@@ -96,20 +96,22 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut WindowContext) {
         Ok::<_, std::io::Error>((journal_dir, entry_path))
     });
 
+    let app_state = workspace.app_state().clone();
+    let workspace_handle = workspace.weak_handle();
+
     cx.spawn(|mut cx| async move {
         let (journal_dir, entry_path) = create_entry.await?;
-        let (workspace, _) = cx
-            .update(|cx| {
-                workspace::open_paths(
-                    &[journal_dir],
-                    app_state,
-                    workspace::OpenOptions::default(),
-                    cx,
-                )
-            })?
-            .await?;
-
-        let opened = workspace
+        // let (workspace, _) = cx
+        //     .update(|cx| {
+        //         workspace::open_paths(
+        //             &[journal_dir],
+        //             app_state,
+        //             workspace::OpenOptions::default(),
+        //             cx,
+        //         )
+        //     })?
+        //     .await?;
+        let opened = workspace_handle
             .update(&mut cx, |workspace, cx| {
                 workspace.open_paths(vec![entry_path], OpenVisible::All, None, cx)
             })?
