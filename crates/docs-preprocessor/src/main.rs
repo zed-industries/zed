@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Arg, ArgMatches, Command};
 use docs_preprocessor::ZedDocsPreprocessor;
 use mdbook::preprocess::{CmdPreprocessor, Preprocessor};
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::process;
 
 pub fn make_app() -> Command {

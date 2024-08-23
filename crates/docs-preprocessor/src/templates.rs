@@ -18,6 +18,38 @@ pub trait Template {
     }
 }
 
+pub struct ActionTemplate;
+
+impl ActionTemplate {
+    pub fn new() -> Self {
+        ActionTemplate
+    }
+}
+
+impl Template for ActionTemplate {
+    fn key(&self) -> &'static str {
+        "action"
+    }
+
+    fn regex(&self) -> Regex {
+        Regex::new(&format!(r"\{{\s*#{}\s+(.+?)\s*}}", self.key())).unwrap()
+    }
+
+    fn parse_args(&self, args: &str) -> HashMap<String, String> {
+        args.split_whitespace()
+            .filter_map(|arg| {
+                let mut parts = arg.splitn(2, '=');
+                Some((parts.next()?.to_string(), parts.next()?.to_string()))
+            })
+            .collect()
+    }
+
+    fn render(&self, _context: &PreprocessorContext, args: &HashMap<String, String>) -> String {
+        let name = args.get("name").map(String::as_str).unwrap_or("");
+        format!("<code class=\"hljs\">{}</code>", name)
+    }
+}
+
 pub struct KeybindingTemplate;
 
 impl KeybindingTemplate {
