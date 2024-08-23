@@ -78,7 +78,7 @@ use project_settings::{DirenvSettings, LspSettings, ProjectSettings};
 use rand::prelude::*;
 use remote::SshSession;
 use rpc::{proto::AddWorktree, ErrorCode};
-use search::{SearchQuery, SearchResult};
+use search::{SearchMatchCandidate, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use serde::Serialize;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
@@ -7308,6 +7308,117 @@ impl Project {
             self.fs.clone(),
             cx,
         )
+
+        let open_buffers: Vec<_> = self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.find_seach_candidates(&query, cx)
+        });
+        let open_paths = open_buffers
+            .iter()
+            .filter_map(|candidate| candidate.path())
+            .collect();
+
+        let matching_paths_rx = if self.is_via_ssh() {
+            self.ssh_session.unwrap().
+
+        } else {
+            self.worktree_store.update(cx, |worktree_store, cx| {
+            worktree_store.find_search_candidates(query.clone(), open_paths, self.fs.clone(), cx)
+        });
+        };
+
+        let buffer_store = self.buffer_store.clone();
+        cx.spawn(|mut cx| async move {
+            const MAX_SEARCH_RESULT_FILES: usize = 5_000;
+            const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
+            let limit = MAX_SEARCH_RESULT_FILES.saturating_sub(open_buffers.len());
+
+            let mut matching_paths = open_buffers
+                .into_iter()
+                .chain(matching_paths_rx.take(limit + 1).collect::<Vec<_>>().await)
+                .collect::<Vec<_>>();
+
+            let mut limit_reached = if matching_paths.len() > MAX_SEARCH_RESULT_FILES {
+                matching_paths.truncate(MAX_SEARCH_RESULT_FILES);
+                true
+            } else {
+                false
+            };
+            cx.update(|cx| {
+                sort_search_matches(&mut matching_paths, cx);
+            })?;
+
+            let mut range_count = 0;
+
+            // Now that we know what paths match the query, we will load at most
+            // 64 buffers at a time to avoid overwhelming the main thread. For each
+            // opened buffer, we will spawn a background task that retrieves all the
+            // ranges in the buffer matched by the query.
+            'outer: for matching_paths_chunk in matching_paths.chunks(64) {
+                let mut chunk_results = Vec::new();
+                for matching_path in matching_paths_chunk {
+                    let query = query.clone();
+                    let buffer = match matching_path {
+                        SearchMatchCandidate::OpenBuffer { buffer, .. } => {
+                            Task::ready(Ok(buffer.clone()))
+                        }
+                        SearchMatchCandidate::Path {
+                            worktree_id, path, ..
+                        } => buffer_store.update(&mut cx, |buffer_store, cx| {
+                            buffer_store.open_buffer(
+                                ProjectPath {
+                                    worktree_id: *worktree_id,
+                                    path: path.clone(),
+                                },
+                                cx,
+                            )
+                        })?,
+                    };
+
+                    chunk_results.push(cx.spawn(|cx| async move {
+                        let buffer = buffer.await?;
+                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+                        let ranges = cx
+                            .background_executor()
+                            .spawn(async move {
+                                query
+                                    .search(&snapshot, None)
+                                    .await
+                                    .iter()
+                                    .map(|range| {
+                                        snapshot.anchor_before(range.start)
+                                            ..snapshot.anchor_after(range.end)
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .await;
+                        anyhow::Ok((buffer, ranges))
+                    }));
+                }
+
+                let chunk_results = futures::future::join_all(chunk_results).await;
+                for result in chunk_results {
+                    if let Some((buffer, ranges)) = result.log_err() {
+                        range_count += ranges.len();
+                        result_tx
+                            .send(SearchResult::Buffer { buffer, ranges })
+                            .await?;
+                        if range_count > MAX_SEARCH_RESULT_RANGES {
+                            limit_reached = true;
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+
+            if limit_reached {
+                result_tx.send(SearchResult::LimitReached).await?;
+            }
+
+            anyhow::Ok(())
+        })
+        .detach();
+
+        result_rx
     }
 
     pub fn request_lsp<R: LspCommand>(

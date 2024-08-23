@@ -1,6 +1,7 @@
 use crate::{
+    search::{SearchMatchCandidate, SearchQuery},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    NoRepositoryError, ProjectPath,
+    Item, NoRepositoryError, ProjectPath,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
@@ -778,6 +779,55 @@ impl BufferStore {
     pub fn discard_incomplete(&mut self) {
         self.opened_buffers
             .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
+    }
+
+    /// Returns open buffers filtered by filename
+    /// Does *not* match the buffer content, project search must do that.
+    pub(crate) fn find_seach_candidates(
+        &self,
+        query: &SearchQuery,
+        cx: &ModelContext<Self>,
+    ) -> Vec<SearchMatchCandidate> {
+        let include_root = self
+            .worktree_store
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>()
+            .len()
+            > 1;
+        self.buffers()
+            .filter_map(|buffer| {
+                let (is_ignored, snapshot) = buffer.read_with(cx, |buffer, cx| {
+                    let worktree_store = self.worktree_store.read(cx);
+                    let is_ignored = buffer
+                        .entry_id(cx)
+                        .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
+                        .map_or(false, |entry| entry.is_ignored);
+                    (is_ignored, buffer.snapshot())
+                });
+                if is_ignored && !query.include_ignored() {
+                    return None;
+                }
+                if let Some(file) = snapshot.file() {
+                    let matched_path = if include_root {
+                        query.file_matches(Some(&file.full_path(cx)))
+                    } else {
+                        query.file_matches(Some(file.path()))
+                    };
+
+                    if matched_path {
+                        Some(SearchMatchCandidate::OpenBuffer {
+                            buffer,
+                            path: Some(file.path().clone()),
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    Some(SearchMatchCandidate::OpenBuffer { buffer, path: None })
+                }
+            })
+            .collect()
     }
 
     fn on_buffer_event(
