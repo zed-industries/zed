@@ -171,11 +171,10 @@ fn toggle_status_bar_item(
 
 /// Configuration of the display of performance details.
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[serde(default)]
 pub struct PerformanceSettings {
     /// Display the time to first window draw and frame rate in the status bar.
-    ///
-    /// Default: false
-    pub show_in_status_bar: Option<bool>,
+    pub show_in_status_bar: bool,
 }
 
 impl Settings for PerformanceSettings {
