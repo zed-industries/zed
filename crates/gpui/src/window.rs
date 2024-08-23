@@ -10,7 +10,7 @@ use crate::{
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
     PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
     Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
+    SubscriberSet, Subscription, SvgColor, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TimeToFirstWindowDraw, TransformationMatrix, Underline, UnderlineStyle, View, VisualContext,
     WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
     WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
@@ -2532,7 +2532,7 @@ impl<'a> WindowContext<'a> {
         bounds: Bounds<Pixels>,
         path: SharedString,
         transformation: TransformationMatrix,
-        maybe_color: Option<Hsla>,
+        color: SvgColor,
     ) -> Result<()> {
         debug_assert_eq!(
             self.window.draw_phase,
@@ -2568,31 +2568,35 @@ impl<'a> WindowContext<'a> {
             .map_origin(|origin| origin.floor())
             .map_size(|size| size.ceil());
 
-        if let Some(color) = maybe_color {
-            self.window
-                .next_frame
-                .scene
-                .insert_primitive(MonochromeSprite {
-                    order: 0,
-                    pad: 0,
-                    bounds: sized_bounds,
-                    content_mask,
-                    color,
-                    tile,
-                    transformation,
-                });
-        } else {
-            self.window
-                .next_frame
-                .scene
-                .insert_primitive(PolychromeSprite {
-                    order: 0,
-                    bounds: sized_bounds,
-                    content_mask,
-                    tile,
-                    grayscale: false,
-                    corner_radii: Corners::default(),
-                });
+        match color {
+            SvgColor::Monochrome(color) => {
+                self.window
+                    .next_frame
+                    .scene
+                    .insert_primitive(MonochromeSprite {
+                        order: 0,
+                        pad: 0,
+                        bounds: sized_bounds,
+                        content_mask,
+                        color,
+                        tile,
+                        transformation,
+                    })
+            }
+            SvgColor::Polychrome => {
+                dbg!("render polychrome");
+                self.window
+                    .next_frame
+                    .scene
+                    .insert_primitive(PolychromeSprite {
+                        order: 0,
+                        bounds: sized_bounds,
+                        content_mask,
+                        tile,
+                        grayscale: false,
+                        corner_radii: Corners::default(),
+                    })
+            }
         }
 
         Ok(())

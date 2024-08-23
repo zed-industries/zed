@@ -1,16 +1,24 @@
 use crate::{
     geometry::Negate as _, point, px, radians, size, Bounds, Element, GlobalElementId, Hitbox,
-    InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString,
-    Size, StyleRefinement, Styled, TransformationMatrix, WindowContext,
+    Hsla, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, Radians,
+    SharedString, Size, StyleRefinement, Styled, TransformationMatrix, WindowContext,
 };
 use util::ResultExt;
+
+/// The color of an [`Svg`].
+#[derive(Debug)]
+pub enum SvgColor {
+    /// A monochrome SVG that is all in one color.
+    Monochrome(Hsla),
+    /// A polychrome SVG that uses the colors of the source SVG.
+    Polychrome,
+}
 
 /// An SVG element.
 pub struct Svg {
     interactivity: Interactivity,
     transformation: Option<Transformation>,
     path: Option<SharedString>,
-    /// whether to respect the fill color of the SVG file
     polychrome: bool,
 }
 
@@ -31,16 +39,18 @@ impl Svg {
         self
     }
 
+    /// Sets the SVG to render as polychrome.
+    ///
+    /// It will use the colors embedded in the SVG.
+    pub fn polychrome(mut self) -> Self {
+        self.polychrome = true;
+        self
+    }
+
     /// Transform the SVG element with the given transformation.
     /// Note that this won't effect the hitbox or layout of the element, only the rendering.
     pub fn with_transformation(mut self, transformation: Transformation) -> Self {
         self.transformation = Some(transformation);
-        self
-    }
-
-    /// Respect the colors of the SVG file.
-    pub fn with_polychrome(mut self) -> Self {
-        self.polychrome = true;
         self
     }
 }
@@ -87,7 +97,7 @@ impl Element for Svg {
     {
         self.interactivity
             .paint(global_id, bounds, hitbox.as_ref(), cx, |style, cx| {
-                if let Some((path, style_color)) = self.path.as_ref().zip(style.text.color) {
+                if let Some(path) = self.path.as_ref() {
                     let transformation = self
                         .transformation
                         .as_ref()
@@ -97,10 +107,11 @@ impl Element for Svg {
                         .unwrap_or_default();
 
                     let color = if self.polychrome {
-                        None
+                        SvgColor::Polychrome
                     } else {
-                        Some(style_color)
+                        SvgColor::Monochrome(style.text.color.unwrap_or_default())
                     };
+
                     cx.paint_svg(bounds, path.clone(), transformation, color)
                         .log_err();
                 }
