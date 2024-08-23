@@ -76,6 +76,10 @@ impl HeadlessProject {
             worktree_store.downgrade(),
             WorktreeStore::handle_expand_project_entry,
         );
+        session.add_request_handler(
+            worktree_store.downgrade(),
+            WorktreeStore::handle_find_match_candidates,
+        );
 
         HeadlessProject {
             session: session.into(),

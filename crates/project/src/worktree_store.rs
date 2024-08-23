@@ -247,6 +247,8 @@ impl WorktreeStore {
         }
     }
 
+    pub fn find_match_candidates()
+
     pub async fn handle_create_project_entry(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::CreateProjectEntry>,

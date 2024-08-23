@@ -1242,8 +1242,10 @@ message FindMatchCandidates {
     repeated string open_buffers = 3;
 }
 
-message MatchCandidateFound {
+message MatchCandidatesFound {
     uint64 search_id = 1;
+    bool is_last = 2;
+    repeated ProjectPath path = 3;
 }
 
 message CodeAction {

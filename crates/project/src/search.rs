@@ -486,7 +486,6 @@ enum SearchMatchCandidate {
     },
     Path {
         worktree_id: WorktreeId,
-        is_ignored: bool,
         path: Arc<Path>,
     },
 }
@@ -512,18 +511,15 @@ pub fn search(
     fs: Arc<dyn Fs>,
     cx: &mut AppContext,
 ) -> Receiver<SearchResult> {
-    let snapshots = worktree_store
+    let include_root = worktree_store
         .read(cx)
         .visible_worktrees(cx)
-        .filter_map(|tree| {
-            let tree = tree.read(cx);
-            Some((tree.snapshot(), tree.as_local()?.settings()))
-        })
-        .collect::<Vec<_>>();
-    let include_root = snapshots.len() > 1;
+        .collect::<Vec<_>>()
+        .len()
+        > 1;
 
     let mut unnamed_buffers = vec![];
-    let opened_buffers = buffer_store.update(cx, |buffer_store, cx| {
+    let opened_buffers: HashMap<_> = buffer_store.update(cx, |buffer_store, cx| {
         buffer_store
             .buffers()
             .filter_map(|buffer| {
@@ -557,38 +553,40 @@ pub fn search(
             .collect()
     });
 
-    let mut path_count: usize = snapshots
-        .iter()
-        .map(|(snapshot, _)| {
-            if query.include_ignored() {
-                snapshot.file_count()
-            } else {
-                snapshot.visible_file_count()
-            }
-        })
-        .sum();
-    path_count = path_count.max(1);
-    if path_count == 0 {
-        let (_, rx) = smol::channel::bounded(1024);
-        return rx;
-    }
-    let workers = cx.background_executor().num_cpus().min(path_count);
     let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
 
-    cx.background_executor()
-        .spawn(find_match_candidates(
+    cx.spawn(|cx| async move {
+        for buffer in unnamed_buffers {
+            matching_paths_tx
+                .send(SearchMatchCandidate::OpenBuffer {
+                    buffer: buffer.clone(),
+                    path: None,
+                })
+                .await
+                .log_err();
+        }
+        for (path, (buffer, _)) in opened_buffers.iter() {
+            matching_paths_tx
+                .send(SearchMatchCandidate::OpenBuffer {
+                    buffer: buffer.clone(),
+                    path: Some(path.clone()),
+                })
+                .await
+                .log_err();
+        }
+
+        find_match_candidates(
             unnamed_buffers,
             opened_buffers,
             cx.background_executor().clone(),
             fs,
-            workers,
             query.clone(),
             include_root,
-            path_count,
-            snapshots,
             matching_paths_tx,
-        ))
-        .detach();
+        )
+        .await
+    })
+    .detach();
 
     let (result_tx, result_rx) = smol::channel::bounded(1024);
     let query = Arc::new(query);
@@ -688,14 +686,11 @@ pub fn search(
 /// Pick paths that might potentially contain a match of a given search query.
 #[allow(clippy::too_many_arguments)]
 async fn find_match_candidates(
-    unnamed_buffers: Vec<Model<Buffer>>,
+    worktree_store: Model<WorktreeStore>,
     opened_buffers: HashMap<Arc<Path>, (Model<Buffer>, BufferSnapshot)>,
     executor: BackgroundExecutor,
     fs: Arc<dyn Fs>,
-    workers: usize,
     query: SearchQuery,
-    include_root: bool,
-    path_count: usize,
     snapshots: Vec<(Snapshot, WorktreeSettings)>,
     matching_paths_tx: Sender<SearchMatchCandidate>,
 ) {
@@ -703,24 +698,31 @@ async fn find_match_candidates(
     let query = &query;
     let matching_paths_tx = &matching_paths_tx;
     let snapshots = &snapshots;
-    for buffer in unnamed_buffers {
-        matching_paths_tx
-            .send(SearchMatchCandidate::OpenBuffer {
-                buffer: buffer.clone(),
-                path: None,
-            })
-            .await
-            .log_err();
+
+    let snapshots = worktree_store
+        .read(cx)
+        .visible_worktrees(cx)
+        .filter_map(|tree| {
+            let tree = tree.read(cx);
+            Some((tree.snapshot(), tree.as_local()?.settings()))
+        })
+        .collect::<Vec<_>>();
+    let include_root = snapshots.len() > 1;
+    let mut path_count: usize = snapshots
+        .iter()
+        .map(|(snapshot, _)| {
+            if query.include_ignored() {
+                snapshot.file_count()
+            } else {
+                snapshot.visible_file_count()
+            }
+        })
+        .sum();
+    path_count = path_count.max(1);
+    if path_count == 0 {
+        return;
     }
-    for (path, (buffer, _)) in opened_buffers.iter() {
-        matching_paths_tx
-            .send(SearchMatchCandidate::OpenBuffer {
-                buffer: buffer.clone(),
-                path: Some(path.clone()),
-            })
-            .await
-            .log_err();
-    }
+    let workers = cx.background_executor().num_cpus().min(path_count);
 
     let paths_per_worker = (path_count + workers - 1) / workers;
 
@@ -833,7 +835,6 @@ async fn search_ignored_entry(
                                 .strip_prefix(snapshot.abs_path())
                                 .expect("scanning worktree-related files"),
                         ),
-                        is_ignored: true,
                     };
                     if counter_tx.send(project_path).await.is_err() {
                         return;
@@ -910,7 +911,6 @@ async fn search_snapshots(
                     let project_path = SearchMatchCandidate::Path {
                         worktree_id: snapshot.id(),
                         path: entry.path.clone(),
-                        is_ignored: entry.is_ignored,
                     };
                     if results_tx.send(project_path).await.is_err() {
                         return;
