@@ -709,22 +709,6 @@ impl Panel for DebugPanel {
     fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(ToggleFocus)
     }
-
-    fn icon_label(&self, _: &WindowContext) -> Option<String> {
-        None
-    }
-
-    fn is_zoomed(&self, _cx: &WindowContext) -> bool {
-        false
-    }
-
-    fn starts_open(&self, _cx: &WindowContext) -> bool {
-        false
-    }
-
-    fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {}
-
-    fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {}
 }
 
 impl Render for DebugPanel {
