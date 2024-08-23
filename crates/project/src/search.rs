@@ -5,7 +5,7 @@ use collections::HashMap;
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{AppContext, BackgroundExecutor, Model, Task};
-use language::{char_kind, Buffer, BufferSnapshot};
+use language::{char_kind, proto::serialize_anchor, Buffer, BufferSnapshot};
 use regex::{Captures, Regex, RegexBuilder};
 use smol::{
     channel::{Receiver, Sender},
@@ -500,11 +500,17 @@ pub enum SearchResult {
     LimitReached,
 }
 
+impl SearchResult {
+    pub fn serialize_range(range: &Range<Anchor>) -> Range<proto::Anchor> {
+        serialize_anchor(&range.start)..serialize_anchor(&range.end)
+    }
+}
+
 pub fn search(
-    buffer_store: &Model<BufferStore>,
-    worktree_store: &Model<WorktreeStore>,
-    fs: Arc<dyn Fs>,
     query: SearchQuery,
+    buffer_store: Model<BufferStore>,
+    worktree_store: Model<WorktreeStore>,
+    fs: Arc<dyn Fs>,
     cx: &mut AppContext,
 ) -> Receiver<SearchResult> {
     let snapshots = worktree_store
@@ -552,7 +558,7 @@ pub fn search(
             .collect()
     });
 
-    let path_count: usize = snapshots
+    let mut path_count: usize = snapshots
         .iter()
         .map(|(snapshot, _)| {
             if query.include_ignored() {
@@ -562,6 +568,7 @@ pub fn search(
             }
         })
         .sum();
+    path_count = path_count.max(1);
     if path_count == 0 {
         let (_, rx) = smol::channel::bounded(1024);
         return rx;
@@ -586,7 +593,6 @@ pub fn search(
 
     let (result_tx, result_rx) = smol::channel::bounded(1024);
     let query = Arc::new(query);
-    let buffer_store = buffer_store.clone();
 
     cx.spawn(|mut cx| async move {
         const MAX_SEARCH_RESULT_FILES: usize = 5_000;

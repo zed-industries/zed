@@ -3,6 +3,7 @@ use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
+    search::{SearchQuery, SearchResult},
     worktree_store::WorktreeStore,
     ProjectPath, WorktreeId, WorktreeSettings,
 };
@@ -49,7 +50,7 @@ impl HeadlessProject {
         session.add_request_handler(this.clone(), Self::handle_list_remote_directory);
         session.add_request_handler(this.clone(), Self::handle_add_worktree);
         session.add_request_handler(this.clone(), Self::handle_open_buffer_by_path);
-        session.add_request_handler(this.clone(), Self::handle_project_search);
+        session.add_request_handler(this.clone(), Self::handle_search_project);
 
         session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_blame_buffer);
         session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_update_buffer);
@@ -179,11 +180,69 @@ impl HeadlessProject {
         Ok(proto::ListRemoteDirectoryResponse { entries })
     }
 
-    pub async fn handle_project_search(
+    pub async fn handle_search_project(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::SearchProject>,
-        cx: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> Result<proto::SearchProjectResponse> {
+        let query = SearchQuery::from_proto(envelope.payload)?;
+        let mut receiver = this.update(&mut cx, |this, cx| {
+            project::search::search(
+                query,
+                this.buffer_store.clone(),
+                this.worktree_store.clone(),
+                this.fs.clone(),
+                cx,
+            )
+        })?;
+
+        let mut locations = Vec::new();
+        let mut limit_reached = false;
+        while let Some(result) = receiver.next().await {
+            match result {
+                SearchResult::Buffer { buffer, ranges } => {
+                    let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id())?;
+                    let this = this.clone();
+                    cx.spawn(|mut cx| async move {
+                        let Some((buffer_store, session)) = this
+                            .update(&mut cx, |this, _| {
+                                (this.buffer_store.clone(), this.session.clone())
+                            })
+                            .log_err()
+                        else {
+                            return;
+                        };
+                        BufferStore::create_buffer_for_peer(
+                            buffer_store,
+                            PEER_ID,
+                            buffer_id,
+                            PROJECT_ID,
+                            session,
+                            &mut cx,
+                        )
+                        .await
+                        .log_err();
+                    })
+                    .detach();
+
+                    for range in ranges {
+                        let range = SearchResult::serialize_range(&range);
+                        locations.push(proto::Location {
+                            buffer_id: buffer_id.to_proto(),
+                            start: Some(range.start),
+                            end: Some(range.end),
+                        });
+                    }
+                }
+                SearchResult::LimitReached => limit_reached = true,
+            }
+        }
+
+        // TODO: it would be nice to return results to the client as they arrive instead of waiting until we have them all. Before its worth doing that we to fix search result rendering being slow.
+        Ok(proto::SearchProjectResponse {
+            locations,
+            limit_reached,
+        })
     }
 
     pub fn on_buffer_store_event(

@@ -18,7 +18,11 @@ use gpui::{
     TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use menu::Confirm;
-use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
+use project::{
+    search::{SearchQuery, SearchResult},
+    search_history::SearchHistoryCursor,
+    Project, ProjectPath,
+};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
@@ -222,7 +226,7 @@ impl ProjectSearch {
             let mut limit_reached = false;
             while let Some(result) = matches.next().await {
                 match result {
-                    project::SearchResult::Buffer { buffer, ranges } => {
+                    SearchResult::Buffer { buffer, ranges } => {
                         let mut match_ranges = this
                             .update(&mut cx, |this, cx| {
                                 this.excerpts.update(cx, |excerpts, cx| {
@@ -245,7 +249,7 @@ impl ProjectSearch {
                         }
                         this.update(&mut cx, |_, cx| cx.notify()).ok()?;
                     }
-                    project::SearchResult::LimitReached => {
+                    SearchResult::LimitReached => {
                         limit_reached = true;
                     }
                 }

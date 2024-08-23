@@ -1920,6 +1920,14 @@ impl Project {
         }
     }
 
+    pub fn is_local(&self) -> bool {
+        self.is_local_or_ssh() && self.ssh_session.is_none()
+    }
+
+    pub fn is_via_ssh(&self) -> bool {
+        self.ssh_session.is_some()
+    }
+
     pub fn is_via_collab(&self) -> bool {
         !self.is_local_or_ssh()
     }
@@ -7222,49 +7230,70 @@ impl Project {
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
     ) -> Receiver<SearchResult> {
-        if self.is_local_or_ssh() {
-            self.search_local(query, cx)
-        } else if let Some(project_id) = self.remote_id() {
-            let (tx, rx) = smol::channel::unbounded();
-            let request = self.client.request(query.to_proto(project_id));
-            cx.spawn(move |this, mut cx| async move {
+        if self.is_local() {
+            return self.search_local(query, cx);
+        }
+        let (tx, rx) = smol::channel::unbounded();
+        if self.is_via_ssh() {
+            let request = self
+                .ssh_session
+                .as_ref()
+                .unwrap()
+                .request(query.to_proto(0));
+            cx.spawn(move |this, cx| async move {
                 let response = request.await?;
-                let mut result = HashMap::default();
-                for location in response.locations {
-                    let buffer_id = BufferId::new(location.buffer_id)?;
-                    let target_buffer = this
-                        .update(&mut cx, |this, cx| {
-                            this.wait_for_remote_buffer(buffer_id, cx)
-                        })?
-                        .await?;
-                    let start = location
-                        .start
-                        .and_then(deserialize_anchor)
-                        .ok_or_else(|| anyhow!("missing target start"))?;
-                    let end = location
-                        .end
-                        .and_then(deserialize_anchor)
-                        .ok_or_else(|| anyhow!("missing target end"))?;
-                    result
-                        .entry(target_buffer)
-                        .or_insert(Vec::new())
-                        .push(start..end)
-                }
-                for (buffer, ranges) in result {
-                    let _ = tx.send(SearchResult::Buffer { buffer, ranges }).await;
-                }
-
-                if response.limit_reached {
-                    let _ = tx.send(SearchResult::LimitReached).await;
-                }
-
-                Result::<(), anyhow::Error>::Ok(())
+                Self::process_search_response(this, response, tx, cx).await
             })
             .detach_and_log_err(cx);
-            rx
+        } else if let Some(project_id) = self.remote_id() {
+            let request = self.client.request(query.to_proto(project_id));
+            cx.spawn(move |this, cx| async move {
+                let response = request.await?;
+                Self::process_search_response(this, response, tx, cx).await
+            })
+            .detach_and_log_err(cx);
         } else {
-            unimplemented!();
+            unimplemented!()
+        };
+        rx
+    }
+
+    async fn process_search_response(
+        this: WeakModel<Self>,
+        response: proto::SearchProjectResponse,
+        tx: smol::channel::Sender<SearchResult>,
+        mut cx: AsyncAppContext,
+    ) -> anyhow::Result<()> {
+        let mut result = HashMap::default();
+        for location in response.locations {
+            let buffer_id = BufferId::new(location.buffer_id)?;
+            let target_buffer = this
+                .update(&mut cx, |this, cx| {
+                    this.wait_for_remote_buffer(buffer_id, cx)
+                })?
+                .await?;
+            let start = location
+                .start
+                .and_then(deserialize_anchor)
+                .ok_or_else(|| anyhow!("missing target start"))?;
+            let end = location
+                .end
+                .and_then(deserialize_anchor)
+                .ok_or_else(|| anyhow!("missing target end"))?;
+            result
+                .entry(target_buffer)
+                .or_insert(Vec::new())
+                .push(start..end)
         }
+        for (buffer, ranges) in result {
+            let _ = tx.send(SearchResult::Buffer { buffer, ranges }).await;
+        }
+
+        if response.limit_reached {
+            let _ = tx.send(SearchResult::LimitReached).await;
+        }
+
+        anyhow::Ok(())
     }
 
     pub fn search_local(
@@ -7273,10 +7302,10 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Receiver<SearchResult> {
         search::search(
-            &self.buffer_store,
-            &self.worktree_store,
-            self.fs.clone(),
             query,
+            self.buffer_store.clone(),
+            self.worktree_store.clone(),
+            self.fs.clone(),
             cx,
         )
     }
