@@ -127,7 +127,9 @@
       "cmd-'": "editor::ToggleHunkDiff",
       "cmd-\"": "editor::ExpandAllHunkDiffs",
       "cmd-alt-g b": "editor::ToggleGitBlame",
-      "cmd-i": "editor::ShowSignatureHelp"
+      "cmd-i": "editor::ShowSignatureHelp",
+      "ctrl-f12": "editor::GoToDeclaration",
+      "alt-ctrl-f12": "editor::GoToDeclarationSplit"
     }
   },
   {
@@ -135,6 +137,7 @@
     "bindings": {
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
+      "cmd-enter": "editor::NewlineBelow",
       "cmd-shift-enter": "editor::NewlineAbove",
       "alt-z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
@@ -147,17 +150,11 @@
     }
   },
   {
-    "context": "Editor && mode == full && !jupyter",
-    "bindings": {
-      "cmd-enter": "editor::NewlineBelow"
-    }
-  },
-  {
     "context": "Editor && mode == full && inline_completion",
     "bindings": {
       "alt-]": "editor::NextInlineCompletion",
       "alt-[": "editor::PreviousInlineCompletion",
-      "alt-right": "editor::AcceptPartialInlineCompletion"
+      "cmd-right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {
@@ -183,7 +180,8 @@
   {
     "context": "Editor && jupyter && !ContextEditor",
     "bindings": {
-      "cmd-enter": "repl::Run"
+      "ctrl-shift-enter": "repl::Run",
+      "ctrl-alt-enter": "repl::RunInPlace"
     }
   },
   {
@@ -191,7 +189,9 @@
     "bindings": {
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch",
-      "alt-m": "assistant::ToggleModelSelector"
+      "alt-m": "assistant::ToggleModelSelector",
+      "cmd-k h": "assistant::DeployHistory",
+      "cmd-k l": "assistant::DeployPromptLibrary"
     }
   },
   {
@@ -298,7 +298,6 @@
       "alt-cmd-c": "search::ToggleCaseSensitive",
       "alt-cmd-w": "search::ToggleWholeWord",
       "alt-cmd-f": "project_search::ToggleFilters",
-      "alt-cmd-g": "search::ToggleRegex",
       "alt-cmd-x": "search::ToggleRegex"
     }
   },
@@ -475,7 +474,7 @@
     "context": "Editor && showing_completions",
     "bindings": {
       "enter": "editor::ConfirmCompletion",
-      "tab": "editor::ConfirmCompletion"
+      "tab": "editor::ComposeCompletion"
     }
   },
   {

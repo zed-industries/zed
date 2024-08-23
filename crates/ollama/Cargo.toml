@@ -18,7 +18,7 @@ schemars = ["dep:schemars"]
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
-http.workspace = true
+http_client.workspace = true
 isahc.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true

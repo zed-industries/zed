@@ -5,9 +5,9 @@ pub(crate) mod linux_prompts;
 #[cfg(not(target_os = "linux"))]
 pub(crate) mod only_instance;
 mod open_listener;
-mod ssh_connection_modal;
 
 pub use app_menus::*;
+use assistant::PromptBuilder;
 use breadcrumbs::Breadcrumbs;
 use client::ZED_URL_SCHEME;
 use collections::VecDeque;
@@ -36,6 +36,7 @@ use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
+use workspace::CloseIntent;
 
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use terminal_view::terminal_panel::{self, TerminalPanel};
@@ -48,7 +49,7 @@ use workspace::{
     open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
 };
 use workspace::{notifications::DetachAndPromptErr, Pane};
-use zed_actions::{OpenBrowser, OpenSettings, OpenZedUrl, Quit};
+use zed_actions::{OpenAccountSettings, OpenBrowser, OpenSettings, OpenZedUrl, Quit};
 
 actions!(
     zed,
@@ -119,7 +120,11 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
     }
 }
 
-pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
+pub fn initialize_workspace(
+    app_state: Arc<AppState>,
+    prompt_builder: Arc<PromptBuilder>,
+    cx: &mut AppContext,
+) {
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         let workspace_handle = cx.view().clone();
         let center_pane = workspace.active_pane().clone();
@@ -138,6 +143,49 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             }
         })
         .detach();
+
+        #[cfg(target_os = "linux")]
+        if let Err(e) = fs::watcher::global(|_| {}) {
+            let message = format!(db::indoc!{r#"
+                inotify_init returned {}
+
+                This may be due to system-wide limits on inotify instances. For troubleshooting see: https://zed.dev/docs/linux
+                "#}, e);
+            let prompt = cx.prompt(PromptLevel::Critical, "Could not start inotify", Some(&message),
+                &["Troubleshoot and Quit"]);
+            cx.spawn(|_, mut cx| async move {
+                if prompt.await == Ok(0) {
+                    cx.update(|cx| {
+                        cx.open_url("https://zed.dev/docs/linux#could-not-start-inotify");
+                        cx.quit();
+                    }).ok();
+                }
+            }).detach()
+        }
+
+        if let Some(specs) = cx.gpu_specs() {
+            log::info!("Using GPU: {:?}", specs);
+            if specs.is_software_emulated && std::env::var("ZED_ALLOW_EMULATED_GPU").is_err() {
+            let message = format!(db::indoc!{r#"
+                Zed uses Vulkan for rendering and requires a compatible GPU.
+
+                Currently you are using a software emulated GPU ({}) which
+                will result in awful performance.
+
+                For troubleshooting see: https://zed.dev/docs/linux
+                "#}, specs.device_name);
+            let prompt = cx.prompt(PromptLevel::Critical, "Unsupported GPU", Some(&message),
+                &["Skip", "Troubleshoot and Quit"]);
+            cx.spawn(|_, mut cx| async move {
+                if prompt.await == Ok(1) {
+                    cx.update(|cx| {
+                        cx.open_url("https://zed.dev/docs/linux#zed-fails-to-open-windows");
+                        cx.quit();
+                    }).ok();
+                }
+            }).detach()
+            }
+        }
 
         let inline_completion_button = cx.new_view(|cx| {
             inline_completion_button::InlineCompletionButton::new(app_state.fs.clone(), cx)
@@ -176,7 +224,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
         let project = workspace.project().clone();
         if project.update(cx, |project, cx| {
-            project.is_local() || project.ssh_connection_string(cx).is_some()
+            project.is_local_or_ssh() || project.ssh_connection_string(cx).is_some()
         }) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
@@ -195,11 +243,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             });
         }
 
+        let prompt_builder = prompt_builder.clone();
         cx.spawn(|workspace_handle, mut cx| async move {
             let assistant_panel =
-                assistant::AssistantPanel::load(workspace_handle.clone(), cx.clone());
-
-            let runtime_panel = repl::RuntimePanel::load(workspace_handle.clone(), cx.clone());
+                assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
 
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
@@ -218,7 +265,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 outline_panel,
                 terminal_panel,
                 assistant_panel,
-                runtime_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
@@ -227,7 +273,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 outline_panel,
                 terminal_panel,
                 assistant_panel,
-                runtime_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
@@ -235,7 +280,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(assistant_panel, cx);
-                workspace.add_panel(runtime_panel, cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(outline_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
@@ -383,6 +427,12 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         || settings::initial_user_settings_content().as_ref().into(),
                         cx,
                     );
+                },
+            )
+            .register_action(
+                |_: &mut Workspace, _: &OpenAccountSettings, cx: &mut ViewContext<Workspace>| {
+                    let server_url = &client::ClientSettings::get_global(cx).server_url;
+                    cx.open_url(&format!("{server_url}/account"));
                 },
             )
             .register_action(
@@ -578,7 +628,7 @@ fn quit(_: &Quit, cx: &mut AppContext) {
         for window in workspace_windows {
             if let Some(should_close) = window
                 .update(&mut cx, |workspace, cx| {
-                    workspace.prepare_to_close(true, cx)
+                    workspace.prepare_to_close(CloseIntent::Quit, cx)
                 })
                 .log_err()
             {
@@ -683,6 +733,7 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,
+    keymap_changed: impl Fn(Option<anyhow::Error>, &mut AppContext) + 'static,
 ) {
     BaseKeymap::register(cx);
     VimModeSetting::register(cx);
@@ -711,10 +762,14 @@ pub fn handle_keymap_file_changes(
                 _ = base_keymap_rx.next() => {}
                 user_keymap_content = user_keymap_file_rx.next() => {
                     if let Some(user_keymap_content) = user_keymap_content {
-                        if let Some(keymap_content) = KeymapFile::parse(&user_keymap_content).log_err() {
-                            user_keymap = keymap_content;
-                        } else {
-                            continue
+                        match KeymapFile::parse(&user_keymap_content) {
+                            Ok(keymap_content) => {
+                                cx.update(|cx| keymap_changed(None, cx)).log_err();
+                                user_keymap = keymap_content;
+                            }
+                            Err(error) => {
+                                cx.update(|cx| keymap_changed(Some(error), cx)).log_err();
+                            }
                         }
                     }
                 }
@@ -980,7 +1035,7 @@ mod tests {
         path::{Path, PathBuf},
         time::Duration,
     };
-    use task::{RevealStrategy, SpawnInTerminal};
+    use task::{HideStrategy, RevealStrategy, Shell, SpawnInTerminal};
     use theme::{ThemeRegistry, ThemeSettings};
     use workspace::{
         item::{Item, ItemHandle},
@@ -3046,8 +3101,8 @@ mod tests {
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
-            handle_settings_file_changes(settings_rx, cx);
-            handle_keymap_file_changes(keymap_rx, cx);
+            handle_settings_file_changes(settings_rx, cx, |_, _| {});
+            handle_keymap_file_changes(keymap_rx, cx, |_, _| {});
         });
         workspace
             .update(cx, |workspace, cx| {
@@ -3186,8 +3241,8 @@ mod tests {
                 PathBuf::from("/keymap.json"),
             );
 
-            handle_settings_file_changes(settings_rx, cx);
-            handle_keymap_file_changes(keymap_rx, cx);
+            handle_settings_file_changes(settings_rx, cx, |_, _| {});
+            handle_keymap_file_changes(keymap_rx, cx, |_, _| {});
         });
 
         cx.background_executor.run_until_parked();
@@ -3287,6 +3342,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_bundled_languages(cx: &mut TestAppContext) {
+        env_logger::builder().is_test(true).try_init().ok();
         let settings = cx.update(|cx| SettingsStore::test(cx));
         cx.set_global(settings);
         let languages = LanguageRegistry::test(cx.executor());
@@ -3329,6 +3385,8 @@ mod tests {
             use_new_terminal: false,
             allow_concurrent_runs: false,
             reveal: RevealStrategy::Always,
+            hide: HideStrategy::Never,
+            shell: Shell::System,
         };
         let project = Project::test(app_state.fs.clone(), [project_root.path()], cx).await;
         let window = cx.add_window(|cx| Workspace::test_new(project, cx));
@@ -3336,7 +3394,7 @@ mod tests {
         cx.update(|cx| {
             window
                 .update(cx, |_workspace, cx| {
-                    cx.emit(workspace::Event::SpawnTask(spawn_in_terminal));
+                    cx.emit(workspace::Event::SpawnTask(Box::new(spawn_in_terminal)));
                 })
                 .unwrap();
         });
@@ -3385,7 +3443,7 @@ mod tests {
         .unwrap();
     }
 
-    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+    pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         init_test_with_state(cx, cx.update(|cx| AppState::test(cx)))
     }
 
@@ -3416,10 +3474,26 @@ mod tests {
             project_panel::init((), cx);
             outline_panel::init((), cx);
             terminal_view::init(cx);
-            assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
-            repl::init(cx);
+            copilot::copilot_chat::init(
+                app_state.fs.clone(),
+                app_state.client.http_client().clone(),
+                cx,
+            );
+            language_model::init(
+                app_state.user_store.clone(),
+                app_state.client.clone(),
+                app_state.fs.clone(),
+                cx,
+            );
+            let prompt_builder =
+                assistant::init(app_state.fs.clone(), app_state.client.clone(), false, cx);
+            repl::init(
+                app_state.fs.clone(),
+                app_state.client.telemetry().clone(),
+                cx,
+            );
             tasks_ui::init(cx);
-            initialize_workspace(app_state.clone(), cx);
+            initialize_workspace(app_state.clone(), prompt_builder, cx);
             app_state
         })
     }
@@ -3448,7 +3522,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_markdown::language()),
+            Some(tree_sitter_md::language()),
         ))
     }
 

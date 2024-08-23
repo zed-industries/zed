@@ -92,6 +92,18 @@ spec:
                 secretKeyRef:
                   name: api
                   key: token
+            - name: LLM_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: llm-token
+                  key: secret
+            - name: LLM_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: llm-database
+                  key: url
+            - name: LLM_DATABASE_MAX_CONNECTIONS
+              value: "${LLM_DATABASE_MAX_CONNECTIONS}"
             - name: ZED_CLIENT_CHECKSUM_SEED
               valueFrom:
                 secretKeyRef:
@@ -122,11 +134,31 @@ spec:
                 secretKeyRef:
                   name: anthropic
                   key: api_key
+            - name: ANTHROPIC_STAFF_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic
+                  key: staff_api_key
+            - name: LLM_CLOSED_BETA_MODEL_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: llm-closed-beta
+                  key: model_name
             - name: GOOGLE_AI_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: google-ai
                   key: api_key
+            - name: QWEN2_7B_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hugging-face
+                  key: api_key
+            - name: QWEN2_7B_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: hugging-face
+                  key: qwen2_api_url
             - name: BLOB_STORE_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
@@ -184,6 +216,12 @@ spec:
                 secretKeyRef:
                   name: supermaven
                   key: api_key
+            - name: USER_BACKFILLER_GITHUB_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: user-backfiller
+                  key: github_access_token
+                  optional: true
             - name: INVITE_LINK_PREFIX
               value: ${INVITE_LINK_PREFIX}
             - name: RUST_BACKTRACE

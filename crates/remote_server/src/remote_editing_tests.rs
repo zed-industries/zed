@@ -3,7 +3,7 @@ use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use fs::{FakeFs, Fs as _};
 use gpui::{Context, Model, TestAppContext};
-use http::FakeHttpClient;
+use http_client::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 use project::Project;
@@ -12,15 +12,23 @@ use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc};
 
+fn init_logger() {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::try_init().ok();
+    }
+}
+
 #[gpui::test]
 async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let (client_ssh, server_ssh) = SshSession::fake(cx, server_cx);
+    init_logger();
 
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
         "/code",
         json!({
             "project1": {
+                ".git": {},
                 "README.md": "# project 1",
                 "src": {
                     "lib.rs": "fn one() -> usize { 1 }"
@@ -32,6 +40,10 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
         }),
     )
     .await;
+    fs.set_index_for_repo(
+        Path::new("/code/project1/.git"),
+        &[(Path::new("src/lib.rs"), "fn one() -> usize { 0 }".into())],
+    );
 
     server_cx.update(HeadlessProject::init);
     let _headless_project =
@@ -52,6 +64,7 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
         assert_eq!(
             worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
             vec![
+                Path::new(".git"),
                 Path::new("README.md"),
                 Path::new("src"),
                 Path::new("src/lib.rs"),
@@ -69,6 +82,10 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
         .unwrap();
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
+        assert_eq!(
+            buffer.diff_base().unwrap().to_string(),
+            "fn one() -> usize { 0 }"
+        );
         let ix = buffer.text().find('1').unwrap();
         buffer.edit([(ix..ix + 1, "100")], None, cx);
     });
@@ -76,7 +93,7 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
     // The user saves the buffer. The new contents are written to the
     // remote filesystem.
     project
-        .update(cx, |project, cx| project.save_buffer(buffer, cx))
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
         .await
         .unwrap();
     assert_eq!(
@@ -98,11 +115,37 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
         assert_eq!(
             worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
             vec![
+                Path::new(".git"),
                 Path::new("README.md"),
                 Path::new("src"),
                 Path::new("src/lib.rs"),
                 Path::new("src/main.rs"),
             ]
+        );
+    });
+
+    // A file that is currently open in a buffer is renamed.
+    fs.rename(
+        "/code/project1/src/lib.rs".as_ref(),
+        "/code/project1/src/lib2.rs".as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(&**buffer.file().unwrap().path(), Path::new("src/lib2.rs"));
+    });
+
+    fs.set_index_for_repo(
+        Path::new("/code/project1/.git"),
+        &[(Path::new("src/lib2.rs"), "fn one() -> usize { 100 }".into())],
+    );
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer.diff_base().unwrap().to_string(),
+            "fn one() -> usize { 100 }"
         );
     });
 }

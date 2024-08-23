@@ -21,7 +21,7 @@ test-support = [
     "collections/test-support",
     "editor/test-support",
     "gpui/test-support",
-    "http/test-support",
+    "http_client/test-support",
     "project/test-support",
     "settings/test-support",
     "util/test-support",
@@ -36,6 +36,7 @@ command_palette.workspace = true
 dev_server_projects.workspace = true
 extensions_ui.workspace = true
 feedback.workspace = true
+feature_flags.workspace = true
 gpui.workspace = true
 notifications.workspace = true
 project.workspace = true
@@ -61,12 +62,12 @@ client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-http = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
-tree-sitter-markdown.workspace = true
+tree-sitter-md.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

@@ -6,7 +6,7 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
 use chrono::Local;
-use gpui::{AppContext, Task, WeakView};
+use gpui::{Task, WeakView};
 use language::LspAdapterDelegate;
 use ui::prelude::*;
 use workspace::Workspace;
@@ -32,19 +32,19 @@ impl SlashCommand for NowSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
 
     fn run(
         self: Arc<Self>,
-        _argument: Option<&str>,
+        _arguments: &[String],
         _workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let now = Local::now();

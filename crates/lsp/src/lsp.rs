@@ -389,7 +389,7 @@ impl LanguageServer {
             notification_handlers,
             response_handlers,
             io_handlers,
-            name: "".into(),
+            name: Arc::default(),
             capabilities: Default::default(),
             code_action_kinds,
             next_id: Default::default(),

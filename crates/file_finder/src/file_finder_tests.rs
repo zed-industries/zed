@@ -226,13 +226,13 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
             .latest_search_query
             .as_ref()
             .expect("Finder should have a query after the update_matches call");
-        assert_eq!(latest_search_query.path_like.raw_query, query_inside_file);
+        assert_eq!(latest_search_query.raw_query, query_inside_file);
+        assert_eq!(latest_search_query.file_query_end, Some(file_query.len()));
+        assert_eq!(latest_search_query.path_position.row, Some(file_row));
         assert_eq!(
-            latest_search_query.path_like.file_query_end,
-            Some(file_query.len())
+            latest_search_query.path_position.column,
+            Some(file_column as u32)
         );
-        assert_eq!(latest_search_query.row, Some(file_row));
-        assert_eq!(latest_search_query.column, Some(file_column as u32));
     });
 
     cx.dispatch_action(SelectNext);
@@ -301,13 +301,13 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
             .latest_search_query
             .as_ref()
             .expect("Finder should have a query after the update_matches call");
-        assert_eq!(latest_search_query.path_like.raw_query, query_outside_file);
+        assert_eq!(latest_search_query.raw_query, query_outside_file);
+        assert_eq!(latest_search_query.file_query_end, Some(file_query.len()));
+        assert_eq!(latest_search_query.path_position.row, Some(file_row));
         assert_eq!(
-            latest_search_query.path_like.file_query_end,
-            Some(file_query.len())
+            latest_search_query.path_position.column,
+            Some(file_column as u32)
         );
-        assert_eq!(latest_search_query.row, Some(file_row));
-        assert_eq!(latest_search_query.column, Some(file_column as u32));
     });
 
     cx.dispatch_action(SelectNext);
@@ -357,7 +357,7 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
 
     let (picker, _, cx) = build_find_picker(project, cx);
 
-    let query = test_path_like("hi");
+    let query = test_path_position("hi");
     picker
         .update(cx, |picker, cx| {
             picker.delegate.spawn_search(query.clone(), cx)
@@ -450,7 +450,7 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
 
     picker
         .update(cx, |picker, cx| {
-            picker.delegate.spawn_search(test_path_like("hi"), cx)
+            picker.delegate.spawn_search(test_path_position("hi"), cx)
         })
         .await;
     picker.update(cx, |picker, _| assert_eq!(picker.delegate.matches.len(), 7));
@@ -478,7 +478,7 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
     // is included in the matching, because the worktree is a single file.
     picker
         .update(cx, |picker, cx| {
-            picker.delegate.spawn_search(test_path_like("thf"), cx)
+            picker.delegate.spawn_search(test_path_position("thf"), cx)
         })
         .await;
     cx.read(|cx| {
@@ -499,7 +499,7 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
     // not match anything.
     picker
         .update(cx, |f, cx| {
-            f.delegate.spawn_search(test_path_like("thf/"), cx)
+            f.delegate.spawn_search(test_path_position("thf/"), cx)
         })
         .await;
     picker.update(cx, |f, _| assert_eq!(f.delegate.matches.len(), 0));
@@ -548,7 +548,7 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     let finder = open_file_picker(&workspace, cx);
     finder
         .update(cx, |f, cx| {
-            f.delegate.spawn_search(test_path_like("a.txt"), cx)
+            f.delegate.spawn_search(test_path_position("a.txt"), cx)
         })
         .await;
 
@@ -581,7 +581,7 @@ async fn test_search_worktree_without_files(cx: &mut TestAppContext) {
 
     picker
         .update(cx, |f, cx| {
-            f.delegate.spawn_search(test_path_like("dir"), cx)
+            f.delegate.spawn_search(test_path_position("dir"), cx)
         })
         .await;
     cx.read(|cx| {
@@ -1496,7 +1496,7 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
     let project = Project::test(app_state.fs.clone(), ["/test/project_1".as_ref()], cx).await;
     let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
     let worktree_1_id = project.update(cx, |project, cx| {
-        let worktree = project.worktrees().last().expect("worktree not found");
+        let worktree = project.worktrees(cx).last().expect("worktree not found");
         worktree.read(cx).id()
     });
 
@@ -1854,18 +1854,18 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     })
 }
 
-fn test_path_like(test_str: &str) -> PathLikeWithPosition<FileSearchQuery> {
-    PathLikeWithPosition::parse_str(test_str, |normalized_query, path_like_str| {
-        Ok::<_, std::convert::Infallible>(FileSearchQuery {
-            raw_query: normalized_query.to_owned(),
-            file_query_end: if path_like_str == test_str {
-                None
-            } else {
-                Some(path_like_str.len())
-            },
-        })
-    })
-    .unwrap()
+fn test_path_position(test_str: &str) -> FileSearchQuery {
+    let path_position = PathWithPosition::parse_str(&test_str);
+
+    FileSearchQuery {
+        raw_query: test_str.to_owned(),
+        file_query_end: if path_position.path.to_str().unwrap() == test_str {
+            None
+        } else {
+            Some(path_position.path.to_str().unwrap().len())
+        },
+        path_position,
+    }
 }
 
 fn build_find_picker(

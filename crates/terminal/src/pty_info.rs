@@ -38,9 +38,9 @@ impl ProcessIdGetter {
     fn new(pty: &Pty) -> ProcessIdGetter {
         let child = pty.child_watcher();
         let handle = child.raw_handle();
-        let fallback_pid = child
-            .pid()
-            .unwrap_or_else(|| unsafe { NonZeroU32::new_unchecked(GetProcessId(HANDLE(handle))) });
+        let fallback_pid = child.pid().unwrap_or_else(|| unsafe {
+            NonZeroU32::new_unchecked(GetProcessId(HANDLE(handle as _)))
+        });
 
         ProcessIdGetter {
             handle: handle as i32,

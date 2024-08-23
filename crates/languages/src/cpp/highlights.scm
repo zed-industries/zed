@@ -1,4 +1,5 @@
 (identifier) @variable
+(field_identifier) @property
 
 (call_expression
   function: (qualified_identifier
@@ -30,6 +31,11 @@
 (function_declarator
   declarator: (field_identifier) @function)
 
+(operator_name
+  (identifier)? @operator) @function
+
+(destructor_name (identifier) @function)
+
 ((namespace_identifier) @type
  (#match? @type "^[A-Z]"))
 
@@ -39,11 +45,13 @@
 ((identifier) @constant
  (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
-(field_identifier) @property
 (statement_identifier) @label
 (this) @variable.special
+("static_assert") @function.builtin
 
 [
+  "alignas"
+  "alignof"
   "break"
   "case"
   "catch"
@@ -51,9 +59,10 @@
   "co_await"
   "co_return"
   "co_yield"
-  "const"
+  "concept"
   "constexpr"
   "continue"
+  "decltype"
   "default"
   "delete"
   "do"
@@ -65,9 +74,7 @@
   "for"
   "friend"
   "if"
-  "if"
   "inline"
-  "mutable"
   "namespace"
   "new"
   "noexcept"
@@ -75,9 +82,9 @@
   "private"
   "protected"
   "public"
+  "requires"
   "return"
   "sizeof"
-  "static"
   "struct"
   "switch"
   "template"
@@ -87,12 +94,12 @@
   "typename"
   "union"
   "using"
-  "virtual"
-  "volatile"
   "while"
   (primitive_type)
   (sized_type_specifier)
+  (storage_class_specifier)
   (type_qualifier)
+  (virtual)
 ] @keyword
 
 [
@@ -126,8 +133,11 @@
 ] @string
 
 [
-  "."
+  ","
+  ":"
+  "::"
   ";"
+  (raw_string_delimiter)
 ] @punctuation.delimiter
 
 [
@@ -140,20 +150,47 @@
 ] @punctuation.bracket
 
 [
-  "--"
+  "."
+  ".*"
+  "->*"
+  "~"
   "-"
+  "--"
   "-="
   "->"
   "="
+  "!"
   "!="
-  "*"
+  "|"
+  "|="
+  "||"
+  "^"
+  "^="
   "&"
+  "&="
   "&&"
   "+"
   "++"
   "+="
+  "*"
+  "*="
+  "/"
+  "/="
+  "%"
+  "%="
+  "<<"
+  "<<="
+  ">>"
+  ">>="
   "<"
   "=="
   ">"
+  "<="
+  ">="
+  "<=>"
   "||"
+  "?"
 ] @operator
+
+(conditional_expression ":" @operator)
+(user_defined_literal (literal_suffix) @operator)

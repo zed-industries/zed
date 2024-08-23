@@ -75,7 +75,7 @@ impl ProjectSlashCommand {
     }
 
     fn path_to_cargo_toml(project: Model<Project>, cx: &mut AppContext) -> Option<Arc<Path>> {
-        let worktree = project.read(cx).worktrees().next()?;
+        let worktree = project.read(cx).worktrees(cx).next()?;
         let worktree = worktree.read(cx);
         let entry = worktree.entry_for_path("Cargo.toml")?;
         let path = ProjectPath {
@@ -103,10 +103,10 @@ impl SlashCommand for ProjectSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }
@@ -117,9 +117,9 @@ impl SlashCommand for ProjectSlashCommand {
 
     fn run(
         self: Arc<Self>,
-        _argument: Option<&str>,
+        _arguments: &[String],
         workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
         let output = workspace.update(cx, |workspace, cx| {

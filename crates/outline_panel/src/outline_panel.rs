@@ -457,7 +457,9 @@ impl OutlinePanel {
     }
 
     fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
-        if let Some(selected_entry) = self.selected_entry.clone() {
+        if self.filter_editor.focus_handle(cx).is_focused(cx) {
+            cx.propagate()
+        } else if let Some(selected_entry) = self.selected_entry.clone() {
             self.open_entry(&selected_entry, cx);
         }
     }
@@ -1065,7 +1067,7 @@ impl OutlinePanel {
             .and_then(|entry| self.abs_path(&entry, cx))
             .map(|p| p.to_string_lossy().to_string())
         {
-            cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
+            cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
         }
     }
 
@@ -1080,7 +1082,7 @@ impl OutlinePanel {
             })
             .map(|p| p.to_string_lossy().to_string())
         {
-            cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
+            cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
         }
     }
 
@@ -2783,7 +2785,7 @@ impl Panel for OutlinePanel {
         settings::update_settings_file::<OutlinePanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings| {
+            move |settings, _| {
                 let dock = match position {
                     DockPosition::Left | DockPosition::Bottom => OutlinePanelDockPosition::Left,
                     DockPosition::Right => OutlinePanelDockPosition::Right,
@@ -2885,7 +2887,7 @@ impl Render for OutlinePanel {
             .on_action(cx.listener(Self::copy_relative_path))
             .on_action(cx.listener(Self::unfold_directory))
             .on_action(cx.listener(Self::fold_directory))
-            .when(project.is_local(), |el| {
+            .when(project.is_local_or_ssh(), |el| {
                 el.on_action(cx.listener(Self::reveal_in_finder))
                     .on_action(cx.listener(Self::open_in_terminal))
             })

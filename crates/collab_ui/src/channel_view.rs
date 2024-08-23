@@ -280,7 +280,7 @@ impl ChannelView {
         };
 
         let link = channel.notes_link(closest_heading.map(|heading| heading.text), cx);
-        cx.write_to_clipboard(ClipboardItem::new(link));
+        cx.write_to_clipboard(ClipboardItem::new_string(link));
         self.workspace
             .update(cx, |workspace, cx| {
                 struct CopyLinkForPositionToast;

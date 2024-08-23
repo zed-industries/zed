@@ -21,7 +21,7 @@ collections.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
-lazy_static.workspace = true
+log.workspace = true
 paths.workspace = true
 release_channel.workspace = true
 rust-embed.workspace = true
@@ -31,7 +31,7 @@ serde_derive.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 smallvec.workspace = true
-tree-sitter-json = "*"
+tree-sitter-json.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
 

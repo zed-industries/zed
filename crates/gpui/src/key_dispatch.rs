@@ -51,7 +51,7 @@
 ///
 use crate::{
     Action, ActionRegistry, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
-    KeymatchResult, Keystroke, KeystrokeMatcher, ModifiersChangedEvent, WindowContext,
+    Keystroke, ModifiersChangedEvent, WindowContext,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
@@ -73,7 +73,6 @@ pub(crate) struct DispatchTree {
     nodes: Vec<DispatchNode>,
     focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
     view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
-    keystroke_matchers: FxHashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
     keymap: Rc<RefCell<Keymap>>,
     action_registry: Rc<ActionRegistry>,
 }
@@ -111,6 +110,19 @@ impl ReusedSubtree {
     }
 }
 
+#[derive(Default, Debug)]
+pub(crate) struct Replay {
+    pub(crate) keystroke: Keystroke,
+    pub(crate) bindings: SmallVec<[KeyBinding; 1]>,
+}
+
+#[derive(Default, Debug)]
+pub(crate) struct DispatchResult {
+    pub(crate) pending: SmallVec<[Keystroke; 1]>,
+    pub(crate) bindings: SmallVec<[KeyBinding; 1]>,
+    pub(crate) to_replay: SmallVec<[Replay; 1]>,
+}
+
 type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext)>;
 type ModifiersChangedListener = Rc<dyn Fn(&ModifiersChangedEvent, &mut WindowContext)>;
 
@@ -129,7 +141,6 @@ impl DispatchTree {
             nodes: Vec::new(),
             focusable_node_ids: FxHashMap::default(),
             view_node_ids: FxHashMap::default(),
-            keystroke_matchers: FxHashMap::default(),
             keymap,
             action_registry,
         }
@@ -142,7 +153,6 @@ impl DispatchTree {
         self.nodes.clear();
         self.focusable_node_ids.clear();
         self.view_node_ids.clear();
-        self.keystroke_matchers.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -310,33 +320,6 @@ impl DispatchTree {
         self.nodes.truncate(index);
     }
 
-    pub fn clear_pending_keystrokes(&mut self) {
-        self.keystroke_matchers.clear();
-    }
-
-    /// Preserve keystroke matchers from previous frames to support multi-stroke
-    /// bindings across multiple frames.
-    pub fn preserve_pending_keystrokes(&mut self, old_tree: &mut Self, focus_id: Option<FocusId>) {
-        if let Some(node_id) = focus_id.and_then(|focus_id| self.focusable_node_id(focus_id)) {
-            let dispatch_path = self.dispatch_path(node_id);
-
-            self.context_stack.clear();
-            for node_id in dispatch_path {
-                let node = self.node(node_id);
-                if let Some(context) = node.context.clone() {
-                    self.context_stack.push(context);
-                }
-
-                if let Some((context_stack, matcher)) = old_tree
-                    .keystroke_matchers
-                    .remove_entry(self.context_stack.as_slice())
-                {
-                    self.keystroke_matchers.insert(context_stack, matcher);
-                }
-            }
-        }
-    }
-
     pub fn on_key_event(&mut self, listener: KeyListener) {
         self.active_node().key_listeners.push(listener);
     }
@@ -419,74 +402,110 @@ impl DispatchTree {
         keymap
             .bindings_for_action(action)
             .filter(|binding| {
-                for i in 0..context_stack.len() {
-                    let context = &context_stack[0..=i];
-                    if keymap.binding_enabled(binding, context) {
-                        return true;
-                    }
-                }
-                false
+                let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, &context_stack);
+                bindings
+                    .iter()
+                    .next()
+                    .is_some_and(|b| b.action.partial_eq(action))
             })
             .cloned()
             .collect()
     }
 
-    // dispatch_key pushes the next keystroke into any key binding matchers.
-    // any matching bindings are returned in the order that they should be dispatched:
-    // * First by length of binding (so if you have a binding for "b" and "ab", the "ab" binding fires first)
-    // * Secondly by depth in the tree (so if Editor has a binding for "b" and workspace a
-    // binding for "b", the Editor action fires first).
-    pub fn dispatch_key(
-        &mut self,
-        keystroke: &Keystroke,
+    fn bindings_for_input(
+        &self,
+        input: &[Keystroke],
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
-    ) -> KeymatchResult {
-        let mut bindings = SmallVec::<[KeyBinding; 1]>::new();
-        let mut pending = false;
+    ) -> (SmallVec<[KeyBinding; 1]>, bool) {
+        let context_stack: SmallVec<[KeyContext; 4]> = dispatch_path
+            .iter()
+            .filter_map(|node_id| self.node(*node_id).context.clone())
+            .collect();
 
-        let mut context_stack: SmallVec<[KeyContext; 4]> = SmallVec::new();
-        for node_id in dispatch_path {
-            let node = self.node(*node_id);
-
-            if let Some(context) = node.context.clone() {
-                context_stack.push(context);
-            }
-        }
-
-        while !context_stack.is_empty() {
-            let keystroke_matcher = self
-                .keystroke_matchers
-                .entry(context_stack.clone())
-                .or_insert_with(|| KeystrokeMatcher::new(self.keymap.clone()));
-
-            let result = keystroke_matcher.match_keystroke(keystroke, &context_stack);
-            if result.pending && !pending && !bindings.is_empty() {
-                context_stack.pop();
-                continue;
-            }
-
-            pending = result.pending || pending;
-            for new_binding in result.bindings {
-                match bindings
-                    .iter()
-                    .position(|el| el.keystrokes.len() < new_binding.keystrokes.len())
-                {
-                    Some(idx) => {
-                        bindings.insert(idx, new_binding);
-                    }
-                    None => bindings.push(new_binding),
-                }
-            }
-            context_stack.pop();
-        }
-
-        KeymatchResult { bindings, pending }
+        self.keymap
+            .borrow()
+            .bindings_for_input(&input, &context_stack)
     }
 
-    pub fn has_pending_keystrokes(&self) -> bool {
-        self.keystroke_matchers
-            .iter()
-            .any(|(_, matcher)| matcher.has_pending_keystrokes())
+    /// dispatch_key processes the keystroke
+    /// input should be set to the value of `pending` from the previous call to dispatch_key.
+    /// This returns three instructions to the input handler:
+    /// - bindings: any bindings to execute before processing this keystroke
+    /// - pending: the new set of pending keystrokes to store
+    /// - to_replay: any keystroke that had been pushed to pending, but are no-longer matched,
+    ///   these should be replayed first.
+    pub fn dispatch_key(
+        &mut self,
+        mut input: SmallVec<[Keystroke; 1]>,
+        keystroke: Keystroke,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) -> DispatchResult {
+        input.push(keystroke.clone());
+        let (bindings, pending) = self.bindings_for_input(&input, dispatch_path);
+
+        if pending {
+            return DispatchResult {
+                pending: input,
+                ..Default::default()
+            };
+        } else if !bindings.is_empty() {
+            return DispatchResult {
+                bindings,
+                ..Default::default()
+            };
+        } else if input.len() == 1 {
+            return DispatchResult::default();
+        }
+        input.pop();
+
+        let (suffix, mut to_replay) = self.replay_prefix(input, dispatch_path);
+
+        let mut result = self.dispatch_key(suffix, keystroke, dispatch_path);
+        to_replay.extend(result.to_replay);
+        result.to_replay = to_replay;
+        return result;
+    }
+
+    /// If the user types a matching prefix of a binding and then waits for a timeout
+    /// flush_dispatch() converts any previously pending input to replay events.
+    pub fn flush_dispatch(
+        &mut self,
+        input: SmallVec<[Keystroke; 1]>,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) -> SmallVec<[Replay; 1]> {
+        let (suffix, mut to_replay) = self.replay_prefix(input, dispatch_path);
+
+        if suffix.len() > 0 {
+            to_replay.extend(self.flush_dispatch(suffix, dispatch_path))
+        }
+
+        to_replay
+    }
+
+    /// Converts the longest prefix of input to a replay event and returns the rest.
+    fn replay_prefix(
+        &mut self,
+        mut input: SmallVec<[Keystroke; 1]>,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) -> (SmallVec<[Keystroke; 1]>, SmallVec<[Replay; 1]>) {
+        let mut to_replay: SmallVec<[Replay; 1]> = Default::default();
+        for last in (0..input.len()).rev() {
+            let (bindings, _) = self.bindings_for_input(&input[0..=last], dispatch_path);
+            if !bindings.is_empty() {
+                to_replay.push(Replay {
+                    keystroke: input.drain(0..=last).last().unwrap(),
+                    bindings,
+                });
+                break;
+            }
+        }
+        if to_replay.is_empty() {
+            to_replay.push(Replay {
+                keystroke: input.remove(0),
+                ..Default::default()
+            });
+        }
+        (input, to_replay)
     }
 
     pub fn dispatch_path(&self, target: DispatchNodeId) -> SmallVec<[DispatchNodeId; 32]> {

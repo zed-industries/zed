@@ -7,13 +7,13 @@ use std::{
 };
 
 use ::fs::{copy_recursive, CopyOptions, Fs, RealFs};
+use ::http_client::HttpClientWithProxy;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use extension::{
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
     ExtensionManifest,
 };
-use http::HttpClientWithProxy;
 use language::LanguageConfig;
 use theme::ThemeRegistry;
 use tree_sitter::{Language, Query, WasmStore};
@@ -60,7 +60,13 @@ async fn main() -> Result<()> {
 
     log::info!("compiling extension");
 
-    let http_client = Arc::new(HttpClientWithProxy::new(None));
+    let user_agent = format!(
+        "Zed Extension CLI/{} ({}; {})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    let http_client = Arc::new(HttpClientWithProxy::new(Some(user_agent), None));
     let builder = ExtensionBuilder::new(http_client, scratch_dir);
     builder
         .compile_extension(
