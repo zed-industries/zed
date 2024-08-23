@@ -116,7 +116,7 @@ fn scroll_editor(
                 DisplayRow(top.row().0 + vertical_scroll_margin)
             };
             let max_row = DisplayRow(map.max_point().row().0.max(top.row().0.saturating_add(
-                (visible_line_count as u32).saturating_sub((1 + vertical_scroll_margin) as u32),
+                (visible_line_count as u32).saturating_sub(1 + vertical_scroll_margin),
             )));
 
             let new_row = if head.row() < min_row {
