@@ -108,11 +108,11 @@ pub struct OutlinePanel {
     cached_entries_update_task: Task<()>,
     outline_fetch_tasks: HashMap<(BufferId, ExcerptId), Task<()>>,
     excerpts: HashMap<BufferId, HashMap<ExcerptId, Excerpt>>,
-    search_matches: Vec<Range<editor::Anchor>>,
-    cached_entries_with_depth: Vec<CachedEntry>,
+    cached_entries: Vec<CachedEntry>,
     filter_editor: View<Editor>,
     mode: ItemsDisplayMode,
-    search_query: Option<String>,
+    search: Option<(SearchKind, String)>,
+    search_matches: Vec<Range<editor::Anchor>>,
 }
 
 #[derive(Debug)]
@@ -211,7 +211,21 @@ enum PanelEntry {
     Fs(FsEntry),
     FoldedDirs(WorktreeId, Vec<Entry>),
     Outline(OutlineEntry),
-    Search(Range<editor::Anchor>, OnceCell<SearchData>),
+    Search(SearchEntry),
+}
+
+#[derive(Clone, Debug)]
+struct SearchEntry {
+    match_range: Range<editor::Anchor>,
+    same_line_matches: Vec<Range<editor::Anchor>>,
+    kind: SearchKind,
+    render_data: Option<OnceCell<SearchData>>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum SearchKind {
+    Project,
+    Buffer,
 }
 
 #[derive(Clone, Debug)]
@@ -228,7 +242,18 @@ impl PartialEq for PanelEntry {
             (Self::Fs(a), Self::Fs(b)) => a == b,
             (Self::FoldedDirs(a1, a2), Self::FoldedDirs(b1, b2)) => a1 == b1 && a2 == b2,
             (Self::Outline(a), Self::Outline(b)) => a == b,
-            (Self::Search(a, _), Self::Search(b, _)) => a == b,
+            (
+                Self::Search(SearchEntry {
+                    match_range: match_range_a,
+                    kind: kind_a,
+                    ..
+                }),
+                Self::Search(SearchEntry {
+                    match_range: match_range_b,
+                    kind: kind_b,
+                    ..
+                }),
+            ) => match_range_a == match_range_b && kind_a == kind_b,
             _ => false,
         }
     }
@@ -449,7 +474,7 @@ impl OutlinePanel {
                 filter_editor,
                 fs_entries: Vec::new(),
                 search_matches: Vec::new(),
-                search_query: None,
+                search: None,
                 fs_entries_depth: HashMap::default(),
                 fs_children_count: HashMap::default(),
                 collapsed_entries: HashSet::default(),
@@ -464,7 +489,7 @@ impl OutlinePanel {
                 cached_entries_update_task: Task::ready(()),
                 outline_fetch_tasks: HashMap::default(),
                 excerpts: HashMap::default(),
-                cached_entries_with_depth: Vec::new(),
+                cached_entries: Vec::new(),
                 _subscriptions: vec![
                     settings_subscription,
                     icons_subscription,
@@ -630,7 +655,9 @@ impl OutlinePanel {
                     .anchor_in_excerpt(*excerpt_id, excerpt_range.context.start);
                 Some(Point::default()).zip(scroll_target)
             }
-            PanelEntry::Search(match_range, _) => Some((Point::default(), match_range.start)),
+            PanelEntry::Search(SearchEntry { match_range, .. }) => {
+                Some((Point::default(), match_range.start))
+            }
         };
 
         if let Some((offset, anchor)) = scroll_target {
@@ -649,7 +676,7 @@ impl OutlinePanel {
                 self.focus_handle.focus(cx);
             }
 
-            if let PanelEntry::Search(..) = entry {
+            if let PanelEntry::Search(_) = entry {
                 if let Some(active_project_search) =
                     self.active_project_search(Some(&active_editor), cx)
                 {
@@ -667,7 +694,7 @@ impl OutlinePanel {
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         if let Some(entry_to_select) = self.selected_entry().and_then(|selected_entry| {
-            self.cached_entries_with_depth
+            self.cached_entries
                 .iter()
                 .map(|cached_entry| &cached_entry.entry)
                 .skip_while(|entry| entry != &selected_entry)
@@ -683,7 +710,7 @@ impl OutlinePanel {
 
     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
         if let Some(entry_to_select) = self.selected_entry().and_then(|selected_entry| {
-            self.cached_entries_with_depth
+            self.cached_entries
                 .iter()
                 .rev()
                 .map(|cached_entry| &cached_entry.entry)
@@ -701,7 +728,7 @@ impl OutlinePanel {
     fn select_parent(&mut self, _: &SelectParent, cx: &mut ViewContext<Self>) {
         if let Some(entry_to_select) = self.selected_entry().and_then(|selected_entry| {
             let mut previous_entries = self
-                .cached_entries_with_depth
+                .cached_entries
                 .iter()
                 .rev()
                 .map(|cached_entry| &cached_entry.entry)
@@ -773,8 +800,8 @@ impl OutlinePanel {
                         false
                     }
                 }),
-                PanelEntry::Search(..) => {
-                    previous_entries.find(|entry| !matches!(entry, PanelEntry::Search(..)))
+                PanelEntry::Search(_) => {
+                    previous_entries.find(|entry| !matches!(entry, PanelEntry::Search(_)))
                 }
             }
         }) {
@@ -785,14 +812,14 @@ impl OutlinePanel {
     }
 
     fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
-        if let Some(first_entry) = self.cached_entries_with_depth.iter().next() {
+        if let Some(first_entry) = self.cached_entries.iter().next() {
             self.select_entry(first_entry.entry.clone(), true, cx);
         }
     }
 
     fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
         if let Some(new_selection) = self
-            .cached_entries_with_depth
+            .cached_entries
             .iter()
             .rev()
             .map(|cached_entry| &cached_entry.entry)
@@ -805,7 +832,7 @@ impl OutlinePanel {
     fn autoscroll(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(selected_entry) = self.selected_entry() {
             let index = self
-                .cached_entries_with_depth
+                .cached_entries
                 .iter()
                 .position(|cached_entry| &cached_entry.entry == selected_entry);
             if let Some(index) = index {
@@ -854,7 +881,7 @@ impl OutlinePanel {
                 cx.notify();
                 return;
             }
-            PanelEntry::Search(..) => {
+            PanelEntry::Search(_) => {
                 cx.notify();
                 return;
             }
@@ -943,7 +970,7 @@ impl OutlinePanel {
             Some(PanelEntry::Outline(OutlineEntry::Excerpt(buffer_id, excerpt_id, _))) => {
                 Some(CollapsedEntry::Excerpt(*buffer_id, *excerpt_id))
             }
-            None | Some(PanelEntry::Search(..)) | Some(PanelEntry::Outline(..)) => None,
+            None | Some(PanelEntry::Search(_)) | Some(PanelEntry::Outline(..)) => None,
         };
         let Some(collapsed_entry) = entry_to_expand else {
             return;
@@ -1004,7 +1031,7 @@ impl OutlinePanel {
                     self.update_cached_entries(None, cx);
                 }
             }
-            PanelEntry::Search(..) | PanelEntry::Outline(..) => {}
+            PanelEntry::Search(_) | PanelEntry::Outline(..) => {}
         }
     }
 
@@ -1047,7 +1074,7 @@ impl OutlinePanel {
 
     pub fn collapse_all_entries(&mut self, _: &CollapseAllEntries, cx: &mut ViewContext<Self>) {
         let new_entries = self
-            .cached_entries_with_depth
+            .cached_entries
             .iter()
             .flat_map(|cached_entry| match &cached_entry.entry {
                 PanelEntry::Fs(FsEntry::Directory(worktree_id, entry)) => {
@@ -1065,7 +1092,7 @@ impl OutlinePanel {
                 PanelEntry::Outline(OutlineEntry::Excerpt(buffer_id, excerpt_id, _)) => {
                     Some(CollapsedEntry::Excerpt(*buffer_id, *excerpt_id))
                 }
-                PanelEntry::Search(..) | PanelEntry::Outline(..) => None,
+                PanelEntry::Search(_) | PanelEntry::Outline(..) => None,
             })
             .collect::<Vec<_>>();
         self.collapsed_entries.extend(new_entries);
@@ -1121,7 +1148,7 @@ impl OutlinePanel {
                     self.collapsed_entries.insert(collapsed_entry);
                 }
             }
-            PanelEntry::Search(..) | PanelEntry::Outline(..) => return,
+            PanelEntry::Search(_) | PanelEntry::Outline(..) => return,
         }
 
         self.select_entry(entry.clone(), true, cx);
@@ -1144,7 +1171,7 @@ impl OutlinePanel {
             .and_then(|entry| match entry {
                 PanelEntry::Fs(entry) => self.relative_path(&entry, cx),
                 PanelEntry::FoldedDirs(_, dirs) => dirs.last().map(|entry| entry.path.clone()),
-                PanelEntry::Search(..) | PanelEntry::Outline(..) => None,
+                PanelEntry::Search(_) | PanelEntry::Outline(..) => None,
             })
             .map(|p| p.to_string_lossy().to_string())
         {
@@ -1231,7 +1258,7 @@ impl OutlinePanel {
                 })
             }
             PanelEntry::Fs(FsEntry::ExternalFile(..)) => None,
-            PanelEntry::Search(match_range, _) => match_range
+            PanelEntry::Search(SearchEntry { match_range, .. }) => match_range
                 .start
                 .buffer_id
                 .or(match_range.end.buffer_id)
@@ -1592,6 +1619,7 @@ impl OutlinePanel {
         &self,
         match_range: &Range<editor::Anchor>,
         search_data: &SearchData,
+        kind: SearchKind,
         depth: usize,
         string_match: Option<&StringMatch>,
         cx: &mut ViewContext<Self>,
@@ -1621,11 +1649,19 @@ impl OutlinePanel {
         .into_any_element();
 
         let is_active = match self.selected_entry() {
-            Some(PanelEntry::Search(selected_range, _)) => match_range == selected_range,
+            Some(PanelEntry::Search(SearchEntry {
+                match_range: selected_match_range,
+                ..
+            })) => match_range == selected_match_range,
             _ => false,
         };
         self.entry_element(
-            PanelEntry::Search(match_range.clone(), OnceCell::new()),
+            PanelEntry::Search(SearchEntry {
+                kind,
+                match_range: match_range.clone(),
+                same_line_matches: Vec::new(),
+                render_data: Some(OnceCell::new()),
+            }),
             ElementId::from(SharedString::from(format!("search-{match_range:?}"))),
             depth,
             None,
@@ -2098,9 +2134,9 @@ impl OutlinePanel {
         self.fs_children_count.clear();
         self.outline_fetch_tasks.clear();
         self.excerpts.clear();
-        self.cached_entries_with_depth = Vec::new();
+        self.cached_entries = Vec::new();
         self.search_matches.clear();
-        self.search_query = None;
+        self.search = None;
         self.pinned = false;
     }
 
@@ -2145,8 +2181,26 @@ impl OutlinePanel {
                     };
                     start_distance + end_distance
                 })
-                .cloned()
-                .map(|range| PanelEntry::Search(range, OnceCell::new())),
+                .and_then(|closest_range| {
+                    self.cached_entries.iter().find_map(|cached_entry| {
+                        if let PanelEntry::Search(SearchEntry {
+                            match_range,
+                            same_line_matches,
+                            ..
+                        }) = &cached_entry.entry
+                        {
+                            if match_range == closest_range
+                                || same_line_matches.contains(&closest_range)
+                            {
+                                Some(cached_entry.entry.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                }),
             ItemsDisplayMode::Outline => self.outline_location(
                 buffer_id,
                 excerpt_id,
@@ -2257,34 +2311,34 @@ impl OutlinePanel {
             Some(outline) => {
                 PanelEntry::Outline(OutlineEntry::Outline(buffer_id, excerpt_id, outline))
             }
-            None => self
-                .cached_entries_with_depth
-                .iter()
-                .rev()
-                .find_map(|cached_entry| match &cached_entry.entry {
-                    PanelEntry::Outline(OutlineEntry::Excerpt(
-                        entry_buffer_id,
-                        entry_excerpt_id,
-                        _,
-                    )) => {
-                        if entry_buffer_id == &buffer_id && entry_excerpt_id == &excerpt_id {
-                            Some(cached_entry.entry.clone())
-                        } else {
-                            None
+            None => {
+                self.cached_entries.iter().rev().find_map(|cached_entry| {
+                    match &cached_entry.entry {
+                        PanelEntry::Outline(OutlineEntry::Excerpt(
+                            entry_buffer_id,
+                            entry_excerpt_id,
+                            _,
+                        )) => {
+                            if entry_buffer_id == &buffer_id && entry_excerpt_id == &excerpt_id {
+                                Some(cached_entry.entry.clone())
+                            } else {
+                                None
+                            }
                         }
-                    }
-                    PanelEntry::Fs(
-                        FsEntry::ExternalFile(file_buffer_id, file_excerpts)
-                        | FsEntry::File(_, _, file_buffer_id, file_excerpts),
-                    ) => {
-                        if file_buffer_id == &buffer_id && file_excerpts.contains(&excerpt_id) {
-                            Some(cached_entry.entry.clone())
-                        } else {
-                            None
+                        PanelEntry::Fs(
+                            FsEntry::ExternalFile(file_buffer_id, file_excerpts)
+                            | FsEntry::File(_, _, file_buffer_id, file_excerpts),
+                        ) => {
+                            if file_buffer_id == &buffer_id && file_excerpts.contains(&excerpt_id) {
+                                Some(cached_entry.entry.clone())
+                            } else {
+                                None
+                            }
                         }
+                        _ => None,
                     }
-                    _ => None,
-                })?,
+                })?
+            }
         };
         Some(closest_container)
     }
@@ -2443,7 +2497,7 @@ impl OutlinePanel {
                     .worktree_for_id(*worktree_id, cx)
                     .and_then(|worktree| worktree.read(cx).absolutize(&entry.path).ok())
             }),
-            PanelEntry::Search(..) | PanelEntry::Outline(..) => None,
+            PanelEntry::Search(_) | PanelEntry::Outline(..) => None,
         }
     }
 
@@ -2480,7 +2534,7 @@ impl OutlinePanel {
             let new_cached_entries = new_cached_entries.await;
             outline_panel
                 .update(&mut cx, |outline_panel, cx| {
-                    outline_panel.cached_entries_with_depth = new_cached_entries;
+                    outline_panel.cached_entries = new_cached_entries;
                     if outline_panel.selected_entry.is_invalidated() {
                         if let Some(new_selected_entry) =
                             outline_panel.active_editor().and_then(|active_editor| {
@@ -2755,7 +2809,7 @@ impl OutlinePanel {
                     if is_singleton
                         && matches!(entry, FsEntry::File(..) | FsEntry::ExternalFile(..))
                         && !entries.iter().any(|item| {
-                            matches!(item.entry, PanelEntry::Outline(..) | PanelEntry::Search(..))
+                            matches!(item.entry, PanelEntry::Outline(..) | PanelEntry::Search(_))
                         })
                     {
                         outline_panel.push_entry(
@@ -2870,8 +2924,12 @@ impl OutlinePanel {
                     }
                     OutlineEntry::Excerpt(..) => {}
                 },
-                PanelEntry::Search(match_range, search_data) => {
-                    if let Some(search_data) = self.init_search_data(match_range, search_data, cx) {
+                PanelEntry::Search(new_search_entry) => {
+                    if let Some(search_data) = new_search_entry
+                        .render_data
+                        .as_ref()
+                        .and_then(|data| data.get())
+                    {
                         match_candidates.push(StringMatchCandidate {
                             id,
                             char_bag: search_data.entire_row_text.chars().collect(),
@@ -2951,19 +3009,23 @@ impl OutlinePanel {
         let mut update_cached_entries = false;
         if buffer_search_matches.is_empty() && project_search_matches.is_empty() {
             self.search_matches.clear();
-            self.search_query = None;
+            self.search = None;
             if self.mode == ItemsDisplayMode::Search {
                 self.mode = ItemsDisplayMode::Outline;
                 update_cached_entries = true;
             }
         } else {
             let new_search_matches = if buffer_search_matches.is_empty() {
-                self.search_query = project_search
-                    .map(|project_search| project_search.read(cx).search_query_text(cx));
+                self.search = project_search.map(|project_search| {
+                    (
+                        SearchKind::Project,
+                        project_search.read(cx).search_query_text(cx),
+                    )
+                });
                 project_search_matches
             } else {
-                self.search_query =
-                    buffer_search.map(|buffer_search| buffer_search.read(cx).query(cx));
+                self.search = buffer_search
+                    .map(|buffer_search| (SearchKind::Buffer, buffer_search.read(cx).query(cx)));
                 buffer_search_matches
             };
             update_cached_entries = self.mode != ItemsDisplayMode::Search
@@ -3081,20 +3143,38 @@ impl OutlinePanel {
         if related_excerpts.is_empty() || self.search_matches.is_empty() {
             return;
         }
+        let Some(kind) = self.search.as_ref().map(|&(kind, _)| kind) else {
+            return;
+        };
 
         for match_range in &self.search_matches {
             if related_excerpts.contains(&match_range.start.excerpt_id)
                 || related_excerpts.contains(&match_range.end.excerpt_id)
             {
                 let depth = if is_singleton { 0 } else { parent_depth + 1 };
-                self.push_entry(
-                    entries,
-                    match_candidates,
-                    track_matches,
-                    PanelEntry::Search(match_range.clone(), OnceCell::new()),
-                    depth,
-                    cx,
-                );
+                let previous_search_entry = entries.last_mut().and_then(|entry| {
+                    if let PanelEntry::Search(previous_search_entry) = &mut entry.entry {
+                        Some(previous_search_entry)
+                    } else {
+                        None
+                    }
+                });
+                let mut new_search_entry = SearchEntry {
+                    kind,
+                    match_range: match_range.clone(),
+                    same_line_matches: Vec::new(),
+                    render_data: Some(OnceCell::new()),
+                };
+                if self.init_search_data(previous_search_entry, &mut new_search_entry, cx) {
+                    self.push_entry(
+                        entries,
+                        match_candidates,
+                        track_matches,
+                        PanelEntry::Search(new_search_entry),
+                        depth,
+                        cx,
+                    );
+                }
             }
         }
     }
@@ -3136,19 +3216,53 @@ impl OutlinePanel {
 
     fn init_search_data<'d>(
         &self,
-        match_range: &Range<editor::Anchor>,
-        search_data: &'d OnceCell<SearchData>,
+        previous_search_entry: Option<&mut SearchEntry>,
+        new_search_entry: &mut SearchEntry,
         cx: &WindowContext,
-    ) -> Option<&'d SearchData> {
-        match search_data.get() {
-            Some(data) => Some(data),
-            None => {
-                let active_editor = self.active_editor()?;
-                let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
-                let theme = cx.theme().syntax().clone();
-                let _ =
-                    search_data.set(SearchData::new(match_range, &multi_buffer_snapshot, &theme));
-                search_data.get()
+    ) -> bool {
+        let Some(active_editor) = self.active_editor() else {
+            return false;
+        };
+        let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
+        let theme = cx.theme().syntax().clone();
+        // TODO kb trim left whitespaces during project search matching,
+
+        let previous_search_data = previous_search_entry.and_then(|previous_search_entry| {
+            let previous_search_data = previous_search_entry.render_data.as_mut()?;
+            previous_search_data.get_or_init(|| {
+                SearchData::new(
+                    &previous_search_entry.match_range,
+                    &multi_buffer_snapshot,
+                    &theme,
+                )
+            });
+            previous_search_data.get_mut()
+        });
+        let new_search_data = new_search_entry.render_data.as_mut().and_then(|data| {
+            data.get_or_init(|| {
+                SearchData::new(
+                    &new_search_entry.match_range,
+                    &multi_buffer_snapshot,
+                    &theme,
+                )
+            });
+            data.get_mut()
+        });
+        match (previous_search_data, new_search_data) {
+            (_, None) => false,
+            (None, Some(_)) => true,
+            (Some(previous_search_data), Some(new_search_data)) => {
+                if previous_search_data.entire_row_range == new_search_data.entire_row_range {
+                    previous_search_data
+                        .highlight_ranges
+                        .extend(new_search_data.highlight_ranges.drain(..));
+                    previous_search_data
+                        .search_match_indices
+                        .extend(new_search_data.search_match_indices.drain(..));
+                    false
+                } else {
+                    true
+                }
             }
         }
     }
@@ -3356,7 +3470,7 @@ impl Render for OutlinePanel {
             )
             .track_focus(&self.focus_handle);
 
-        if self.cached_entries_with_depth.is_empty() {
+        if self.cached_entries.is_empty() {
             let header = if self.updating_fs_entries {
                 "Loading outlines"
             } else if query.is_some() {
@@ -3395,7 +3509,7 @@ impl Render for OutlinePanel {
             )
         } else {
             outline_panel
-                .when_some(self.search_query.as_ref(), |outline_panel, search_query| {
+                .when_some(self.search.as_ref(), |outline_panel, (_, search_query)| {
                     outline_panel.child(
                         div()
                             .mx_2()
@@ -3407,10 +3521,10 @@ impl Render for OutlinePanel {
                     )
                 })
                 .child({
-                    let items_len = self.cached_entries_with_depth.len();
+                    let items_len = self.cached_entries.len();
                     uniform_list(cx.view().clone(), "entries", items_len, {
                         move |outline_panel, range, cx| {
-                            let entries = outline_panel.cached_entries_with_depth.get(range);
+                            let entries = outline_panel.cached_entries.get(range);
                             entries
                                 .map(|entries| entries.to_vec())
                                 .unwrap_or_default()
@@ -3454,17 +3568,22 @@ impl Render for OutlinePanel {
                                         cached_entry.string_match.as_ref(),
                                         cx,
                                     )),
-                                    PanelEntry::Search(match_range, search_data) => outline_panel
-                                        .init_search_data(&match_range, &search_data, cx)
-                                        .map(|search_data| {
-                                            outline_panel.render_search_match(
-                                                &match_range,
-                                                search_data,
-                                                cached_entry.depth,
-                                                cached_entry.string_match.as_ref(),
-                                                cx,
-                                            )
-                                        }),
+                                    PanelEntry::Search(SearchEntry {
+                                        match_range,
+                                        render_data,
+                                        kind,
+                                        same_line_matches: _,
+                                    }) => render_data.as_ref().and_then(|search_data| {
+                                        let search_data = search_data.get()?;
+                                        Some(outline_panel.render_search_match(
+                                            &match_range,
+                                            search_data,
+                                            kind,
+                                            cached_entry.depth,
+                                            cached_entry.string_match.as_ref(),
+                                            cx,
+                                        ))
+                                    }),
                                 })
                                 .collect()
                         }
