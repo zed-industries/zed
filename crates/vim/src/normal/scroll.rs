@@ -149,6 +149,19 @@ mod test {
     use language::Point;
     use settings::SettingsStore;
 
+    pub fn sample_text(rows: usize, cols: usize, start_char: char) -> String {
+        let mut text = String::new();
+        for row in 0..rows {
+            let c: char = (start_char as u32 + row as u32) as u8 as char;
+            let mut line = c.to_string().repeat(cols);
+            if row < rows - 1 {
+                line.push('\n');
+            }
+            text += &line;
+        }
+        text
+    }
+
     #[gpui::test]
     async fn test_scroll(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
@@ -244,18 +257,6 @@ mod test {
 
         cx.set_scroll_height(10).await;
 
-        pub fn sample_text(rows: usize, cols: usize, start_char: char) -> String {
-            let mut text = String::new();
-            for row in 0..rows {
-                let c: char = (start_char as u32 + row as u32) as u8 as char;
-                let mut line = c.to_string().repeat(cols);
-                if row < rows - 1 {
-                    line.push('\n');
-                }
-                text += &line;
-            }
-            text
-        }
         let content = "ˇ".to_owned() + &sample_text(26, 2, 'a');
         cx.set_shared_state(&content).await;
 
@@ -288,18 +289,6 @@ mod test {
         cx.set_scroll_height(10).await;
         cx.neovim.set_option(&format!("scrolloff={}", 0)).await;
 
-        pub fn sample_text(rows: usize, cols: usize, start_char: char) -> String {
-            let mut text = String::new();
-            for row in 0..rows {
-                let c: char = (start_char as u32 + row as u32) as u8 as char;
-                let mut line = c.to_string().repeat(cols);
-                if row < rows - 1 {
-                    line.push('\n');
-                }
-                text += &line;
-            }
-            text
-        }
         let content = "ˇ".to_owned() + &sample_text(26, 2, 'a');
         cx.set_shared_state(&content).await;
 
