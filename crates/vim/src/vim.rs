@@ -101,7 +101,7 @@ pub fn init(cx: &mut AppContext) {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = Vim::enabled(cx);
             update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
-                *setting = Some(!currently_enabled)
+                *setting = VimModeSetting(!currently_enabled);
             })
         });
 
