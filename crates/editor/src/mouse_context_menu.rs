@@ -1,11 +1,10 @@
 use std::ops::Range;
 
-use crate::GoToDeclaration;
 use crate::{
-    selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut, DisplayPoint,
-    DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation,
-    GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode, ToDisplayPoint,
-    ToggleCodeActions,
+    actions::Format, selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut,
+    DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDeclaration,
+    GoToDefinition, GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager,
+    SelectMode, ToDisplayPoint, ToggleCodeActions,
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
@@ -174,6 +173,7 @@ pub fn deploy_context_menu(
                         deployed_from_indicator: None,
                     }),
                 )
+                .action("Format Buffer", Box::new(Format))
                 .separator()
                 .action("Cut", Box::new(Cut))
                 .action("Copy", Box::new(Copy))
