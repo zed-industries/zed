@@ -5,22 +5,13 @@ use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
 /// Configuration of voice calls in Zed.
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(default)]
 pub struct CallSettings {
     /// Whether the microphone should be muted when joining a channel or a call.
     pub mute_on_join: bool,
     /// Whether your current project should be shared when joining an empty channel.
     pub share_on_join: bool,
-}
-
-impl Default for CallSettings {
-    fn default() -> Self {
-        Self {
-            mute_on_join: false,
-            share_on_join: false,
-        }
-    }
 }
 
 impl Settings for CallSettings {
