@@ -81,11 +81,11 @@ impl Vim {
     }
 
     fn move_to_next_match(&mut self, _: &MoveToNextMatch, cx: &mut ViewContext<Self>) {
-        self.move_to_match_internal(Direction::Next, cx)
+        self.move_to_match_internal(self.search.direction, cx)
     }
 
     fn move_to_prev_match(&mut self, _: &MoveToPrevMatch, cx: &mut ViewContext<Self>) {
-        self.move_to_match_internal(Direction::Prev, cx)
+        self.move_to_match_internal(self.search.direction.opposite(), cx)
     }
 
     fn search(&mut self, action: &Search, cx: &mut ViewContext<Self>) {
@@ -236,6 +236,7 @@ impl Vim {
         let vim = cx.view().clone();
 
         let searched = pane.update(cx, |pane, cx| {
+            self.search.direction = direction;
             let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
                 return false;
             };
