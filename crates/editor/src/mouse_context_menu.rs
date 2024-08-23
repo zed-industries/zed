@@ -161,19 +161,20 @@ pub fn deploy_context_menu(
         ui::ContextMenu::build(cx, |menu, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
-                .action("Rename Symbol", Box::new(Rename))
                 .action("Go to Definition", Box::new(GoToDefinition))
                 .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
                 .action("Go to Implementation", Box::new(GoToImplementation))
                 .action("Find All References", Box::new(FindAllReferences))
+                .separator()
+                .action("Rename Symbol", Box::new(Rename))
+                .action("Format Buffer", Box::new(Format))
                 .action(
                     "Code Actions",
                     Box::new(ToggleCodeActions {
                         deployed_from_indicator: None,
                     }),
                 )
-                .action("Format Buffer", Box::new(Format))
                 .separator()
                 .action("Cut", Box::new(Cut))
                 .action("Copy", Box::new(Copy))
