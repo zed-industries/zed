@@ -298,7 +298,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                                 continue;
                             };
                             let project_root_name = root_name_for_project(&project, cx);
-                            let is_local = project.read_with(cx, |project, _| project.is_local());
+                            let is_local =
+                                project.read_with(cx, |project, _| project.is_local_or_ssh());
                             let worktree = project.read_with(cx, |project, cx| {
                                 project
                                     .worktrees(cx)
@@ -334,7 +335,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         continue;
                     };
                     let project_root_name = root_name_for_project(&project, cx);
-                    let is_local = project.read_with(cx, |project, _| project.is_local());
+                    let is_local = project.read_with(cx, |project, _| project.is_local_or_ssh());
 
                     match rng.gen_range(0..100_u32) {
                         // Manipulate an existing buffer
@@ -1254,7 +1255,7 @@ impl RandomizedTest for ProjectCollaborationTest {
             let buffers = client.buffers().clone();
             for (guest_project, guest_buffers) in &buffers {
                 let project_id = if guest_project.read_with(client_cx, |project, _| {
-                    project.is_local() || project.is_disconnected()
+                    project.is_local_or_ssh() || project.is_disconnected()
                 }) {
                     continue;
                 } else {
@@ -1558,7 +1559,9 @@ async fn ensure_project_shared(
     let first_root_name = root_name_for_project(project, cx);
     let active_call = cx.read(ActiveCall::global);
     if active_call.read_with(cx, |call, _| call.room().is_some())
-        && project.read_with(cx, |project, _| project.is_local() && !project.is_shared())
+        && project.read_with(cx, |project, _| {
+            project.is_local_or_ssh() && !project.is_shared()
+        })
     {
         match active_call
             .update(cx, |call, cx| call.share_project(project.clone(), cx))

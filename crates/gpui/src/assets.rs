@@ -30,7 +30,7 @@ impl AssetSource for () {
 
 /// A unique identifier for the image cache
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct ImageId(usize);
+pub struct ImageId(pub usize);
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub(crate) struct RenderImageParams {
