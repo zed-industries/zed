@@ -196,6 +196,7 @@ impl Default for Scrollbar {
 
 /// Gutter-related settings.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(default)]
 pub struct Gutter {
     /// Whether to show line numbers in the gutter.
     pub line_numbers: bool,
