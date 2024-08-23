@@ -296,14 +296,7 @@ impl EditableSettingControl for InlineGitBlameControl {
         value: Self::Value,
         _cx: &AppContext,
     ) {
-        if let Some(inline_blame) = settings.git.inline_blame.as_mut() {
-            inline_blame.enabled = value;
-        } else {
-            settings.git.inline_blame = Some(InlineBlameSettings {
-                enabled: false,
-                ..Default::default()
-            });
-        }
+        settings.git.inline_blame.enabled = value;
     }
 }
 

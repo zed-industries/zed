@@ -12465,7 +12465,7 @@ impl EditorSnapshot {
         let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
             matches!(
                 ProjectSettings::get_global(cx).git.git_gutter,
-                Some(GitGutterSetting::TrackedFiles)
+                GitGutterSetting::TrackedFiles
             )
         });
         let gutter_settings = EditorSettings::get_global(cx).gutter;
