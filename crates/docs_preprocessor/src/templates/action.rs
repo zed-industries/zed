@@ -42,7 +42,8 @@ impl Template for ActionTemplate {
             })
             .collect::<String>()
             .trim()
-            .to_string();
+            .to_string()
+            .replace("::", ":");
 
         format!("<code class=\"hljs\">{}</code>", formatted_name)
     }
