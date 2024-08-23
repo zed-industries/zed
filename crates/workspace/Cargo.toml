@@ -43,7 +43,6 @@ gpui.workspace = true
 http_client.workspace = true
 itertools.workspace = true
 language.workspace = true
-lazy_static.workspace = true
 log.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true

@@ -680,6 +680,12 @@ impl Item for Editor {
         self.nav_history = Some(history);
     }
 
+    fn discarded(&self, _project: Model<Project>, cx: &mut ViewContext<Self>) {
+        for buffer in self.buffer().clone().read(cx).all_buffers() {
+            buffer.update(cx, |buffer, cx| buffer.discarded(cx))
+        }
+    }
+
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         let selection = self.selections.newest_anchor();
         self.push_to_nav_history(selection.head(), None, cx);

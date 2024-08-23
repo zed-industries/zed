@@ -87,6 +87,7 @@ pub enum KernelStatus {
     Error,
     ShuttingDown,
     Shutdown,
+    Restarting,
 }
 
 impl KernelStatus {
@@ -107,6 +108,7 @@ impl ToString for KernelStatus {
             KernelStatus::Error => "Error".to_string(),
             KernelStatus::ShuttingDown => "Shutting Down".to_string(),
             KernelStatus::Shutdown => "Shutdown".to_string(),
+            KernelStatus::Restarting => "Restarting".to_string(),
         }
     }
 }
@@ -122,6 +124,7 @@ impl From<&Kernel> for KernelStatus {
             Kernel::ErroredLaunch(_) => KernelStatus::Error,
             Kernel::ShuttingDown => KernelStatus::ShuttingDown,
             Kernel::Shutdown => KernelStatus::Shutdown,
+            Kernel::Restarting => KernelStatus::Restarting,
         }
     }
 }
@@ -133,6 +136,7 @@ pub enum Kernel {
     ErroredLaunch(String),
     ShuttingDown,
     Shutdown,
+    Restarting,
 }
 
 impl Kernel {
@@ -160,7 +164,7 @@ impl Kernel {
 
     pub fn is_shutting_down(&self) -> bool {
         match self {
-            Kernel::ShuttingDown => true,
+            Kernel::Restarting | Kernel::ShuttingDown => true,
             Kernel::RunningKernel(_)
             | Kernel::StartingKernel(_)
             | Kernel::ErroredLaunch(_)
@@ -261,7 +265,7 @@ impl RunningKernel {
             messages_rx.push(control_reply_rx);
             messages_rx.push(shell_reply_rx);
 
-            let _iopub_task = cx.background_executor().spawn({
+            let iopub_task = cx.background_executor().spawn({
                 async move {
                     while let Ok(message) = iopub_socket.read().await {
                         iopub.send(message).await?;
@@ -274,7 +278,7 @@ impl RunningKernel {
                 futures::channel::mpsc::channel(100);
             let (mut shell_request_tx, mut shell_request_rx) = futures::channel::mpsc::channel(100);
 
-            let _routing_task = cx.background_executor().spawn({
+            let routing_task = cx.background_executor().spawn({
                 async move {
                     while let Some(message) = request_rx.next().await {
                         match message.content {
@@ -292,7 +296,7 @@ impl RunningKernel {
                 }
             });
 
-            let _shell_task = cx.background_executor().spawn({
+            let shell_task = cx.background_executor().spawn({
                 async move {
                     while let Some(message) = shell_request_rx.next().await {
                         shell_socket.send(message).await.ok();
@@ -303,7 +307,7 @@ impl RunningKernel {
                 }
             });
 
-            let _control_task = cx.background_executor().spawn({
+            let control_task = cx.background_executor().spawn({
                 async move {
                     while let Some(message) = control_request_rx.next().await {
                         control_socket.send(message).await.ok();
@@ -319,12 +323,12 @@ impl RunningKernel {
                     process,
                     request_tx,
                     working_directory,
-                    _shell_task,
-                    _iopub_task,
-                    _control_task,
-                    _routing_task,
+                    _shell_task: shell_task,
+                    _iopub_task: iopub_task,
+                    _control_task: control_task,
+                    _routing_task: routing_task,
                     connection_path,
-                    execution_state: ExecutionState::Busy,
+                    execution_state: ExecutionState::Idle,
                     kernel_info: None,
                 },
                 messages_rx,

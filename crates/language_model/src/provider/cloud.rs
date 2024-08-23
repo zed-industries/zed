@@ -8,7 +8,7 @@ use anthropic::AnthropicError;
 use anyhow::{anyhow, Result};
 use client::{Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME};
 use collections::BTreeMap;
-use feature_flags::{FeatureFlagAppExt, ZedPro};
+use feature_flags::{FeatureFlagAppExt, LlmClosedBeta, ZedPro};
 use futures::{
     future::BoxFuture, stream::BoxStream, AsyncBufReadExt, FutureExt, Stream, StreamExt,
     TryStreamExt as _,
@@ -26,9 +26,12 @@ use smol::{
     io::{AsyncReadExt, BufReader},
     lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard},
 };
-use std::{future, sync::Arc};
+use std::{
+    future,
+    sync::{Arc, LazyLock},
+};
 use strum::IntoEnumIterator;
-use ui::prelude::*;
+use ui::{prelude::*, TintColor};
 
 use crate::{LanguageModelAvailability, LanguageModelProvider};
 
@@ -36,6 +39,18 @@ use super::anthropic::count_anthropic_tokens;
 
 pub const PROVIDER_ID: &str = "zed.dev";
 pub const PROVIDER_NAME: &str = "Zed";
+
+const ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: Option<&str> =
+    option_env!("ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON");
+
+fn zed_cloud_provider_additional_models() -> &'static [AvailableModel] {
+    static ADDITIONAL_MODELS: LazyLock<Vec<AvailableModel>> = LazyLock::new(|| {
+        ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON
+            .map(|json| serde_json::from_str(json).unwrap())
+            .unwrap_or(Vec::new())
+    });
+    ADDITIONAL_MODELS.as_slice()
+}
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
@@ -52,12 +67,20 @@ pub enum AvailableProvider {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
-    provider: AvailableProvider,
-    name: String,
-    max_tokens: usize,
-    tool_override: Option<String>,
-    cache_configuration: Option<LanguageModelCacheConfiguration>,
-    max_output_tokens: Option<u32>,
+    /// The provider of the language model.
+    pub provider: AvailableProvider,
+    /// The model's name in the provider's API. e.g. claude-3-5-sonnet-20240620
+    pub name: String,
+    /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+    pub display_name: Option<String>,
+    /// The size of the context window, indicating the maximum number of tokens the model can process.
+    pub max_tokens: usize,
+    /// The maximum number of output tokens allowed by the model.
+    pub max_output_tokens: Option<u32>,
+    /// Override this model with a different Anthropic model for tool calls.
+    pub tool_override: Option<String>,
+    /// Indicates whether this custom model supports caching.
+    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
 }
 
 pub struct CloudLanguageModelProvider {
@@ -192,44 +215,53 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             for model in ZedModel::iter() {
                 models.insert(model.id().to_string(), CloudModel::Zed(model));
             }
-
-            // Override with available models from settings
-            for model in &AllLanguageModelSettings::get_global(cx)
-                .zed_dot_dev
-                .available_models
-            {
-                let model = match model.provider {
-                    AvailableProvider::Anthropic => {
-                        CloudModel::Anthropic(anthropic::Model::Custom {
-                            name: model.name.clone(),
-                            max_tokens: model.max_tokens,
-                            tool_override: model.tool_override.clone(),
-                            cache_configuration: model.cache_configuration.as_ref().map(|config| {
-                                anthropic::AnthropicModelCacheConfiguration {
-                                    max_cache_anchors: config.max_cache_anchors,
-                                    should_speculate: config.should_speculate,
-                                    min_total_token: config.min_total_token,
-                                }
-                            }),
-                            max_output_tokens: model.max_output_tokens,
-                        })
-                    }
-                    AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
-                        name: model.name.clone(),
-                        max_tokens: model.max_tokens,
-                    }),
-                    AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
-                        name: model.name.clone(),
-                        max_tokens: model.max_tokens,
-                    }),
-                };
-                models.insert(model.id().to_string(), model.clone());
-            }
         } else {
             models.insert(
                 anthropic::Model::Claude3_5Sonnet.id().to_string(),
                 CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet),
             );
+        }
+
+        let llm_closed_beta_models = if cx.has_flag::<LlmClosedBeta>() {
+            zed_cloud_provider_additional_models()
+        } else {
+            &[]
+        };
+
+        // Override with available models from settings
+        for model in AllLanguageModelSettings::get_global(cx)
+            .zed_dot_dev
+            .available_models
+            .iter()
+            .chain(llm_closed_beta_models)
+            .cloned()
+        {
+            let model = match model.provider {
+                AvailableProvider::Anthropic => CloudModel::Anthropic(anthropic::Model::Custom {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    tool_override: model.tool_override.clone(),
+                    cache_configuration: model.cache_configuration.as_ref().map(|config| {
+                        anthropic::AnthropicModelCacheConfiguration {
+                            max_cache_anchors: config.max_cache_anchors,
+                            should_speculate: config.should_speculate,
+                            min_total_token: config.min_total_token,
+                        }
+                    }),
+                    max_output_tokens: model.max_output_tokens,
+                }),
+                AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
+                }),
+                AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                }),
+            };
+            models.insert(model.id().to_string(), model.clone());
         }
 
         models
@@ -389,6 +421,10 @@ impl LanguageModel for CloudLanguageModel {
         LanguageModelName::from(self.model.display_name().to_string())
     }
 
+    fn icon(&self) -> Option<IconName> {
+        self.model.icon()
+    }
+
     fn provider_id(&self) -> LanguageModelProviderId {
         LanguageModelProviderId(PROVIDER_ID.into())
     }
@@ -407,6 +443,21 @@ impl LanguageModel for CloudLanguageModel {
 
     fn max_token_count(&self) -> usize {
         self.model.max_token_count()
+    }
+
+    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
+        match &self.model {
+            CloudModel::Anthropic(model) => {
+                model
+                    .cache_configuration()
+                    .map(|cache| LanguageModelCacheConfiguration {
+                        max_cache_anchors: cache.max_cache_anchors,
+                        should_speculate: cache.should_speculate,
+                        min_total_token: cache.min_total_token,
+                    })
+            }
+            CloudModel::OpenAi(_) | CloudModel::Google(_) | CloudModel::Zed(_) => None,
+        }
     }
 
     fn count_tokens(
@@ -478,7 +529,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
-                let request = request.into_open_ai(model.id().into());
+                let request = request.into_open_ai(model.id().into(), model.max_output_tokens());
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let response = Self::perform_llm_completion(
@@ -522,7 +573,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Zed(model) => {
                 let client = self.client.clone();
-                let mut request = request.into_open_ai(model.id().into());
+                let mut request = request.into_open_ai(model.id().into(), None);
                 request.max_tokens = Some(4000);
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
@@ -594,7 +645,8 @@ impl LanguageModel for CloudLanguageModel {
                     .boxed()
             }
             CloudModel::OpenAi(model) => {
-                let mut request = request.into_open_ai(model.id().into());
+                let mut request =
+                    request.into_open_ai(model.id().into(), model.max_output_tokens());
                 request.tool_choice = Some(open_ai::ToolChoice::Other(
                     open_ai::ToolDefinition::Function {
                         function: open_ai::FunctionDefinition {
@@ -641,7 +693,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Zed(model) => {
                 // All Zed models are OpenAI-based at the time of writing.
-                let mut request = request.into_open_ai(model.id().into());
+                let mut request = request.into_open_ai(model.id().into(), None);
                 request.tool_choice = Some(open_ai::ToolChoice::Other(
                     open_ai::ToolDefinition::Function {
                         function: open_ai::FunctionDefinition {
@@ -741,6 +793,46 @@ impl ConfigurationView {
         });
         cx.notify();
     }
+
+    fn render_accept_terms(&mut self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        if self.state.read(cx).has_accepted_terms_of_service(cx) {
+            return None;
+        }
+
+        let accept_terms_disabled = self.state.read(cx).accept_terms.is_some();
+
+        let terms_button = Button::new("terms_of_service", "Terms of Service")
+            .style(ButtonStyle::Subtle)
+            .icon(IconName::ExternalLink)
+            .icon_color(Color::Muted)
+            .on_click(move |_, cx| cx.open_url("https://zed.dev/terms-of-service"));
+
+        let text =
+            "In order to use Zed AI, please read and accept our terms and conditions to continue:";
+
+        let form = v_flex()
+            .gap_2()
+            .child(Label::new("Terms and Conditions"))
+            .child(Label::new(text))
+            .child(h_flex().justify_center().child(terms_button))
+            .child(
+                h_flex().justify_center().child(
+                    Button::new("accept_terms", "I've read and accept the terms of service")
+                        .style(ButtonStyle::Tinted(TintColor::Accent))
+                        .disabled(accept_terms_disabled)
+                        .on_click({
+                            let state = self.state.downgrade();
+                            move |_, cx| {
+                                state
+                                    .update(cx, |state, cx| state.accept_terms_of_service(cx))
+                                    .ok();
+                            }
+                        }),
+                ),
+            );
+
+        Some(form.into_any())
+    }
 }
 
 impl Render for ConfigurationView {
@@ -750,55 +842,50 @@ impl Render for ConfigurationView {
 
         let is_connected = !self.state.read(cx).is_signed_out();
         let plan = self.state.read(cx).user_store.read(cx).current_plan();
-        let must_accept_terms = !self.state.read(cx).has_accepted_terms_of_service(cx);
+        let has_accepted_terms = self.state.read(cx).has_accepted_terms_of_service(cx);
 
         let is_pro = plan == Some(proto::Plan::ZedPro);
+        let subscription_text = Label::new(if is_pro {
+            "You have full access to Zed's hosted models from Anthropic, OpenAI, Google with faster speeds and higher limits through Zed Pro."
+        } else {
+            "You have basic access to models from Anthropic through the Zed AI Free plan."
+        });
+        let manage_subscription_button = if is_pro {
+            Some(
+                h_flex().child(
+                    Button::new("manage_settings", "Manage Subscription")
+                        .style(ButtonStyle::Tinted(TintColor::Accent))
+                        .on_click(cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL))),
+                ),
+            )
+        } else if cx.has_flag::<ZedPro>() {
+            Some(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("learn_more", "Learn more")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(|_, _, cx| cx.open_url(ZED_AI_URL))),
+                    )
+                    .child(
+                        Button::new("upgrade", "Upgrade")
+                            .style(ButtonStyle::Subtle)
+                            .color(Color::Accent)
+                            .on_click(cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL))),
+                    ),
+            )
+        } else {
+            None
+        };
 
         if is_connected {
             v_flex()
                 .gap_3()
                 .max_w_4_5()
-                .when(must_accept_terms, |this| {
-                    this.child(Label::new(
-                        "You must accept the terms of service to use this provider.",
-                    ))
-                })
-                .child(Label::new(
-                    if is_pro {
-                        "You have full access to Zed's hosted models from Anthropic, OpenAI, Google with faster speeds and higher limits through Zed Pro."
-                    } else {
-                        "You have basic access to models from Anthropic through the Zed AI Free plan."
-                    }))
-                .children(if is_pro {
-                    Some(
-                        h_flex().child(
-                            Button::new("manage_settings", "Manage Subscription")
-                                .style(ButtonStyle::Filled)
-                                .on_click(
-                                    cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL)),
-                                ),
-                        ),
-                    )
-                } else if cx.has_flag::<ZedPro>() {
-                    Some(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("learn_more", "Learn more")
-                                    .style(ButtonStyle::Subtle)
-                                    .on_click(cx.listener(|_, _, cx| cx.open_url(ZED_AI_URL))),
-                            )
-                            .child(
-                                Button::new("upgrade", "Upgrade")
-                                    .style(ButtonStyle::Subtle)
-                                    .color(Color::Accent)
-                                    .on_click(
-                                        cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL)),
-                                    ),
-                            ),
-                    )
-                } else {
-                    None
+                .children(self.render_accept_terms(cx))
+                .when(has_accepted_terms, |this| {
+                    this.child(subscription_text)
+                        .children(manage_subscription_button)
                 })
         } else {
             v_flex()

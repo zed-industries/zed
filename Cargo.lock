@@ -83,7 +83,7 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.24.1-dev"
-source = "git+https://github.com/alacritty/alacritty?rev=cacdb5bb3b72bad2c729227537979d95af75978f#cacdb5bb3b72bad2c729227537979d95af75978f"
+source = "git+https://github.com/alacritty/alacritty?rev=91d034ff8b53867143c005acfaa14609147c9a2c#91d034ff8b53867143c005acfaa14609147c9a2c"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.6.0",
@@ -223,6 +223,7 @@ name = "anthropic"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "futures 0.3.30",
  "http_client",
  "isahc",
@@ -232,6 +233,7 @@ dependencies = [
  "strum",
  "thiserror",
  "tokio",
+ "util",
 ]
 
 [[package]]
@@ -280,9 +282,9 @@ checksum = "9d151e35f61089500b617991b791fc8bfd237ae50cd5950803758a179b41e67a"
 
 [[package]]
 name = "arrayvec"
-version = "0.7.4"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "as-raw-xcb-connection"
@@ -1053,9 +1055,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-s3"
-version = "1.43.0"
+version = "1.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ccda7e730ace3cb8bbd4071bc650c6d294364891f9564bd4e43adfc8dea3177"
+checksum = "4abf69a87be33b6f125a93d5046b5f7395c26d1f449bf8d3927f5577463b6de0"
 dependencies = [
  "ahash 0.8.11",
  "aws-credential-types",
@@ -1267,9 +1269,9 @@ dependencies = [
 
 [[package]]
 name = "aws-smithy-runtime"
-version = "1.6.2"
+version = "1.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce87155eba55e11768b8c1afa607f3e864ae82f03caf63258b37455b0ad02537"
+checksum = "0abbf454960d0db2ad12684a1640120e7557294b0ff8e2f11236290a1b293225"
 dependencies = [
  "aws-smithy-async",
  "aws-smithy-http",
@@ -1311,9 +1313,9 @@ dependencies = [
 
 [[package]]
 name = "aws-smithy-types"
-version = "1.2.0"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfe321a6b21f5d8eabd0ade9c55d3d0335f3c3157fc2b3e87f05f34b539e4df5"
+checksum = "6cee7cadb433c781d3299b916fbf620fea813bf38f49db282fb6858141a05cc8"
 dependencies = [
  "base64-simd",
  "bytes 1.7.1",
@@ -1539,7 +1541,7 @@ dependencies = [
  "bitflags 2.6.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "lazy_static",
  "lazycell",
  "proc-macro2",
@@ -1622,7 +1624,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.4.0"
-source = "git+https://github.com/kvark/blade?rev=ac25c77ed8d86c386a541c935ffe0a0f6024e701#ac25c77ed8d86c386a541c935ffe0a0f6024e701"
+source = "git+https://github.com/kvark/blade?rev=7f54ddfc001edc48225e6602d3c38ebb855421aa#7f54ddfc001edc48225e6602d3c38ebb855421aa"
 dependencies = [
  "ash",
  "ash-window",
@@ -1652,7 +1654,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=ac25c77ed8d86c386a541c935ffe0a0f6024e701#ac25c77ed8d86c386a541c935ffe0a0f6024e701"
+source = "git+https://github.com/kvark/blade?rev=7f54ddfc001edc48225e6602d3c38ebb855421aa#7f54ddfc001edc48225e6602d3c38ebb855421aa"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1662,7 +1664,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/kvark/blade?rev=ac25c77ed8d86c386a541c935ffe0a0f6024e701#ac25c77ed8d86c386a541c935ffe0a0f6024e701"
+source = "git+https://github.com/kvark/blade?rev=7f54ddfc001edc48225e6602d3c38ebb855421aa#7f54ddfc001edc48225e6602d3c38ebb855421aa"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -2209,9 +2211,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.15"
+version = "4.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11d8838454fda655dafd3accb2b6e2bea645b9e4078abe84a22ceb947235c5cc"
+checksum = "ed6719fffa43d0d87e5fd8caeab59be1554fb028cd30edc88fc4369b17971019"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -2264,6 +2266,7 @@ dependencies = [
  "plist",
  "release_channel",
  "serde",
+ "tempfile",
  "util",
 ]
 
@@ -2327,7 +2330,6 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "http_client",
- "lazy_static",
  "log",
  "once_cell",
  "parking_lot",
@@ -2349,6 +2351,7 @@ dependencies = [
  "thiserror",
  "time",
  "tiny_http",
+ "tokio-socks",
  "url",
  "util",
  "windows 0.58.0",
@@ -2529,7 +2532,6 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
- "lazy_static",
  "menu",
  "notifications",
  "parking_lot",
@@ -3261,7 +3263,6 @@ dependencies = [
  "anyhow",
  "gpui",
  "indoc",
- "lazy_static",
  "log",
  "paths",
  "release_channel",
@@ -3541,7 +3542,6 @@ dependencies = [
  "indoc",
  "itertools 0.11.0",
  "language",
- "lazy_static",
  "linkify",
  "log",
  "lsp",
@@ -4304,7 +4304,6 @@ dependencies = [
  "git",
  "git2",
  "gpui",
- "lazy_static",
  "libc",
  "notify",
  "objc",
@@ -4630,7 +4629,6 @@ dependencies = [
  "git2",
  "gpui",
  "http_client",
- "lazy_static",
  "log",
  "parking_lot",
  "pretty_assertions",
@@ -4829,7 +4827,6 @@ dependencies = [
  "http_client",
  "image",
  "itertools 0.11.0",
- "lazy_static",
  "linkme",
  "log",
  "media",
@@ -5057,9 +5054,9 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "heed"
-version = "0.20.4"
+version = "0.20.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "620033c8c8edfd2f53e6f99a30565eb56a33b42c468e3ad80e21d85fb93bafb0"
+checksum = "7d4f449bab7320c56003d37732a917e18798e2f1709d80263face2b4f9436ddb"
 dependencies = [
  "bitflags 2.6.0",
  "byteorder",
@@ -5879,9 +5876,9 @@ dependencies = [
 
 [[package]]
 name = "khronos-egl"
-version = "5.0.0"
+version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1382b16c04aeb821453d6215a3c80ba78f24c6595c5aa85653378aabe0c83e3"
+checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
 dependencies = [
  "libc",
  "libloading",
@@ -5945,7 +5942,6 @@ dependencies = [
  "http_client",
  "indoc",
  "itertools 0.11.0",
- "lazy_static",
  "log",
  "lsp",
  "parking_lot",
@@ -6079,7 +6075,6 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
- "lazy_static",
  "log",
  "lsp",
  "node_runtime",
@@ -6147,9 +6142,9 @@ checksum = "03087c2bad5e1034e8cace5926dec053fb3790248370865f5117a7d0213354c8"
 
 [[package]]
 name = "libc"
-version = "0.2.155"
+version = "0.2.158"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97b3888a4aecf77e811145cadf6eef5901f4782c53886191b2f693f24761847c"
+checksum = "d8adc4bb1803a324070e64a98ae98f38934d91957a99cfb3a43dcbc01bc56439"
 
 [[package]]
 name = "libfuzzer-sys"
@@ -6181,7 +6176,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4979f22fdb869068da03c9f7528f8297c6fd2606bc3a4affe42e6a823fdb8da4"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -6314,9 +6309,9 @@ dependencies = [
 
 [[package]]
 name = "lmdb-master-sys"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1de7e761853c15ca72821d9f928d7bb123ef4c05377c4e7ab69fa1c742f91d24"
+checksum = "472c3760e2a8d0f61f322fb36788021bb36d573c502b50fa3e2bcaac3ec326c9"
 dependencies = [
  "cc",
  "doxygen-rs",
@@ -7591,6 +7586,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 
 [[package]]
+name = "performance"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "gpui",
+ "log",
+ "schemars",
+ "serde",
+ "settings",
+ "util",
+ "workspace",
+]
+
+[[package]]
+name = "perplexity"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "zed_extension_api 0.1.0",
+]
+
+[[package]]
 name = "pest"
 version = "2.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8111,7 +8129,7 @@ dependencies = [
  "text",
  "unindent",
  "util",
- "which 6.0.2",
+ "which 6.0.3",
  "worktree",
 ]
 
@@ -9033,9 +9051,9 @@ dependencies = [
 
 [[package]]
 name = "runtimelib"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c3d817764e3971867351e6103955b17d808f5330e9ef63aaaaab55bf8c664c1"
+checksum = "a7d76d28b882a7b889ebb04e79bc2b160b3061821ea596ff0f4a838fc7a76db0"
 dependencies = [
  "anyhow",
  "async-dispatcher",
@@ -9557,18 +9575,18 @@ dependencies = [
 
 [[package]]
 name = "serde"
-version = "1.0.207"
+version = "1.0.208"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5665e14a49a4ea1b91029ba7d3bca9f299e1f7cfa194388ccc20f14743e784f2"
+checksum = "cff085d2cb684faa248efb494c39b68e522822ac0de72ccf08109abde717cfb2"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.207"
+version = "1.0.208"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6aea2634c86b0e8ef2cfdc0c340baede54ec27b1e46febd7f80dffb2aa44a00e"
+checksum = "24008e81ff7613ed8e5ba0cfaf24e2c2f1e5b8a0495711e44fcd4882fca62bcf"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9716,7 +9734,6 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "indoc",
- "lazy_static",
  "log",
  "paths",
  "pretty_assertions",
@@ -10128,7 +10145,6 @@ dependencies = [
  "collections",
  "futures 0.3.30",
  "indoc",
- "lazy_static",
  "libsqlite3-sys",
  "parking_lot",
  "smol",
@@ -10141,7 +10157,6 @@ dependencies = [
 name = "sqlez_macros"
 version = "0.1.0"
 dependencies = [
- "lazy_static",
  "sqlez",
  "sqlformat",
  "syn 1.0.109",
@@ -10989,7 +11004,6 @@ dependencies = [
  "env_logger",
  "gpui",
  "http_client",
- "lazy_static",
  "log",
  "parking_lot",
  "postage",
@@ -11278,9 +11292,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.39.2"
+version = "1.39.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "daa4fb1bc778bd6f04cbfc4bb2d06a7396a8f299dc33ea1900cedaa316f467b1"
+checksum = "9babc99b9923bfa4804bd74722ff02c0381021eafa4db9949217e3be8e84fff5"
 dependencies = [
  "backtrace",
  "bytes 1.7.1",
@@ -11334,6 +11348,18 @@ checksum = "c28327cf380ac148141087fbfb9de9d7bd4e84ab5d2c28fbc911d753de8a7081"
 dependencies = [
  "rustls",
  "tokio",
+]
+
+[[package]]
+name = "tokio-socks"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d4770b8024672c1101b3f6733eab95b18007dbe0847a8afe341fcf79e06043f"
+dependencies = [
+ "either",
+ "futures-io",
+ "futures-util",
+ "thiserror",
 ]
 
 [[package]]
@@ -11645,9 +11671,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-css"
-version = "0.21.0"
+version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2f806f96136762b0121f5fdd7172a3dcd8f42d37a2f23ed7f11b35895e20eb4"
+checksum = "5e08e324b1cf60fd3291774b49724c66de2ce8fcf4d358d0b4b82e37b41b1c9b"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -11675,9 +11701,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-go"
-version = "0.21.0"
+version = "0.21.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55cb318be5ccf75f44e054acf6898a5c95d59b53443eed578e16be0cd7ec037f"
+checksum = "b8d702a98d3c7e70e466456e58ff2b1ac550bf1e29b97e5770676d2fdabec00d"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -11712,9 +11738,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-html"
-version = "0.20.3"
+version = "0.20.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95b3492b08a786bf5cc79feb0ef2ff3b115d5174364e0ddfd7860e0b9b088b53"
+checksum = "8766b5ad3721517f8259e6394aefda9c686aebf7a8c74ab8624f2c3b46902fd5"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -12187,7 +12213,6 @@ dependencies = [
  "indoc",
  "itertools 0.11.0",
  "language",
- "lazy_static",
  "log",
  "lsp",
  "multi_buffer",
@@ -12868,9 +12893,9 @@ dependencies = [
 
 [[package]]
 name = "which"
-version = "6.0.2"
+version = "6.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d9c5ed668ee1f17edb3b627225343d210006a90bb1e3745ce1f30b1fb115075"
+checksum = "b4ee928febd44d98f2f459a4a79bd4d928591333a494a10a868418ac1b39cf1f"
 dependencies = [
  "either",
  "home",
@@ -13530,7 +13555,6 @@ dependencies = [
  "http_client",
  "itertools 0.11.0",
  "language",
- "lazy_static",
  "log",
  "node_runtime",
  "parking_lot",
@@ -13814,7 +13838,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.150.0"
+version = "0.151.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -13875,6 +13899,7 @@ dependencies = [
  "outline_panel",
  "parking_lot",
  "paths",
+ "performance",
  "profiling",
  "project",
  "project_panel",
@@ -13902,6 +13927,7 @@ dependencies = [
  "terminal_view",
  "theme",
  "theme_selector",
+ "time",
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",
@@ -13962,7 +13988,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]
@@ -14150,7 +14176,7 @@ dependencies = [
 
 [[package]]
 name = "zed_zig"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

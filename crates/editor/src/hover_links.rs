@@ -2,15 +2,15 @@ use crate::{
     hover_popover::{self, InlayHover},
     scroll::ScrollAmount,
     Anchor, Editor, EditorSnapshot, FindAllReferences, GoToDefinition, GoToTypeDefinition, InlayId,
-    PointForPosition, SelectPhase,
+    Navigated, PointForPosition, SelectPhase,
 };
 use gpui::{px, AppContext, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
 use project::{
-    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink,
-    ResolveState,
+    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink, Project,
+    ResolveState, ResolvedPath,
 };
 use std::ops::Range;
 use theme::ActiveTheme as _;
@@ -63,6 +63,7 @@ impl RangeInEditor {
 #[derive(Debug, Clone)]
 pub enum HoverLink {
     Url(String),
+    File(ResolvedPath),
     Text(LocationLink),
     InlayHint(lsp::Location, LanguageServerId),
 }
@@ -157,10 +158,10 @@ impl Editor {
     ) {
         let reveal_task = self.cmd_click_reveal_task(point, modifiers, cx);
         cx.spawn(|editor, mut cx| async move {
-            let definition_revealed = reveal_task.await.log_err().unwrap_or(false);
+            let definition_revealed = reveal_task.await.log_err().unwrap_or(Navigated::No);
             let find_references = editor
                 .update(&mut cx, |editor, cx| {
-                    if definition_revealed {
+                    if definition_revealed == Navigated::Yes {
                         return None;
                     }
                     editor.find_all_references(&FindAllReferences, cx)
@@ -194,7 +195,7 @@ impl Editor {
         point: PointForPosition,
         modifiers: Modifiers,
         cx: &mut ViewContext<Editor>,
-    ) -> Task<anyhow::Result<bool>> {
+    ) -> Task<anyhow::Result<Navigated>> {
         if let Some(hovered_link_state) = self.hovered_link_state.take() {
             self.hide_hovered_link(cx);
             if !hovered_link_state.links.is_empty() {
@@ -211,7 +212,7 @@ impl Editor {
                     .read(cx)
                     .text_anchor_for_position(current_position, cx)
                 else {
-                    return Task::ready(Ok(false));
+                    return Task::ready(Ok(Navigated::No));
                 };
                 let links = hovered_link_state
                     .links
@@ -247,7 +248,7 @@ impl Editor {
                 self.go_to_definition(&GoToDefinition, cx)
             }
         } else {
-            Task::ready(Ok(false))
+            Task::ready(Ok(Navigated::No))
         }
     }
 }
@@ -522,35 +523,54 @@ pub fn show_link_definition(
                         })
                         .ok()
                     } else if let Some(project) = project {
-                        // query the LSP for definition info
-                        project
-                            .update(&mut cx, |project, cx| match preferred_kind {
-                                LinkDefinitionKind::Symbol => {
-                                    project.definition(&buffer, buffer_position, cx)
-                                }
+                        if let Some((filename_range, filename)) =
+                            find_file(&buffer, project.clone(), buffer_position, &mut cx).await
+                        {
+                            let range = maybe!({
+                                let start =
+                                    snapshot.anchor_in_excerpt(excerpt_id, filename_range.start)?;
+                                let end =
+                                    snapshot.anchor_in_excerpt(excerpt_id, filename_range.end)?;
+                                Some(RangeInEditor::Text(start..end))
+                            });
 
-                                LinkDefinitionKind::Type => {
-                                    project.type_definition(&buffer, buffer_position, cx)
-                                }
-                            })?
-                            .await
-                            .ok()
-                            .map(|definition_result| {
-                                (
-                                    definition_result.iter().find_map(|link| {
-                                        link.origin.as_ref().and_then(|origin| {
-                                            let start = snapshot.anchor_in_excerpt(
-                                                excerpt_id,
-                                                origin.range.start,
-                                            )?;
-                                            let end = snapshot
-                                                .anchor_in_excerpt(excerpt_id, origin.range.end)?;
-                                            Some(RangeInEditor::Text(start..end))
-                                        })
-                                    }),
-                                    definition_result.into_iter().map(HoverLink::Text).collect(),
-                                )
-                            })
+                            Some((range, vec![HoverLink::File(filename)]))
+                        } else {
+                            // query the LSP for definition info
+                            project
+                                .update(&mut cx, |project, cx| match preferred_kind {
+                                    LinkDefinitionKind::Symbol => {
+                                        project.definition(&buffer, buffer_position, cx)
+                                    }
+
+                                    LinkDefinitionKind::Type => {
+                                        project.type_definition(&buffer, buffer_position, cx)
+                                    }
+                                })?
+                                .await
+                                .ok()
+                                .map(|definition_result| {
+                                    (
+                                        definition_result.iter().find_map(|link| {
+                                            link.origin.as_ref().and_then(|origin| {
+                                                let start = snapshot.anchor_in_excerpt(
+                                                    excerpt_id,
+                                                    origin.range.start,
+                                                )?;
+                                                let end = snapshot.anchor_in_excerpt(
+                                                    excerpt_id,
+                                                    origin.range.end,
+                                                )?;
+                                                Some(RangeInEditor::Text(start..end))
+                                            })
+                                        }),
+                                        definition_result
+                                            .into_iter()
+                                            .map(HoverLink::Text)
+                                            .collect(),
+                                    )
+                                })
+                        }
                     } else {
                         None
                     }
@@ -684,6 +704,116 @@ pub(crate) fn find_url(
         }
     }
     None
+}
+
+pub(crate) async fn find_file(
+    buffer: &Model<language::Buffer>,
+    project: Model<Project>,
+    position: text::Anchor,
+    cx: &mut AsyncWindowContext,
+) -> Option<(Range<text::Anchor>, ResolvedPath)> {
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
+
+    let (range, candidate_file_path) = surrounding_filename(snapshot, position)?;
+
+    let existing_path = project
+        .update(cx, |project, cx| {
+            project.resolve_existing_file_path(&candidate_file_path, &buffer, cx)
+        })
+        .ok()?
+        .await?;
+
+    Some((range, existing_path))
+}
+
+fn surrounding_filename(
+    snapshot: language::BufferSnapshot,
+    position: text::Anchor,
+) -> Option<(Range<text::Anchor>, String)> {
+    const LIMIT: usize = 2048;
+
+    let offset = position.to_offset(&snapshot);
+    let mut token_start = offset;
+    let mut token_end = offset;
+    let mut found_start = false;
+    let mut found_end = false;
+    let mut inside_quotes = false;
+
+    let mut filename = String::new();
+
+    let mut backwards = snapshot.reversed_chars_at(offset).take(LIMIT).peekable();
+    while let Some(ch) = backwards.next() {
+        // Escaped whitespace
+        if ch.is_whitespace() && backwards.peek() == Some(&'\\') {
+            filename.push(ch);
+            token_start -= ch.len_utf8();
+            backwards.next();
+            token_start -= '\\'.len_utf8();
+            continue;
+        }
+        if ch.is_whitespace() {
+            found_start = true;
+            break;
+        }
+        if (ch == '"' || ch == '\'') && !inside_quotes {
+            found_start = true;
+            inside_quotes = true;
+            break;
+        }
+
+        filename.push(ch);
+        token_start -= ch.len_utf8();
+    }
+    if !found_start && token_start != 0 {
+        return None;
+    }
+
+    filename = filename.chars().rev().collect();
+
+    let mut forwards = snapshot
+        .chars_at(offset)
+        .take(LIMIT - (offset - token_start))
+        .peekable();
+    while let Some(ch) = forwards.next() {
+        // Skip escaped whitespace
+        if ch == '\\' && forwards.peek().map_or(false, |ch| ch.is_whitespace()) {
+            token_end += ch.len_utf8();
+            let whitespace = forwards.next().unwrap();
+            token_end += whitespace.len_utf8();
+            filename.push(whitespace);
+            continue;
+        }
+
+        if ch.is_whitespace() {
+            found_end = true;
+            break;
+        }
+        if ch == '"' || ch == '\'' {
+            // If we're inside quotes, we stop when we come across the next quote
+            if inside_quotes {
+                found_end = true;
+                break;
+            } else {
+                // Otherwise, we skip the quote
+                inside_quotes = true;
+                continue;
+            }
+        }
+        filename.push(ch);
+        token_end += ch.len_utf8();
+    }
+
+    if !found_end && (token_end - token_start >= LIMIT) {
+        return None;
+    }
+
+    if filename.is_empty() {
+        return None;
+    }
+
+    let range = snapshot.anchor_before(token_start)..snapshot.anchor_after(token_end);
+
+    Some((range, filename))
 }
 
 #[cfg(test)]
@@ -1267,5 +1397,185 @@ mod tests {
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
         assert_eq!(cx.opened_url(), Some("https://zed.dev/releases".into()));
+    }
+
+    #[gpui::test]
+    async fn test_surrounding_filename(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        let test_cases = [
+            ("file ˇ name", None),
+            ("ˇfile name", Some("file")),
+            ("file ˇname", Some("name")),
+            ("fiˇle name", Some("file")),
+            ("filenˇame", Some("filename")),
+            // Absolute path
+            ("foobar ˇ/home/user/f.txt", Some("/home/user/f.txt")),
+            ("foobar /home/useˇr/f.txt", Some("/home/user/f.txt")),
+            // Windows
+            ("C:\\Useˇrs\\user\\f.txt", Some("C:\\Users\\user\\f.txt")),
+            // Whitespace
+            ("ˇfile\\ -\\ name.txt", Some("file - name.txt")),
+            ("file\\ -\\ naˇme.txt", Some("file - name.txt")),
+            // Tilde
+            ("ˇ~/file.txt", Some("~/file.txt")),
+            ("~/fiˇle.txt", Some("~/file.txt")),
+            // Double quotes
+            ("\"fˇile.txt\"", Some("file.txt")),
+            ("ˇ\"file.txt\"", Some("file.txt")),
+            ("ˇ\"fi\\ le.txt\"", Some("fi le.txt")),
+            // Single quotes
+            ("'fˇile.txt'", Some("file.txt")),
+            ("ˇ'file.txt'", Some("file.txt")),
+            ("ˇ'fi\\ le.txt'", Some("fi le.txt")),
+        ];
+
+        for (input, expected) in test_cases {
+            cx.set_state(input);
+
+            let (position, snapshot) = cx.editor(|editor, cx| {
+                let positions = editor.selections.newest_anchor().head().text_anchor;
+                let snapshot = editor
+                    .buffer()
+                    .clone()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap()
+                    .read(cx)
+                    .snapshot();
+                (positions, snapshot)
+            });
+
+            let result = surrounding_filename(snapshot, position);
+
+            if let Some(expected) = expected {
+                assert!(result.is_some(), "Failed to find file path: {}", input);
+                let (_, path) = result.unwrap();
+                assert_eq!(&path, expected, "Incorrect file path for input: {}", input);
+            } else {
+                assert!(
+                    result.is_none(),
+                    "Expected no result, but got one: {:?}",
+                    result
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_hover_filenames(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Insert a new file
+        let fs = cx.update_workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
+            .await;
+
+        cx.set_state(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.ˇ
+        "});
+
+        // File does not exist
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that dˇoes_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.
+        "});
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        // No highlight
+        cx.update_editor(|editor, cx| {
+            assert!(editor
+                .snapshot(cx)
+                .text_highlight_ranges::<HoveredLinkState>()
+                .unwrap_or_default()
+                .1
+                .is_empty());
+        });
+
+        // Moving the mouse over a file that does exist should highlight it.
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to fˇile2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.
+        "});
+
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to «file2.rsˇ» if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.
+        "});
+
+        // Moving the mouse over a relative path that does exist should highlight it
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/fˇile2.rs if you want.
+            Or go to /root/dir/file2.rs if project is local.
+        "});
+
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to «../dir/file2.rsˇ» if you want.
+            Or go to /root/dir/file2.rs if project is local.
+        "});
+
+        // Moving the mouse over an absolute path that does exist should highlight it
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to /root/diˇr/file2.rs if project is local.
+        "});
+
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to «/root/dir/file2.rsˇ» if project is local.
+        "});
+
+        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+
+        cx.update_workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.update_workspace(|workspace, cx| {
+            let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+
+            let buffer = active_editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap();
+
+            let file = buffer.read(cx).file().unwrap();
+            let file_path = file.as_local().unwrap().abs_path(cx);
+
+            assert_eq!(file_path.to_str().unwrap(), "/root/dir/file2.rs");
+        });
     }
 }

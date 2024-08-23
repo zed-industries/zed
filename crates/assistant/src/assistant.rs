@@ -9,6 +9,7 @@ mod model_selector;
 mod prompt_library;
 mod prompts;
 mod slash_command;
+pub(crate) mod slash_command_picker;
 pub mod slash_command_settings;
 mod streaming_diff;
 mod terminal_inline_assistant;
@@ -33,7 +34,7 @@ use language_model::{
 };
 pub(crate) use model_selector::*;
 pub use prompts::PromptBuilder;
-use prompts::PromptOverrideContext;
+use prompts::PromptLoadingParams;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
@@ -59,7 +60,6 @@ actions!(
         InsertIntoEditor,
         ToggleFocus,
         InsertActivePrompt,
-        ShowConfiguration,
         DeployHistory,
         DeployPromptLibrary,
         ConfirmCommand,
@@ -184,7 +184,7 @@ impl Assistant {
 pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
-    dev_mode: bool,
+    stdout_is_a_pty: bool,
     cx: &mut AppContext,
 ) -> Arc<PromptBuilder> {
     cx.set_global(Assistant::default());
@@ -223,9 +223,11 @@ pub fn init(
     assistant_panel::init(cx);
     context_servers::init(cx);
 
-    let prompt_builder = prompts::PromptBuilder::new(Some(PromptOverrideContext {
-        dev_mode,
+    let prompt_builder = prompts::PromptBuilder::new(Some(PromptLoadingParams {
         fs: fs.clone(),
+        repo_path: stdout_is_a_pty
+            .then(|| std::env::current_dir().log_err())
+            .flatten(),
         cx,
     }))
     .log_err()

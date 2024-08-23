@@ -139,6 +139,11 @@ spec:
                 secretKeyRef:
                   name: anthropic
                   key: staff_api_key
+            - name: LLM_CLOSED_BETA_MODEL_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: llm-closed-beta
+                  key: model_name
             - name: GOOGLE_AI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -211,6 +216,12 @@ spec:
                 secretKeyRef:
                   name: supermaven
                   key: api_key
+            - name: USER_BACKFILLER_GITHUB_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: user-backfiller
+                  key: github_access_token
+                  optional: true
             - name: INVITE_LINK_PREFIX
               value: ${INVITE_LINK_PREFIX}
             - name: RUST_BACKTRACE
