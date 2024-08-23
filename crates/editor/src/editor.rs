@@ -59,7 +59,7 @@ use convert_case::{Case, Casing};
 use debounced_delay::DebouncedDelay;
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
-pub use editor_settings::{CurrentLineHighlight, EditorSettings};
+pub use editor_settings::{CurrentLineHighlight, EditorSettings, ScrollBeyondLastLine};
 pub use editor_settings_controls::*;
 use element::LineWithInvisibles;
 pub use element::{
