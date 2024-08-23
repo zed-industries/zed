@@ -6,18 +6,25 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use std::sync::Arc;
 
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
+#[derive(Deserialize, Serialize, Debug, Clone, JsonSchema)]
+#[serde(default)]
 pub struct ExtensionSettings {
     /// The extensions that should be automatically installed by Zed.
     ///
     /// This is used to make functionality provided by extensions (e.g., language support)
     /// available out-of-the-box.
-    #[serde(default)]
     pub auto_install_extensions: HashMap<Arc<str>, bool>,
-    #[serde(default)]
     pub auto_update_extensions: HashMap<Arc<str>, bool>,
 }
 
+impl Default for ExtensionSettings {
+    fn default() -> Self {
+        Self {
+            auto_install_extensions: HashMap::from_iter([("html".into(), true)]),
+            auto_update_extensions: Default::default(),
+        }
+    }
+}
 impl ExtensionSettings {
     /// Returns whether the given extension should be auto-installed.
     pub fn should_auto_install(&self, extension_id: &str) -> bool {
