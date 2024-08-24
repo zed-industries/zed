@@ -191,10 +191,9 @@ impl PromptBuilder {
         for path in Assets.list("prompts")? {
             if let Some(id) = path.split('/').last().and_then(|s| s.strip_suffix(".hbs")) {
                 if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
-                    let mut prompt = String::from_utf8_lossy(prompt.as_ref()).to_string();
-                    LineEnding::normalize(&mut prompt);
                     log::info!("Registering built-in prompt template: {}", id);
-                    handlebars.register_template_string(id, prompt)?
+                    let prompt = String::from_utf8_lossy(prompt.as_ref());
+                    handlebars.register_template_string(id, LineEnding::normalize_cow(prompt))?
                 }
             }
         }
