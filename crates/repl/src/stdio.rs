@@ -1,6 +1,6 @@
-use crate::outputs::ExecutionView;
-use alacritty_terminal::{term::Config, vte::ansi::Processor};
-use gpui::{canvas, size, AnyElement, FontStyle, TextStyle, WhiteSpace};
+use crate::outputs::{ExecutionView, SupportsClipboard};
+use alacritty_terminal::{grid::Dimensions as _, term::Config, vte::ansi::Processor};
+use gpui::{canvas, size, AnyElement, ClipboardItem, FontStyle, TextStyle, WhiteSpace};
 use settings::Settings as _;
 use std::mem;
 use terminal::ZedListener;
@@ -45,6 +45,7 @@ pub fn text_style(cx: &mut WindowContext) -> TextStyle {
         line_height: cx.line_height().into(),
         background_color: Some(theme.colors().terminal_background),
         white_space: WhiteSpace::Normal,
+        truncate: None,
         // These are going to be overridden per-cell
         underline: None,
         strikethrough: None,
@@ -179,5 +180,24 @@ impl TerminalOutput {
         // We must set the height explicitly for the editor block to size itself correctly
         .h(height)
         .into_any_element()
+    }
+}
+
+impl SupportsClipboard for TerminalOutput {
+    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+        let start = alacritty_terminal::index::Point::new(
+            alacritty_terminal::index::Line(0),
+            alacritty_terminal::index::Column(0),
+        );
+        let end = alacritty_terminal::index::Point::new(
+            alacritty_terminal::index::Line(self.handler.screen_lines() as i32 - 1),
+            alacritty_terminal::index::Column(self.handler.columns() - 1),
+        );
+        let text = self.handler.bounds_to_string(start, end);
+        Some(ClipboardItem::new_string(text.trim().into()))
+    }
+
+    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+        true
     }
 }

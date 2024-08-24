@@ -56,6 +56,23 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
             }
         }
     }
+
+    pub fn is_deployed(&self) -> bool {
+        self.0
+            .borrow()
+            .as_ref()
+            .map_or(false, |state| state.menu.borrow().as_ref().is_some())
+    }
+
+    pub fn is_focused(&self, cx: &mut WindowContext) -> bool {
+        self.0.borrow().as_ref().map_or(false, |state| {
+            state
+                .menu
+                .borrow()
+                .as_ref()
+                .map_or(false, |view| view.focus_handle(cx).is_focused(cx))
+        })
+    }
 }
 
 pub struct PopoverMenu<M: ManagedView> {
@@ -340,9 +357,12 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 // want a click on the toggle to re-open it.
                 cx.on_mouse_event(move |_: &MouseDownEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble && child_hitbox.is_hovered(cx) {
-                        menu_handle.borrow_mut().take();
+                        if let Some(menu) = menu_handle.borrow().as_ref() {
+                            menu.update(cx, |_, cx| {
+                                cx.emit(DismissEvent);
+                            });
+                        }
                         cx.stop_propagation();
-                        cx.refresh();
                     }
                 })
             }

@@ -305,7 +305,7 @@ zed_actions = { path = "crates/zed_actions" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "cacdb5bb3b72bad2c729227537979d95af75978f" }
+alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "91d034ff8b53867143c005acfaa14609147c9a2c" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 ashpd = "0.9.1"
@@ -321,9 +321,9 @@ async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "ac25c77ed8d86c386a541c935ffe0a0f6024e701" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "ac25c77ed8d86c386a541c935ffe0a0f6024e701" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "ac25c77ed8d86c386a541c935ffe0a0f6024e701" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "7f54ddfc001edc48225e6602d3c38ebb855421aa" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "7f54ddfc001edc48225e6602d3c38ebb855421aa" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "7f54ddfc001edc48225e6602d3c38ebb855421aa" }
 cargo_metadata = "0.18"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
@@ -359,7 +359,6 @@ isahc = { version = "1.7.2", default-features = false, features = [
 ] }
 itertools = "0.11.0"
 jsonwebtoken = "9.3"
-lazy_static = "1.4.0"
 libc = "0.2"
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
@@ -389,7 +388,7 @@ runtimelib = { version = "0.15", default-features = false, features = [
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-schemars = {version = "0.8", features = ["impl_json_schema"]}
+schemars = { version = "0.8", features = ["impl_json_schema"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }

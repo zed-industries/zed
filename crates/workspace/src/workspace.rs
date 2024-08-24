@@ -44,7 +44,6 @@ pub use item::{
 };
 use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
-use lazy_static::lazy_static;
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
@@ -56,7 +55,9 @@ pub use persistence::{
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
-use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use project::{
+    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+};
 use serde::Deserialize;
 use session::AppSession;
 use settings::Settings;
@@ -77,7 +78,7 @@ use std::{
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::{atomic::AtomicUsize, Arc, Weak},
+    sync::{atomic::AtomicUsize, Arc, LazyLock, Weak},
     time::Duration,
 };
 use task::SpawnInTerminal;
@@ -101,16 +102,19 @@ use crate::persistence::{
     SerializedAxis,
 };
 
-lazy_static! {
-    static ref ZED_WINDOW_SIZE: Option<Size<Pixels>> = env::var("ZED_WINDOW_SIZE")
+static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
+    env::var("ZED_WINDOW_SIZE")
         .ok()
         .as_deref()
-        .and_then(parse_pixel_size_env_var);
-    static ref ZED_WINDOW_POSITION: Option<Point<Pixels>> = env::var("ZED_WINDOW_POSITION")
+        .and_then(parse_pixel_size_env_var)
+});
+
+static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
+    env::var("ZED_WINDOW_POSITION")
         .ok()
         .as_deref()
-        .and_then(parse_pixel_position_env_var);
-}
+        .and_then(parse_pixel_position_env_var)
+});
 
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
@@ -132,6 +136,8 @@ actions!(
         FollowNextCollaborator,
         NewCenterTerminal,
         NewFile,
+        NewFileSplitVertical,
+        NewFileSplitHorizontal,
         NewSearch,
         NewTerminal,
         NewWindow,
@@ -163,9 +169,6 @@ pub struct ActivatePaneInDirection(pub SplitDirection);
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SwapPaneInDirection(pub SplitDirection);
-
-#[derive(Clone, Deserialize, PartialEq)]
-pub struct NewFileInDirection(pub SplitDirection);
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -216,7 +219,6 @@ impl_actions!(
         ActivatePaneInDirection,
         CloseAllItemsAndPanes,
         CloseInactiveTabsAndPanes,
-        NewFileInDirection,
         OpenTerminal,
         Reload,
         Save,
@@ -1492,7 +1494,7 @@ impl Workspace {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<Option<ProjectPath>> {
-        if self.project.read(cx).is_remote()
+        if self.project.read(cx).is_via_collab()
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
@@ -1574,7 +1576,7 @@ impl Workspace {
         T: 'static,
         F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
-        if self.project.read(cx).is_local() {
+        if self.project.read(cx).is_local_or_ssh() {
             Task::Ready(Some(Ok(callback(self, cx))))
         } else {
             let task = Self::new_local(Vec::new(), self.app_state.clone(), None, cx);
@@ -1887,7 +1889,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let window = cx.window_handle().downcast::<Self>();
-        let is_remote = self.project.read(cx).is_remote();
+        let is_remote = self.project.read(cx).is_via_collab();
         let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
 
@@ -2013,9 +2015,20 @@ impl Workspace {
         })
     }
 
+    pub fn open_resolved_path(
+        &mut self,
+        path: ResolvedPath,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        match path {
+            ResolvedPath::ProjectPath(project_path) => self.open_path(project_path, None, true, cx),
+            ResolvedPath::AbsPath(path) => self.open_abs_path(path, false, cx),
+        }
+    }
+
     fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
         let project = self.project.read(cx);
-        if project.is_remote() && project.dev_server_project_id().is_none() {
+        if project.is_via_collab() && project.dev_server_project_id().is_none() {
             self.show_error(
                 &anyhow!("You cannot add folders to someone else's project"),
                 cx,
@@ -3375,7 +3388,7 @@ impl Workspace {
             title = "empty project".to_string();
         }
 
-        if project.is_remote() {
+        if project.is_via_collab() {
             title.push_str(" ↙");
         } else if project.is_shared() {
             title.push_str(" ↗");
@@ -3899,7 +3912,7 @@ impl Workspace {
     fn local_paths(&self, cx: &AppContext) -> Option<Vec<Arc<Path>>> {
         let project = self.project().read(cx);
 
-        if project.is_local() {
+        if project.is_local_or_ssh() {
             Some(
                 project
                     .visible_worktrees(cx)
@@ -5091,7 +5104,7 @@ async fn join_channel_internal(
                         return None;
                     }
 
-                    if (project.is_local() || is_dev_server)
+                    if (project.is_local_or_ssh() || is_dev_server)
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()
@@ -5245,7 +5258,7 @@ pub fn local_workspace_windows(cx: &AppContext) -> Vec<WindowHandle<Workspace>> 
         .filter(|workspace| {
             workspace
                 .read(cx)
-                .is_ok_and(|workspace| workspace.project.read(cx).is_local())
+                .is_ok_and(|workspace| workspace.project.read(cx).is_local_or_ssh())
         })
         .collect()
 }
@@ -5303,7 +5316,7 @@ pub fn open_paths(
                     for window in local_workspace_windows(cx) {
                         if let Ok(workspace) = window.read(cx) {
                             let project = workspace.project().read(cx);
-                            if project.is_remote() {
+                            if project.is_via_collab() {
                                 continue;
                             }
                             existing = Some(window);

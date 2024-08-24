@@ -97,6 +97,7 @@ tab_switcher.workspace = true
 supermaven.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
+time.workspace =  true
 telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true

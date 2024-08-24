@@ -412,7 +412,6 @@ pub trait PlatformDispatcher: Send + Sync {
 pub(crate) trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
     fn all_font_names(&self) -> Vec<String>;
-    fn all_font_families(&self) -> Vec<String>;
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
@@ -940,11 +939,11 @@ pub enum CursorStyle {
     ResizeUpRightDownLeft,
 
     /// A cursor indicating that the item/column can be resized horizontally.
-    /// corresponds to the CSS curosr value `col-resize`
+    /// corresponds to the CSS cursor value `col-resize`
     ResizeColumn,
 
     /// A cursor indicating that the item/row can be resized vertically.
-    /// corresponds to the CSS curosr value `row-resize`
+    /// corresponds to the CSS cursor value `row-resize`
     ResizeRow,
 
     /// A text input cursor for vertical layout
@@ -1016,6 +1015,13 @@ impl ClipboardItem {
         }
     }
 
+    /// Create a new ClipboardItem::Image with the given image with no associated metadata
+    pub fn new_image(image: &Image) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::Image(image.clone())],
+        }
+    }
+
     /// Concatenates together all the ClipboardString entries in the item.
     /// Returns None if there were no ClipboardString entries.
     pub fn text(&self) -> Option<String> {
@@ -1084,10 +1090,11 @@ pub enum ImageFormat {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Image {
     /// The image format the bytes represent (e.g. PNG)
-    format: ImageFormat,
+    pub format: ImageFormat,
     /// The raw image bytes
-    bytes: Vec<u8>,
-    id: u64,
+    pub bytes: Vec<u8>,
+    /// The unique ID for the image
+    pub id: u64,
 }
 
 impl Hash for Image {

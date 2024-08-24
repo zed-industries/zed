@@ -21,7 +21,6 @@ use std::{
 use anyhow::anyhow;
 use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use ashpd::desktop::open_uri::{OpenDirectoryRequest, OpenFileRequest as OpenUriRequest};
-use ashpd::desktop::ResponseError;
 use ashpd::{url, ActivationToken};
 use async_task::Runnable;
 use calloop::channel::Channel;
@@ -185,7 +184,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         // cleaned up when `kill -0` returns.
         let script = format!(
             r#"
-            while kill -O {pid} 2>/dev/null; do
+            while kill -0 {pid} 2>/dev/null; do
                 sleep 0.1
             done
 
@@ -300,7 +299,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                             .filter_map(|uri| uri.to_file_path().ok())
                             .collect::<Vec<_>>(),
                     )),
-                    Err(ashpd::Error::Response(ResponseError::Cancelled)) => Ok(None),
+                    Err(ashpd::Error::Response(_)) => Ok(None),
                     Err(e) => Err(e.into()),
                 };
                 done_tx.send(result);
@@ -338,7 +337,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                         .uris()
                         .first()
                         .and_then(|uri| uri.to_file_path().ok())),
-                    Err(ashpd::Error::Response(ResponseError::Cancelled)) => Ok(None),
+                    Err(ashpd::Error::Response(_)) => Ok(None),
                     Err(e) => Err(e.into()),
                 };
                 done_tx.send(result);

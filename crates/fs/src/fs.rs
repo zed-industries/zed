@@ -351,6 +351,16 @@ impl Fs for RealFs {
                 // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
                 // See https://github.com/zed-industries/zed/pull/8437 for more details.
                 NamedTempFile::new_in(path.parent().unwrap_or(&paths::temp_dir()))
+            } else if cfg!(target_os = "windows") {
+                // If temp dir is set to a different drive than the destination,
+                // we receive error:
+                //
+                // failed to persist temporary file:
+                // The system cannot move the file to a different disk drive. (os error 17)
+                //
+                // So we use the directory of the destination as a temp dir to avoid it.
+                // https://github.com/zed-industries/zed/issues/16571
+                NamedTempFile::new_in(path.parent().unwrap_or(&paths::temp_dir()))
             } else {
                 NamedTempFile::new()
             }?;
@@ -794,9 +804,8 @@ impl FakeFsState {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-lazy_static::lazy_static! {
-    pub static ref FS_DOT_GIT: &'static OsStr = OsStr::new(".git");
-}
+pub static FS_DOT_GIT: std::sync::LazyLock<&'static OsStr> =
+    std::sync::LazyLock::new(|| OsStr::new(".git"));
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFs {

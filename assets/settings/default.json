@@ -64,9 +64,15 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
+  // How much to fade out unused code.
+  "unnecessary_code_fade": 0.3,
   // The factor to grow the active pane by. Defaults to 1.0
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,
+  // The direction that you want to split panes horizontally. Defaults to "up"
+  "pane_split_direction_horizontal": "up",
+  // The direction that you want to split panes horizontally. Defaults to "left"
+  "pane_split_direction_vertical": "left",
   // Centered layout related settings.
   "centered_layout": {
     // The relative width of the left padding of the central pane from the
@@ -504,6 +510,8 @@
   //      "soft_wrap": "editor_width",
   // 4. Soft wrap lines at the preferred line length.
   //      "soft_wrap": "preferred_line_length",
+  // 5. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
+  //      "soft_wrap": "bounded",
   "soft_wrap": "prefer_line",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
@@ -836,6 +844,7 @@
       "language_servers": ["starpls", "!buck2-lsp", "..."]
     },
     "Svelte": {
+      "language_servers": ["svelte-language-server", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["prettier-plugin-svelte"]
@@ -859,6 +868,7 @@
       }
     },
     "Vue.js": {
+      "language_servers": ["vue-language-server", "..."],
       "prettier": {
         "allowed": true
       }

@@ -1060,7 +1060,7 @@ mod tests {
             editor.change_selections(None, cx, |selections| {
                 selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
             });
-            editor.next_inline_completion(&Default::default(), cx);
+            editor.refresh_inline_completion(true, false, cx);
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
@@ -1070,7 +1070,7 @@ mod tests {
             editor.change_selections(None, cx, |s| {
                 s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
             });
-            editor.next_inline_completion(&Default::default(), cx);
+            editor.refresh_inline_completion(true, false, cx);
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);

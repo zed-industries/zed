@@ -40,6 +40,7 @@ pub struct OpenAiSettings {
 pub struct AvailableModel {
     pub name: String,
     pub max_tokens: usize,
+    pub max_output_tokens: Option<u32>,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -170,6 +171,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                 open_ai::Model::Custom {
                     name: model.name.clone(),
                     max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
                 },
             );
         }
@@ -275,6 +277,10 @@ impl LanguageModel for OpenAiLanguageModel {
         self.model.max_token_count()
     }
 
+    fn max_output_tokens(&self) -> Option<u32> {
+        self.model.max_output_tokens()
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
@@ -288,7 +294,7 @@ impl LanguageModel for OpenAiLanguageModel {
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let request = request.into_open_ai(self.model.id().into());
+        let request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
         let completions = self.stream_completion(request, cx);
         async move { Ok(open_ai::extract_text_from_events(completions.await?).boxed()) }.boxed()
     }
@@ -301,7 +307,7 @@ impl LanguageModel for OpenAiLanguageModel {
         schema: serde_json::Value,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut request = request.into_open_ai(self.model.id().into());
+        let mut request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
         request.tool_choice = Some(ToolChoice::Other(ToolDefinition::Function {
             function: FunctionDefinition {
                 name: tool_name.clone(),
@@ -454,6 +460,7 @@ impl ConfigurationView {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
+            truncate: None,
         };
         EditorElement::new(
             &self.api_key_editor,
