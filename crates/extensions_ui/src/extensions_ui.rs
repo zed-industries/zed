@@ -101,9 +101,9 @@ pub fn init(cx: &mut AppContext) {
             }
             _ => {}
         })
-        .detach();
+            .detach();
     })
-    .detach();
+        .detach();
 }
 
 #[derive(Clone)]
@@ -345,7 +345,7 @@ impl ExtensionsPage {
                     &Default::default(),
                     cx.background_executor().clone(),
                 )
-                .await;
+                    .await;
                 matches
                     .into_iter()
                     .map(|mat| dev_extensions[mat.candidate_id].clone())
@@ -364,7 +364,7 @@ impl ExtensionsPage {
                 anyhow::Ok(())
             })?
         })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
     fn render_extensions(
@@ -424,16 +424,16 @@ impl ExtensionsPage {
                                     SharedString::from(format!("rebuild-{}", extension.id)),
                                     "Rebuild",
                                 )
-                                .on_click({
-                                    let extension_id = extension.id.clone();
-                                    move |_, cx| {
-                                        ExtensionStore::global(cx).update(cx, |store, cx| {
-                                            store.rebuild_dev_extension(extension_id.clone(), cx)
-                                        });
-                                    }
-                                })
-                                .color(Color::Accent)
-                                .disabled(matches!(status, ExtensionStatus::Upgrading)),
+                                    .on_click({
+                                        let extension_id = extension.id.clone();
+                                        move |_, cx| {
+                                            ExtensionStore::global(cx).update(cx, |store, cx| {
+                                                store.rebuild_dev_extension(extension_id.clone(), cx)
+                                            });
+                                        }
+                                    })
+                                    .color(Color::Accent)
+                                    .disabled(matches!(status, ExtensionStatus::Upgrading)),
                             )
                             .child(
                                 Button::new(SharedString::from(extension.id.clone()), "Uninstall")
@@ -463,7 +463,7 @@ impl ExtensionsPage {
                             },
                             extension.authors.join(", ")
                         ))
-                        .size(LabelSize::Small),
+                            .size(LabelSize::Small),
                     )
                     .child(Label::new("<>").size(LabelSize::Small)),
             )
@@ -480,16 +480,16 @@ impl ExtensionsPage {
                             SharedString::from(format!("repository-{}", extension.id)),
                             IconName::Github,
                         )
-                        .icon_color(Color::Accent)
-                        .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Filled)
-                        .on_click(cx.listener({
-                            let repository_url = repository_url.clone();
-                            move |_, _, cx| {
-                                cx.open_url(&repository_url);
-                            }
-                        }))
-                        .tooltip(move |cx| Tooltip::text(repository_url.clone(), cx))
+                            .icon_color(Color::Accent)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener({
+                                let repository_url = repository_url.clone();
+                                move |_, _, cx| {
+                                    cx.open_url(&repository_url);
+                                }
+                            }))
+                            .tooltip(move |cx| Tooltip::text(repository_url.clone(), cx))
                     })),
             )
     }
@@ -532,7 +532,7 @@ impl ExtensionsPage {
                                 installed_version
                                     .filter(|installed_version| *installed_version != version)
                                     .map(|installed_version| {
-                                        Headline::new(format!("(v{installed_version} installed)",))
+                                        Headline::new(format!("(v{installed_version} installed)", ))
                                             .size(HeadlineSize::XSmall)
                                     }),
                             ),
@@ -558,14 +558,14 @@ impl ExtensionsPage {
                             },
                             extension.manifest.authors.join(", ")
                         ))
-                        .size(LabelSize::Small),
+                            .size(LabelSize::Small),
                     )
                     .child(
                         Label::new(format!(
                             "Downloads: {}",
                             extension.download_count.to_formatted_string(&Locale::en)
                         ))
-                        .size(LabelSize::Small),
+                            .size(LabelSize::Small),
                     ),
             )
             .child(
@@ -587,38 +587,38 @@ impl ExtensionsPage {
                                     SharedString::from(format!("repository-{}", extension.id)),
                                     IconName::Github,
                                 )
-                                .icon_color(Color::Accent)
-                                .icon_size(IconSize::Small)
-                                .style(ButtonStyle::Filled)
-                                .on_click(cx.listener({
-                                    let repository_url = repository_url.clone();
-                                    move |_, _, cx| {
-                                        cx.open_url(&repository_url);
-                                    }
-                                }))
-                                .tooltip(move |cx| Tooltip::text(repository_url.clone(), cx)),
+                                    .icon_color(Color::Accent)
+                                    .icon_size(IconSize::Small)
+                                    .style(ButtonStyle::Filled)
+                                    .on_click(cx.listener({
+                                        let repository_url = repository_url.clone();
+                                        move |_, _, cx| {
+                                            cx.open_url(&repository_url);
+                                        }
+                                    }))
+                                    .tooltip(move |cx| Tooltip::text(repository_url.clone(), cx)),
                             )
                             .child(
                                 PopoverMenu::new(SharedString::from(format!(
                                     "more-{}",
                                     extension.id
                                 )))
-                                .trigger(
-                                    IconButton::new(
-                                        SharedString::from(format!("more-{}", extension.id)),
-                                        IconName::Ellipsis,
+                                    .trigger(
+                                        IconButton::new(
+                                            SharedString::from(format!("more-{}", extension.id)),
+                                            IconName::Ellipsis,
+                                        )
+                                            .icon_color(Color::Accent)
+                                            .icon_size(IconSize::Small)
+                                            .style(ButtonStyle::Filled),
                                     )
-                                    .icon_color(Color::Accent)
-                                    .icon_size(IconSize::Small)
-                                    .style(ButtonStyle::Filled),
-                                )
-                                .menu(move |cx| {
-                                    Some(Self::render_remote_extension_context_menu(
-                                        &this,
-                                        extension_id.clone(),
-                                        cx,
-                                    ))
-                                }),
+                                    .menu(move |cx| {
+                                        Some(Self::render_remote_extension_context_menu(
+                                            &this,
+                                            extension_id.clone(),
+                                            cx,
+                                        ))
+                                    }),
                             ),
                     ),
             )
@@ -673,7 +673,7 @@ impl ExtensionsPage {
 
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
     fn buttons_for_entry(
@@ -700,17 +700,17 @@ impl ExtensionsPage {
                 Button::new(SharedString::from(extension.id.clone()), "Install")
                     .color(Color::Accent)
                     .on_click(
-                    cx.listener({
-                        let extension_id = extension.id.clone();
-                        move |this, _, cx| {
-                            this.telemetry
-                                .report_app_event("extensions: install extension".to_string());
-                            ExtensionStore::global(cx).update(cx, |store, cx| {
-                                store.install_latest_extension(extension_id.clone(), cx)
-                            });
-                        }
-                    }),
-                ),
+                        cx.listener({
+                            let extension_id = extension.id.clone();
+                            move |this, _, cx| {
+                                this.telemetry
+                                    .report_app_event("extensions: install extension".to_string());
+                                ExtensionStore::global(cx).update(cx, |store, cx| {
+                                    store.install_latest_extension(extension_id.clone(), cx)
+                                });
+                            }
+                        }),
+                    ),
                 None,
             ),
             ExtensionStatus::Installing => (
@@ -727,17 +727,17 @@ impl ExtensionsPage {
                 Button::new(SharedString::from(extension.id.clone()), "Uninstall")
                     .color(Color::Error)
                     .on_click(
-                    cx.listener({
-                        let extension_id = extension.id.clone();
-                        move |this, _, cx| {
-                            this.telemetry
-                                .report_app_event("extensions: uninstall extension".to_string());
-                            ExtensionStore::global(cx).update(cx, |store, cx| {
-                                store.uninstall_extension(extension_id.clone(), cx)
-                            });
-                        }
-                    }),
-                ),
+                        cx.listener({
+                            let extension_id = extension.id.clone();
+                            move |this, _, cx| {
+                                this.telemetry
+                                    .report_app_event("extensions: uninstall extension".to_string());
+                                ExtensionStore::global(cx).update(cx, |store, cx| {
+                                    store.uninstall_extension(extension_id.clone(), cx)
+                                });
+                            }
+                        }),
+                    ),
                 if installed_version == extension.manifest.version {
                     None
                 } else {
@@ -873,7 +873,7 @@ impl ExtensionsPage {
             this.update(&mut cx, |this, cx| {
                 this.fetch_extensions(search, cx);
             })
-            .ok();
+                .ok();
         }));
     }
 
@@ -975,12 +975,12 @@ impl ExtensionsPage {
                     telemetry,
                     "Zed comes with basic Git support. More Git features are coming in the future.",
                 )
-                .docs_url("https://zed.dev/docs/git"),
+                    .docs_url("https://zed.dev/docs/git"),
                 Feature::OpenIn => FeatureUpsell::new(
                     telemetry,
                     "Zed supports linking to a source line on GitHub and others.",
                 )
-                .docs_url("https://zed.dev/docs/git#git-integrations"),
+                    .docs_url("https://zed.dev/docs/git#git-integrations"),
                 Feature::Vim => FeatureUpsell::new(telemetry, "Vim support is built-in to Zed!")
                     .docs_url("https://zed.dev/docs/vim")
                     .child(CheckboxWithLabel::new(
