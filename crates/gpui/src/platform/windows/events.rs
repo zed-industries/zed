@@ -1089,6 +1089,8 @@ fn handle_system_settings_changed(
     lock.click_state.system_update();
     // window border offset
     lock.border_offset.update(handle).log_err();
+    lock.taskbar_position = TaskbarPosition::new(lock.display).log_err().flatten();
+    println!("==> {:?}", lock.taskbar_position);
     Some(0)
 }
 

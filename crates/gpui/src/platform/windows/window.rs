@@ -50,6 +50,7 @@ pub struct WindowsWindowState {
     pub nc_button_pressed: Option<u32>,
 
     pub display: WindowsDisplay,
+    pub taskbar_position: Option<TaskbarPosition>,
     fullscreen: Option<StyleAndBounds>,
     hwnd: HWND,
 }
@@ -95,6 +96,8 @@ impl WindowsWindowState {
         let system_settings = WindowsSystemSettings::new();
         let nc_button_pressed = None;
         let fullscreen = None;
+        let taskbar_position = TaskbarPosition::new(display)?;
+        println!("-> {:?}", taskbar_position);
 
         Ok(Self {
             origin,
@@ -111,6 +114,7 @@ impl WindowsWindowState {
             current_cursor,
             nc_button_pressed,
             display,
+            taskbar_position,
             fullscreen,
             hwnd,
         })
@@ -913,6 +917,87 @@ impl WindowBorderOffset {
         self.height_offset =
             (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) enum TaskbarPosition {
+    Left,
+    Right,
+    Top,
+    #[default]
+    Bottom,
+}
+
+impl TaskbarPosition {
+    pub(crate) fn new(display: WindowsDisplay) -> anyhow::Result<Option<Self>> {
+        let mut position = APPBARDATA::default();
+        let ret = unsafe { SHAppBarMessage(ABM_GETTASKBARPOS, &mut position) };
+        if ret == 0 {
+            anyhow::bail!("{}", std::io::Error::last_os_error());
+        }
+        let taskbar_bounds: Bounds<DevicePixels> = Bounds::new(
+            point(position.rc.left.into(), position.rc.top.into()),
+            size(
+                (position.rc.right - position.rc.left).into(),
+                (position.rc.bottom - position.rc.top).into(),
+            ),
+        );
+        let display_bounds = display.physical_bounds();
+        let intersec = display_bounds.intersect(&taskbar_bounds);
+        println!("taskbar: {:?}", taskbar_bounds);
+        println!("display: {:?}", display_bounds);
+        println!("Intersect: {:?}", intersec);
+        if display_bounds.intersect(&taskbar_bounds) != taskbar_bounds {
+            return Ok(None);
+        }
+        println!("--> {:#?}", position.rc);
+        if taskbar_bounds.bottom() == display_bounds.bottom()
+            && taskbar_bounds.right() == display_bounds.right()
+        {
+            if taskbar_bounds.size.height < display_bounds.size.height
+                && taskbar_bounds.size.width == display_bounds.size.width
+            {
+                return Ok(Some(Self::Bottom));
+            }
+            if taskbar_bounds.size.width < display_bounds.size.width
+                && taskbar_bounds.size.height == display_bounds.size.height
+            {
+                return Ok(Some(Self::Right));
+            }
+            log::error!(
+                "Unrecognized taskbar bounds {:?} give display bounds {:?}",
+                taskbar_bounds,
+                display_bounds
+            );
+            return Ok(None);
+        }
+        if taskbar_bounds.top() == display_bounds.top()
+            && taskbar_bounds.left() == display_bounds.left()
+        {
+            if taskbar_bounds.size.height < display_bounds.size.height
+                && taskbar_bounds.size.width == display_bounds.size.width
+            {
+                return Ok(Some(Self::Top));
+            }
+            if taskbar_bounds.size.width < display_bounds.size.width
+                && taskbar_bounds.size.height == display_bounds.size.height
+            {
+                return Ok(Some(Self::Left));
+            }
+            log::error!(
+                "Unrecognized taskbar bounds {:?} give display bounds {:?}",
+                taskbar_bounds,
+                display_bounds
+            );
+            return Ok(None);
+        }
+        log::error!(
+            "Unrecognized taskbar bounds {:?} give display bounds {:?}",
+            taskbar_bounds,
+            display_bounds
+        );
+        return Ok(None);
     }
 }
 
