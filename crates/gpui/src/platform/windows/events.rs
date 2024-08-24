@@ -740,28 +740,12 @@ fn handle_activate_msg(
 }
 
 fn handle_create_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut size_rect = RECT::default();
-    unsafe { GetWindowRect(handle, &mut size_rect).log_err() };
-
-    let width = size_rect.right - size_rect.left;
-    let height = size_rect.bottom - size_rect.top;
-
     if state_ptr.hide_title_bar {
-        unsafe {
-            SetWindowPos(
-                handle,
-                None,
-                size_rect.left,
-                size_rect.top,
-                width,
-                height,
-                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
-            )
-            .log_err()
-        };
+        notify_frame_changed(handle);
+        Some(0)
+    } else {
+        None
     }
-
-    Some(0)
 }
 
 fn handle_dpi_changed_msg(
@@ -1098,11 +1082,16 @@ fn handle_system_settings_changed(
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
     let display = lock.display;
+    // system settings
     lock.system_settings.update(display);
     // mouse double click
     lock.click_state.system_update();
     // window border offset
     lock.border_offset.update(handle).log_err();
+    drop(lock);
+    // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
+    // taskbar correctly.
+    notify_frame_changed(handle);
     Some(0)
 }
 
@@ -1385,4 +1374,27 @@ fn get_frame_thickness(dpi: u32) -> i32 {
     let resize_frame_thickness = unsafe { GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) };
     let padding_thickness = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
     resize_frame_thickness + padding_thickness
+}
+
+fn notify_frame_changed(handle: HWND) {
+    unsafe {
+        SetWindowPos(
+            handle,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED
+                | SWP_NOACTIVATE
+                | SWP_NOCOPYBITS
+                | SWP_NOMOVE
+                | SWP_NOOWNERZORDER
+                | SWP_NOREPOSITION
+                | SWP_NOSENDCHANGING
+                | SWP_NOSIZE
+                | SWP_NOZORDER,
+        )
+        .log_err();
+    }
 }
