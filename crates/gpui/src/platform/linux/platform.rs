@@ -184,7 +184,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         // cleaned up when `kill -0` returns.
         let script = format!(
             r#"
-            while kill -O {pid} 2>/dev/null; do
+            while kill -0 {pid} 2>/dev/null; do
                 sleep 0.1
             done
 
