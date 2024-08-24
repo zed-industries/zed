@@ -24,3 +24,9 @@ simplelog.workspace= true
 strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
 vscode_theme = "0.2.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# import async-std to cause the fix to async-tar be compiled in
+# https://github.com/zed-industries/zed/issues/12079
+# https://github.com/dignifiedquire/async-tar/issues/48
+async-std.workspace = true

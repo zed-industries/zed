@@ -314,6 +314,14 @@ async-dispatcher = "0.1"
 async-fs = "1.6"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
+# this requirement on async-std and unstable feature is here because async-tar depends on it,
+# but on windows they use a feature only available on unstable, but do not enable this feature in their Cargo.toml.
+# this causes a compile error on windows. this exploits cargo's feature unification to temporarily patch the issue
+#
+# while an issue was made in their repo, it seems unlikely they will fix it anytime soon, even if a pr is submitted
+# https://github.com/zed-industries/zed/issues/12079
+# https://github.com/dignifiedquire/async-tar/issues/48
+async-std = { version = "1.12.0", features = ["unstable"] }
 async-tar = "0.4.2"
 async-trait = "0.1"
 async-tungstenite = "0.23"
