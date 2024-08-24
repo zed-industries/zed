@@ -1544,19 +1544,15 @@ impl Project {
             return;
         };
 
+        cx.emit(Event::DebugClientStopped(client_id));
+
         if !should_terminate {
-            return cx.emit(Event::DebugClientStopped(client_id));
+            return;
         }
 
         if let DebugAdapterClientState::Running(client) = debug_client {
-            cx.spawn(|project, mut cx| async move {
-                client.terminate().await.log_err();
-
-                project.update(&mut cx, |_, cx| {
-                    cx.emit(Event::DebugClientStopped(client.id()))
-                })
-            })
-            .detach_and_log_err(cx)
+            cx.spawn(|_, _| async move { client.terminate().await })
+                .detach_and_log_err(cx)
         }
     }
 

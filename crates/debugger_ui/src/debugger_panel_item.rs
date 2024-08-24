@@ -18,6 +18,10 @@ use workspace::dock::Panel;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
 
+pub enum Event {
+    Close,
+}
+
 #[derive(PartialEq, Eq)]
 enum ThreadItem {
     Variables,
@@ -231,11 +235,11 @@ impl DebugPanelItem {
             return;
         }
 
-        cx.emit(ItemEvent::CloseItem);
+        cx.emit(Event::Close);
     }
 }
 
-impl EventEmitter<ItemEvent> for DebugPanelItem {}
+impl EventEmitter<Event> for DebugPanelItem {}
 
 impl FocusableView for DebugPanelItem {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
@@ -244,7 +248,7 @@ impl FocusableView for DebugPanelItem {
 }
 
 impl Item for DebugPanelItem {
-    type Event = ItemEvent;
+    type Event = Event;
 
     fn tab_content(
         &self,
@@ -271,6 +275,12 @@ impl Item for DebugPanelItem {
             self.thread_id,
             self.current_thread_state().status
         )))
+    }
+
+    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+        match event {
+            Event::Close => f(ItemEvent::CloseItem),
+        }
     }
 }
 

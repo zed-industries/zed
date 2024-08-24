@@ -187,6 +187,13 @@ impl DebugPanel {
             pane::Event::Remove => cx.emit(PanelEvent::Close),
             pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
             pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
+            pane::Event::AddItem { item } => {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        item.added_to_pane(workspace, self.pane.clone(), cx)
+                    })
+                    .ok();
+            }
             _ => {}
         }
     }
@@ -515,25 +522,13 @@ impl DebugPanel {
 
                     if !existing_item {
                         let debug_panel = cx.view().clone();
+                        this.pane.update(cx, |pane, cx| {
+                            let tab = cx.new_view(|cx| {
+                                DebugPanelItem::new(debug_panel, client.clone(), thread_id, cx)
+                            });
 
-                        this.workspace
-                            .update(cx, |_, cx| {
-                                this.pane.update(cx, |_, cx| {
-                                    let tab = cx.new_view(|cx| {
-                                        DebugPanelItem::new(
-                                            debug_panel,
-                                            client.clone(),
-                                            thread_id,
-                                            cx,
-                                        )
-                                    });
-
-                                    cx.emit(pane::Event::AddItem {
-                                        item: Box::new(tab),
-                                    });
-                                });
-                            })
-                            .log_err();
+                            pane.add_item(Box::new(tab), true, true, None, cx);
+                        });
                     }
 
                     cx.emit(DebugPanelEvent::Stopped((client_id, event)));
