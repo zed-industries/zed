@@ -98,7 +98,10 @@ impl AutoHideTaskbarPosition {
         let mut info = APPBARDATA::default();
         let ret = unsafe { SHAppBarMessage(ABM_GETTASKBARPOS, &mut info) };
         if ret == 0 {
-            anyhow::bail!("{}", std::io::Error::last_os_error());
+            anyhow::bail!(
+                "Unable to retrieve taskbar position: {}",
+                std::io::Error::last_os_error()
+            );
         }
         let taskbar_bounds: Bounds<DevicePixels> = Bounds::new(
             point(info.rc.left.into(), info.rc.top.into()),
