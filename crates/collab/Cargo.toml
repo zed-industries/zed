@@ -57,7 +57,7 @@ serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
 strum.workspace = true
 subtle.workspace = true
 rustc-demangle.workspace = true
@@ -113,7 +113,7 @@ sea-orm = { version = "0.12.x", features = ["sqlx-sqlite"] }
 serde_json.workspace = true
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
-sqlx = { version = "0.7", features = ["sqlite"] }
+sqlx = { version = "0.8", features = ["sqlite"] }
 theme.workspace = true
 unindent.workspace = true
 util.workspace = true
