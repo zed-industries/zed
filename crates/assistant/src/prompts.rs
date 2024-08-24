@@ -8,6 +8,7 @@ use language::BufferSnapshot;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use text::LineEnding;
 use util::ResultExt;
 
 #[derive(Serialize)]
@@ -190,9 +191,10 @@ impl PromptBuilder {
         for path in Assets.list("prompts")? {
             if let Some(id) = path.split('/').last().and_then(|s| s.strip_suffix(".hbs")) {
                 if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
+                    let mut prompt = String::from_utf8_lossy(prompt.as_ref()).to_string();
+                    LineEnding::normalize(&mut prompt);
                     log::info!("Registering built-in prompt template: {}", id);
-                    handlebars
-                        .register_template_string(id, String::from_utf8_lossy(prompt.as_ref()))?
+                    handlebars.register_template_string(id, prompt)?
                 }
             }
         }
