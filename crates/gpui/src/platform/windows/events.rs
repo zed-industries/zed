@@ -664,56 +664,52 @@ fn handle_calc_client_size(
         return None;
     }
 
-    let dpi = unsafe { GetDpiForWindow(handle) };
-
-    let frame_x = unsafe { GetSystemMetricsForDpi(SM_CXFRAME, dpi) };
-    let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, dpi) };
-    let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
-
+    let is_maximized = state_ptr.state.borrow().is_maximized();
+    let insets = get_client_area_insets(handle, is_maximized, state_ptr.windows_version);
     // wparam is TRUE so lparam points to an NCCALCSIZE_PARAMS structure
     let mut params = lparam.0 as *mut NCCALCSIZE_PARAMS;
     let mut requested_client_rect = unsafe { &mut ((*params).rgrc) };
 
-    requested_client_rect[0].right -= frame_x + padding;
-    requested_client_rect[0].left += frame_x + padding;
-    requested_client_rect[0].bottom -= frame_y + padding;
+    requested_client_rect[0].left += insets.left;
+    requested_client_rect[0].top += insets.top;
+    requested_client_rect[0].right -= insets.right;
+    requested_client_rect[0].bottom -= insets.bottom;
 
-    if state_ptr.state.borrow().is_maximized() {
-        requested_client_rect[0].top += frame_y + padding;
-        if let Some(ref taskbar_position) = state_ptr
-            .state
-            .borrow()
-            .system_settings
-            .auto_hide_taskbar_position
-        {
-            // Fot the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
-            // so the window isn't treated as a "fullscreen app", which would cause
-            // the taskbars to disappear.
-            match taskbar_position {
-                AutoHideTaskbarPosition::Left => {
-                    requested_client_rect[0].left += AUTO_HIDE_TASKBAR_THICKNESS_PX
-                }
-                AutoHideTaskbarPosition::Right => {
-                    requested_client_rect[0].right -= AUTO_HIDE_TASKBAR_THICKNESS_PX
-                }
-                AutoHideTaskbarPosition::Top => {
-                    requested_client_rect[0].top += AUTO_HIDE_TASKBAR_THICKNESS_PX
-                }
-                AutoHideTaskbarPosition::Bottom => {
-                    requested_client_rect[0].bottom -= AUTO_HIDE_TASKBAR_THICKNESS_PX
-                }
-            }
-        }
-    } else {
-        match state_ptr.windows_version {
-            WindowsVersion::Win10 => {}
-            WindowsVersion::Win11 => {
-                // Magic number that calculates the width of the border
-                let border = (dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32).round() as i32;
-                requested_client_rect[0].top += border;
-            }
-        }
-    }
+    // if state_ptr.state.borrow().is_maximized() {
+    //     if let Some(ref taskbar_position) = state_ptr
+    //         .state
+    //         .borrow()
+    //         .system_settings
+    //         .auto_hide_taskbar_position
+    //     {
+    //         // Fot the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
+    //         // so the window isn't treated as a "fullscreen app", which would cause
+    //         // the taskbars to disappear.
+    //         match taskbar_position {
+    //             AutoHideTaskbarPosition::Left => {
+    //                 requested_client_rect[0].left += AUTO_HIDE_TASKBAR_THICKNESS_PX
+    //             }
+    //             AutoHideTaskbarPosition::Right => {
+    //                 requested_client_rect[0].right -= AUTO_HIDE_TASKBAR_THICKNESS_PX
+    //             }
+    //             AutoHideTaskbarPosition::Top => {
+    //                 requested_client_rect[0].top += AUTO_HIDE_TASKBAR_THICKNESS_PX
+    //             }
+    //             AutoHideTaskbarPosition::Bottom => {
+    //                 requested_client_rect[0].bottom -= AUTO_HIDE_TASKBAR_THICKNESS_PX
+    //             }
+    //         }
+    //     }
+    // } else {
+    //     match state_ptr.windows_version {
+    //         WindowsVersion::Win10 => {}
+    //         WindowsVersion::Win11 => {
+    //             // Magic number that calculates the width of the border
+    //             let border = (dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32).round() as i32;
+    //             requested_client_rect[0].top += border;
+    //         }
+    //     }
+    // }
 
     Some(0)
 }
@@ -1347,4 +1343,52 @@ pub(crate) fn current_modifiers() -> Modifiers {
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
     }
+}
+
+fn get_client_area_insets(
+    handle: HWND,
+    is_maximized: bool,
+    windows_version: WindowsVersion,
+) -> RECT {
+    // For maximized windows, Windows outdents the window rect from the screen's client rect
+    // by `frame_thickness` on each edge, meaning `insets` must contain `frame_thickness`
+    // on all sides (including the top) to avoid the client area extending onto adjacent
+    // monitors.
+    //
+    // For non-maximized windows, things become complicated:
+    //
+    // - On Windows 10
+    // The top inset must be zero, since if there is any nonclient area, Windows will draw
+    // a full native titlebar outside the client area. (This doesn't occur in the maximized
+    // case.)
+    //
+    // - On Windows 11
+    // The top inset is calculated using an empirical formula that I derived through various
+    // tests. Without this, the top 1-2 rows of pixels in our window would be obscured.
+    let dpi = unsafe { GetDpiForWindow(handle) };
+    let frame_thickness = get_frame_thickness(dpi);
+    let top_insets = if is_maximized {
+        frame_thickness
+    } else {
+        match windows_version {
+            WindowsVersion::Win10 => 0,
+            WindowsVersion::Win11 => (dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32).round() as i32,
+        }
+    };
+    RECT {
+        left: frame_thickness,
+        top: top_insets,
+        right: frame_thickness,
+        bottom: frame_thickness,
+    }
+}
+
+// there is some additional non-visible space when talking about window
+// borders on Windows:
+// - SM_CXSIZEFRAME: The resize handle.
+// - SM_CXPADDEDBORDER: Additional border space that isn't part of the resize handle.
+fn get_frame_thickness(dpi: u32) -> i32 {
+    let resize_frame_thickness = unsafe { GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) };
+    let padding_thickness = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
+    resize_frame_thickness + padding_thickness
 }
