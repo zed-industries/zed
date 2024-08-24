@@ -1304,7 +1304,6 @@ async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
 
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
-        dbg!(&finder.delegate.matches);
         assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_selection(finder, 0, "2.txt");
         assert_match_at_position(finder, 1, "3.txt");
@@ -2043,24 +2042,18 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
     let mut search_entries = SearchEntries::default();
     for m in &picker.delegate.matches.matches {
         match &m {
-            Match::History(entry, _) => {
-                search_entries.history.push(
-                    entry
-                        .panel_match
-                        .as_ref()
-                        .map(|path_match| {
-                            Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path)
-                        })
-                        .unwrap_or_else(|| {
-                            entry
-                                .path
-                                .absolute
-                                .as_deref()
-                                .unwrap_or_else(|| &entry.path.project.path)
-                                .to_path_buf()
-                        }),
-                );
-                search_entries.history_found_paths.push(entry.path.clone());
+            Match::History { path, data } => {
+                search_entries.history.push(match &data {
+                    HistoryEntryData::HistoryScore(_) => path
+                        .absolute
+                        .as_deref()
+                        .unwrap_or_else(|| &path.project.path)
+                        .to_path_buf(),
+                    HistoryEntryData::PanelMatch(path_match) => {
+                        Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path)
+                    }
+                });
+                search_entries.history_found_paths.push(path.clone());
             }
             Match::Search(path_match) => {
                 search_entries
@@ -2099,7 +2092,7 @@ fn assert_match_at_position(
         .get(match_index)
         .unwrap_or_else(|| panic!("Finder has no match for index {match_index}"));
     let match_file_name = match &match_item {
-        Match::History(entry, _) => entry.path.absolute.as_deref().unwrap().file_name(),
+        Match::History { path, .. } => path.absolute.as_deref().unwrap().file_name(),
         Match::Search(path_match) => path_match.0.path.file_name(),
     }
     .unwrap()
