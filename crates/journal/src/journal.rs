@@ -86,6 +86,8 @@ pub fn new_journal_entry(workspace: &mut Workspace, cx: &mut WindowContext) {
     let now = now.time();
     let entry_heading = heading_entry(now, &settings.hour_format);
 
+    let binding = journal_dir.clone();
+    let journal_dir_path = binding.as_os_str();
     let create_entry = cx.background_executor().spawn(async move {
         std::fs::create_dir_all(month_dir)?;
         OpenOptions::new()
@@ -99,18 +101,33 @@ pub fn new_journal_entry(workspace: &mut Workspace, cx: &mut WindowContext) {
     let app_state = workspace.app_state().clone();
     let workspace_handle = workspace.weak_handle();
 
+    let worktrees = workspace.visible_worktrees(cx).collect::<Vec<_>>();
+    println!("Current worktrees:");
+    let mut open_new_workspace = true;
+    for (index, worktree) in worktrees.iter().enumerate() {
+        let root_name = worktree.read(cx).root_name();
+        println!("Worktree {}: {:?}", index, root_name);
+        println!("journal_dir_path: {journal_dir_path:?}");
+        if root_name == "journal" {
+            open_new_workspace = false;
+            break;
+        }
+    }
+
     cx.spawn(|mut cx| async move {
         let (journal_dir, entry_path) = create_entry.await?;
-        // let (workspace, _) = cx
-        //     .update(|cx| {
-        //         workspace::open_paths(
-        //             &[journal_dir],
-        //             app_state,
-        //             workspace::OpenOptions::default(),
-        //             cx,
-        //         )
-        //     })?
-        //     .await?;
+        if open_new_workspace {
+            let (workspace, _) = cx
+                .update(|cx| {
+                    workspace::open_paths(
+                        &[journal_dir],
+                        app_state,
+                        workspace::OpenOptions::default(),
+                        cx,
+                    )
+                })?
+                .await?;
+        }
         let opened = workspace_handle
             .update(&mut cx, |workspace, cx| {
                 workspace.open_paths(vec![entry_path], OpenVisible::All, None, cx)
