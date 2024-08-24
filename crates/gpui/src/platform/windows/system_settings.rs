@@ -93,9 +93,13 @@ pub(crate) enum AutoHideTaskbarPosition {
 impl AutoHideTaskbarPosition {
     fn new(display: WindowsDisplay) -> anyhow::Result<Option<Self>> {
         if !check_auto_hide_taskbar_enable() {
+            // If auto hide taskbar is not enable, we do nothing in this case.
             return Ok(None);
         }
-        let mut info = APPBARDATA::default();
+        let mut info = APPBARDATA {
+            cbSize: std::mem::size_of::<APPBARDATA>() as u32,
+            ..Default::default()
+        };
         let ret = unsafe { SHAppBarMessage(ABM_GETTASKBARPOS, &mut info) };
         if ret == 0 {
             anyhow::bail!(
@@ -111,14 +115,10 @@ impl AutoHideTaskbarPosition {
             ),
         );
         let display_bounds = display.physical_bounds();
-        let intersec = display_bounds.intersect(&taskbar_bounds);
-        println!("taskbar: {:?}", taskbar_bounds);
-        println!("display: {:?}", display_bounds);
-        println!("Intersect: {:?}", intersec);
         if display_bounds.intersect(&taskbar_bounds) != taskbar_bounds {
+            // This case indicates that taskbar is not on the current monitor.
             return Ok(None);
         }
-        println!("--> {:#?}", info.rc);
         if taskbar_bounds.bottom() == display_bounds.bottom()
             && taskbar_bounds.right() == display_bounds.right()
         {
@@ -168,6 +168,7 @@ impl AutoHideTaskbarPosition {
     }
 }
 
+/// Check if auto hide taskbar is enable or not.
 fn check_auto_hide_taskbar_enable() -> bool {
     let mut info = APPBARDATA {
         cbSize: std::mem::size_of::<APPBARDATA>() as u32,

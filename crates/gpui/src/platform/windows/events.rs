@@ -686,6 +686,9 @@ fn handle_calc_client_size(
             .system_settings
             .auto_hide_taskbar_position
         {
+            // Fot the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
+            // so the window isn't treated as a "fullscreen app", which would cause
+            // the taskbars to disappear.
             match taskbar_position {
                 AutoHideTaskbarPosition::Left => {
                     requested_client_rect[0].left += AUTO_HIDE_TASKBAR_THICKNESS_PX

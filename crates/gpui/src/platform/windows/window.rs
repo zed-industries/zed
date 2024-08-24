@@ -95,7 +95,6 @@ impl WindowsWindowState {
         let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
-        println!("-> {:?}", system_settings.auto_hide_taskbar_position);
 
         Ok(Self {
             origin,
