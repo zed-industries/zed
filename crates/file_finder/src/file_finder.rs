@@ -315,8 +315,9 @@ impl Matches {
             (Match::History { .. }, Match::Search(_)) if separate_history => cmp::Ordering::Greater,
             (Match::Search(_), Match::History { .. }) if separate_history => cmp::Ordering::Less,
 
-            (Match::History { data: score_a, .. }, Match::History { data: score_b, .. }) => {
-                score_a.cmp(&score_b)
+            (Match::History { data: data_a, .. }, Match::History { data: data_b, .. }) => {
+                assert!(std::mem::discriminant(data_a) == std::mem::discriminant(data_b));
+                data_a.cmp(data_b)
             }
             (Match::History { data: score_a, .. }, Match::Search(match_b)) => {
                 if let HistoryEntryData::PanelMatch(panel_match_a) = &score_a {
