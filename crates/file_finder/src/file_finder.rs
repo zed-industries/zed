@@ -207,27 +207,22 @@ struct Matches {
     matches: Vec<Match>,
 }
 
-/// History entries are assigned `HistoryScore` if a search query is empty
-/// or `ProjectPanelOrdMatch` otherwise.
-/// If we do not have a query we're not able to calculate query match score.
-/// If that's the case we want to order history entries from the most
-/// recently opened to the last.
-/// So we assign the higher history score to the more recently opened paths.
-/// Since all history entries have the same enum variant, derived implementation
-/// of the ordering is fine.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-enum HistoryEntryData {
-    PanelMatch(ProjectPanelOrdMatch),
-    HistoryScore(usize),
-}
-
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 enum Match {
     History {
         path: FoundPath,
-        data: HistoryEntryData,
+        panel_match: Option<ProjectPanelOrdMatch>,
     },
     Search(ProjectPanelOrdMatch),
+}
+
+impl Match {
+    fn path(&self) -> &Arc<Path> {
+        match self {
+            Match::History { path, .. } => &path.project.path,
+            Match::Search(panel_match) => &panel_match.0.path,
+        }
+    }
 }
 
 impl Matches {
@@ -240,12 +235,27 @@ impl Matches {
     }
 
     fn position(&self, entry: &Match) -> Result<usize, usize> {
-        self.matches.binary_search_by(|m| {
-            //NOTE: `reverse()` since if cmp_matches(a, b) == Ordering::Greater, then a is better than b.
-            // And we want the better entries go first.
-            Self::cmp_matches(self.separate_history, self.opened_path.as_ref(), &m, &entry)
-                .reverse()
-        })
+        if let Match::History {
+            path,
+            panel_match: None,
+        } = entry
+        {
+            //NOTE: slow case, linear search by path. Should not happen actually,
+            // since we call `position` only if matches set changed, but query has not changed.
+            // And History entries do not have panel_match iff query is empty, so there's no
+            // reason for matches set to change
+            self.matches
+                .iter()
+                .position(|m| path.project.path == *m.path())
+                .ok_or(0)
+        } else {
+            self.matches.binary_search_by(|m| {
+                //NOTE: `reverse()` since if cmp_matches(a, b) == Ordering::Greater, then a is better than b.
+                // And we want the better entries go first.
+                Self::cmp_matches(self.separate_history, self.opened_path.as_ref(), &m, &entry)
+                    .reverse()
+            })
+        }
     }
 
     fn push_new_matches<'a>(
@@ -256,6 +266,29 @@ impl Matches {
         new_search_matches: impl Iterator<Item = ProjectPanelOrdMatch>,
         extend_old_matches: bool,
     ) {
+        self.opened_path = currently_opened.cloned();
+
+        let Some(query) = query else {
+            //NOTE: assuming that if there's no query, then there's no search matches.
+            self.matches.clear();
+            let path_to_entry = |found_path: &FoundPath| Match::History {
+                path: found_path.clone(),
+                panel_match: None,
+            };
+            //NOTE: add currently_opened first, if anything is opened
+            self.matches
+                .extend(currently_opened.into_iter().map(path_to_entry));
+
+            //NOTE: add history items in order, if differ from currently_opened
+            self.matches.extend(
+                history_items
+                    .into_iter()
+                    .filter(|found_path| Some(*found_path) != currently_opened)
+                    .map(path_to_entry),
+            );
+            return;
+        };
+
         let new_history_matches = matching_history_items(history_items, currently_opened, query);
         let new_search_matches: Vec<Match> = new_search_matches
             .filter(|path_match| !new_history_matches.contains_key(&path_match.0.path))
@@ -270,8 +303,6 @@ impl Matches {
         } else {
             self.matches.clear();
         }
-
-        self.opened_path = currently_opened.cloned();
 
         //NOTE: At this point we have an unsorted set of new history matches, an unsorted set of new search matches
         // and a sorted set of old search matches.
@@ -315,24 +346,30 @@ impl Matches {
             (Match::History { .. }, Match::Search(_)) if separate_history => cmp::Ordering::Greater,
             (Match::Search(_), Match::History { .. }) if separate_history => cmp::Ordering::Less,
 
-            (Match::History { data: data_a, .. }, Match::History { data: data_b, .. }) => {
-                assert!(std::mem::discriminant(data_a) == std::mem::discriminant(data_b));
-                data_a.cmp(data_b)
-            }
-            (Match::History { data: score_a, .. }, Match::Search(match_b)) => {
-                if let HistoryEntryData::PanelMatch(panel_match_a) = &score_a {
-                    panel_match_a.cmp(match_b)
-                } else {
-                    cmp::Ordering::Less
-                }
-            }
-            (Match::Search(match_a), Match::History { data: score_b, .. }) => {
-                if let HistoryEntryData::PanelMatch(panel_match_b) = &score_b {
-                    match_a.cmp(panel_match_b)
-                } else {
-                    cmp::Ordering::Greater
-                }
-            }
+            (
+                Match::History {
+                    panel_match: match_a,
+                    ..
+                },
+                Match::History {
+                    panel_match: match_b,
+                    ..
+                },
+            ) => match_a.cmp(match_b),
+            (
+                Match::History {
+                    panel_match: match_a,
+                    ..
+                },
+                Match::Search(match_b),
+            ) => match_a.as_ref().cmp(&Some(match_b)),
+            (
+                Match::Search(match_a),
+                Match::History {
+                    panel_match: match_b,
+                    ..
+                },
+            ) => Some(match_a).cmp(&match_b.as_ref()),
             (Match::Search(match_a), Match::Search(match_b)) => match_a.cmp(match_b),
         }
     }
@@ -346,32 +383,13 @@ impl Matches {
 fn matching_history_items<'a>(
     history_items: impl IntoIterator<Item = &'a FoundPath>,
     currently_opened: Option<&'a FoundPath>,
-    query: Option<&FileSearchQuery>,
+    query: &FileSearchQuery,
 ) -> HashMap<Arc<Path>, Match> {
-    let history_items = history_items.into_iter().chain(currently_opened);
-
-    //NOTE: `currently_opened` history score doesn't matter, since we bubble
-    // it up explicitly during sorting the matches list.
-    // We also want to be sure, that if currently opened path is present in the
-    // `history_items` we do not include it twice. HashMap helps us with it.
-    let Some(query) = query else {
-        return history_items
-            .enumerate()
-            .map(|(i, found_path)| {
-                (
-                    Arc::clone(&found_path.project.path),
-                    Match::History {
-                        path: found_path.clone(),
-                        data: HistoryEntryData::HistoryScore(MAX_RECENT_SELECTIONS - i),
-                    },
-                )
-            })
-            .collect();
-    };
-
     let mut candidates_paths = HashMap::default();
 
     let history_items_by_worktrees = history_items
+        .into_iter()
+        .chain(currently_opened)
         .filter_map(|found_path| {
             let candidate = PathMatchCandidate {
                 is_dir: false, // You can't open directories as project items
@@ -422,7 +440,7 @@ fn matching_history_items<'a>(
                     Arc::clone(&path_match.path),
                     Match::History {
                         path: found_path.clone(),
-                        data: HistoryEntryData::PanelMatch(ProjectPanelOrdMatch(path_match)),
+                        panel_match: Some(ProjectPanelOrdMatch(path_match)),
                     },
                 )
             }),
@@ -629,7 +647,7 @@ impl FileFinderDelegate {
         let (file_name, file_name_positions, full_path, full_path_positions) = match &path_match {
             Match::History {
                 path: entry_path,
-                data: score,
+                panel_match,
             } => {
                 let worktree_id = entry_path.project.worktree_id;
                 let project_relative_path = &entry_path.project.path;
@@ -672,7 +690,7 @@ impl FileFinderDelegate {
                     path_prefix: "".into(),
                     distance_to_relative_ancestor: usize::MAX,
                 };
-                if let HistoryEntryData::PanelMatch(found_path_match) = &score {
+                if let Some(found_path_match) = &panel_match {
                     path_match
                         .positions
                         .extend(found_path_match.0.positions.iter())

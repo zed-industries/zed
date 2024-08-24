@@ -2042,18 +2042,27 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
     let mut search_entries = SearchEntries::default();
     for m in &picker.delegate.matches.matches {
         match &m {
-            Match::History { path, data } => {
-                search_entries.history.push(match &data {
-                    HistoryEntryData::HistoryScore(_) => path
-                        .absolute
-                        .as_deref()
-                        .unwrap_or_else(|| &path.project.path)
-                        .to_path_buf(),
-                    HistoryEntryData::PanelMatch(path_match) => {
-                        Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path)
-                    }
-                });
-                search_entries.history_found_paths.push(path.clone());
+            Match::History {
+                path: history_path,
+                panel_match: path_match,
+            } => {
+                search_entries.history.push(
+                    path_match
+                        .as_ref()
+                        .map(|path_match| {
+                            Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path)
+                        })
+                        .unwrap_or_else(|| {
+                            history_path
+                                .absolute
+                                .as_deref()
+                                .unwrap_or_else(|| &history_path.project.path)
+                                .to_path_buf()
+                        }),
+                );
+                search_entries
+                    .history_found_paths
+                    .push(history_path.clone());
             }
             Match::Search(path_match) => {
                 search_entries
