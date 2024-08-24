@@ -675,41 +675,35 @@ fn handle_calc_client_size(
     requested_client_rect[0].right -= insets.right;
     requested_client_rect[0].bottom -= insets.bottom;
 
-    // if state_ptr.state.borrow().is_maximized() {
-    //     if let Some(ref taskbar_position) = state_ptr
-    //         .state
-    //         .borrow()
-    //         .system_settings
-    //         .auto_hide_taskbar_position
-    //     {
-    //         // Fot the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
-    //         // so the window isn't treated as a "fullscreen app", which would cause
-    //         // the taskbars to disappear.
-    //         match taskbar_position {
-    //             AutoHideTaskbarPosition::Left => {
-    //                 requested_client_rect[0].left += AUTO_HIDE_TASKBAR_THICKNESS_PX
-    //             }
-    //             AutoHideTaskbarPosition::Right => {
-    //                 requested_client_rect[0].right -= AUTO_HIDE_TASKBAR_THICKNESS_PX
-    //             }
-    //             AutoHideTaskbarPosition::Top => {
-    //                 requested_client_rect[0].top += AUTO_HIDE_TASKBAR_THICKNESS_PX
-    //             }
-    //             AutoHideTaskbarPosition::Bottom => {
-    //                 requested_client_rect[0].bottom -= AUTO_HIDE_TASKBAR_THICKNESS_PX
-    //             }
-    //         }
-    //     }
-    // } else {
-    //     match state_ptr.windows_version {
-    //         WindowsVersion::Win10 => {}
-    //         WindowsVersion::Win11 => {
-    //             // Magic number that calculates the width of the border
-    //             let border = (dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32).round() as i32;
-    //             requested_client_rect[0].top += border;
-    //         }
-    //     }
-    // }
+    // Fix auto hide taskbar not showing. This solution is based on the approach
+    // used by Chrome. However, it may result in one row of pixels being obscured
+    // in our client area. But as Chrome says, "there seems to be no better solution."
+    if is_maximized {
+        if let Some(ref taskbar_position) = state_ptr
+            .state
+            .borrow()
+            .system_settings
+            .auto_hide_taskbar_position
+        {
+            // Fot the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
+            // so the window isn't treated as a "fullscreen app", which would cause
+            // the taskbar to disappear.
+            match taskbar_position {
+                AutoHideTaskbarPosition::Left => {
+                    requested_client_rect[0].left += AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                AutoHideTaskbarPosition::Top => {
+                    requested_client_rect[0].top += AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                AutoHideTaskbarPosition::Right => {
+                    requested_client_rect[0].right -= AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                AutoHideTaskbarPosition::Bottom => {
+                    requested_client_rect[0].bottom -= AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+            }
+        }
+    }
 
     Some(0)
 }
