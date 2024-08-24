@@ -19,6 +19,7 @@ pub(crate) const CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
 pub(crate) const CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
+const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
 
 pub(crate) fn handle_msg(
     handle: HWND,
@@ -679,7 +680,24 @@ fn handle_calc_client_size(
 
     if state_ptr.state.borrow().is_maximized() {
         requested_client_rect[0].top += frame_y + padding;
-        requested_client_rect[0].bottom -= 2;
+        if let Some(ref taskbar_position) =
+            state_ptr.state.borrow().system_settings.taskbar_position
+        {
+            match taskbar_position {
+                TaskbarPosition::Left => {
+                    requested_client_rect[0].left += AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                TaskbarPosition::Right => {
+                    requested_client_rect[0].right -= AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                TaskbarPosition::Top => {
+                    requested_client_rect[0].top += AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                TaskbarPosition::Bottom => {
+                    requested_client_rect[0].bottom -= AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+            }
+        }
     } else {
         match state_ptr.windows_version {
             WindowsVersion::Win10 => {}
@@ -1083,14 +1101,13 @@ fn handle_system_settings_changed(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    // mouse wheel
-    lock.system_settings.mouse_wheel_settings.update();
+    let display = lock.display;
+    lock.system_settings.update(display);
+    println!("==> {:?}", lock.system_settings.taskbar_position);
     // mouse double click
     lock.click_state.system_update();
     // window border offset
     lock.border_offset.update(handle).log_err();
-    lock.taskbar_position = TaskbarPosition::new(lock.display).log_err().flatten();
-    println!("==> {:?}", lock.taskbar_position);
     Some(0)
 }
 
