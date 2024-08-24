@@ -164,7 +164,7 @@ impl AutoHideTaskbarPosition {
             taskbar_bounds,
             display_bounds
         );
-        return Ok(None);
+        Ok(None)
     }
 }
 
