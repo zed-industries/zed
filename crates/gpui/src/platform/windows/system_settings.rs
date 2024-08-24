@@ -2,7 +2,7 @@ use std::ffi::{c_uint, c_void};
 
 use ::util::ResultExt;
 use windows::Win32::UI::{
-    Shell::{SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA},
+    Shell::{SHAppBarMessage, ABM_GETSTATE, ABM_GETTASKBARPOS, ABS_AUTOHIDE, APPBARDATA},
     WindowsAndMessaging::{
         SystemParametersInfoW, SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES,
         SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
@@ -18,7 +18,7 @@ use super::WindowsDisplay;
 #[derive(Default, Debug, Clone, Copy)]
 pub(crate) struct WindowsSystemSettings {
     pub(crate) mouse_wheel_settings: MouseWheelSettings,
-    pub(crate) taskbar_position: Option<TaskbarPosition>,
+    pub(crate) auto_hide_taskbar_position: Option<AutoHideTaskbarPosition>,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -38,7 +38,7 @@ impl WindowsSystemSettings {
 
     pub(crate) fn update(&mut self, display: WindowsDisplay) {
         self.mouse_wheel_settings.update();
-        self.taskbar_position = TaskbarPosition::new(display).log_err().flatten();
+        self.auto_hide_taskbar_position = AutoHideTaskbarPosition::new(display).log_err().flatten();
     }
 }
 
@@ -82,7 +82,7 @@ impl MouseWheelSettings {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) enum TaskbarPosition {
+pub(crate) enum AutoHideTaskbarPosition {
     Left,
     Right,
     Top,
@@ -90,18 +90,21 @@ pub(crate) enum TaskbarPosition {
     Bottom,
 }
 
-impl TaskbarPosition {
+impl AutoHideTaskbarPosition {
     fn new(display: WindowsDisplay) -> anyhow::Result<Option<Self>> {
-        let mut position = APPBARDATA::default();
-        let ret = unsafe { SHAppBarMessage(ABM_GETTASKBARPOS, &mut position) };
+        if !check_auto_hide_taskbar_enable() {
+            return Ok(None);
+        }
+        let mut info = APPBARDATA::default();
+        let ret = unsafe { SHAppBarMessage(ABM_GETTASKBARPOS, &mut info) };
         if ret == 0 {
             anyhow::bail!("{}", std::io::Error::last_os_error());
         }
         let taskbar_bounds: Bounds<DevicePixels> = Bounds::new(
-            point(position.rc.left.into(), position.rc.top.into()),
+            point(info.rc.left.into(), info.rc.top.into()),
             size(
-                (position.rc.right - position.rc.left).into(),
-                (position.rc.bottom - position.rc.top).into(),
+                (info.rc.right - info.rc.left).into(),
+                (info.rc.bottom - info.rc.top).into(),
             ),
         );
         let display_bounds = display.physical_bounds();
@@ -112,7 +115,7 @@ impl TaskbarPosition {
         if display_bounds.intersect(&taskbar_bounds) != taskbar_bounds {
             return Ok(None);
         }
-        println!("--> {:#?}", position.rc);
+        println!("--> {:#?}", info.rc);
         if taskbar_bounds.bottom() == display_bounds.bottom()
             && taskbar_bounds.right() == display_bounds.right()
         {
@@ -160,4 +163,13 @@ impl TaskbarPosition {
         );
         return Ok(None);
     }
+}
+
+fn check_auto_hide_taskbar_enable() -> bool {
+    let mut info = APPBARDATA {
+        cbSize: std::mem::size_of::<APPBARDATA>() as u32,
+        ..Default::default()
+    };
+    let ret = unsafe { SHAppBarMessage(ABM_GETSTATE, &mut info) } as u32;
+    ret == ABS_AUTOHIDE
 }

@@ -680,20 +680,23 @@ fn handle_calc_client_size(
 
     if state_ptr.state.borrow().is_maximized() {
         requested_client_rect[0].top += frame_y + padding;
-        if let Some(ref taskbar_position) =
-            state_ptr.state.borrow().system_settings.taskbar_position
+        if let Some(ref taskbar_position) = state_ptr
+            .state
+            .borrow()
+            .system_settings
+            .auto_hide_taskbar_position
         {
             match taskbar_position {
-                TaskbarPosition::Left => {
+                AutoHideTaskbarPosition::Left => {
                     requested_client_rect[0].left += AUTO_HIDE_TASKBAR_THICKNESS_PX
                 }
-                TaskbarPosition::Right => {
+                AutoHideTaskbarPosition::Right => {
                     requested_client_rect[0].right -= AUTO_HIDE_TASKBAR_THICKNESS_PX
                 }
-                TaskbarPosition::Top => {
+                AutoHideTaskbarPosition::Top => {
                     requested_client_rect[0].top += AUTO_HIDE_TASKBAR_THICKNESS_PX
                 }
-                TaskbarPosition::Bottom => {
+                AutoHideTaskbarPosition::Bottom => {
                     requested_client_rect[0].bottom -= AUTO_HIDE_TASKBAR_THICKNESS_PX
                 }
             }
@@ -1103,7 +1106,7 @@ fn handle_system_settings_changed(
     let mut lock = state_ptr.state.borrow_mut();
     let display = lock.display;
     lock.system_settings.update(display);
-    println!("==> {:?}", lock.system_settings.taskbar_position);
+    println!("==> {:?}", lock.system_settings.auto_hide_taskbar_position);
     // mouse double click
     lock.click_state.system_update();
     // window border offset
