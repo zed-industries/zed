@@ -1106,7 +1106,6 @@ fn handle_system_settings_changed(
     let mut lock = state_ptr.state.borrow_mut();
     let display = lock.display;
     lock.system_settings.update(display);
-    println!("==> {:?}", lock.system_settings.auto_hide_taskbar_position);
     // mouse double click
     lock.click_state.system_update();
     // window border offset
