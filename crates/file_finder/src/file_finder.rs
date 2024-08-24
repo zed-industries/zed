@@ -264,45 +264,35 @@ impl Matches {
         new_search_matches: impl Iterator<Item = ProjectPanelOrdMatch>,
         extend_old_matches: bool,
     ) {
-        let matching_history_paths =
-            matching_history_item_paths(history_items.clone(), currently_opened, query);
-        let new_search_matches = new_search_matches
-            .filter(|path_match| !matching_history_paths.contains_key(&path_match.0.path))
-            .map(Match::Search);
+        let new_history_matches = matching_history_items(history_items, currently_opened, query);
+        let new_search_matches: Vec<Match> = new_search_matches
+            .filter(|path_match| !new_history_matches.contains_key(&path_match.0.path))
+            .map(Match::Search)
+            .collect();
 
         if extend_old_matches {
+            //NOTE: since we take history matches instead of new search matches
+            // and history matches has not changed(since the query has not changed and we do not extend old matches otherwise),
+            // old matches can't contain paths present in history_matches as well
             self.matches.retain(|m| matches!(m, Match::Search(_)));
         } else {
             self.matches.clear();
         }
 
-        let history_matches = history_items
-            .into_iter()
-            .chain(currently_opened)
-            .enumerate()
-            .filter_map(|(i, history_item)| {
-                let query_match = matching_history_paths
-                    .get(&history_item.project.path)
-                    .cloned();
-                let query_match = if query.is_some() {
-                    query_match?
-                } else {
-                    query_match.flatten()
-                };
-                Some(Match::History(
-                    HistoryEntry {
-                        path: history_item.clone(),
-                        panel_match: query_match,
-                    },
-                    i + 1,
-                ))
-            });
-
         self.opened_path = currently_opened.cloned();
 
-        for new_match in history_matches.chain(new_search_matches) {
+        //NOTE: build a sorted Vec<Match>, eliminating duplicate search matches, if occured
+        for new_match in new_history_matches
+            .into_values()
+            .chain(new_search_matches.into_iter())
+        {
             match self.matches.binary_search_by(|m| {
-                Self::cmp_matches(self.separate_history, currently_opened, &m, &new_match)
+                Self::cmp_matches(
+                    self.separate_history,
+                    self.opened_path.as_ref(),
+                    &m,
+                    &new_match,
+                )
             }) {
                 Ok(_duplicate) => continue,
                 Err(i) => {
@@ -321,10 +311,6 @@ impl Matches {
         a: &Match,
         b: &Match,
     ) -> cmp::Ordering {
-        if a.eq(b) {
-            return cmp::Ordering::Equal;
-        }
-
         match (&a, &b) {
             // bubble currently opened files to the top
             (Match::History(entry, _), _) if Some(&entry.path) == currently_opened => {
@@ -352,23 +338,39 @@ impl Matches {
     }
 }
 
-fn matching_history_item_paths<'a>(
+/// Produces a HashMap of history entries matching the query.
+/// `currently_opened` also treated as a history entry.
+fn matching_history_items<'a>(
     history_items: impl IntoIterator<Item = &'a FoundPath>,
     currently_opened: Option<&'a FoundPath>,
     query: Option<&FileSearchQuery>,
-) -> HashMap<Arc<Path>, Option<ProjectPanelOrdMatch>> {
+) -> HashMap<Arc<Path>, Match> {
+    let history_items = history_items
+        .into_iter()
+        .chain(currently_opened)
+        .enumerate();
+
     let Some(query) = query else {
         return history_items
-            .into_iter()
-            .chain(currently_opened)
-            .map(|found_path| (Arc::clone(&found_path.project.path), None))
+            .map(|(i, found_path)| {
+                (
+                    Arc::clone(&found_path.project.path),
+                    Match::History(
+                        HistoryEntry {
+                            path: found_path.clone(),
+                            panel_match: None,
+                        },
+                        i + 1,
+                    ),
+                )
+            })
             .collect();
     };
 
+    let mut candidates_info = HashMap::default();
+
     let history_items_by_worktrees = history_items
-        .into_iter()
-        .chain(currently_opened)
-        .filter_map(|found_path| {
+        .filter_map(|(i, found_path)| {
             let candidate = PathMatchCandidate {
                 is_dir: false, // You can't open directories as project items
                 path: &found_path.project.path,
@@ -385,6 +387,7 @@ fn matching_history_item_paths<'a>(
                         .chars(),
                 ),
             };
+            candidates_info.insert(Arc::clone(&found_path.project.path), (i + 1, found_path));
             Some((found_path.project.worktree_id, candidate))
         })
         .fold(
@@ -410,9 +413,18 @@ fn matching_history_item_paths<'a>(
             )
             .into_iter()
             .map(|path_match| {
+                let (_, (history_score, found_path)) = candidates_info
+                    .remove_entry(&path_match.path)
+                    .expect("candidate info not found");
                 (
                     Arc::clone(&path_match.path),
-                    Some(ProjectPanelOrdMatch(path_match)),
+                    Match::History(
+                        HistoryEntry {
+                            path: found_path.clone(),
+                            panel_match: Some(ProjectPanelOrdMatch(path_match)),
+                        },
+                        history_score,
+                    ),
                 )
             }),
         );

@@ -1304,6 +1304,7 @@ async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
 
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
+        dbg!(&finder.delegate.matches);
         assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_selection(finder, 0, "2.txt");
         assert_match_at_position(finder, 1, "3.txt");
