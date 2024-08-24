@@ -697,7 +697,9 @@ impl ExtensionsPage {
 
         match status.clone() {
             ExtensionStatus::NotInstalled => (
-                Button::new(SharedString::from(extension.id.clone()), "Install").on_click(
+                Button::new(SharedString::from(extension.id.clone()), "Install")
+                    .color(Color::Accent)
+                    .on_click(
                     cx.listener({
                         let extension_id = extension.id.clone();
                         move |this, _, cx| {
@@ -722,7 +724,9 @@ impl ExtensionsPage {
                 ),
             ),
             ExtensionStatus::Installed(installed_version) => (
-                Button::new(SharedString::from(extension.id.clone()), "Uninstall").on_click(
+                Button::new(SharedString::from(extension.id.clone()), "Uninstall")
+                    .color(Color::Error)
+                    .on_click(
                     cx.listener({
                         let extension_id = extension.id.clone();
                         move |this, _, cx| {
