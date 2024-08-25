@@ -264,6 +264,7 @@ pub struct Pane {
     display_nav_history_buttons: Option<bool>,
     double_click_dispatch_action: Option<Box<dyn Action>>,
     save_modals_spawned: HashSet<EntityId>,
+    close_pane_if_empty: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -469,6 +470,7 @@ impl Pane {
             _subscriptions: subscriptions,
             double_click_dispatch_action,
             save_modals_spawned: HashSet::default(),
+            close_pane_if_empty: true,
         }
     }
 
@@ -594,6 +596,15 @@ impl Pane {
 
     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
         self.can_split = can_split;
+        cx.notify();
+    }
+
+    pub fn set_close_pane_if_empty(
+        &mut self,
+        close_pane_if_empty: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.close_pane_if_empty = close_pane_if_empty;
         cx.notify();
     }
 
@@ -1308,7 +1319,7 @@ impl Pane {
                         .iter()
                         .position(|i| i.item_id() == item.item_id())
                     {
-                        pane.remove_item(item_ix, false, true, cx);
+                        pane.remove_item(item_ix, false, pane.close_pane_if_empty, cx);
                     }
                 })
                 .ok();

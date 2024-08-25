@@ -65,6 +65,7 @@ impl DebugPanel {
                 pane.set_can_navigate(true, cx);
                 pane.display_nav_history_buttons(None);
                 pane.set_should_display_tab_bar(|_| true);
+                pane.set_close_pane_if_empty(false, cx);
 
                 pane
             });
