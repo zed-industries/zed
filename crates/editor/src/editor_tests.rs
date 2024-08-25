@@ -2121,6 +2121,42 @@ fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("one\n2\nthree\n4", cx);
+        build_editor(buffer.clone(), cx)
+    });
+
+    _ = view.update(cx, |view, cx| {
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 1)
+            ])
+        });
+        view.delete_to_previous_word_start(&DeleteToPreviousWordStart, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n2\nthree\n");
+        view.delete_to_previous_word_start(&DeleteToPreviousWordStart, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n2\nthree");
+        view.delete_to_previous_word_start(&DeleteToPreviousWordStart, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n2\n");
+        view.delete_to_previous_word_start(&DeleteToPreviousWordStart, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n2");
+        view.delete_to_previous_word_start_ignoring_newlines(
+            &DeleteToPreviousWordStartIgnoringNewlines,
+            cx,
+        );
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n");
+        view.delete_to_previous_word_start_ignoring_newlines(
+            &DeleteToPreviousWordStartIgnoringNewlines,
+            cx,
+        );
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "");
+    });
+}
+
+#[gpui::test]
 fn test_newline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
