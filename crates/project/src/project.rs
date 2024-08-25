@@ -55,8 +55,8 @@ use language::{
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
     Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
-    LspAdapterDelegate, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
-    ToPointUtf16, Transaction, Unclipped,
+    LspAdapterDelegate, Patch, PendingLanguageServer, Point, PointUtf16, TextBufferSnapshot,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -115,7 +115,6 @@ use task::{
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding, Selection};
-use unicase::UniCase;
 use util::{
     debug_panic, defer, maybe, merge_json_value_into, parse_env_output, paths::compare_paths,
     post_inc, ResultExt, TryFutureExt as _,
@@ -4928,7 +4927,7 @@ impl Project {
         buffers: HashSet<Model<Buffer>>,
         push_to_history: bool,
         trigger: FormatTrigger,
-        selection: Option<Selection<Point>>,
+        selections: Vec<Selection<Point>>,
         cx: &mut ModelContext<Project>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
         if self.is_local_or_ssh() {
@@ -4948,7 +4947,7 @@ impl Project {
                     buffers_with_paths,
                     push_to_history,
                     trigger,
-                    selection,
+                    selections,
                     cx.clone(),
                 )
                 .await;
@@ -4994,7 +4993,7 @@ impl Project {
         mut buffers_with_paths: Vec<(Model<Buffer>, Option<PathBuf>)>,
         push_to_history: bool,
         trigger: FormatTrigger,
-        selection: Option<Selection<Point>>,
+        selections: Vec<Selection<Point>>,
         mut cx: AsyncAppContext,
     ) -> anyhow::Result<ProjectTransaction> {
         // Do not allow multiple concurrent formatting requests for the
@@ -5124,14 +5123,23 @@ impl Project {
                                                     &settings,
                                                     &adapters_and_servers,
                                                     push_to_history,
-                                                    selection.as_ref(),
+                                                    selections.clone(),
                                                     &mut project_transaction,
                                                     &mut cx,
                                                 )
                                                 .await
                                             } else {
+                                                let formatter = primary_language_server
+                                                    .as_ref()
+                                                    .map(|l| Formatter::LanguageServer {
+                                                        name: Some(l.name().to_string()),
+                                                    })
+                                                    .unwrap_or_else(|| Formatter::LanguageServer {
+                                                        name: None,
+                                                    });
+
                                                 Self::perform_format(
-                                                    &Formatter::LanguageServer { name: None },
+                                                    &formatter,
                                                     server_and_buffer,
                                                     project.clone(),
                                                     buffer,
@@ -5139,7 +5147,7 @@ impl Project {
                                                     &settings,
                                                     &adapters_and_servers,
                                                     push_to_history,
-                                                    selection.as_ref(),
+                                                    selections.clone(),
                                                     &mut project_transaction,
                                                     &mut cx,
                                                 )
@@ -5163,7 +5171,7 @@ impl Project {
                                                 &settings,
                                                 &adapters_and_servers,
                                                 push_to_history,
-                                                selection.as_ref(),
+                                                selections.clone(),
                                                 &mut project_transaction,
                                                 &mut cx,
                                             )
@@ -5190,7 +5198,7 @@ impl Project {
                                         &settings,
                                         &adapters_and_servers,
                                         push_to_history,
-                                        selection.as_ref(),
+                                        selections.clone(),
                                         &mut project_transaction,
                                         &mut cx,
                                     )
@@ -5219,14 +5227,23 @@ impl Project {
                                             &settings,
                                             &adapters_and_servers,
                                             push_to_history,
-                                            selection.as_ref(),
+                                            selections.clone(),
                                             &mut project_transaction,
                                             &mut cx,
                                         )
                                         .await
                                     } else {
+                                        let formatter = primary_language_server
+                                            .as_ref()
+                                            .map(|l| Formatter::LanguageServer {
+                                                name: Some(l.name().to_string()),
+                                            })
+                                            .unwrap_or_else(|| Formatter::LanguageServer {
+                                                name: None,
+                                            });
+
                                         Self::perform_format(
-                                            &Formatter::LanguageServer { name: None },
+                                            &formatter,
                                             server_and_buffer,
                                             project.clone(),
                                             buffer,
@@ -5234,7 +5251,7 @@ impl Project {
                                             &settings,
                                             &adapters_and_servers,
                                             push_to_history,
-                                            selection.as_ref(),
+                                            selections.clone(),
                                             &mut project_transaction,
                                             &mut cx,
                                         )
@@ -5260,7 +5277,7 @@ impl Project {
                                         &settings,
                                         &adapters_and_servers,
                                         push_to_history,
-                                        selection.as_ref(),
+                                        selections.clone(),
                                         &mut project_transaction,
                                         &mut cx,
                                     )
@@ -5333,7 +5350,7 @@ impl Project {
         settings: &LanguageSettings,
         adapters_and_servers: &Vec<(Arc<CachedLspAdapter>, Arc<LanguageServer>)>,
         push_to_history: bool,
-        selection: Option<&Selection<Point>>,
+        selections: Vec<Selection<Point>>,
         transaction: &mut ProjectTransaction,
         mut cx: &mut AsyncAppContext,
     ) -> Result<Option<FormatOperation>, anyhow::Error> {
@@ -5351,16 +5368,13 @@ impl Project {
                         language_server
                     };
                     Some(FormatOperation::Lsp(
-
-
-
                         Self::format_via_lsp(
                             &project,
                             buffer,
                             buffer_abs_path,
                             language_server,
                             settings,
-                            selection,
+                            selections,
                             cx,
                         )
                         .await
@@ -5370,13 +5384,16 @@ impl Project {
                     None
                 }
             }
-            Formatter::Prettier => {
-                prettier_support::format_with_prettier(&project, buffer, &mut cx)
-                    .await
-                    .transpose()
-                    .ok()
-                    .flatten()
-            }
+            Formatter::Prettier => prettier_support::format_with_prettier(
+                &project,
+                buffer,
+                selections.first(),
+                &mut cx,
+            )
+            .await
+            .transpose()
+            .ok()
+            .flatten(),
             Formatter::External { command, arguments } => {
                 let buffer_abs_path = buffer_abs_path.as_ref().map(|path| path.as_path());
                 Self::format_via_external_command(
@@ -5419,7 +5436,7 @@ impl Project {
         abs_path: &Path,
         language_server: &Arc<LanguageServer>,
         settings: &LanguageSettings,
-        selection: Option<&Selection<Point>>,
+        selections: Vec<Selection<Point>>,
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
         let uri = lsp::Url::from_file_path(abs_path)
@@ -5439,28 +5456,44 @@ impl Project {
                 })
                 .await?
         } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
-            let (buffer_start, buffer_end) = if let Some(selection) = selection {
-                let selection_start = selection.start;
-                let selection_end = selection.end;
-
-                (lsp::Position::new(selection_start.row, selection_start.column), lsp::Position::new(selection_end.row, selection_end.column))
-            } else {
-
+            let ranges = if selections.is_empty() {
                 let buffer_start = lsp::Position::new(0, 0);
                 let buffer_end = buffer.update(cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
-                (buffer_start, buffer_end)
+                vec![(buffer_start, buffer_end)]
+            } else {
+                selections
+                    .into_iter()
+                    .map(|selection| {
+                        let selection_start = selection.start;
+                        let selection_end = selection.end;
+
+                        (
+                            lsp::Position::new(selection_start.row, selection_start.column),
+                            lsp::Position::new(selection_end.row, selection_end.column),
+                        )
+                    })
+                    .collect()
             };
 
-            println!("{buffer_start:?}:{buffer_end:?}");
+            let mut text_edits = vec![];
+            for (buffer_start, buffer_end) in ranges {
+                log::debug!("Performing range format of {abs_path:?} from {buffer_start:?} to {buffer_end:?}");
 
-            language_server
-                .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
-                    text_document,
-                    range: lsp::Range::new(buffer_start, buffer_end),
-                    options: lsp_command::lsp_formatting_options(settings),
-                    work_done_progress_params: Default::default(),
-                })
-                .await?
+                language_server
+                    .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
+                        text_document: text_document.clone(),
+                        range: lsp::Range::new(buffer_start, buffer_end),
+                        options: lsp_command::lsp_formatting_options(settings),
+                        work_done_progress_params: Default::default(),
+                    })
+                    .await?
+                    .map(|mut edits| text_edits.append(&mut edits));
+            }
+            if text_edits.is_empty() {
+                None
+            } else {
+                Some(text_edits)
+            }
         } else {
             None
         };
@@ -9247,7 +9280,7 @@ impl Project {
                 buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
             }
             let trigger = FormatTrigger::from_proto(envelope.payload.trigger);
-            Ok::<_, anyhow::Error>(this.format(buffers, false, trigger, None, cx))
+            Ok::<_, anyhow::Error>(this.format(buffers, false, trigger, Vec::with_capacity(0), cx))
         })??;
 
         let project_transaction = format.await?;

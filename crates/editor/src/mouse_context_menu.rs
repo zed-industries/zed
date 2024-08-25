@@ -1,6 +1,5 @@
 use std::ops::Range;
 
-
 use crate::{
     actions::Format, selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut,
     DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDeclaration,

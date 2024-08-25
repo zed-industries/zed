@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncAppContext, Model};
-use language::{language_settings::language_settings, Buffer, Diff};
+use language::{language_settings::language_settings, Buffer, Diff, Point, Selection};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
@@ -198,6 +198,7 @@ impl Prettier {
         &self,
         buffer: &Model<Buffer>,
         buffer_path: Option<PathBuf>,
+        selection: Option<&Selection<Point>>,
         cx: &mut AsyncAppContext,
     ) -> anyhow::Result<Diff> {
         match self {
@@ -281,6 +282,16 @@ impl Prettier {
                                     "useTabs".to_string(),
                                     serde_json::Value::Bool(language_settings.hard_tabs),
                                 );
+                            }
+                            if let Some(selection ) = selection {
+                                if selection.start != selection.end {
+                                    if !options.contains_key("rangeStart") {
+                                        options.insert("rangeStart".to_string(), serde_json::json!(selection.start.row));
+                                    }
+                                    if !options.contains_key("rangeEnd") {
+                                        options.insert("rangeEnd".to_string(), serde_json::json!(selection.end.row));
+                                    }
+                                }
                             }
                             Some(options)
                         } else {

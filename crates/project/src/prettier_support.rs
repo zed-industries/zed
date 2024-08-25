@@ -14,12 +14,13 @@ use futures::{
 use gpui::{AsyncAppContext, Model, ModelContext, Task, WeakModel};
 use language::{
     language_settings::{Formatter, LanguageSettings, SelectedFormatter},
-    Buffer, LanguageServerName, LocalFile,
+    Buffer, LanguageServerName, LocalFile, Point,
 };
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
 use prettier::Prettier;
+use text::Selection;
 use util::{ResultExt, TryFutureExt};
 
 use crate::{
@@ -42,6 +43,7 @@ pub fn prettier_plugins_for_language(
 pub(super) async fn format_with_prettier(
     project: &WeakModel<Project>,
     buffer: &Model<Buffer>,
+    selection: Option<&Selection<Point>>,
     cx: &mut AsyncAppContext,
 ) -> Option<Result<FormatOperation>> {
     let prettier_instance = project
@@ -70,11 +72,10 @@ pub(super) async fn format_with_prettier(
                 .flatten();
 
             let format_result = prettier
-                .format(buffer, buffer_path, cx)
+                .format(buffer, buffer_path, selection, cx)
                 .await
                 .map(FormatOperation::Prettier)
                 .with_context(|| format!("{} failed to format buffer", prettier_description));
-
             Some(format_result)
         }
         Err(error) => {
