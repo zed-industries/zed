@@ -784,7 +784,7 @@ pub struct TitlebarOptions {
     /// The initial title of the window
     pub title: Option<SharedString>,
 
-    /// Whether the titlebar should appear transparent (macOS only)
+    /// Whether the titlebar should appear transparent (macOS and Windows only)
     pub appears_transparent: bool,
 
     /// The position of the macOS traffic light buttons
