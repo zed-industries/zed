@@ -21,7 +21,8 @@ in
       xorg.libxcb
       vulkan-loader
     ];
-  in pkgs.mkShell.override {inherit stdenv;} {
+  in
+    pkgs.mkShell.override {inherit stdenv;} {
       nativeBuildInputs = with pkgs; [
         clang
         curl
