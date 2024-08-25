@@ -165,6 +165,7 @@ pub struct FileFinderDelegate {
     cancel_flag: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
     separate_history: bool,
+    first_update: bool,
 }
 
 /// Use a custom ordering for file finder: the regular one
@@ -223,6 +224,13 @@ impl Match {
             Match::Search(panel_match) => &panel_match.0.path,
         }
     }
+
+    fn panel_match(&self) -> Option<&ProjectPanelOrdMatch> {
+        match self {
+            Match::History { panel_match, .. } => panel_match.as_ref(),
+            Match::Search(panel_match) => Some(&panel_match),
+        }
+    }
 }
 
 impl Matches {
@@ -240,10 +248,10 @@ impl Matches {
             panel_match: None,
         } = entry
         {
-            //NOTE: slow case, linear search by path. Should not happen actually,
-            // since we call `position` only if matches set changed, but query has not changed.
+            //NOTE: Slow case: linear search by path. Should not happen actually,
+            // since we call `position` only if matches set changed, but the query has not changed.
             // And History entries do not have panel_match iff query is empty, so there's no
-            // reason for matches set to change
+            // reason for the matches set to change.
             self.matches
                 .iter()
                 .position(|m| path.project.path == *m.path())
@@ -334,6 +342,8 @@ impl Matches {
         a: &Match,
         b: &Match,
     ) -> cmp::Ordering {
+        assert!(a.panel_match().is_some() && b.panel_match().is_some());
+
         match (&a, &b) {
             // bubble currently opened files to the top
             (Match::History { path, .. }, _) if Some(path) == currently_opened => {
@@ -346,31 +356,7 @@ impl Matches {
             (Match::History { .. }, Match::Search(_)) if separate_history => cmp::Ordering::Greater,
             (Match::Search(_), Match::History { .. }) if separate_history => cmp::Ordering::Less,
 
-            (
-                Match::History {
-                    panel_match: match_a,
-                    ..
-                },
-                Match::History {
-                    panel_match: match_b,
-                    ..
-                },
-            ) => match_a.cmp(match_b),
-            (
-                Match::History {
-                    panel_match: match_a,
-                    ..
-                },
-                Match::Search(match_b),
-            ) => match_a.as_ref().cmp(&Some(match_b)),
-            (
-                Match::Search(match_a),
-                Match::History {
-                    panel_match: match_b,
-                    ..
-                },
-            ) => Some(match_a).cmp(&match_b.as_ref()),
-            (Match::Search(match_a), Match::Search(match_b)) => match_a.cmp(match_b),
+            _ => a.panel_match().cmp(&b.panel_match()),
         }
     }
 }
@@ -520,6 +506,7 @@ impl FileFinderDelegate {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             history_items,
             separate_history,
+            first_update: true,
         }
     }
 
@@ -875,26 +862,34 @@ impl PickerDelegate for FileFinderDelegate {
         let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
         if raw_query.is_empty() {
-            let project = self.project.read(cx);
-            self.latest_search_id = post_inc(&mut self.search_count);
-            self.matches = Matches {
-                separate_history: self.separate_history,
-                ..Matches::default()
-            };
-            self.matches.push_new_matches(
-                self.history_items.iter().filter(|history_item| {
-                    project
-                        .worktree_for_id(history_item.project.worktree_id, cx)
-                        .is_some()
-                        || (project.is_local_or_ssh() && history_item.absolute.is_some())
-                }),
-                self.currently_opened_path.as_ref(),
-                None,
-                None.into_iter(),
-                false,
-            );
+            //NOTE: if there was no query before, and we already have some (history) matches
+            // there's no need to update anything, since nothing has changed.
+            // We also want to populate matches set from history entries on the first update.
+            if self.latest_search_query.is_some() || self.first_update {
+                let project = self.project.read(cx);
 
-            self.selected_index = 0;
+                self.latest_search_id = post_inc(&mut self.search_count);
+                self.latest_search_query = None;
+                self.matches = Matches {
+                    separate_history: self.separate_history,
+                    ..Matches::default()
+                };
+                self.matches.push_new_matches(
+                    self.history_items.iter().filter(|history_item| {
+                        project
+                            .worktree_for_id(history_item.project.worktree_id, cx)
+                            .is_some()
+                            || (project.is_local_or_ssh() && history_item.absolute.is_some())
+                    }),
+                    self.currently_opened_path.as_ref(),
+                    None,
+                    None.into_iter(),
+                    false,
+                );
+
+                self.first_update = false;
+                self.selected_index = 0;
+            }
             cx.notify();
             Task::ready(())
         } else {
