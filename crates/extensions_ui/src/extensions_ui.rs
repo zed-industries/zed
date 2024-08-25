@@ -462,8 +462,7 @@ impl ExtensionsPage {
                                     .color(Color::Default),
                             )
                             .child(
-                                Label::new(format!(
-                                    "{}",
+                                Label::new(
                                     extension
                                         .authors
                                         .iter()
@@ -472,7 +471,8 @@ impl ExtensionsPage {
                                         })
                                         .collect::<Vec<_>>()
                                         .join(", ")
-                                ))
+                                        .to_string(),
+                                )
                                 .size(LabelSize::Small),
                             ),
                     )
@@ -568,8 +568,7 @@ impl ExtensionsPage {
                                     .color(Color::Default),
                             )
                             .child(
-                                Label::new(format!(
-                                    "{}",
+                                Label::new(
                                     extension
                                         .manifest
                                         .authors
@@ -579,7 +578,8 @@ impl ExtensionsPage {
                                         })
                                         .collect::<Vec<_>>()
                                         .join(", ")
-                                ))
+                                        .to_string(),
+                                )
                                 .size(LabelSize::Small),
                             ),
                     )
@@ -592,10 +592,12 @@ impl ExtensionsPage {
                                     .color(Color::Default),
                             )
                             .child(
-                                Label::new(format!(
-                                    "{}",
-                                    extension.download_count.to_formatted_string(&Locale::en)
-                                ))
+                                Label::new(
+                                    extension
+                                        .download_count
+                                        .to_formatted_string(&Locale::en)
+                                        .to_string(),
+                                )
                                 .size(LabelSize::Small),
                             ),
                     ),
