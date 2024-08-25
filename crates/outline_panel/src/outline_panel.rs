@@ -711,12 +711,12 @@ impl OutlinePanel {
                     self.active_project_search(Some(&active_editor), cx)
                 {
                     self.workspace.update(cx, |workspace, cx| {
-                        workspace.activate_item(&active_project_search, true, true, cx)
+                        workspace.activate_item(&active_project_search, true, change_selection, cx)
                     });
                 }
             } else {
                 self.workspace.update(cx, |workspace, cx| {
-                    workspace.activate_item(&active_editor, true, true, cx)
+                    workspace.activate_item(&active_editor, true, change_selection, cx)
                 });
             };
         }
