@@ -613,11 +613,15 @@
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
       "ctrl-shift-c": "terminal::Copy",
       "ctrl-insert": "terminal::Copy",
-      // "ctrl-a": "editor::SelectAll", // conflicts with readline
       "ctrl-shift-v": "terminal::Paste",
       "shift-insert": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",
+      // Overrides for conflicting keybindings
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-shift-a": "editor::SelectAll",
+      "ctrl-shift-f": "buffer_search::Deploy",
+      "ctrl-shift-l": "terminal::Clear",
+      "ctrl-shift-w": "pane::CloseActiveItem",
       "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "up": ["terminal::SendKeystroke", "up"],
       "pageup": ["terminal::SendKeystroke", "pageup"],
@@ -631,8 +635,7 @@
       "shift-up": "terminal::ScrollLineUp",
       "shift-down": "terminal::ScrollLineDown",
       "shift-home": "terminal::ScrollToTop",
-      "shift-end": "terminal::ScrollToBottom",
-      "ctrl-shift-f": "buffer_search::Deploy"
+      "shift-end": "terminal::ScrollToBottom"
     }
   }
 ]
