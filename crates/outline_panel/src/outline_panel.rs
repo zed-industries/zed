@@ -3453,29 +3453,21 @@ impl Panel for OutlinePanel {
                     let old_active = outline_panel.active;
                     outline_panel.active = active;
                     if active && old_active != active {
-                        let mut replaced = false;
                         if let Some(active_editor) =
                             workspace_active_editor(outline_panel.workspace.read(cx), cx)
                         {
                             if outline_panel.should_replace_active_editor(&active_editor) {
                                 outline_panel.replace_active_editor(active_editor, cx);
-                                replaced = true;
-                            }
-                        }
-                        if !replaced {
-                            if outline_panel.pinned {
-                                if let Some(active_editor) = outline_panel.active_editor() {
-                                    outline_panel.selected_entry.invalidate();
-                                    outline_panel.update_fs_entries(
-                                        &active_editor,
-                                        HashSet::default(),
-                                        None,
-                                        cx,
-                                    )
-                                }
                             } else {
-                                outline_panel.active_item = None;
+                                outline_panel.update_fs_entries(
+                                    &active_editor,
+                                    HashSet::default(),
+                                    None,
+                                    cx,
+                                )
                             }
+                        } else if !outline_panel.pinned {
+                            outline_panel.clear_previous(cx);
                         }
                     }
                     outline_panel.serialize(cx);
