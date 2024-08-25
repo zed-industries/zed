@@ -454,16 +454,27 @@ impl ExtensionsPage {
                 h_flex()
                     .justify_between()
                     .child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Person)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Default),
+                            )
+                            .child(
+                                Label::new(format!(
+                                    "{}",
+                                    extension
+                                        .authors
+                                        .iter()
+                                        .map(|author| {
+                                            author.split('<').next().unwrap().trim().to_string()
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ))
+                                .size(LabelSize::Small),
+                            ),
                     )
                     .child(Label::new("<>").size(LabelSize::Small)),
             )
@@ -549,23 +560,44 @@ impl ExtensionsPage {
                 h_flex()
                     .justify_between()
                     .child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.manifest.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.manifest.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Person)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Default),
+                            )
+                            .child(
+                                Label::new(format!(
+                                    "{}",
+                                    extension
+                                        .manifest
+                                        .authors
+                                        .iter()
+                                        .map(|author| {
+                                            author.split('<').next().unwrap().trim().to_string()
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ))
+                                .size(LabelSize::Small),
+                            ),
                     )
                     .child(
-                        Label::new(format!(
-                            "Downloads: {}",
-                            extension.download_count.to_formatted_string(&Locale::en)
-                        ))
-                        .size(LabelSize::Small),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Download)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Default),
+                            )
+                            .child(
+                                Label::new(format!(
+                                    "{}",
+                                    extension.download_count.to_formatted_string(&Locale::en)
+                                ))
+                                .size(LabelSize::Small),
+                            ),
                     ),
             )
             .child(
