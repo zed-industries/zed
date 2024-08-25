@@ -7297,7 +7297,7 @@ impl Editor {
 
     pub fn delete_to_previous_word_start_ignoring_newlines(
         &mut self,
-        _: &DeleteToPreviousWordStart,
+        _: &DeleteToPreviousWordStartIgnoringNewlines,
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
