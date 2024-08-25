@@ -345,11 +345,7 @@ impl TerminalBuilder {
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
                 working_directory: working_directory.clone(),
-                #[cfg(target_os = "linux")]
-                hold: !matches!(shell.clone(), Shell::System),
-                // with hold: true, macOS gets tasks stuck on ctrl-c interrupts periodically
-                #[cfg(not(target_os = "linux"))]
-                hold: false,
+                hold: task.as_ref().map_or(false, |task| task.wait_for_subprocess),
                 env: env.into_iter().collect(),
             }
         };
@@ -615,6 +611,7 @@ pub struct TaskState {
     pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
     pub hide: HideStrategy,
+    pub wait_for_subprocess: bool,
 }
 
 /// A status of the current terminal tab's task.

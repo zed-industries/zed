@@ -1661,6 +1661,7 @@ pub async fn spawn_ssh_task(
                     cwd: None,
                     use_new_terminal: true,
                     allow_concurrent_runs: false,
+                    wait_for_subprocess: true,
                     reveal: RevealStrategy::Always,
                     hide: HideStrategy::Never,
                     env: Default::default(),
