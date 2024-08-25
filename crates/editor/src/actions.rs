@@ -210,6 +210,7 @@ gpui::actions!(
         DeleteToNextWordEnd,
         DeleteToPreviousSubwordStart,
         DeleteToPreviousWordStart,
+        DeleteToPreviousWordStartIgnoringNewlines,
         DisplayCursorNames,
         DuplicateLineDown,
         DuplicateLineUp,

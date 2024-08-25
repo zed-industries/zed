@@ -7294,6 +7294,27 @@ impl Editor {
         });
     }
 
+    pub fn delete_to_previous_word_start_ignoring_newlines(
+        &mut self,
+        _: &DeleteToPreviousWordStart,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.transact(cx, |this, cx| {
+            this.select_autoclose_pair(cx);
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                let line_mode = s.line_mode;
+                s.move_with(|map, selection| {
+                    if selection.is_empty() && !line_mode {
+                        let cursor =
+                            movement::previous_word_start_ignoring_newlines(map, selection.head());
+                        selection.set_head(cursor, SelectionGoal::None);
+                    }
+                });
+            });
+            this.insert("", cx);
+        });
+    }
+
     pub fn delete_to_previous_subword_start(
         &mut self,
         _: &DeleteToPreviousSubwordStart,
