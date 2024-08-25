@@ -32,6 +32,7 @@ fn add_vars(env_content: String, vars: &mut Vec<(String, String)>) -> Result<()>
             toml::Value::String(value) => value,
             toml::Value::Integer(value) => value.to_string(),
             toml::Value::Float(value) => value.to_string(),
+            toml::Value::Boolean(value) => value.to_string(),
             _ => panic!("unsupported TOML value in .env.toml for key {}", key),
         };
         vars.push((key, value));

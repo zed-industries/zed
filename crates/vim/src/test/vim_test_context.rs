@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
-use gpui::{Context, SemanticVersion, View, VisualContext};
+use gpui::{Context, SemanticVersion, UpdateGlobal, View, VisualContext};
 use search::{project_search::ProjectSearchBar, BufferSearchBar};
 
 use crate::{state::Operator, *};
@@ -12,7 +12,7 @@ pub struct VimTestContext {
 
 impl VimTestContext {
     pub fn init(cx: &mut gpui::TestAppContext) {
-        if cx.has_global::<Vim>() {
+        if cx.has_global::<VimGlobals>() {
             return;
         }
         cx.update(|cx| {
@@ -119,23 +119,31 @@ impl VimTestContext {
     }
 
     pub fn mode(&mut self) -> Mode {
-        self.cx.read(|cx| cx.global::<Vim>().state().mode)
+        self.update_editor(|editor, cx| editor.addon::<VimAddon>().unwrap().view.read(cx).mode)
     }
 
     pub fn active_operator(&mut self) -> Option<Operator> {
-        self.cx
-            .read(|cx| cx.global::<Vim>().state().operator_stack.last().cloned())
+        self.update_editor(|editor, cx| {
+            editor
+                .addon::<VimAddon>()
+                .unwrap()
+                .view
+                .read(cx)
+                .operator_stack
+                .last()
+                .cloned()
+        })
     }
 
     pub fn set_state(&mut self, text: &str, mode: Mode) {
-        let window = self.window;
         self.cx.set_state(text);
-        self.update_window(window, |_, cx| {
-            Vim::update(cx, |vim, cx| {
+        let vim = self.update_editor(|editor, _cx| editor.addon::<VimAddon>().cloned().unwrap());
+
+        self.update(|cx| {
+            vim.view.update(cx, |vim, cx| {
                 vim.switch_mode(mode, true, cx);
-            })
-        })
-        .unwrap();
+            });
+        });
         self.cx.cx.cx.run_until_parked();
     }
 

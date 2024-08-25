@@ -12,6 +12,7 @@ pub mod worktree_store;
 
 #[cfg(test)]
 mod project_tests;
+
 pub mod search_history;
 mod yarn;
 
@@ -32,7 +33,7 @@ use futures::{
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt,
 };
-use fuzzy::CharBag;
+
 use git::{blame::Blame, repository::GitRepository};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
@@ -41,19 +42,28 @@ use gpui::{
 };
 use http_client::HttpClient;
 use itertools::Itertools;
-use language::{language_settings::{
-    language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
-    LanguageSettings, SelectedFormatter,
-}, markdown, point_to_lsp, prepare_completion_documentation, proto::{
-    deserialize_anchor, deserialize_version, serialize_anchor, serialize_line_ending,
-    serialize_version, split_operations,
-}, range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel, ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation, Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate, Patch, PendingLanguageServer, Point, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped};
+use language::{
+    language_settings::{
+        language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
+        LanguageSettings, SelectedFormatter,
+    },
+    markdown, point_to_lsp, prepare_completion_documentation,
+    proto::{
+        deserialize_anchor, deserialize_version, serialize_anchor, serialize_line_ending,
+        serialize_version, split_operations,
+    },
+    range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
+    ContextProvider, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation,
+    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    LspAdapterDelegate, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
+    ToPointUtf16, Transaction, Unclipped,
+};
 use log::error;
 use lsp::{
     CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, Edit, FileSystemWatcher, InsertTextFormat, LanguageServer,
-    LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem, OneOf,
-    ServerHealthStatus, ServerStatus, TextEdit, WorkDoneProgressCancelParams,
+    LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem, MessageType,
+    OneOf, ServerHealthStatus, ServerStatus, TextEdit, WorkDoneProgressCancelParams,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -107,8 +117,8 @@ use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding, Selection};
 use unicase::UniCase;
 use util::{
-    debug_panic, defer, maybe, merge_json_value_into, parse_env_output, post_inc,
-    NumericPrefixWithSuffix, ResultExt, TryFutureExt as _,
+    debug_panic, defer, maybe, merge_json_value_into, parse_env_output, paths::compare_paths,
+    post_inc, ResultExt, TryFutureExt as _,
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
@@ -223,6 +233,7 @@ pub struct Project {
     cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
 }
 
+#[derive(Debug)]
 pub enum LanguageServerToQuery {
     Primary,
     Other(LanguageServerId),
@@ -299,10 +310,16 @@ impl PartialEq for LanguageServerPromptRequest {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum LanguageServerLogType {
+    Log(MessageType),
+    Trace(Option<String>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     LanguageServerAdded(LanguageServerId),
     LanguageServerRemoved(LanguageServerId),
-    LanguageServerLog(LanguageServerId, String),
+    LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
     Notification(String),
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Model<Buffer>),
@@ -404,6 +421,28 @@ pub struct InlayHint {
     pub resolve_state: ResolveState,
 }
 
+/// The user's intent behind a given completion confirmation
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
+pub enum CompletionIntent {
+    /// The user intends to 'commit' this result, if possible
+    /// completion confirmations should run side effects
+    Complete,
+    /// The user intends to continue 'composing' this completion
+    /// completion confirmations should not run side effects and
+    /// let the user continue composing their action
+    Compose,
+}
+
+impl CompletionIntent {
+    pub fn is_complete(&self) -> bool {
+        self == &Self::Complete
+    }
+
+    pub fn is_compose(&self) -> bool {
+        self == &Self::Compose
+    }
+}
+
 /// A completion provided by a language server
 #[derive(Clone)]
 pub struct Completion {
@@ -420,9 +459,10 @@ pub struct Completion {
     /// The raw completion provided by the language server.
     pub lsp_completion: lsp::CompletionItem,
     /// An optional callback to invoke when this completion is confirmed.
-    pub confirm: Option<Arc<dyn Send + Sync + Fn(&mut WindowContext)>>,
-    /// If true, the editor will show a new completion menu after this completion is confirmed.
-    pub show_new_completions_on_confirm: bool,
+    /// Returns, whether new completions should be retriggered after the current one.
+    /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
+    /// if no confirmation is provided or `false` is returned, the completion will be committed.
+    pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut WindowContext) -> bool>>,
 }
 
 impl std::fmt::Debug for Completion {
@@ -604,7 +644,7 @@ impl DirectoryLister {
     pub fn is_local(&self, cx: &AppContext) -> bool {
         match self {
             DirectoryLister::Local(_) => true,
-            DirectoryLister::Project(project) => project.read(cx).is_local(),
+            DirectoryLister::Project(project) => project.read(cx).is_local_or_ssh(),
         }
     }
 
@@ -616,16 +656,17 @@ impl DirectoryLister {
         };
         "~/".to_string()
     }
-    pub fn list_directory(&self, query: String, cx: &mut AppContext) -> Task<Result<Vec<PathBuf>>> {
+
+    pub fn list_directory(&self, path: String, cx: &mut AppContext) -> Task<Result<Vec<PathBuf>>> {
         match self {
             DirectoryLister::Project(project) => {
-                project.update(cx, |project, cx| project.list_directory(query, cx))
+                project.update(cx, |project, cx| project.list_directory(path, cx))
             }
             DirectoryLister::Local(fs) => {
                 let fs = fs.clone();
                 cx.background_executor().spawn(async move {
                     let mut results = vec![];
-                    let expanded = shellexpand::tilde(&query);
+                    let expanded = shellexpand::tilde(&path);
                     let query = Path::new(expanded.as_ref());
                     let mut response = fs.read_dir(query).await?;
                     while let Some(path) = response.next().await {
@@ -1379,7 +1420,7 @@ impl Project {
     }
 
     pub fn ssh_connection_string(&self, cx: &ModelContext<Self>) -> Option<SharedString> {
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             return None;
         }
 
@@ -1797,7 +1838,7 @@ impl Project {
     }
 
     fn unshare_internal(&mut self, cx: &mut AppContext) -> Result<()> {
-        if self.is_remote() {
+        if self.is_via_collab() {
             if self.dev_server_project_id().is_some() {
                 if let ProjectClientState::Remote { in_room, .. } = &mut self.client_state {
                     *in_room = false
@@ -1899,28 +1940,21 @@ impl Project {
         self.is_disconnected() || self.capability() == Capability::ReadOnly
     }
 
-    pub fn is_local(&self) -> bool {
+    pub fn is_local_or_ssh(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => true,
             ProjectClientState::Remote { .. } => false,
         }
     }
 
-    pub fn is_ssh(&self) -> bool {
-        match &self.client_state {
-            ProjectClientState::Local | ProjectClientState::Shared { .. } => true,
-            ProjectClientState::Remote { .. } => false,
-        }
-    }
-
-    pub fn is_remote(&self) -> bool {
-        !self.is_local()
+    pub fn is_via_collab(&self) -> bool {
+        !self.is_local_or_ssh()
     }
 
     pub fn create_buffer(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Model<Buffer>>> {
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.create_buffer(
-                if self.is_remote() {
+                if self.is_via_collab() {
                     Some((self.client.clone().into(), self.remote_id().unwrap()))
                 } else {
                     None
@@ -1936,7 +1970,7 @@ impl Project {
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Model<Buffer> {
-        if self.is_remote() {
+        if self.is_via_collab() {
             panic!("called create_local_buffer on a remote project")
         }
         self.buffer_store.update(cx, |buffer_store, cx| {
@@ -1978,7 +2012,7 @@ impl Project {
         path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        if self.is_remote() && self.is_disconnected() {
+        if self.is_via_collab() && self.is_disconnected() {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
 
@@ -2067,7 +2101,7 @@ impl Project {
     ) -> Task<Result<Model<Buffer>>> {
         if let Some(buffer) = self.buffer_for_id(id, cx) {
             Task::ready(Ok(buffer))
-        } else if self.is_local() {
+        } else if self.is_local_or_ssh() {
             Task::ready(Err(anyhow!("buffer {} does not exist", id)))
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::OpenBufferById {
@@ -2267,6 +2301,7 @@ impl Project {
 
         buffer.update(cx, |buffer, cx| {
             let worktree_id = old_file.worktree_id(cx);
+
             let ids = &self.language_server_ids;
 
             if let Some(language) = buffer.language().cloned() {
@@ -2329,7 +2364,7 @@ impl Project {
         let mut changes = rx.ready_chunks(MAX_BATCH_SIZE);
 
         while let Some(changes) = changes.next().await {
-            let is_local = this.update(&mut cx, |this, _| this.is_local())?;
+            let is_local = this.update(&mut cx, |this, _| this.is_local_or_ssh())?;
 
             for change in changes {
                 match change {
@@ -2471,7 +2506,7 @@ impl Project {
             }
 
             BufferEvent::Reloaded => {
-                if self.is_local() {
+                if self.is_local_or_ssh() {
                     if let Some(project_id) = self.remote_id() {
                         let buffer = buffer.read(cx);
                         self.client
@@ -2587,7 +2622,7 @@ impl Project {
                 let worktree_id = file.worktree_id(cx);
                 let abs_path = file.as_local()?.abs_path(cx);
                 let text_document = lsp::TextDocumentIdentifier {
-                    uri: lsp::Url::from_file_path(abs_path).unwrap(),
+                    uri: lsp::Url::from_file_path(abs_path).log_err()?,
                 };
 
                 for (_, _, server) in self.language_servers_for_worktree(worktree_id) {
@@ -3618,17 +3653,56 @@ impl Project {
             })
             .detach();
         language_server
-            .on_notification::<lsp::notification::Progress, _>(move |params, mut cx| {
-                if let Some(this) = project.upgrade() {
-                    this.update(&mut cx, |this, cx| {
-                        this.on_lsp_progress(
-                            params,
-                            server_id,
-                            disk_based_diagnostics_progress_token.clone(),
-                            cx,
-                        );
-                    })
-                    .ok();
+            .on_notification::<lsp::notification::Progress, _>({
+                let project = project.clone();
+                move |params, mut cx| {
+                    if let Some(this) = project.upgrade() {
+                        this.update(&mut cx, |this, cx| {
+                            this.on_lsp_progress(
+                                params,
+                                server_id,
+                                disk_based_diagnostics_progress_token.clone(),
+                                cx,
+                            );
+                        })
+                        .ok();
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_notification::<lsp::notification::LogMessage, _>({
+                let project = project.clone();
+                move |params, mut cx| {
+                    if let Some(this) = project.upgrade() {
+                        this.update(&mut cx, |_, cx| {
+                            cx.emit(Event::LanguageServerLog(
+                                server_id,
+                                LanguageServerLogType::Log(params.typ),
+                                params.message,
+                            ));
+                        })
+                        .ok();
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_notification::<lsp::notification::LogTrace, _>({
+                let project = project.clone();
+                move |params, mut cx| {
+                    if let Some(this) = project.upgrade() {
+                        this.update(&mut cx, |_, cx| {
+                            cx.emit(Event::LanguageServerLog(
+                                server_id,
+                                LanguageServerLogType::Trace(params.verbose),
+                                params.message,
+                            ));
+                        })
+                        .ok();
+                    }
                 }
             })
             .detach();
@@ -3640,9 +3714,16 @@ impl Project {
             (None, override_options) => initialization_options = override_options,
             _ => {}
         }
+
         let language_server = cx
             .update(|cx| language_server.initialize(initialization_options, cx))?
-            .await?;
+            .await
+            .inspect_err(|_| {
+                if let Some(this) = project.upgrade() {
+                    this.update(cx, |_, cx| cx.emit(Event::LanguageServerRemoved(server_id)))
+                        .ok();
+                }
+            })?;
 
         language_server
             .notify::<lsp::notification::DidChangeConfiguration>(
@@ -3928,7 +4009,7 @@ impl Project {
         buffers: impl IntoIterator<Item = Model<Buffer>>,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.is_remote() {
+        if self.is_via_collab() {
             let request = self.client.request(proto::RestartLanguageServers {
                 project_id: self.remote_id().unwrap(),
                 buffer_ids: buffers
@@ -4241,7 +4322,7 @@ impl Project {
             cx.notify();
         }
 
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
                 language_server_id,
                 message: proto::update_language_server::Variant::WorkStart(proto::LspWorkStart {
@@ -4306,7 +4387,7 @@ impl Project {
             cx.notify();
         }
 
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
                 language_server_id,
                 message: proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd {
@@ -4850,7 +4931,7 @@ impl Project {
         selection: Option<Selection<Point>>,
         cx: &mut ModelContext<Project>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let buffers_with_paths = buffers
                 .into_iter()
                 .map(|buffer_handle| {
@@ -5604,7 +5685,7 @@ impl Project {
     pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
         let language_registry = self.languages.clone();
 
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let mut requests = Vec::new();
             for ((worktree_id, _), server_id) in self.language_server_ids.iter() {
                 let Some(worktree_handle) = self.worktree_for_id(*worktree_id, cx) else {
@@ -5761,7 +5842,7 @@ impl Project {
         symbol: &Symbol,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let language_server_id = if let Some(id) = self.language_server_ids.get(&(
                 symbol.source_worktree_id,
                 symbol.language_server_name.clone(),
@@ -5820,7 +5901,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<SignatureHelp>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let all_actions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
@@ -5894,7 +5975,7 @@ impl Project {
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<Hover>> {
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let all_actions_task = self.request_multiple_lsp_locally(
                 &buffer,
                 Some(position),
@@ -6002,7 +6083,10 @@ impl Project {
             })
             .map(|(_, server)| LanguageServerToQuery::Other(server.server_id()))
             .next()
-            .or_else(|| self.is_remote().then_some(LanguageServerToQuery::Primary))
+            .or_else(|| {
+                self.is_via_collab()
+                    .then_some(LanguageServerToQuery::Primary)
+            })
             .filter(|_| {
                 maybe!({
                     let language_name = buffer.read(cx).language_at(position)?.name();
@@ -6044,7 +6128,7 @@ impl Project {
     ) -> Task<Result<Vec<Completion>>> {
         let language_registry = self.languages.clone();
 
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let snapshot = buffer.read(cx).snapshot();
             let offset = position.to_offset(&snapshot);
             let scope = snapshot.language_scope_at(offset);
@@ -6154,7 +6238,7 @@ impl Project {
         let client = self.client();
         let language_registry = self.languages().clone();
 
-        let is_remote = self.is_remote();
+        let is_remote = self.is_via_collab();
         let project_id = self.remote_id();
 
         let buffer_id = buffer.read(cx).remote_id();
@@ -6367,7 +6451,7 @@ impl Project {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
 
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let server_id = completion.server_id;
             let lang_server = match self.language_server_for_buffer(buffer, server_id, cx) {
                 Some((_, server)) => server.clone(),
@@ -6479,7 +6563,7 @@ impl Project {
         range: Range<Anchor>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<CodeAction>> {
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let all_actions_task = self.request_multiple_lsp_locally(
                 &buffer_handle,
                 Some(range.start),
@@ -6570,7 +6654,7 @@ impl Project {
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let buffer = buffer_handle.read(cx);
             let (lsp_adapter, lang_server) = if let Some((adapter, server)) =
                 self.language_server_for_buffer(buffer, action.server_id, cx)
@@ -6652,7 +6736,7 @@ impl Project {
         trigger: String,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             cx.spawn(move |this, mut cx| async move {
                 // Do not allow multiple concurrent formatting requests for the
                 // same buffer.
@@ -7078,7 +7162,7 @@ impl Project {
         let buffer_id = buffer.remote_id().into();
         let lsp_request = InlayHints { range };
 
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let lsp_request_task = self.request_lsp(
                 buffer_handle.clone(),
                 LanguageServerToQuery::Primary,
@@ -7130,7 +7214,7 @@ impl Project {
         server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) -> Task<anyhow::Result<InlayHint>> {
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let buffer = buffer_handle.read(cx);
             let (_, lang_server) = if let Some((adapter, server)) =
                 self.language_server_for_buffer(buffer, server_id, cx)
@@ -7192,7 +7276,7 @@ impl Project {
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
     ) -> Receiver<SearchResult> {
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             self.search_local(query, cx)
         } else if let Some(project_id) = self.remote_id() {
             let (tx, rx) = smol::channel::unbounded();
@@ -7534,7 +7618,7 @@ impl Project {
         <R::LspRequest as lsp::request::Request>::Params: Send,
     {
         let buffer = buffer_handle.read(cx);
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let language_server = match server {
                 LanguageServerToQuery::Primary => {
                     match self.primary_language_server_for_buffer(buffer, cx) {
@@ -7636,7 +7720,7 @@ impl Project {
         <R::LspRequest as lsp::request::Request>::Result: Send,
         <R::LspRequest as lsp::request::Request>::Params: Send,
     {
-        if !self.is_local() {
+        if !self.is_local_or_ssh() {
             debug_panic!("Should not request multiple lsp commands in non-local project");
             return Task::ready(Vec::new());
         }
@@ -7762,12 +7846,94 @@ impl Project {
         }
     }
 
+    // Returns the resolved version of `path`, that was found in `buffer`, if it exists.
+    pub fn resolve_existing_file_path(
+        &self,
+        path: &str,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<ResolvedPath>> {
+        // TODO: ssh based remoting.
+        if self.ssh_session.is_some() {
+            return Task::ready(None);
+        }
+
+        if self.is_local_or_ssh() {
+            let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
+
+            if expanded.is_absolute() {
+                let fs = self.fs.clone();
+                cx.background_executor().spawn(async move {
+                    let path = expanded.as_path();
+                    let exists = fs.is_file(path).await;
+
+                    exists.then(|| ResolvedPath::AbsPath(expanded))
+                })
+            } else {
+                self.resolve_path_in_worktrees(expanded, buffer, cx)
+            }
+        } else {
+            let path = PathBuf::from(path);
+            if path.is_absolute() || path.starts_with("~") {
+                return Task::ready(None);
+            }
+
+            self.resolve_path_in_worktrees(path, buffer, cx)
+        }
+    }
+
+    fn resolve_path_in_worktrees(
+        &self,
+        path: PathBuf,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<ResolvedPath>> {
+        let mut candidates = vec![path.clone()];
+
+        if let Some(file) = buffer.read(cx).file() {
+            if let Some(dir) = file.path().parent() {
+                let joined = dir.to_path_buf().join(path);
+                candidates.push(joined);
+            }
+        }
+
+        let worktrees = self.worktrees(cx).collect::<Vec<_>>();
+        cx.spawn(|_, mut cx| async move {
+            for worktree in worktrees {
+                for candidate in candidates.iter() {
+                    let path = worktree
+                        .update(&mut cx, |worktree, _| {
+                            let root_entry_path = &worktree.root_entry().unwrap().path;
+
+                            let resolved = resolve_path(&root_entry_path, candidate);
+
+                            let stripped =
+                                resolved.strip_prefix(&root_entry_path).unwrap_or(&resolved);
+
+                            worktree.entry_for_path(stripped).map(|entry| {
+                                ResolvedPath::ProjectPath(ProjectPath {
+                                    worktree_id: worktree.id(),
+                                    path: entry.path.clone(),
+                                })
+                            })
+                        })
+                        .ok()?;
+
+                    if path.is_some() {
+                        return path;
+                    }
+                }
+            }
+            None
+        })
+    }
+
     pub fn list_directory(
         &self,
         query: String,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<PathBuf>>> {
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
         } else if let Some(dev_server) = self.dev_server_project_id().and_then(|id| {
             dev_server_projects::Store::global(cx)
@@ -7798,7 +7964,7 @@ impl Project {
         if !self.loading_worktrees.contains_key(&path) {
             let task = if self.ssh_session.is_some() {
                 self.create_ssh_worktree(abs_path, visible, cx)
-            } else if self.is_local() {
+            } else if self.is_local_or_ssh() {
                 self.create_local_worktree(abs_path, visible, cx)
             } else if self.dev_server_project_id.is_some() {
                 self.create_dev_server_worktree(abs_path, cx)
@@ -8325,7 +8491,7 @@ impl Project {
         }
 
         cx.emit(Event::DiskBasedDiagnosticsStarted { language_server_id });
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
                 language_server_id,
                 message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
@@ -8349,7 +8515,7 @@ impl Project {
 
         cx.emit(Event::DiskBasedDiagnosticsFinished { language_server_id });
 
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
                 language_server_id,
                 message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
@@ -8623,7 +8789,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            if this.is_local() {
+            if this.is_local_or_ssh() {
                 this.unshare(cx)?;
             } else {
                 this.disconnected_from_host(cx);
@@ -9125,7 +9291,6 @@ impl Project {
                         filter_range: Default::default(),
                     },
                     confirm: None,
-                    show_new_completions_on_confirm: false,
                 },
                 false,
                 cx,
@@ -10341,7 +10506,7 @@ impl Project {
         location: Location,
         cx: &mut ModelContext<'_, Project>,
     ) -> Task<Option<TaskContext>> {
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let (worktree_id, cwd) = if let Some(worktree) = self.task_worktree(cx) {
                 (
                     Some(worktree.read(cx).id()),
@@ -10468,7 +10633,7 @@ impl Project {
         location: Option<Location>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>> {
-        if self.is_local() {
+        if self.is_local_or_ssh() {
             let (file, language) = location
                 .map(|location| {
                     let buffer = location.buffer.read(cx);
@@ -10762,7 +10927,6 @@ async fn populate_labels_for_completions(
             documentation,
             lsp_completion,
             confirm: None,
-            show_new_completions_on_confirm: false,
         })
     }
 }
@@ -11027,17 +11191,13 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
     type Item = fuzzy::PathMatchCandidate<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.traversal.next().map(|entry| match entry.kind {
-            EntryKind::Dir => fuzzy::PathMatchCandidate {
+        self.traversal
+            .next()
+            .map(|entry| fuzzy::PathMatchCandidate {
+                is_dir: entry.kind.is_dir(),
                 path: &entry.path,
-                char_bag: CharBag::from_iter(entry.path.to_string_lossy().to_lowercase().chars()),
-            },
-            EntryKind::File(char_bag) => fuzzy::PathMatchCandidate {
-                path: &entry.path,
-                char_bag,
-            },
-            EntryKind::UnloadedDir | EntryKind::PendingDir => unreachable!(),
-        })
+                char_bag: entry.char_bag,
+            })
     }
 }
 
@@ -11227,6 +11387,14 @@ fn resolve_path(base: &Path, path: &Path) -> PathBuf {
         }
     }
     result
+}
+
+/// ResolvedPath is a path that has been resolved to either a ProjectPath
+/// or an AbsPath and that *exists*.
+#[derive(Debug, Clone)]
+pub enum ResolvedPath {
+    ProjectPath(ProjectPath),
+    AbsPath(PathBuf),
 }
 
 impl Item for Buffer {
@@ -11582,87 +11750,4 @@ fn sort_search_matches(search_matches: &mut Vec<SearchMatchCandidate>, cx: &AppC
             compare_paths((path_a.as_ref(), *is_file_a), (path_b.as_ref(), *is_file_b))
         }),
     });
-}
-
-pub fn compare_paths(
-    (path_a, a_is_file): (&Path, bool),
-    (path_b, b_is_file): (&Path, bool),
-) -> cmp::Ordering {
-    let mut components_a = path_a.components().peekable();
-    let mut components_b = path_b.components().peekable();
-    loop {
-        match (components_a.next(), components_b.next()) {
-            (Some(component_a), Some(component_b)) => {
-                let a_is_file = components_a.peek().is_none() && a_is_file;
-                let b_is_file = components_b.peek().is_none() && b_is_file;
-                let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                    let maybe_numeric_ordering = maybe!({
-                        let path_a = Path::new(component_a.as_os_str());
-                        let num_and_remainder_a = if a_is_file {
-                            path_a.file_stem()
-                        } else {
-                            path_a.file_name()
-                        }
-                        .and_then(|s| s.to_str())
-                        .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
-
-                        let path_b = Path::new(component_b.as_os_str());
-                        let num_and_remainder_b = if b_is_file {
-                            path_b.file_stem()
-                        } else {
-                            path_b.file_name()
-                        }
-                        .and_then(|s| s.to_str())
-                        .and_then(NumericPrefixWithSuffix::from_numeric_prefixed_str)?;
-
-                        num_and_remainder_a.partial_cmp(&num_and_remainder_b)
-                    });
-
-                    maybe_numeric_ordering.unwrap_or_else(|| {
-                        let name_a = UniCase::new(component_a.as_os_str().to_string_lossy());
-                        let name_b = UniCase::new(component_b.as_os_str().to_string_lossy());
-
-                        name_a.cmp(&name_b)
-                    })
-                });
-                if !ordering.is_eq() {
-                    return ordering;
-                }
-            }
-            (Some(_), None) => break cmp::Ordering::Greater,
-            (None, Some(_)) => break cmp::Ordering::Less,
-            (None, None) => break cmp::Ordering::Equal,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn compare_paths_with_dots() {
-        let mut paths = vec![
-            (Path::new("test_dirs"), false),
-            (Path::new("test_dirs/1.46"), false),
-            (Path::new("test_dirs/1.46/bar_1"), true),
-            (Path::new("test_dirs/1.46/bar_2"), true),
-            (Path::new("test_dirs/1.45"), false),
-            (Path::new("test_dirs/1.45/foo_2"), true),
-            (Path::new("test_dirs/1.45/foo_1"), true),
-        ];
-        paths.sort_by(|&a, &b| compare_paths(a, b));
-        assert_eq!(
-            paths,
-            vec![
-                (Path::new("test_dirs"), false),
-                (Path::new("test_dirs/1.45"), false),
-                (Path::new("test_dirs/1.45/foo_1"), true),
-                (Path::new("test_dirs/1.45/foo_2"), true),
-                (Path::new("test_dirs/1.46"), false),
-                (Path::new("test_dirs/1.46/bar_1"), true),
-                (Path::new("test_dirs/1.46/bar_2"), true),
-            ]
-        );
-    }
 }

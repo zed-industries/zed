@@ -488,9 +488,9 @@ impl TerminalView {
 
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
-        if let Some(item) = cx.read_from_clipboard() {
+        if let Some(clipboard_string) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.terminal
-                .update(cx, |terminal, _cx| terminal.paste(item.text()));
+                .update(cx, |terminal, _cx| terminal.paste(&clipboard_string));
         }
     }
 
@@ -787,23 +787,20 @@ fn possible_open_targets(
     let row = path_position.row;
     let column = path_position.column;
     let maybe_path = path_position.path;
-    let potential_abs_paths = if maybe_path.is_absolute() {
-        HashSet::from_iter([maybe_path])
+
+    let abs_path = if maybe_path.is_absolute() {
+        Some(maybe_path)
     } else if maybe_path.starts_with("~") {
-        if let Some(abs_path) = maybe_path
+        maybe_path
             .strip_prefix("~")
             .ok()
             .and_then(|maybe_path| Some(dirs::home_dir()?.join(maybe_path)))
-        {
-            HashSet::from_iter([abs_path])
-        } else {
-            HashSet::default()
-        }
     } else {
-        // First check cwd and then workspace
         let mut potential_cwd_and_workspace_paths = HashSet::default();
         if let Some(cwd) = cwd {
-            potential_cwd_and_workspace_paths.insert(Path::join(cwd, &maybe_path));
+            let abs_path = Path::join(cwd, &maybe_path);
+            let canonicalized_path = abs_path.canonicalize().unwrap_or(abs_path);
+            potential_cwd_and_workspace_paths.insert(canonicalized_path);
         }
         if let Some(workspace) = workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
@@ -815,10 +812,25 @@ fn possible_open_targets(
                 }
             });
         }
-        potential_cwd_and_workspace_paths
+
+        return possible_open_paths_metadata(
+            fs,
+            row,
+            column,
+            potential_cwd_and_workspace_paths,
+            cx,
+        );
     };
 
-    possible_open_paths_metadata(fs, row, column, potential_abs_paths, cx)
+    let canonicalized_paths = match abs_path {
+        Some(abs_path) => match abs_path.canonicalize() {
+            Ok(path) => HashSet::from_iter([path]),
+            Err(_) => HashSet::default(),
+        },
+        None => HashSet::default(),
+    };
+
+    possible_open_paths_metadata(fs, row, column, canonicalized_paths, cx)
 }
 
 fn regex_to_literal(regex: &str) -> String {
@@ -943,26 +955,31 @@ impl Item for TerminalView {
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
+        let rerun_button = |task_id: task::TaskId| {
+            IconButton::new("rerun-icon", IconName::Rerun)
+                .icon_size(IconSize::Small)
+                .size(ButtonSize::Compact)
+                .icon_color(Color::Default)
+                .shape(ui::IconButtonShape::Square)
+                .tooltip(|cx| Tooltip::text("Rerun task", cx))
+                .on_click(move |_, cx| {
+                    cx.dispatch_action(Box::new(tasks_ui::Rerun {
+                        task_id: Some(task_id.clone()),
+                        ..tasks_ui::Rerun::default()
+                    }));
+                })
+        };
 
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
-                TaskStatus::Unknown => (IconName::ExclamationTriangle, Color::Warning, None),
                 TaskStatus::Running => (IconName::Play, Color::Disabled, None),
+                TaskStatus::Unknown => (
+                    IconName::ExclamationTriangle,
+                    Color::Warning,
+                    Some(rerun_button(terminal_task.id.clone())),
+                ),
                 TaskStatus::Completed { success } => {
-                    let task_id = terminal_task.id.clone();
-                    let rerun_button = IconButton::new("rerun-icon", IconName::Rerun)
-                        .icon_size(IconSize::Small)
-                        .size(ButtonSize::Compact)
-                        .icon_color(Color::Default)
-                        .shape(ui::IconButtonShape::Square)
-                        .tooltip(|cx| Tooltip::text("Rerun task", cx))
-                        .on_click(move |_, cx| {
-                            cx.dispatch_action(Box::new(tasks_ui::Rerun {
-                                task_id: Some(task_id.clone()),
-                                ..Default::default()
-                            }));
-                        });
-
+                    let rerun_button = rerun_button(terminal_task.id.clone());
                     if *success {
                         (IconName::Check, Color::Success, Some(rerun_button))
                     } else {

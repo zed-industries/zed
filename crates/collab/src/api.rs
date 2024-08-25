@@ -108,9 +108,10 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 
 #[derive(Debug, Deserialize)]
 struct AuthenticatedUserParams {
-    github_user_id: Option<i32>,
+    github_user_id: i32,
     github_login: String,
     github_email: Option<String>,
+    github_user_created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -131,6 +132,7 @@ async fn get_authenticated_user(
             &params.github_login,
             params.github_user_id,
             params.github_email.as_deref(),
+            params.github_user_created_at,
             initial_channel_id,
         )
         .await?;

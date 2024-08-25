@@ -224,7 +224,7 @@ pub fn initialize_workspace(
 
         let project = workspace.project().clone();
         if project.update(cx, |project, cx| {
-            project.is_local() || project.ssh_connection_string(cx).is_some()
+            project.is_local_or_ssh() || project.ssh_connection_string(cx).is_some()
         }) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
@@ -3486,7 +3486,7 @@ mod tests {
                 cx,
             );
             let prompt_builder =
-                assistant::init(app_state.fs.clone(), app_state.client.clone(), cx);
+                assistant::init(app_state.fs.clone(), app_state.client.clone(), false, cx);
             repl::init(
                 app_state.fs.clone(),
                 app_state.client.telemetry().clone(),

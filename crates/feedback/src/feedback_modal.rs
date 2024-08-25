@@ -126,7 +126,7 @@ impl FeedbackModal {
                 .language_for_name("Markdown");
 
             let project = workspace.project().clone();
-            let is_local_project = project.read(cx).is_local();
+            let is_local_project = project.read(cx).is_local_or_ssh();
 
             if !is_local_project {
                 struct FeedbackInRemoteProject;

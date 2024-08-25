@@ -14,7 +14,7 @@ pub struct Outline<T> {
     path_candidate_prefixes: Vec<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct OutlineItem<T> {
     pub depth: usize,
     pub range: Range<T>,
@@ -24,6 +24,9 @@ pub struct OutlineItem<T> {
     pub body_range: Option<Range<T>>,
     pub annotation_range: Option<Range<T>>,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SymbolPath(pub String);
 
 impl<T: ToPoint> OutlineItem<T> {
     /// Converts to an equivalent outline item, but with parameterized over Points.
@@ -84,13 +87,28 @@ impl<T> Outline<T> {
         }
     }
 
-    /// Find the most similar symbol to the provided query according to the Jaro-Winkler distance measure.
-    pub fn find_most_similar(&self, query: &str) -> Option<&OutlineItem<T>> {
-        let candidate = self.path_candidates.iter().max_by(|a, b| {
-            strsim::jaro_winkler(&a.string, query)
-                .total_cmp(&strsim::jaro_winkler(&b.string, query))
-        })?;
-        Some(&self.items[candidate.id])
+    /// Find the most similar symbol to the provided query using normalized Levenshtein distance.
+    pub fn find_most_similar(&self, query: &str) -> Option<(SymbolPath, &OutlineItem<T>)> {
+        const SIMILARITY_THRESHOLD: f64 = 0.6;
+
+        let (position, similarity) = self
+            .path_candidates
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| {
+                let similarity = strsim::normalized_levenshtein(&candidate.string, query);
+                (index, similarity)
+            })
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())?;
+
+        if similarity >= SIMILARITY_THRESHOLD {
+            self.path_candidates
+                .get(position)
+                .map(|candidate| SymbolPath(candidate.string.clone()))
+                .zip(self.items.get(position))
+        } else {
+            None
+        }
     }
 
     /// Find all outline symbols according to a longest subsequence match with the query, ordered descending by match score.
@@ -207,4 +225,47 @@ pub fn render_item<T>(
     );
 
     StyledText::new(outline_item.text.clone()).with_highlights(&text_style, highlights)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_most_similar_with_low_similarity() {
+        let outline = Outline::new(vec![
+            OutlineItem {
+                depth: 0,
+                range: Point::new(0, 0)..Point::new(5, 0),
+                text: "fn process".to_string(),
+                highlight_ranges: vec![],
+                name_ranges: vec![3..10],
+                body_range: None,
+                annotation_range: None,
+            },
+            OutlineItem {
+                depth: 0,
+                range: Point::new(7, 0)..Point::new(12, 0),
+                text: "struct DataProcessor".to_string(),
+                highlight_ranges: vec![],
+                name_ranges: vec![7..20],
+                body_range: None,
+                annotation_range: None,
+            },
+        ]);
+        assert_eq!(
+            outline.find_most_similar("pub fn process"),
+            Some((SymbolPath("fn process".into()), &outline.items[0]))
+        );
+        assert_eq!(
+            outline.find_most_similar("async fn process"),
+            Some((SymbolPath("fn process".into()), &outline.items[0])),
+        );
+        assert_eq!(
+            outline.find_most_similar("struct Processor"),
+            Some((SymbolPath("struct DataProcessor".into()), &outline.items[1]))
+        );
+        assert_eq!(outline.find_most_similar("struct User"), None);
+        assert_eq!(outline.find_most_similar("struct"), None);
+    }
 }

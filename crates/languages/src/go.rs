@@ -4,7 +4,6 @@ use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
-use lazy_static::lazy_static;
 use lsp::LanguageServerBinary;
 use project::project_settings::{BinarySettings, ProjectSettings};
 use regex::Regex;
@@ -20,7 +19,7 @@ use std::{
     str,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
-        Arc,
+        Arc, LazyLock,
     },
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
@@ -37,12 +36,12 @@ impl GoLspAdapter {
     const SERVER_NAME: &'static str = "gopls";
 }
 
-lazy_static! {
-    static ref GOPLS_VERSION_REGEX: Regex = Regex::new(r"\d+\.\d+\.\d+").unwrap();
-    static ref GO_EXTRACT_SUBTEST_NAME_REGEX: Regex =
-        Regex::new(r#".*t\.Run\("([^"]*)".*"#).unwrap();
-    static ref GO_ESCAPE_SUBTEST_NAME_REGEX: Regex = Regex::new(r#"[.*+?^${}()|\[\]\\]"#).unwrap();
-}
+static GOPLS_VERSION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Failed to create GOPLS_VERSION_REGEX"));
+
+static GO_ESCAPE_SUBTEST_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"[.*+?^${}()|\[\]\\]"#).expect("Failed to create GO_ESCAPE_SUBTEST_NAME_REGEX")
+});
 
 #[async_trait(?Send)]
 impl super::LspAdapter for GoLspAdapter {

@@ -49,7 +49,7 @@ message Envelope {
         GetDefinition get_definition = 32;
         GetDefinitionResponse get_definition_response = 33;
         GetDeclaration get_declaration = 237;
-        GetDeclarationResponse get_declaration_response = 238; // current max
+        GetDeclarationResponse get_declaration_response = 238;
         GetTypeDefinition get_type_definition = 34;
         GetTypeDefinitionResponse get_type_definition_response = 35;
 
@@ -130,6 +130,8 @@ message Envelope {
         GetPrivateUserInfoResponse get_private_user_info_response = 103;
         UpdateUserPlan update_user_plan = 234;
         UpdateDiffBase update_diff_base = 104;
+        AcceptTermsOfService accept_terms_of_service = 239;
+        AcceptTermsOfServiceResponse accept_terms_of_service_response = 240;
 
         OnTypeFormatting on_type_formatting = 105;
         OnTypeFormattingResponse on_type_formatting_response = 106;
@@ -197,10 +199,6 @@ message Envelope {
 
         JoinHostedProject join_hosted_project = 164;
 
-        CompleteWithLanguageModel complete_with_language_model = 226;
-        CompleteWithLanguageModelResponse complete_with_language_model_response = 227;
-        StreamCompleteWithLanguageModel stream_complete_with_language_model = 228;
-        StreamCompleteWithLanguageModelResponse stream_complete_with_language_model_response = 229;
         CountLanguageModelTokens count_language_model_tokens = 230;
         CountLanguageModelTokensResponse count_language_model_tokens_response = 231;
         GetCachedEmbeddings get_cached_embeddings = 189;
@@ -266,20 +264,23 @@ message Envelope {
 
         GetSignatureHelp get_signature_help = 217;
         GetSignatureHelpResponse get_signature_help_response = 218;
+
         ListRemoteDirectory list_remote_directory = 219;
         ListRemoteDirectoryResponse list_remote_directory_response = 220;
         UpdateDevServerProject update_dev_server_project = 221;
-
         AddWorktree add_worktree = 222;
         AddWorktreeResponse add_worktree_response = 223;
 
         GetLlmToken get_llm_token = 235;
-        GetLlmTokenResponse get_llm_token_response = 236; // current max
+        GetLlmTokenResponse get_llm_token_response = 236;
+
+        LspExtSwitchSourceHeader lsp_ext_switch_source_header = 241;
+        LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242; // current max
     }
 
     reserved 158 to 161;
     reserved 166 to 169;
-    reserved 224 to 225;
+    reserved 224 to 229;
 }
 
 // Messages
@@ -1696,6 +1697,7 @@ message GetPrivateUserInfoResponse {
     string metrics_id = 1;
     bool staff = 2;
     repeated string flags = 3;
+    optional uint64 accepted_tos_at = 4;
 }
 
 enum Plan {
@@ -1705,6 +1707,12 @@ enum Plan {
 
 message UpdateUserPlan {
     Plan plan = 1;
+}
+
+message AcceptTermsOfService {}
+
+message AcceptTermsOfServiceResponse {
+    uint64 accepted_tos_at = 1;
 }
 
 // Entities
@@ -2071,6 +2079,15 @@ message LspExtExpandMacroResponse {
     string expansion = 2;
 }
 
+message LspExtSwitchSourceHeader {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message LspExtSwitchSourceHeaderResponse {
+    string target_file = 1;
+}
+
 message SetRoomParticipantRole {
     uint64 room_id = 1;
     uint64 user_id = 2;
@@ -2082,24 +2099,6 @@ enum LanguageModelRole {
     LanguageModelAssistant = 1;
     LanguageModelSystem = 2;
     reserved 3;
-}
-
-message CompleteWithLanguageModel {
-    LanguageModelProvider provider = 1;
-    string request = 2;
-}
-
-message CompleteWithLanguageModelResponse {
-    string completion = 1;
-}
-
-message StreamCompleteWithLanguageModel {
-    LanguageModelProvider provider = 1;
-    string request = 2;
-}
-
-message StreamCompleteWithLanguageModelResponse {
-    string event = 1;
 }
 
 message CountLanguageModelTokens {
@@ -2323,6 +2322,7 @@ message ContextMessageStatus {
         Done done = 1;
         Pending pending = 2;
         Error error = 3;
+        Canceled canceled = 4;
     }
 
     message Done {}
@@ -2332,6 +2332,8 @@ message ContextMessageStatus {
     message Error {
         string message = 1;
     }
+
+    message Canceled {}
 }
 
 message ContextMessage {

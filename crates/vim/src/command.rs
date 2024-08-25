@@ -12,12 +12,11 @@ use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 use ui::WindowContext;
 use util::ResultExt;
-use workspace::{notifications::NotifyResultExt, SaveIntent, Workspace};
+use workspace::{notifications::NotifyResultExt, SaveIntent};
 
 use crate::{
     motion::{EndOfDocument, Motion, StartOfDocument},
     normal::{
-        move_cursor,
         search::{FindCommand, ReplaceCommand, Replacement},
         JoinLines,
     },
@@ -66,77 +65,89 @@ impl Clone for WithRange {
     }
 }
 
-pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-    workspace.register_action(|workspace, _: &VisualCommand, cx| {
-        command_palette::CommandPalette::toggle(workspace, "'<,'>", cx);
+pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &VisualCommand, cx| {
+        let Some(workspace) = vim.workspace(cx) else {
+            return;
+        };
+        workspace.update(cx, |workspace, cx| {
+            command_palette::CommandPalette::toggle(workspace, "'<,'>", cx);
+        })
     });
 
-    workspace.register_action(|workspace, _: &CountCommand, cx| {
-        let count = Vim::update(cx, |vim, cx| vim.take_count(cx)).unwrap_or(1);
-        command_palette::CommandPalette::toggle(
-            workspace,
-            &format!(".,.+{}", count.saturating_sub(1)),
-            cx,
-        );
-    });
-
-    workspace.register_action(|workspace: &mut Workspace, action: &GoToLine, cx| {
-        Vim::update(cx, |vim, cx| {
-            vim.switch_mode(Mode::Normal, false, cx);
-            let result = vim.update_active_editor(cx, |vim, editor, cx| {
-                action.range.head().buffer_row(vim, editor, cx)
-            });
-            let Some(buffer_row) = result else {
-                return anyhow::Ok(());
-            };
-            move_cursor(
-                vim,
-                Motion::StartOfDocument,
-                Some(buffer_row?.0 as usize + 1),
+    Vim::action(editor, cx, |vim, _: &CountCommand, cx| {
+        let Some(workspace) = vim.workspace(cx) else {
+            return;
+        };
+        let count = vim.take_count(cx).unwrap_or(1);
+        workspace.update(cx, |workspace, cx| {
+            command_palette::CommandPalette::toggle(
+                workspace,
+                &format!(".,.+{}", count.saturating_sub(1)),
                 cx,
             );
-            Ok(())
         })
-        .notify_err(workspace, cx);
     });
 
-    workspace.register_action(|workspace: &mut Workspace, action: &WithRange, cx| {
+    Vim::action(editor, cx, |vim, action: &GoToLine, cx| {
+        vim.switch_mode(Mode::Normal, false, cx);
+        let result = vim.update_editor(cx, |vim, editor, cx| {
+            action.range.head().buffer_row(vim, editor, cx)
+        });
+        let buffer_row = match result {
+            None => return,
+            Some(e @ Err(_)) => {
+                let Some(workspace) = vim.workspace(cx) else {
+                    return;
+                };
+                workspace.update(cx, |workspace, cx| {
+                    e.notify_err(workspace, cx);
+                });
+                return;
+            }
+            Some(Ok(result)) => result,
+        };
+        vim.move_cursor(Motion::StartOfDocument, Some(buffer_row.0 as usize + 1), cx);
+    });
+
+    Vim::action(editor, cx, |vim, action: &WithRange, cx| {
         if action.is_count {
             for _ in 0..action.range.as_count() {
                 cx.dispatch_action(action.action.boxed_clone())
             }
-        } else {
-            Vim::update(cx, |vim, cx| {
-                let result = vim.update_active_editor(cx, |vim, editor, cx| {
-                    action.range.buffer_range(vim, editor, cx)
-                });
-                let Some(range) = result else {
-                    return anyhow::Ok(());
-                };
-                let range = range?;
-                vim.update_active_editor(cx, |_, editor, cx| {
-                    editor.change_selections(None, cx, |s| {
-                        let end = Point::new(range.end.0, s.buffer().line_len(range.end));
-                        s.select_ranges([end..Point::new(range.start.0, 0)]);
-                    })
-                });
-                cx.dispatch_action(action.action.boxed_clone());
-                cx.defer(move |cx| {
-                    Vim::update(cx, |vim, cx| {
-                        vim.update_active_editor(cx, |_, editor, cx| {
-                            editor.change_selections(None, cx, |s| {
-                                s.select_ranges([
-                                    Point::new(range.start.0, 0)..Point::new(range.start.0, 0)
-                                ]);
-                            })
-                        });
-                    })
-                });
-
-                Ok(())
-            })
-            .notify_err(workspace, cx);
+            return;
         }
+        let result = vim.update_editor(cx, |vim, editor, cx| {
+            action.range.buffer_range(vim, editor, cx)
+        });
+
+        let range = match result {
+            None => return,
+            Some(e @ Err(_)) => {
+                let Some(workspace) = vim.workspace(cx) else {
+                    return;
+                };
+                workspace.update(cx, |workspace, cx| {
+                    e.notify_err(workspace, cx);
+                });
+                return;
+            }
+            Some(Ok(result)) => result,
+        };
+        vim.update_editor(cx, |_, editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                let end = Point::new(range.end.0, s.buffer().line_len(range.end));
+                s.select_ranges([end..Point::new(range.start.0, 0)]);
+            })
+        });
+        cx.dispatch_action(action.action.boxed_clone());
+        cx.defer(move |vim, cx| {
+            vim.update_editor(cx, |_, editor, cx| {
+                editor.change_selections(None, cx, |s| {
+                    s.select_ranges([Point::new(range.start.0, 0)..Point::new(range.start.0, 0)]);
+                })
+            });
+        });
     });
 }
 
@@ -343,12 +354,7 @@ impl Position {
         let target = match self {
             Position::Line { row, offset } => row.saturating_add_signed(offset.saturating_sub(1)),
             Position::Mark { name, offset } => {
-                let Some(mark) = vim
-                    .state()
-                    .marks
-                    .get(&name.to_string())
-                    .and_then(|vec| vec.last())
-                else {
+                let Some(mark) = vim.marks.get(&name.to_string()).and_then(|vec| vec.last()) else {
                     return Err(anyhow!("mark {} not set", name));
                 };
                 mark.to_point(&snapshot.buffer_snapshot)
@@ -523,8 +529,8 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
             save_intent: Some(SaveIntent::Overwrite),
         }),
         VimCommand::new(("cq", "uit"), zed_actions::Quit),
-        VimCommand::new(("sp", "lit"), workspace::SplitUp),
-        VimCommand::new(("vs", "plit"), workspace::SplitLeft),
+        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal),
+        VimCommand::new(("vs", "plit"), workspace::SplitVertical),
         VimCommand::new(
             ("bd", "elete"),
             workspace::CloseActiveItem {
@@ -540,14 +546,8 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("bf", "irst"), workspace::ActivateItem(0)),
         VimCommand::new(("br", "ewind"), workspace::ActivateItem(0)),
         VimCommand::new(("bl", "ast"), workspace::ActivateLastItem),
-        VimCommand::new(
-            ("new", ""),
-            workspace::NewFileInDirection(workspace::SplitDirection::Up),
-        ),
-        VimCommand::new(
-            ("vne", "w"),
-            workspace::NewFileInDirection(workspace::SplitDirection::Left),
-        ),
+        VimCommand::new(("new", ""), workspace::NewFileSplitHorizontal),
+        VimCommand::new(("vne", "w"), workspace::NewFileSplitVertical),
         VimCommand::new(("tabe", "dit"), workspace::NewFile),
         VimCommand::new(("tabnew", ""), workspace::NewFile),
         VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem).count(),
@@ -736,9 +736,15 @@ fn generate_positions(string: &str, query: &str) -> Vec<usize> {
 mod test {
     use std::path::Path;
 
-    use crate::test::{NeovimBackedTestContext, VimTestContext};
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
+    use editor::Editor;
     use gpui::TestAppContext;
     use indoc::indoc;
+    use ui::ViewContext;
+    use workspace::Workspace;
 
     #[gpui::test]
     async fn test_command_basics(cx: &mut TestAppContext) {
@@ -916,5 +922,56 @@ mod test {
         cx.simulate_shared_keystrokes("v 2 j : s / . / k enter")
             .await;
         cx.shared_state().await.assert_eq("k\nk\nˇk\n4\n4\n3\n2\n1");
+    }
+
+    fn assert_active_item(
+        workspace: &mut Workspace,
+        expected_path: &str,
+        expected_text: &str,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+
+        let buffer = active_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap();
+
+        let text = buffer.read(cx).text();
+        let file = buffer.read(cx).file().unwrap();
+        let file_path = file.as_local().unwrap().abs_path(cx);
+
+        assert_eq!(text, expected_text);
+        assert_eq!(file_path.to_str().unwrap(), expected_path);
+    }
+
+    #[gpui::test]
+    async fn test_command_gf(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Assert base state, that we're in /root/dir/file.rs
+        cx.workspace(|workspace, cx| {
+            assert_active_item(workspace, "/root/dir/file.rs", "", cx);
+        });
+
+        // Insert a new file
+        let fs = cx.workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
+            .await;
+
+        // Put the path to the second file into the currently open buffer
+        cx.set_state(indoc! {"go to fiˇle2.rs"}, Mode::Normal);
+
+        // Go to file2.rs
+        cx.simulate_keystrokes("g f");
+
+        // We now have two items
+        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, cx| {
+            assert_active_item(workspace, "/root/dir/file2.rs", "This is file2.rs", cx);
+        });
     }
 }

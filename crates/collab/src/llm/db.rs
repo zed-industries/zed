@@ -67,6 +67,21 @@ impl LlmDatabase {
         Ok(())
     }
 
+    /// Returns the names of the known models for the given [`LanguageModelProvider`].
+    pub fn model_names_for_provider(&self, provider: LanguageModelProvider) -> Vec<String> {
+        self.models
+            .keys()
+            .filter_map(|(model_provider, model_name)| {
+                if model_provider == &provider {
+                    Some(model_name)
+                } else {
+                    None
+                }
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
     pub fn model(&self, provider: LanguageModelProvider, name: &str) -> Result<&model::Model> {
         Ok(self
             .models

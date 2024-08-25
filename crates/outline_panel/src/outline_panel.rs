@@ -1067,7 +1067,7 @@ impl OutlinePanel {
             .and_then(|entry| self.abs_path(&entry, cx))
             .map(|p| p.to_string_lossy().to_string())
         {
-            cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
+            cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
         }
     }
 
@@ -1082,7 +1082,7 @@ impl OutlinePanel {
             })
             .map(|p| p.to_string_lossy().to_string())
         {
-            cx.write_to_clipboard(ClipboardItem::new(clipboard_text));
+            cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
         }
     }
 
@@ -2887,7 +2887,7 @@ impl Render for OutlinePanel {
             .on_action(cx.listener(Self::copy_relative_path))
             .on_action(cx.listener(Self::unfold_directory))
             .on_action(cx.listener(Self::fold_directory))
-            .when(project.is_local(), |el| {
+            .when(project.is_local_or_ssh(), |el| {
                 el.on_action(cx.listener(Self::reveal_in_finder))
                     .on_action(cx.listener(Self::open_in_terminal))
             })
