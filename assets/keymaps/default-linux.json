@@ -474,8 +474,7 @@
   {
     "context": "!Terminal",
     "bindings": {
-      "ctrl-shift-c": "collab_panel::ToggleFocus",
-      "ctrl-shift-f": "buffer_search::Deploy"
+      "ctrl-shift-c": "collab_panel::ToggleFocus"
     }
   },
   {
@@ -632,7 +631,8 @@
       "shift-up": "terminal::ScrollLineUp",
       "shift-down": "terminal::ScrollLineDown",
       "shift-home": "terminal::ScrollToTop",
-      "shift-end": "terminal::ScrollToBottom"
+      "shift-end": "terminal::ScrollToBottom",
+      "ctrl-shift-f": "buffer_search::Deploy"
     }
   }
 ]
