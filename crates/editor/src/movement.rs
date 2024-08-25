@@ -261,7 +261,7 @@ pub fn line_end(
 }
 
 /// Returns a position of the previous word boundary, where a word character is defined as either
-/// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
+/// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS).
 pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
@@ -269,22 +269,19 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
         (char_kind(&scope, left) != char_kind(&scope, right) && !right.is_whitespace())
             || left == '\n'
-            || right == '\n'
     })
 }
 
 /// Returns a position of the previous word boundary, where a word character is defined as either
-/// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS).
-pub fn previous_word_start_ignoring_newlines(
-    map: &DisplaySnapshot,
-    point: DisplayPoint,
-) -> DisplayPoint {
+/// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
+pub fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
 
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
         (char_kind(&scope, left) != char_kind(&scope, right) && !right.is_whitespace())
             || left == '\n'
+            || right == '\n'
     })
 }
 

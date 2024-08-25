@@ -7285,7 +7285,8 @@ impl Editor {
                 let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
                     if selection.is_empty() && !line_mode {
-                        let cursor = movement::previous_word_start(map, selection.head());
+                        let cursor =
+                            movement::previous_word_start_or_newline(map, selection.head());
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });
@@ -7305,8 +7306,7 @@ impl Editor {
                 let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
                     if selection.is_empty() && !line_mode {
-                        let cursor =
-                            movement::previous_word_start_ignoring_newlines(map, selection.head());
+                        let cursor = movement::previous_word_start(map, selection.head());
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });
