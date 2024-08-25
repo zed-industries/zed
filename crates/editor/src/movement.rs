@@ -261,7 +261,7 @@ pub fn line_end(
 }
 
 /// Returns a position of the previous word boundary, where a word character is defined as either
-/// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS).
+/// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
 pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let scope = map.buffer_snapshot.language_scope_at(raw_point);
