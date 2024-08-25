@@ -12,10 +12,10 @@ use crate::{
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, CacheStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
-    CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
-    InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
-    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split,
-    ToggleFocus, ToggleModelSelector, WorkflowStepResolution, WorkflowStepView,
+    CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssistId, InlineAssistant,
+    InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus,
+    QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus,
+    ToggleModelSelector, WorkflowStepResolution, WorkflowStepView,
 };
 use crate::{ContextStoreEvent, ModelPickerDelegate};
 use anyhow::{anyhow, Result};
@@ -82,6 +82,7 @@ use workspace::{
     ToolbarItemView, Workspace,
 };
 use workspace::{searchable::SearchableItemHandle, NewFile};
+use zed_actions::InlineAssist;
 
 pub fn init(cx: &mut AppContext) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
@@ -107,27 +108,10 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |terminal_panel: &mut TerminalPanel, cx: &mut ViewContext<TerminalPanel>| {
             let settings = AssistantSettings::get_global(cx);
-            if !settings.enabled {
-                return;
-            }
-
-            terminal_panel.register_tab_bar_button(cx.new_view(|_| InlineAssistTabBarButton), cx);
+            terminal_panel.asssistant_enabled(settings.enabled, cx);
         },
     )
     .detach();
-}
-
-struct InlineAssistTabBarButton;
-
-impl Render for InlineAssistTabBarButton {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("terminal_inline_assistant", IconName::ZedAssistant)
-            .icon_size(IconSize::Small)
-            .on_click(cx.listener(|_, _, cx| {
-                cx.dispatch_action(InlineAssist::default().boxed_clone());
-            }))
-            .tooltip(move |cx| Tooltip::for_action("Inline Assist", &InlineAssist::default(), cx))
-    }
 }
 
 pub enum AssistantPanelEvent {

@@ -25,6 +25,7 @@ use terminal::{
     TerminalSize,
 };
 use terminal_element::{is_blank, TerminalElement};
+use terminal_panel::TerminalPanel;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{paths::PathWithPosition, ResultExt};
 use workspace::{
@@ -40,6 +41,7 @@ use anyhow::Context;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use smol::Timer;
+use zed_actions::InlineAssist;
 
 use std::{
     cmp,
@@ -210,6 +212,13 @@ impl TerminalView {
         position: gpui::Point<Pixels>,
         cx: &mut ViewContext<Self>,
     ) {
+        let assistant_enabled = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).panel::<TerminalPanel>(cx))
+            .map_or(false, |terminal_panel| {
+                terminal_panel.read(cx).assistant_enabled()
+            });
         let context_menu = ContextMenu::build(cx, |menu, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal))
@@ -218,6 +227,10 @@ impl TerminalView {
                 .action("Paste", Box::new(Paste))
                 .action("Select All", Box::new(SelectAll))
                 .action("Clear", Box::new(Clear))
+                .when(assistant_enabled, |menu| {
+                    menu.separator()
+                        .action("Inline Assist", Box::new(InlineAssist::default()))
+                })
                 .separator()
                 .action("Close", Box::new(CloseActiveItem { save_intent: None }))
         });
