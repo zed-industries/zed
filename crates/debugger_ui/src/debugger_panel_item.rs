@@ -51,6 +51,7 @@ pub struct DebugPanelItem {
     active_thread_item: ThreadItem,
     client: Arc<DebugAdapterClient>,
     _subscriptions: Vec<Subscription>,
+    workspace: WeakView<Workspace>,
 }
 
 impl_actions!(debug_panel_item, [DebugItemAction]);
@@ -81,6 +82,7 @@ enum DebugPanelItemActionKind {
 impl DebugPanelItem {
     pub fn new(
         debug_panel: View<DebugPanel>,
+        workspace: WeakView<Workspace>,
         client: Arc<DebugAdapterClient>,
         thread_id: u64,
         cx: &mut ViewContext<Self>,
@@ -145,6 +147,7 @@ impl DebugPanelItem {
         Self {
             client,
             thread_id,
+            workspace,
             focus_handle,
             variable_list,
             output_editor,
@@ -529,19 +532,18 @@ impl DebugPanelItem {
             })
             .on_click(cx.listener({
                 let stack_frame_id = stack_frame.id;
+                let stack_frame = stack_frame.clone();
                 move |this, _, cx| {
                     this.update_stack_frame_id(stack_frame_id);
 
+                    let workspace = this.workspace.clone();
+                    let stack_frame = stack_frame.clone();
+                    cx.spawn(|_, cx| async move {
+                        DebugPanel::go_to_stack_frame(workspace, stack_frame, true, cx).await
+                    })
+                    .detach_and_log_err(cx);
+
                     cx.notify();
-
-                    // let client = this.client();
-                    // DebugPanel::go_to_stack_frame(&stack_frame, client, true, cx)
-                    //     .detach_and_log_err(cx);
-
-                    // TODO:
-                    // this.go_to_stack_frame(&stack_frame, this.client.clone(), false, cx)
-                    //     .detach_and_log_err(cx);
-                    // cx.notify();
                 }
             }))
             .hover(|s| s.bg(cx.theme().colors().element_hover).cursor_pointer())

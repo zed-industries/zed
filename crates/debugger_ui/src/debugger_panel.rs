@@ -266,7 +266,12 @@ impl DebugPanel {
         clear_highlights: bool,
         mut cx: AsyncWindowContext,
     ) -> Result<()> {
-        let path = stack_frame.clone().source.unwrap().path.unwrap().clone();
+        let Some(path) = &stack_frame.source.and_then(|s| s.path) else {
+            return Err(anyhow::anyhow!(
+                "Cannot go to stack frame, path doesn't exist"
+            ));
+        };
+
         let row = (stack_frame.line.saturating_sub(1)) as u32;
         let column = (stack_frame.column.saturating_sub(1)) as u32;
 
@@ -520,7 +525,13 @@ impl DebugPanel {
                         let debug_panel = cx.view().clone();
                         this.pane.update(cx, |pane, cx| {
                             let tab = cx.new_view(|cx| {
-                                DebugPanelItem::new(debug_panel, client.clone(), thread_id, cx)
+                                DebugPanelItem::new(
+                                    debug_panel,
+                                    this.workspace.clone(),
+                                    client.clone(),
+                                    thread_id,
+                                    cx,
+                                )
                             });
 
                             pane.add_item(Box::new(tab), true, true, None, cx);
