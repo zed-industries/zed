@@ -774,6 +774,7 @@ impl BladeRenderer {
     }
 
     /// Required to compile on macOS, but not currently supported.
+    #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
     pub fn fps(&self) -> f32 {
         0.0
     }
