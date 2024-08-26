@@ -251,10 +251,6 @@ impl Vim {
 
         editor.register_addon(VimAddon { view: vim.clone() });
 
-        if VimSettings::get_global(cx).toggle_relative_line_numbers {
-            editor.set_relative_line_number(Some(true), cx)
-        }
-
         vim.update(cx, |_, cx| {
             Vim::action(editor, cx, |vim, action: &SwitchMode, cx| {
                 vim.switch_mode(action.0, false, cx)
@@ -527,6 +523,10 @@ impl Vim {
         count
     }
 
+    pub fn relative_line_numbers(&self) -> bool {
+        self.mode != Mode::Insert
+    }
+
     pub fn cursor_shape(&self) -> CursorShape {
         match self.mode {
             Mode::Normal => {
@@ -635,30 +635,23 @@ impl Vim {
         cx.emit(VimEvent::Focused);
         self.sync_vim_settings(cx);
 
-        if let Some(old_vim) = Vim::globals(cx).vim() {
-            if old_vim.entity_id() == cx.view().entity_id() {
-                return;
-            } else {
-                if VimSettings::get_global(cx).toggle_relative_line_numbers {
+        if VimSettings::get_global(cx).toggle_relative_line_numbers {
+            if let Some(old_vim) = Vim::globals(cx).focused_vim() {
+                if old_vim.entity_id() != cx.view().entity_id() {
                     old_vim.update(cx, |vim, cx| {
                         vim.update_editor(cx, |_, editor, cx| {
                             editor.set_relative_line_number(None, cx)
                         });
                     });
-                    self.update_editor(cx, |_, editor, cx| {
-                        editor.set_relative_line_number(Some(true), cx)
-                    });
                 }
-                Vim::globals(cx).vim = Some(cx.view().downgrade());
             }
-        } else {
-            if VimSettings::get_global(cx).toggle_relative_line_numbers {
-                self.update_editor(cx, |_, editor, cx| {
-                    editor.set_relative_line_number(Some(true), cx)
-                });
-            }
-            Vim::globals(cx).vim = Some(cx.view().downgrade());
+
+            self.update_editor(cx, |vim, editor, cx| {
+                let is_relative = vim.mode != Mode::Insert;
+                editor.set_relative_line_number(Some(is_relative), cx)
+            });
         }
+        Vim::globals(cx).focused_vim = Some(cx.view().downgrade());
     }
 
     fn blurred(&mut self, cx: &mut ViewContext<Self>) {
