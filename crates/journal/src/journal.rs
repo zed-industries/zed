@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use workspace::{AppState, ItemHandle, OpenVisible, Workspace};
+use workspace::{AppState, OpenVisible, Workspace};
 
 actions!(journal, [NewJournalEntry]);
 
