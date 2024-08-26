@@ -17,7 +17,7 @@ jobs:
         with:
           script: |
             const comment = context.payload.comment.body;
-            const triggerStrings = ['www.mediafire.com', 'Download', 'changeme'];
+            const triggerStrings = ['www.mediafire.com'];
             return triggerStrings.some(triggerString => comment.includes(triggerString));
 
       - name: Delete comment if it contains any of the specific strings
@@ -37,8 +37,9 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const username = context.payload.comment.user.login;
-            await github.rest.orgs.blockUser({
-              org: context.repo.owner,
-              username: username
+            const userId = context.payload.comment.user.id;
+            await github.rest.users.block({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              user_id: userId
             });
