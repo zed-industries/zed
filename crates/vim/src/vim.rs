@@ -228,8 +228,21 @@ impl Vim {
         }
 
         let mut was_enabled = Vim::enabled(cx);
+        let mut was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
         cx.observe_global::<SettingsStore>(move |editor, cx| {
             let enabled = Vim::enabled(cx);
+            let toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
+            if enabled && was_enabled && (toggle != was_toggle) {
+                if toggle {
+                    let is_relative = editor
+                        .addon::<VimAddon>()
+                        .map(|vim| vim.view.read(cx).mode != Mode::Insert);
+                    editor.set_relative_line_number(is_relative, cx)
+                } else {
+                    editor.set_relative_line_number(None, cx)
+                }
+            }
+            was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
             if was_enabled == enabled {
                 return;
             }
@@ -296,9 +309,7 @@ impl Vim {
         editor.set_autoindent(true);
         editor.selections.line_mode = false;
         editor.unregister_addon::<VimAddon>();
-        if VimSettings::get_global(cx).toggle_relative_line_numbers {
-            editor.set_relative_line_number(None, cx)
-        }
+        editor.set_relative_line_number(None, cx)
     }
 
     /// Register an action on the editor.
@@ -521,10 +532,6 @@ impl Vim {
         }
         self.sync_vim_settings(cx);
         count
-    }
-
-    pub fn relative_line_numbers(&self) -> bool {
-        self.mode != Mode::Insert
     }
 
     pub fn cursor_shape(&self) -> CursorShape {
