@@ -50,6 +50,7 @@ members = [
     "crates/inline_completion_button",
     "crates/install_cli",
     "crates/journal",
+    "crates/keycodes",
     "crates/language",
     "crates/language_model",
     "crates/language_selector",
