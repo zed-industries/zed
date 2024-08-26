@@ -345,7 +345,7 @@ impl TerminalBuilder {
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
                 working_directory: working_directory.clone(),
-                hold: task.as_ref().map_or(false, |task| task.wait_for_subprocess),
+                hold: false,
                 env: env.into_iter().collect(),
             }
         };
@@ -611,7 +611,6 @@ pub struct TaskState {
     pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
     pub hide: HideStrategy,
-    pub wait_for_subprocess: bool,
 }
 
 /// A status of the current terminal tab's task.

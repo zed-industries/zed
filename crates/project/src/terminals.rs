@@ -159,7 +159,6 @@ impl Project {
                     hide: spawn_task.hide,
                     status: TaskStatus::Running,
                     completion_rx,
-                    wait_for_subprocess: spawn_task.wait_for_subprocess,
                 });
 
                 env.extend(spawn_task.env);

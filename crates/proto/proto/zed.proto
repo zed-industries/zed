@@ -2263,7 +2263,6 @@ message TaskTemplate {
     HideStrategy hide = 10;
     repeated string tags = 9;
     Shell shell = 11;
-    bool wait_for_subprocess = 12;
 }
 
 message Shell {

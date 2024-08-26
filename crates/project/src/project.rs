@@ -9573,7 +9573,6 @@ impl Project {
                     cwd: template.cwd,
                     use_new_terminal: template.use_new_terminal,
                     allow_concurrent_runs: template.allow_concurrent_runs,
-                    wait_for_subprocess: template.wait_for_subprocess,
                     reveal: match template.reveal {
                         RevealStrategy::Always => proto::RevealStrategy::RevealAlways as i32,
                         RevealStrategy::Never => proto::RevealStrategy::RevealNever as i32,
@@ -10712,7 +10711,6 @@ impl Project {
                         cwd: proto_template.cwd,
                         use_new_terminal: proto_template.use_new_terminal,
                         allow_concurrent_runs: proto_template.allow_concurrent_runs,
-                        wait_for_subprocess: proto_template.wait_for_subprocess,
                         reveal,
                         hide,
                         shell,
