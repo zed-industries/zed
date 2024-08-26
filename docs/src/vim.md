@@ -57,7 +57,6 @@ g <space>  Open the current search excerpt
 <ctrl-w> g D      Go to type definition in a split
 
 # Insert mode
-i a / a a      Select the function argument the cursor is in
 ctrl-x ctrl-o  Open the completion menu
 ctrl-x ctrl-c  Request GitHub Copilot suggestion (if configured)
 ctrl-x ctrl-a  Open the inline AI assistant (if configured)
@@ -258,6 +257,8 @@ There are also a few Zed settings that you may also enjoy if you use vim mode:
   "relative_line_numbers": true,
   // hide the scroll bar
   "scrollbar": { "show": "never" },
+  // prevent the buffer from scrolling beyond the last line
+  "scroll_beyond_last_line": "off",
   // allow cursor to reach edges of screen
   "vertical_scroll_margin": 0,
   "gutter": {

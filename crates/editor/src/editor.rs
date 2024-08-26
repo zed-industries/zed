@@ -59,7 +59,7 @@ use convert_case::{Case, Casing};
 use debounced_delay::DebouncedDelay;
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
-pub use editor_settings::{CurrentLineHighlight, EditorSettings};
+pub use editor_settings::{CurrentLineHighlight, EditorSettings, ScrollBeyondLastLine};
 pub use editor_settings_controls::*;
 use element::LineWithInvisibles;
 pub use element::{
@@ -10900,6 +10900,17 @@ impl Editor {
                             cx,
                         )
                     })
+                }
+            }
+        }
+    }
+
+    pub fn copy_file_location(&mut self, _: &CopyFileLocation, cx: &mut ViewContext<Self>) {
+        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
+                if let Some(path) = file.path().to_str() {
+                    let selection = self.selections.newest::<Point>(cx).start.row + 1;
+                    cx.write_to_clipboard(ClipboardItem::new_string(format!("{path}:{selection}")));
                 }
             }
         }

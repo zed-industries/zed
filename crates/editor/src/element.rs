@@ -353,6 +353,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_highlight_json);
         register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, Editor::open_permalink_to_line);
+        register_action(view, cx, Editor::copy_file_location);
         register_action(view, cx, Editor::toggle_git_blame);
         register_action(view, cx, Editor::toggle_git_blame_inline);
         register_action(view, cx, Editor::toggle_hunk_diff);
