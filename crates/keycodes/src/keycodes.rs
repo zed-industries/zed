@@ -1,8 +1,4 @@
-use macos::translate_key_macos;
-
 mod keyboard_layout;
-mod macos;
-mod scancode;
 
 pub fn translate_key(keystroke: &str, keyboard_layout: KeyboardLayout) -> String {
     match keyboard_layout {
