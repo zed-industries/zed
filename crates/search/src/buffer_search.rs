@@ -936,6 +936,7 @@ impl BufferSearchBar {
                         false,
                         Default::default(),
                         Default::default(),
+                        None,
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
@@ -953,6 +954,7 @@ impl BufferSearchBar {
                         false,
                         Default::default(),
                         Default::default(),
+                        None,
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {

@@ -7277,11 +7277,18 @@ impl Project {
     ) -> Receiver<SearchResult> {
         let (result_tx, result_rx) = smol::channel::bounded(1024);
 
-        let matching_buffers_rx =
-            self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx);
+        let matching_buffers_rx = if query.buffers().is_none() {
+            Some(self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx))
+        } else {
+            None
+        };
 
         cx.spawn(|_, cx| async move {
-            let mut matching_buffers = matching_buffers_rx.collect::<Vec<_>>().await;
+            let mut matching_buffers = if query.buffers().is_none() {
+                matching_buffers_rx.unwrap().collect::<Vec<_>>().await
+            } else {
+                query.buffers().as_ref().unwrap().clone()
+            };
             let mut limit_reached = if matching_buffers.len() > MAX_SEARCH_RESULT_FILES {
                 matching_buffers.truncate(MAX_SEARCH_RESULT_FILES);
                 true

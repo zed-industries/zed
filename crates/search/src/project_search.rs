@@ -17,7 +17,7 @@ use gpui::{
     ModelContext, ParentElement, Point, Render, SharedString, Styled, Subscription, Task,
     TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
 };
-use language::BufferId;
+use language::Buffer;
 use menu::Confirm;
 use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
 use settings::Settings;
@@ -865,8 +865,8 @@ impl ProjectSearchView {
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
         let text = self.query_editor.read(cx).text(cx);
-        let opened_buffer_ids = if self.included_opened_only {
-            self.opened_editor_buffer_ids(cx)
+        let open_buffers = if self.included_opened_only {
+            Some(self.open_buffers(cx))
         } else {
             None
         };
@@ -914,7 +914,7 @@ impl ProjectSearchView {
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                 included_files,
                 excluded_files,
-                opened_buffer_ids,
+                open_buffers,
             ) {
                 Ok(query) => {
                     let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Query);
@@ -941,7 +941,7 @@ impl ProjectSearchView {
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                 included_files,
                 excluded_files,
-                opened_buffer_ids,
+                open_buffers,
             ) {
                 Ok(query) => {
                     let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Query);
@@ -970,22 +970,18 @@ impl ProjectSearchView {
         query
     }
 
-    fn opened_editor_buffer_ids(&self, cx: &mut ViewContext<Self>) -> Option<Vec<BufferId>> {
-        let buffer_ids = self.workspace.update(cx, |workspace, cx| {
-            let mut buffer_ids = Vec::new();
-            for editor in workspace.items_of_type::<Editor>(cx) {
-                if let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
-                    let buffer_id = buffer.read(cx).remote_id();
-                    buffer_ids.push(buffer_id);
+    fn open_buffers(&self, cx: &mut ViewContext<Self>) -> Vec<Model<Buffer>> {
+        let mut buffers = Vec::new();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                for editor in workspace.items_of_type::<Editor>(cx) {
+                    if let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
+                        buffers.push(buffer);
+                    }
                 }
-            }
-            buffer_ids
-        });
-        if let Ok(buffer_ids) = buffer_ids {
-            Some(buffer_ids)
-        } else {
-            None
-        }
+            })
+            .ok();
+        buffers
     }
 
     fn parse_path_matches(text: &str) -> anyhow::Result<PathMatcher> {
