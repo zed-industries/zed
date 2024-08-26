@@ -38,7 +38,7 @@ use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{ops::Range, sync::Arc};
 use surrounds::SurroundsType;
-use ui::{Element, IntoElement, VisualContext};
+use ui::{IntoElement, VisualContext};
 use workspace::{self, Pane, Workspace};
 
 use crate::state::ReplayableAction;
