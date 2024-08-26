@@ -650,13 +650,13 @@ impl Vim {
                             editor.set_relative_line_number(None, cx)
                         });
                     });
+
+                    self.update_editor(cx, |vim, editor, cx| {
+                        let is_relative = vim.mode != Mode::Insert;
+                        editor.set_relative_line_number(Some(is_relative), cx)
+                    });
                 }
             }
-
-            self.update_editor(cx, |vim, editor, cx| {
-                let is_relative = vim.mode != Mode::Insert;
-                editor.set_relative_line_number(Some(is_relative), cx)
-            });
         }
         Vim::globals(cx).focused_vim = Some(cx.view().downgrade());
     }
