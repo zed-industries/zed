@@ -359,10 +359,13 @@ impl LlmDatabase {
                 .get(&(provider, model_name.to_string()))
                 .ok_or_else(|| anyhow!("unknown model {provider}:{model_name}"))?;
 
+            let tokens_per_minute = self.usage_measure_ids[&UsageMeasure::TokensPerMinute];
+
             let users_in_recent_minutes = usage::Entity::find()
                 .filter(
                     usage::Column::ModelId
                         .eq(model.id)
+                        .and(usage::Column::MeasureId.eq(tokens_per_minute))
                         .and(usage::Column::Timestamp.gte(minute_since.naive_utc()))
                         .and(usage::Column::IsStaff.eq(false)),
                 )
@@ -376,6 +379,7 @@ impl LlmDatabase {
                 .filter(
                     usage::Column::ModelId
                         .eq(model.id)
+                        .and(usage::Column::MeasureId.eq(tokens_per_minute))
                         .and(usage::Column::Timestamp.gte(day_since.naive_utc()))
                         .and(usage::Column::IsStaff.eq(false)),
                 )
