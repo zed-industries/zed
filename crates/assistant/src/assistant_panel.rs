@@ -3212,9 +3212,7 @@ impl ContextEditor {
             };
             let mut new_blocks = vec![];
             let mut block_index_to_message = vec![];
-            let mut total = 0;
             for message in self.context.read(cx).messages(cx) {
-                total += 1;
                 if let Some(_) = blocks_to_remove.remove(&message.id) {
                     // This is an old message that we might modify.
                     let Some((meta, block_id)) = old_blocks.get_mut(&message.id) else {
@@ -3240,7 +3238,7 @@ impl ContextEditor {
             editor.remove_blocks(blocks_to_remove.into_values().collect(), None, cx);
 
             let ids = editor.insert_blocks(new_blocks, None, cx);
-            old_blocks.extend(ids.into_iter().zip(block_index_to_message.into_iter()).map(
+            old_blocks.extend(ids.into_iter().zip(block_index_to_message).map(
                 |(block_id, (message_id, message_meta))| (message_id, (message_meta, block_id)),
             ));
             self.blocks = old_blocks;
