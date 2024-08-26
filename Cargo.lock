@@ -7387,9 +7387,11 @@ dependencies = [
  "menu",
  "project",
  "schemars",
+ "search",
  "serde",
  "serde_json",
  "settings",
+ "theme",
  "util",
  "workspace",
  "worktree",
@@ -10991,6 +10993,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -13988,7 +13991,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "zed_extension_api 0.0.6",
 ]

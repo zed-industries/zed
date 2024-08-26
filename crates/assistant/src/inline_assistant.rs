@@ -1,6 +1,7 @@
 use crate::{
-    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
-    CharOperation, LineDiff, LineOperation, ModelSelector, StreamingDiff,
+    assistant_settings::AssistantSettings, humanize_token_count, prompts::PromptBuilder,
+    AssistantPanel, AssistantPanelEvent, CharOperation, LineDiff, LineOperation, ModelSelector,
+    StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{telemetry::Telemetry, ErrorExt};
@@ -35,7 +36,7 @@ use language_model::{
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use rope::Rope;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use smol::future::FutureExt;
 use std::{
     cmp,
@@ -47,6 +48,7 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
+use terminal_view::terminal_panel::TerminalPanel;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
@@ -129,6 +131,18 @@ impl InlineAssistant {
     pub fn register_workspace(&mut self, workspace: &View<Workspace>, cx: &mut WindowContext) {
         cx.subscribe(workspace, |_, event, cx| {
             Self::update_global(cx, |this, cx| this.handle_workspace_event(event, cx));
+        })
+        .detach();
+
+        let workspace = workspace.clone();
+        cx.observe_global::<SettingsStore>(move |cx| {
+            let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+                return;
+            };
+            let enabled = AssistantSettings::get_global(cx).enabled;
+            terminal_panel.update(cx, |terminal_panel, cx| {
+                terminal_panel.asssistant_enabled(enabled, cx)
+            });
         })
         .detach();
     }

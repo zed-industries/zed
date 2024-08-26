@@ -40,7 +40,6 @@ struct PendingWork<'a> {
     progress: &'a LanguageServerProgress,
 }
 
-#[derive(Default)]
 struct Content {
     icon: Option<gpui::AnyElement>,
     message: String,
@@ -173,7 +172,7 @@ impl ActivityIndicator {
             .flatten()
     }
 
-    fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Content {
+    fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Option<Content> {
         // Show any language server has pending activity.
         let mut pending_work = self.pending_language_server_work(cx);
         if let Some(PendingWork {
@@ -202,7 +201,7 @@ impl ActivityIndicator {
                 write!(&mut message, " + {} more", additional_work_count).unwrap();
             }
 
-            return Content {
+            return Some(Content {
                 icon: Some(
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::Small)
@@ -215,7 +214,7 @@ impl ActivityIndicator {
                 ),
                 message,
                 on_click: Some(Arc::new(Self::toggle_language_server_work_context_menu)),
-            };
+            });
         }
 
         // Show any language server installation info.
@@ -234,7 +233,7 @@ impl ActivityIndicator {
         }
 
         if !downloading.is_empty() {
-            return Content {
+            return Some(Content {
                 icon: Some(
                     Icon::new(IconName::Download)
                         .size(IconSize::Small)
@@ -242,11 +241,11 @@ impl ActivityIndicator {
                 ),
                 message: format!("Downloading {}...", downloading.join(", "),),
                 on_click: None,
-            };
+            });
         }
 
         if !checking_for_update.is_empty() {
-            return Content {
+            return Some(Content {
                 icon: Some(
                     Icon::new(IconName::Download)
                         .size(IconSize::Small)
@@ -257,11 +256,11 @@ impl ActivityIndicator {
                     checking_for_update.join(", "),
                 ),
                 on_click: None,
-            };
+            });
         }
 
         if !failed.is_empty() {
-            return Content {
+            return Some(Content {
                 icon: Some(
                     Icon::new(IconName::ExclamationTriangle)
                         .size(IconSize::Small)
@@ -274,12 +273,12 @@ impl ActivityIndicator {
                 on_click: Some(Arc::new(|this, cx| {
                     this.show_error_message(&Default::default(), cx)
                 })),
-            };
+            });
         }
 
         // Show any formatting failure
         if let Some(failure) = self.project.read(cx).last_formatting_failure() {
-            return Content {
+            return Some(Content {
                 icon: Some(
                     Icon::new(IconName::ExclamationTriangle)
                         .size(IconSize::Small)
@@ -289,13 +288,13 @@ impl ActivityIndicator {
                 on_click: Some(Arc::new(|_, cx| {
                     cx.dispatch_action(Box::new(workspace::OpenLog));
                 })),
-            };
+            });
         }
 
         // Show any application auto-update info.
         if let Some(updater) = &self.auto_updater {
             return match &updater.read(cx).status() {
-                AutoUpdateStatus::Checking => Content {
+                AutoUpdateStatus::Checking => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
                             .size(IconSize::Small)
@@ -303,8 +302,8 @@ impl ActivityIndicator {
                     ),
                     message: "Checking for Zed updates…".to_string(),
                     on_click: None,
-                },
-                AutoUpdateStatus::Downloading => Content {
+                }),
+                AutoUpdateStatus::Downloading => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
                             .size(IconSize::Small)
@@ -312,8 +311,8 @@ impl ActivityIndicator {
                     ),
                     message: "Downloading Zed update…".to_string(),
                     on_click: None,
-                },
-                AutoUpdateStatus::Installing => Content {
+                }),
+                AutoUpdateStatus::Installing => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
                             .size(IconSize::Small)
@@ -321,8 +320,8 @@ impl ActivityIndicator {
                     ),
                     message: "Installing Zed update…".to_string(),
                     on_click: None,
-                },
-                AutoUpdateStatus::Updated { binary_path } => Content {
+                }),
+                AutoUpdateStatus::Updated { binary_path } => Some(Content {
                     icon: None,
                     message: "Click to restart and update Zed".to_string(),
                     on_click: Some(Arc::new({
@@ -331,8 +330,8 @@ impl ActivityIndicator {
                         };
                         move |_, cx| workspace::reload(&reload, cx)
                     })),
-                },
-                AutoUpdateStatus::Errored => Content {
+                }),
+                AutoUpdateStatus::Errored => Some(Content {
                     icon: Some(
                         Icon::new(IconName::ExclamationTriangle)
                             .size(IconSize::Small)
@@ -342,8 +341,8 @@ impl ActivityIndicator {
                     on_click: Some(Arc::new(|this, cx| {
                         this.dismiss_error_message(&Default::default(), cx)
                     })),
-                },
-                AutoUpdateStatus::Idle => Default::default(),
+                }),
+                AutoUpdateStatus::Idle => None,
             };
         }
 
@@ -351,7 +350,7 @@ impl ActivityIndicator {
             ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
         {
             if let Some(extension_id) = extension_store.outstanding_operations().keys().next() {
-                return Content {
+                return Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
                             .size(IconSize::Small)
@@ -359,11 +358,11 @@ impl ActivityIndicator {
                     ),
                     message: format!("Updating {extension_id} extension…"),
                     on_click: None,
-                };
+                });
             }
         }
 
-        Default::default()
+        None
     }
 
     fn toggle_language_server_work_context_menu(&mut self, cx: &mut ViewContext<Self>) {
@@ -375,13 +374,13 @@ impl EventEmitter<Event> for ActivityIndicator {}
 
 impl Render for ActivityIndicator {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let content = self.content_to_render(cx);
-
         let result = h_flex()
             .id("activity-indicator")
             .on_action(cx.listener(Self::show_error_message))
             .on_action(cx.listener(Self::dismiss_error_message));
-
+        let Some(content) = self.content_to_render(cx) else {
+            return result;
+        };
         let this = cx.view().downgrade();
         result.gap_2().child(
             PopoverMenu::new("activity-indicator-popover")

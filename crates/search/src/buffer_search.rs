@@ -988,7 +988,11 @@ impl BufferSearchBar {
                                     .searchable_items_with_matches
                                     .get(&active_searchable_item.downgrade())
                                     .unwrap();
-                                active_searchable_item.update_matches(matches, cx);
+                                if matches.is_empty() {
+                                    active_searchable_item.clear_matches(cx);
+                                } else {
+                                    active_searchable_item.update_matches(matches, cx);
+                                }
                                 let _ = done_tx.send(());
                             }
                             cx.notify();
