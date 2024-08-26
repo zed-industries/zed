@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::{
-    actions::Format, selections_collection::SelectionsCollection, Copy, CopyFileLocation,
+    actions::Format, selections_collection::SelectionsCollection, Copy,
     CopyPermalinkToLine, Cut, DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences,
     GoToDeclaration, GoToDefinition, GoToImplementation, GoToTypeDefinition, Paste, Rename,
     RevealInFileManager, SelectMode, ToDisplayPoint, ToggleCodeActions,
@@ -187,7 +187,6 @@ pub fn deploy_context_menu(
                 })
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .action("Copy Permalink", Box::new(CopyPermalinkToLine))
-                .action("Copy File:Line", Box::new(CopyFileLocation));
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,
