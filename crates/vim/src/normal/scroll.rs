@@ -294,7 +294,7 @@ mod test {
 
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<EditorSettings>(cx, |s| {
-                s.scroll_beyond_last_line = Some(ScrollBeyondLastLine::Off)
+                s.scroll_beyond_last_line = ScrollBeyondLastLine::Off
             });
         });
 

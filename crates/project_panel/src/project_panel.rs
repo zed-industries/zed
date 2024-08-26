@@ -2803,7 +2803,7 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
                     worktree_settings.file_scan_exclusions =
-                        Some(vec!["**/.git".to_string(), "**/4/**".to_string()]);
+                        vec!["**/.git".to_string(), "**/4/**".to_string()];
                 });
             });
         });
@@ -4384,10 +4384,10 @@ mod tests {
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions = Some(Vec::new());
+                    worktree_settings.file_scan_exclusions = Vec::new();
                 });
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_reveal_entries = Some(false)
+                    project_panel_settings.auto_reveal_entries = false
                 });
             })
         });
@@ -4508,7 +4508,7 @@ mod tests {
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_reveal_entries = Some(true)
+                    project_panel_settings.auto_reveal_entries = true
                 });
             })
         });
@@ -4622,10 +4622,10 @@ mod tests {
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions = Some(Vec::new());
+                    worktree_settings.file_scan_exclusions = Vec::new();
                 });
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_reveal_entries = Some(false)
+                    project_panel_settings.auto_reveal_entries = false
                 });
             })
         });
@@ -4826,7 +4826,7 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
                     project_settings.file_scan_exclusions =
-                        Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
+                        vec!["excluded_dir".to_string(), "**/.git".to_string()];
                 });
             });
         });
@@ -5139,10 +5139,10 @@ mod tests {
 
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_fold_dirs = Some(false);
+                    project_panel_settings.auto_fold_dirs = false;
                 });
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions = Some(Vec::new());
+                    worktree_settings.file_scan_exclusions = Vec::new();
                 });
             });
         });
@@ -5161,10 +5161,10 @@ mod tests {
 
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_fold_dirs = Some(false);
+                    project_panel_settings.auto_fold_dirs = false;
                 });
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions = Some(Vec::new());
+                    worktree_settings.file_scan_exclusions = Vec::new();
                 });
             });
         });
