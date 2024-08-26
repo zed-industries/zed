@@ -77,6 +77,7 @@ pub fn new_journal_entry(workspace: &mut Workspace, cx: &mut WindowContext) {
             return;
         }
     };
+    let journal_dir_clone = journal_dir.clone();
 
     let now = Local::now();
     let month_dir = journal_dir
@@ -98,15 +99,17 @@ pub fn new_journal_entry(workspace: &mut Workspace, cx: &mut WindowContext) {
 
     let worktrees = workspace.visible_worktrees(cx).collect::<Vec<_>>();
     let mut open_new_workspace = true;
-    for worktree in worktrees.iter() {
+    'outer: for worktree in worktrees.iter() {
+        let worktree_root = worktree.read(cx).abs_path();
         if worktree.read(cx).root_name() == "journal" {
             open_new_workspace = false;
             break;
         }
         for directory in worktree.read(cx).directories(true, 1) {
-            if directory.path.ends_with("journal") {
+            let full_directory_path = worktree_root.join(&directory.path);
+            if full_directory_path.ends_with(&journal_dir_clone) {
                 open_new_workspace = false;
-                break;
+                break 'outer;
             }
         }
     }
