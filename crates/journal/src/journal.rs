@@ -1,8 +1,8 @@
-use anyhow::{Error, Result};
+use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::scroll::Autoscroll;
 use editor::Editor;
-use gpui::{actions, AppContext, ViewContext, WindowContext, WindowHandle};
+use gpui::{actions, AppContext, ViewContext, WindowContext};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -99,21 +99,25 @@ pub fn new_journal_entry(workspace: &mut Workspace, cx: &mut WindowContext) {
     let worktrees = workspace.visible_worktrees(cx).collect::<Vec<_>>();
     let mut open_new_workspace = true;
     for worktree in worktrees.iter() {
-        let root_name = worktree.read(cx).root_name();
-        if root_name == "journal" {
+        if worktree.read(cx).root_name() == "journal" {
             open_new_workspace = false;
             break;
+        }
+        for directory in worktree.read(cx).directories(true, 1) {
+            if directory.path.ends_with("journal") {
+                open_new_workspace = false;
+                break;
+            }
         }
     }
 
     let app_state = workspace.app_state().clone();
-    let workspace_handle = workspace.weak_handle().clone();
+    let view_snapshot = workspace.weak_handle().clone();
 
     cx.spawn(|mut cx| async move {
         let (journal_dir, entry_path) = create_entry.await?;
-        let opened: Vec<Option<Result<Box<dyn ItemHandle>, Error>>>;
-        if open_new_workspace {
-            let (workspace, _) = cx
+        let opened = if open_new_workspace {
+            let (new_workspace, _) = cx
                 .update(|cx| {
                     workspace::open_paths(
                         &[journal_dir],
@@ -123,18 +127,18 @@ pub fn new_journal_entry(workspace: &mut Workspace, cx: &mut WindowContext) {
                     )
                 })?
                 .await?;
-            opened = workspace
+            new_workspace
                 .update(&mut cx, |workspace, cx| {
                     workspace.open_paths(vec![entry_path], OpenVisible::All, None, cx)
                 })?
-                .await;
+                .await
         } else {
-            opened = workspace_handle
+            view_snapshot
                 .update(&mut cx, |workspace, cx| {
                     workspace.open_paths(vec![entry_path], OpenVisible::All, None, cx)
                 })?
-                .await;
-        }
+                .await
+        };
 
         if let Some(Some(Ok(item))) = opened.first() {
             if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
