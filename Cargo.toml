@@ -224,6 +224,7 @@ indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
+keycodes = { path = "crates/keycodes" }
 language = { path = "crates/language" }
 language_model = { path = "crates/language_model" }
 language_selector = { path = "crates/language_selector" }

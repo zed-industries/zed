@@ -4827,6 +4827,7 @@ dependencies = [
  "http_client",
  "image",
  "itertools 0.11.0",
+ "keycodes",
  "linkme",
  "log",
  "media",
