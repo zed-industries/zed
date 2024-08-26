@@ -478,6 +478,7 @@ impl Server {
             .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::SearchProject>,
             ))
+            .add_request_handler(user_handler(forward_find_search_candidates_request))
             .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetDocumentHighlights>,
             ))
@@ -2935,6 +2936,59 @@ where
         .await
         .host_for_read_only_project_request(project_id, session.connection_id, session.user_id())
         .await?;
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, host_connection_id, request)
+        .await?;
+    response.send(payload)?;
+    Ok(())
+}
+
+async fn forward_find_search_candidates_request(
+    request: proto::FindSearchCandidates,
+    response: Response<proto::FindSearchCandidates>,
+    session: UserSession,
+) -> Result<()> {
+    let project_id = ProjectId::from_proto(request.remote_entity_id());
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_read_only_project_request(project_id, session.connection_id, session.user_id())
+        .await?;
+
+    let host_version = session
+        .connection_pool()
+        .await
+        .connection(host_connection_id)
+        .map(|c| c.zed_version);
+
+    if host_version.is_some_and(|host_version| host_version < ZedVersion::with_search_candidates())
+    {
+        let query = request.query.ok_or_else(|| anyhow!("missing query"))?;
+        let search = proto::SearchProject {
+            project_id: project_id.to_proto(),
+            query: query.query,
+            regex: query.regex,
+            whole_word: query.whole_word,
+            case_sensitive: query.case_sensitive,
+            files_to_include: query.files_to_include,
+            files_to_exclude: query.files_to_exclude,
+            include_ignored: query.include_ignored,
+        };
+
+        let payload = session
+            .peer
+            .forward_request(session.connection_id, host_connection_id, search)
+            .await?;
+        return response.send(proto::FindSearchCandidatesResponse {
+            buffer_ids: payload
+                .locations
+                .into_iter()
+                .map(|loc| loc.buffer_id)
+                .collect(),
+        });
+    }
+
     let payload = session
         .peer
         .forward_request(session.connection_id, host_connection_id, request)

@@ -1,7 +1,8 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
-use language::{char_kind, BufferSnapshot};
+use gpui::Model;
+use language::{char_kind, Buffer, BufferSnapshot};
 use regex::{Captures, Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{
@@ -11,9 +12,18 @@ use std::{
     path::Path,
     sync::{Arc, OnceLock},
 };
+use text::Anchor;
 use util::paths::PathMatcher;
 
 static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: OnceLock<Regex> = OnceLock::new();
+
+pub enum SearchResult {
+    Buffer {
+        buffer: Model<Buffer>,
+        ranges: Vec<Range<Anchor>>,
+    },
+    LimitReached,
+}
 
 #[derive(Clone, Debug)]
 pub struct SearchInputs {
@@ -122,7 +132,29 @@ impl SearchQuery {
         })
     }
 
-    pub fn from_proto(message: proto::SearchProject) -> Result<Self> {
+    pub fn from_proto_v1(message: proto::SearchProject) -> Result<Self> {
+        if message.regex {
+            Self::regex(
+                message.query,
+                message.whole_word,
+                message.case_sensitive,
+                message.include_ignored,
+                deserialize_path_matches(&message.files_to_include)?,
+                deserialize_path_matches(&message.files_to_exclude)?,
+            )
+        } else {
+            Self::text(
+                message.query,
+                message.whole_word,
+                message.case_sensitive,
+                message.include_ignored,
+                deserialize_path_matches(&message.files_to_include)?,
+                deserialize_path_matches(&message.files_to_exclude)?,
+            )
+        }
+    }
+
+    pub fn from_proto(message: proto::SearchQuery) -> Result<Self> {
         if message.regex {
             Self::regex(
                 message.query,
@@ -158,9 +190,21 @@ impl SearchQuery {
             }
         }
     }
-    pub fn to_proto(&self, project_id: u64) -> proto::SearchProject {
+    pub fn to_protov1(&self, project_id: u64) -> proto::SearchProject {
         proto::SearchProject {
             project_id,
+            query: self.as_str().to_string(),
+            regex: self.is_regex(),
+            whole_word: self.whole_word(),
+            case_sensitive: self.case_sensitive(),
+            include_ignored: self.include_ignored(),
+            files_to_include: self.files_to_include().sources().join(","),
+            files_to_exclude: self.files_to_exclude().sources().join(","),
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::SearchQuery {
+        proto::SearchQuery {
             query: self.as_str().to_string(),
             regex: self.is_regex(),
             whole_word: self.whole_word(),
@@ -402,7 +446,7 @@ impl SearchQuery {
     }
 }
 
-fn deserialize_path_matches(glob_set: &str) -> anyhow::Result<PathMatcher> {
+pub fn deserialize_path_matches(glob_set: &str) -> anyhow::Result<PathMatcher> {
     let globs = glob_set
         .split(',')
         .map(str::trim)

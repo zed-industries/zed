@@ -15,7 +15,7 @@ use language::{
 use lsp::FakeLanguageServer;
 use pretty_assertions::assert_eq;
 use project::{
-    search::SearchQuery, Project, ProjectPath, SearchResult, DEFAULT_COMPLETION_CONTEXT,
+    search::SearchQuery, search::SearchResult, Project, ProjectPath, DEFAULT_COMPLETION_CONTEXT,
 };
 use rand::{
     distributions::{Alphanumeric, DistString},

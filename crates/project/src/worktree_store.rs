@@ -1,12 +1,31 @@
+use std::{
+    cmp,
+    collections::VecDeque,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
+};
+
 use anyhow::{anyhow, Context as _, Result};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
+use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, EntityId, EventEmitter, Model, ModelContext, WeakModel};
 use rpc::{
     proto::{self, AnyProtoClient},
     TypedEnvelope,
 };
+use smol::{
+    channel::{Receiver, Sender},
+    lock::Semaphore,
+    stream::StreamExt,
+};
 use text::ReplicaId;
-use worktree::{ProjectEntryId, Worktree, WorktreeId};
+use util::ResultExt;
+use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeId, WorktreeSettings};
+
+use crate::{search::SearchQuery, ProjectPath};
 
 pub struct WorktreeStore {
     is_shared: bool,
@@ -59,6 +78,15 @@ impl WorktreeStore {
     ) -> Option<Model<Worktree>> {
         self.worktrees()
             .find(|worktree| worktree.read(cx).contains_entry(entry_id))
+    }
+
+    pub fn entry_for_id<'a>(
+        &'a self,
+        entry_id: ProjectEntryId,
+        cx: &'a AppContext,
+    ) -> Option<&'a Entry> {
+        self.worktrees()
+            .find_map(|worktree| worktree.read(cx).entry_for_id(entry_id))
     }
 
     pub fn add(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
@@ -232,6 +260,287 @@ impl WorktreeStore {
                     });
                     if !is_visible {
                         *worktree_handle = WorktreeHandle::Weak(worktree.downgrade());
+                    }
+                }
+            }
+        }
+    }
+
+    /// search over all worktrees (ignoring open buffers)
+    /// the query is tested against the file on disk and matching files are returned.
+    pub fn find_search_candidates(
+        &self,
+        query: SearchQuery,
+        limit: usize,
+        skip_entries: HashSet<ProjectEntryId>,
+        fs: Arc<dyn Fs>,
+        cx: &ModelContext<Self>,
+    ) -> Receiver<ProjectPath> {
+        let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
+        let snapshots = self
+            .visible_worktrees(cx)
+            .filter_map(|tree| {
+                let tree = tree.read(cx);
+                Some((tree.snapshot(), tree.as_local()?.settings()))
+            })
+            .collect::<Vec<_>>();
+        let include_root = snapshots.len() > 1;
+        let path_count: usize = snapshots
+            .iter()
+            .map(|(snapshot, _)| {
+                if query.include_ignored() {
+                    snapshot.file_count()
+                } else {
+                    snapshot.visible_file_count()
+                }
+            })
+            .sum();
+
+        let remaining_paths = AtomicUsize::new(limit);
+        if path_count == 0 {
+            return matching_paths_rx;
+        }
+        let workers = cx.background_executor().num_cpus().min(path_count);
+        let paths_per_worker = (path_count + workers - 1) / workers;
+
+        let executor = cx.background_executor().clone();
+        cx.background_executor()
+            .spawn(async move {
+                let fs = &fs;
+                let query = &query;
+                let matching_paths_tx = &matching_paths_tx;
+                let snapshots = &snapshots;
+                let remaining_paths = &remaining_paths;
+
+                executor
+                    .scoped(move |scope| {
+                        let max_concurrent_workers = Arc::new(Semaphore::new(workers));
+
+                        for worker_ix in 0..workers {
+                            let snapshots = snapshots.clone();
+                            let worker_start_ix = worker_ix * paths_per_worker;
+                            let worker_end_ix = worker_start_ix + paths_per_worker;
+                            let skip_entries = skip_entries.clone();
+                            let limiter = Arc::clone(&max_concurrent_workers);
+                            scope.spawn(async move {
+                                let _guard = limiter.acquire().await;
+                                Self::search_snapshots(
+                                    &snapshots,
+                                    worker_start_ix,
+                                    worker_end_ix,
+                                    &query,
+                                    remaining_paths,
+                                    &matching_paths_tx,
+                                    &skip_entries,
+                                    include_root,
+                                    fs,
+                                )
+                                .await;
+                            });
+                        }
+
+                        if query.include_ignored() {
+                            for (snapshot, settings) in snapshots {
+                                for ignored_entry in
+                                    snapshot.entries(true, 0).filter(|e| e.is_ignored)
+                                {
+                                    let limiter = Arc::clone(&max_concurrent_workers);
+                                    scope.spawn(async move {
+                                        let _guard = limiter.acquire().await;
+                                        if remaining_paths.load(SeqCst) == 0 {
+                                            return;
+                                        }
+
+                                        Self::search_ignored_entry(
+                                            &snapshot,
+                                            &settings,
+                                            ignored_entry,
+                                            &fs,
+                                            &query,
+                                            remaining_paths,
+                                            &matching_paths_tx,
+                                        )
+                                        .await;
+                                    });
+                                }
+                            }
+                        }
+                    })
+                    .await
+            })
+            .detach();
+        return matching_paths_rx;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn search_snapshots(
+        snapshots: &Vec<(worktree::Snapshot, WorktreeSettings)>,
+        worker_start_ix: usize,
+        worker_end_ix: usize,
+        query: &SearchQuery,
+        remaining_paths: &AtomicUsize,
+        results_tx: &Sender<ProjectPath>,
+        skip_entries: &HashSet<ProjectEntryId>,
+        include_root: bool,
+        fs: &Arc<dyn Fs>,
+    ) {
+        let mut snapshot_start_ix = 0;
+        let mut abs_path = PathBuf::new();
+
+        for (snapshot, _) in snapshots {
+            let snapshot_end_ix = snapshot_start_ix
+                + if query.include_ignored() {
+                    snapshot.file_count()
+                } else {
+                    snapshot.visible_file_count()
+                };
+            if worker_end_ix <= snapshot_start_ix {
+                break;
+            } else if worker_start_ix > snapshot_end_ix {
+                snapshot_start_ix = snapshot_end_ix;
+                continue;
+            } else {
+                let start_in_snapshot = worker_start_ix.saturating_sub(snapshot_start_ix);
+                let end_in_snapshot = cmp::min(worker_end_ix, snapshot_end_ix) - snapshot_start_ix;
+
+                for entry in snapshot
+                    .files(false, start_in_snapshot)
+                    .take(end_in_snapshot - start_in_snapshot)
+                {
+                    if results_tx.is_closed() {
+                        break;
+                    }
+                    if skip_entries.contains(&entry.id) {
+                        continue;
+                    }
+
+                    let matched_path = if include_root {
+                        let mut full_path = PathBuf::from(snapshot.root_name());
+                        full_path.push(&entry.path);
+                        query.file_matches(Some(&full_path))
+                    } else {
+                        query.file_matches(Some(&entry.path))
+                    };
+
+                    let matches = if matched_path {
+                        abs_path.clear();
+                        abs_path.push(&snapshot.abs_path());
+                        abs_path.push(&entry.path);
+                        if let Some(file) = fs.open_sync(&abs_path).await.log_err() {
+                            query.detect(file).unwrap_or(false)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
+                    if matches {
+                        if remaining_paths
+                            .fetch_update(SeqCst, SeqCst, |value| {
+                                if value > 0 {
+                                    Some(value - 1)
+                                } else {
+                                    None
+                                }
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+
+                        let project_path = ProjectPath {
+                            worktree_id: snapshot.id(),
+                            path: entry.path.clone(),
+                        };
+                        if results_tx.send(project_path).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+
+                snapshot_start_ix = snapshot_end_ix;
+            }
+        }
+    }
+
+    async fn search_ignored_entry(
+        snapshot: &Snapshot,
+        settings: &WorktreeSettings,
+        ignored_entry: &Entry,
+        fs: &Arc<dyn Fs>,
+        query: &SearchQuery,
+        remaining_paths: &AtomicUsize,
+        counter_tx: &Sender<ProjectPath>,
+    ) {
+        let mut ignored_paths_to_process =
+            VecDeque::from([snapshot.abs_path().join(&ignored_entry.path)]);
+
+        while let Some(ignored_abs_path) = ignored_paths_to_process.pop_front() {
+            let metadata = fs
+                .metadata(&ignored_abs_path)
+                .await
+                .with_context(|| format!("fetching fs metadata for {ignored_abs_path:?}"))
+                .log_err()
+                .flatten();
+
+            if let Some(fs_metadata) = metadata {
+                if fs_metadata.is_dir {
+                    let files = fs
+                        .read_dir(&ignored_abs_path)
+                        .await
+                        .with_context(|| format!("listing ignored path {ignored_abs_path:?}"))
+                        .log_err();
+
+                    if let Some(mut subfiles) = files {
+                        while let Some(subfile) = subfiles.next().await {
+                            if let Some(subfile) = subfile.log_err() {
+                                ignored_paths_to_process.push_back(subfile);
+                            }
+                        }
+                    }
+                } else if !fs_metadata.is_symlink {
+                    if !query.file_matches(Some(&ignored_abs_path))
+                        || settings.is_path_excluded(&ignored_entry.path)
+                    {
+                        continue;
+                    }
+                    let matches = if let Some(file) = fs
+                        .open_sync(&ignored_abs_path)
+                        .await
+                        .with_context(|| format!("Opening ignored path {ignored_abs_path:?}"))
+                        .log_err()
+                    {
+                        query.detect(file).unwrap_or(false)
+                    } else {
+                        false
+                    };
+
+                    if matches {
+                        if remaining_paths
+                            .fetch_update(SeqCst, SeqCst, |value| {
+                                if value > 0 {
+                                    Some(value - 1)
+                                } else {
+                                    None
+                                }
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+
+                        let project_path = ProjectPath {
+                            worktree_id: snapshot.id(),
+                            path: Arc::from(
+                                ignored_abs_path
+                                    .strip_prefix(snapshot.abs_path())
+                                    .expect("scanning worktree-related files"),
+                            ),
+                        };
+                        if counter_tx.send(project_path).await.is_err() {
+                            return;
+                        }
                     }
                 }
             }

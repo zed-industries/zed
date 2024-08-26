@@ -222,7 +222,7 @@ impl ProjectSearch {
             let mut limit_reached = false;
             while let Some(result) = matches.next().await {
                 match result {
-                    project::SearchResult::Buffer { buffer, ranges } => {
+                    project::search::SearchResult::Buffer { buffer, ranges } => {
                         let mut match_ranges = this
                             .update(&mut cx, |this, cx| {
                                 this.excerpts.update(cx, |excerpts, cx| {
@@ -245,7 +245,7 @@ impl ProjectSearch {
                         }
                         this.update(&mut cx, |_, cx| cx.notify()).ok()?;
                     }
-                    project::SearchResult::LimitReached => {
+                    project::search::SearchResult::LimitReached => {
                         limit_reached = true;
                     }
                 }
