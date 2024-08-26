@@ -24,6 +24,7 @@ members = [
     "crates/db",
     "crates/dev_server_projects",
     "crates/diagnostics",
+    "crates/docs_preprocessor",
     "crates/editor",
     "crates/extension",
     "crates/extension_api",
@@ -165,7 +166,7 @@ members = [
     # Tooling
     #
 
-    "tooling/xtask",
+    "tooling/xtask"
 ]
 default-members = ["crates/zed"]
 
