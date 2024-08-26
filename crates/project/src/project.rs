@@ -110,6 +110,8 @@ const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
 
+const EDITORCONFIG_FILE_NAME: &str = ".editorconfig";
+
 pub trait Item {
     fn try_open(
         project: &Model<Project>,
@@ -3809,6 +3811,20 @@ impl Project {
                         );
                     }
                 })
+            } else if path.ends_with(EDITORCONFIG_FILE_NAME) {
+                let current_settings = AllLanguageSettings::get_global(cx);
+                let has_file = current_settings.editorconfig_files.contains(&abs_path);
+                let needs_removal = removed && has_file;
+                let needs_addition = !has_file;
+                if needs_removal || needs_addition {
+                    let mut new_settings = current_settings.clone();
+                    if needs_removal {
+                        new_settings.unregister_editorconfig_path(&abs_path);
+                    } else if needs_addition {
+                        new_settings.register_editorconfig_path(abs_path);
+                    }
+                    AllLanguageSettings::override_global(new_settings, cx);
+                }
             }
         }
     }

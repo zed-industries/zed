@@ -10,6 +10,7 @@ use ec4rs::property::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
+use parking_lot::RwLock;
 use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
@@ -20,7 +21,12 @@ use serde::{
 };
 use serde_json::Value;
 use settings::{add_references_to_properties, Settings, SettingsLocation, SettingsSources};
-use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
+use std::{
+    borrow::Cow,
+    num::NonZeroU32,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::{serde::default_true, ResultExt};
 
 /// Initializes the language settings.
@@ -58,6 +64,8 @@ pub struct AllLanguageSettings {
     defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
+    pub editorconfig_files: HashSet<PathBuf>,
+    pub resolved_editorconfig_chains: Arc<RwLock<HashMap<Vec<PathBuf>, EditorConfigContent>>>,
 }
 
 /// The settings for a particular language.
@@ -858,13 +866,45 @@ impl AllLanguageSettings {
             .show_inline_completions
     }
 
+    pub fn unregister_editorconfig_path(&mut self, abs_path: &PathBuf) {
+        self.resolved_editorconfig_chains
+            .write()
+            .retain(|chain, _| !chain.contains(abs_path));
+        self.editorconfig_files.remove(abs_path);
+    }
+
+    pub fn register_editorconfig_path(&mut self, abs_path: PathBuf) {
+        self.resolved_editorconfig_chains
+            .write()
+            .retain(|chain, _| !chain.contains(&abs_path));
+        self.editorconfig_files.insert(abs_path);
+    }
+
     fn editorconfig_settings(
         &self,
         file: Option<&Arc<dyn File>>,
         cx: &AppContext,
     ) -> Option<EditorConfigContent> {
         let file_path = file?.as_local()?.abs_path(cx);
-        // TODO kb this goes recursively up the directory tree
+        let mut editorconfig_chain = Vec::new();
+        for file_path in file_path.ancestors() {
+            if self.editorconfig_files.contains(file_path) {
+                editorconfig_chain.push(file_path.to_owned());
+            }
+        }
+        if editorconfig_chain.is_empty() {
+            return None;
+        }
+
+        {
+            let resolved_editorconfig_chains = self.resolved_editorconfig_chains.read();
+            if let Some(content) = resolved_editorconfig_chains.get(&editorconfig_chain) {
+                return Some(content.clone());
+            }
+            drop(resolved_editorconfig_chains);
+        }
+
+        // FS operation that goes recursively up the directory tree, may be slow
         let mut cfg = ec4rs::properties_of(file_path).log_err()?;
         if cfg.is_empty() {
             return None;
@@ -905,6 +945,11 @@ impl AllLanguageSettings {
                 None
             },
         };
+
+        self.resolved_editorconfig_chains
+            .write()
+            .insert(editorconfig_chain, editorconfig.clone());
+
         Some(editorconfig)
     }
 }
@@ -1052,6 +1097,8 @@ impl settings::Settings for AllLanguageSettings {
                     .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
                     .collect(),
             },
+            editorconfig_files: HashSet::default(),
+            resolved_editorconfig_chains: Arc::default(),
             defaults,
             languages,
             file_types,
