@@ -89,7 +89,8 @@ fn get_max_tokens(name: &str) -> usize {
             | "llava-llama3" | "starcoder" | "openchat" | "aya" => 8192,
             "llama2" | "yi" | "llama2-chinese" | "vicuna" | "nous-hermes2"  // 4K
             | "stablelm2" => 4096,
-            "phi" | "orca-mini" | "tinyllama" | "granite-code" | _ => 2048, // 2K (default)
+            "phi" | "orca-mini" | "tinyllama" | "granite-code" => 2048,     // 2K
+            _ => 2048,                                                      // 2K (default)
         },
     }
 }
