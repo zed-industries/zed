@@ -784,24 +784,26 @@ impl BufferStore {
     pub fn find_search_candidates(
         &mut self,
         query: &SearchQuery,
-        limit: usize,
+        mut limit: usize,
         fs: Arc<dyn Fs>,
         cx: &mut ModelContext<Self>,
     ) -> Receiver<Model<Buffer>> {
         let (tx, rx) = smol::channel::unbounded();
-        let open_buffers = self.find_open_search_candidates(query, cx);
-        let skip_entries: HashSet<_> = open_buffers
-            .iter()
-            .filter_map(|buffer| buffer.read(cx).entry_id(cx))
-            .collect();
-
-        let limit = limit.saturating_sub(open_buffers.len());
-        for open_buffer in open_buffers {
-            tx.send_blocking(open_buffer).ok();
+        let mut open_buffers = HashSet::default();
+        for handle in self.buffers() {
+            let buffer = handle.read(cx);
+            if let Some(entry_id) = buffer.entry_id(cx) {
+                open_buffers.insert(entry_id);
+            } else {
+                limit = limit.saturating_sub(1);
+                tx.send_blocking(handle).log_err();
+            };
         }
 
+        let limit = limit.saturating_sub(open_buffers.len());
+
         let match_rx = self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.find_search_candidates(query.clone(), limit, skip_entries, fs, cx)
+            worktree_store.find_search_candidates(query.clone(), limit, open_buffers, fs, cx)
         });
 
         const MAX_CONCURRENT_BUFFER_OPENS: usize = 8;

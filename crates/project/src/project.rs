@@ -7281,25 +7281,17 @@ impl Project {
             self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx);
 
         cx.spawn(|_, cx| async move {
-            let mut matching_buffers = matching_buffers_rx.collect::<Vec<_>>().await;
-            let mut limit_reached = if matching_buffers.len() > MAX_SEARCH_RESULT_FILES {
-                matching_buffers.truncate(MAX_SEARCH_RESULT_FILES);
-                true
-            } else {
-                false
-            };
-            cx.update(|cx| {
-                sort_search_matches(&mut matching_buffers, cx);
-            })?;
-
             let mut range_count = 0;
+            let mut buffer_count = 0;
+            let mut limit_reached = false;
             let query = Arc::new(query);
+            let mut chunks = matching_buffers_rx.ready_chunks(64);
 
             // Now that we know what paths match the query, we will load at most
             // 64 buffers at a time to avoid overwhelming the main thread. For each
             // opened buffer, we will spawn a background task that retrieves all the
             // ranges in the buffer matched by the query.
-            'outer: for matching_buffer_chunk in matching_buffers.chunks(64) {
+            'outer: while let Some(matching_buffer_chunk) = chunks.next().await {
                 let mut chunk_results = Vec::new();
                 for buffer in matching_buffer_chunk {
                     let buffer = buffer.clone();
@@ -7322,6 +7314,10 @@ impl Project {
                             .await;
                         anyhow::Ok((buffer, ranges))
                     }));
+                    buffer_count += 1;
+                    if buffer_count > MAX_SEARCH_RESULT_FILES {
+                        limit_reached = true;
+                    }
                 }
 
                 let chunk_results = futures::future::join_all(chunk_results).await;
