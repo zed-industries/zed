@@ -98,14 +98,16 @@ impl ExtensionBuilder {
 
         for (grammar_name, grammar_metadata) in &extension_manifest.grammars {
             log::info!(
-                "compiling extension grammar {} in {}",
-                grammar_name,
+                "compiling grammar {grammar_name} for extension {}",
                 extension_dir.display()
             );
             self.compile_grammar(extension_dir, grammar_name.as_ref(), grammar_metadata)
                 .await
                 .with_context(|| format!("failed to compile grammar '{grammar_name}'"))?;
-            log::info!("compiled extension grammar in {}", extension_dir.display());
+            log::info!(
+                "compiled grammar {grammar_name} for extension {}",
+                extension_dir.display()
+            );
         }
 
         log::info!("finished compiling extension {}", extension_dir.display());
@@ -124,6 +126,10 @@ impl ExtensionBuilder {
         let cargo_toml_content = fs::read_to_string(&extension_dir.join("Cargo.toml"))?;
         let cargo_toml: CargoToml = toml::from_str(&cargo_toml_content)?;
 
+        log::info!(
+            "compiling Rust crate for extension {}",
+            extension_dir.display()
+        );
         let output = Command::new("cargo")
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))
@@ -138,7 +144,11 @@ impl ExtensionBuilder {
                 String::from_utf8_lossy(&output.stderr)
             );
         }
-        log::info!("compiled rust extension {}", extension_dir.display());
+
+        log::info!(
+            "compiled Rust crate for extension {}",
+            extension_dir.display()
+        );
 
         let mut wasm_path = PathBuf::from(extension_dir);
         wasm_path.extend([
@@ -179,12 +189,6 @@ impl ExtensionBuilder {
             parse_wasm_extension_version(&manifest.id, &component_bytes)
                 .context("compiled wasm did not contain a valid zed extension api version")?;
         manifest.lib.version = Some(wasm_extension_api_version);
-
-        log::info!(
-            "setting manifest version {} for extension {}",
-            wasm_extension_api_version,
-            extension_dir.display()
-        );
 
         let extension_file = extension_dir.join("extension.wasm");
         fs::write(extension_file.clone(), &component_bytes)
