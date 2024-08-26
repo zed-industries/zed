@@ -42,7 +42,6 @@ use serde_json::Value;
 use smol::future::FutureExt as _;
 use std::num::NonZeroU32;
 use std::{
-    any::Any,
     ffi::OsStr,
     fmt::Debug,
     hash::Hash,
@@ -61,7 +60,7 @@ use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
-use util::serde::default_true;
+use util::{serde::default_true, AssetVersion};
 
 pub use buffer::Operation;
 pub use buffer::*;
@@ -177,9 +176,16 @@ impl CachedLspAdapter {
         })
     }
 
+    pub async fn check_if_user_installed(
+        &self,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        self.adapter.check_if_user_installed(&*delegate, cx).await
+    }
+
     pub async fn get_language_server_command(
         self: Arc<Self>,
-        language: Arc<Language>,
         container_dir: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
@@ -187,7 +193,7 @@ impl CachedLspAdapter {
         let cached_binary = self.cached_binary.lock().await;
         self.adapter
             .clone()
-            .get_language_server_command(language, container_dir, delegate, cached_binary, cx)
+            .get_language_server_command(container_dir, delegate, cached_binary, cx)
             .await
     }
 
@@ -278,34 +284,12 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        language: Arc<Language>,
         container_dir: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
         mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         cx: &'a mut AsyncAppContext,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move {
-            // First we check whether the adapter can give us a user-installed binary.
-            // If so, we do *not* want to cache that, because each worktree might give us a different
-            // binary:
-            //
-            //      worktree 1: user-installed at `.bin/gopls`
-            //      worktree 2: user-installed at `~/bin/gopls`
-            //      worktree 3: no gopls found in PATH -> fallback to Zed installation
-            //
-            // We only want to cache when we fall back to the global one,
-            // because we don't want to download and overwrite our global one
-            // for each worktree we might have open.
-            if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), cx).await {
-                log::info!(
-                    "found user-installed language server for {}. path: {:?}, arguments: {:?}",
-                    language.name(),
-                    binary.path,
-                    binary.arguments
-                );
-                return Ok(binary);
-            }
-
             if let Some(cached_binary) = cached_binary.as_ref() {
                 return Ok(cached_binary.clone());
             }
@@ -359,7 +343,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>>;
+    ) -> Result<Box<dyn AssetVersion>>;
 
     fn will_fetch_server(
         &self,
@@ -379,7 +363,7 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn AssetVersion>,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary>;
@@ -1634,7 +1618,6 @@ impl LspAdapter for FakeLspAdapter {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        _: Arc<Language>,
         _: Arc<Path>,
         _: Arc<dyn LspAdapterDelegate>,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
@@ -1646,13 +1629,13 @@ impl LspAdapter for FakeLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+    ) -> Result<Box<dyn AssetVersion>> {
         unreachable!();
     }
 
     async fn fetch_server_binary(
         &self,
-        _: Box<dyn 'static + Send + Any>,
+        _: Box<dyn AssetVersion>,
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {

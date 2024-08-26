@@ -8,8 +8,8 @@ use lsp::LanguageServerBinary;
 use project::project_settings::{BinarySettings, ProjectSettings};
 use settings::Settings;
 use smol::fs::{self, File};
-use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
-use util::{fs::remove_matching, maybe, ResultExt};
+use std::{env::consts, path::PathBuf, sync::Arc};
+use util::{fs::remove_matching, maybe, AssetVersion, ResultExt};
 
 pub struct CLspAdapter;
 
@@ -68,7 +68,7 @@ impl super::LspAdapter for CLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+    ) -> Result<Box<dyn AssetVersion>> {
         let release =
             latest_github_release("clangd/clangd", true, false, delegate.http_client()).await?;
         let os_suffix = match consts::OS {
@@ -92,11 +92,14 @@ impl super::LspAdapter for CLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        version: Box<dyn AssetVersion>,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let version = version
+            .as_any()
+            .downcast_ref::<GitHubLspBinaryVersion>()
+            .unwrap();
         let zip_path = container_dir.join(format!("clangd_{}.zip", version.name));
         let version_dir = container_dir.join(format!("clangd_{}", version.name));
         let binary_path = version_dir.join("bin/clangd");

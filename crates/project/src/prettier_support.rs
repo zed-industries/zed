@@ -13,13 +13,16 @@ use futures::{
 };
 use gpui::{AsyncAppContext, Model, ModelContext, Task, WeakModel};
 use language::{
-    language_settings::{Formatter, LanguageSettings, SelectedFormatter},
+    language_settings::{
+        AllLanguageSettings, DependencyManagement, Formatter, LanguageSettings, SelectedFormatter,
+    },
     Buffer, LanguageServerName, LocalFile,
 };
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
 use prettier::Prettier;
+use settings::Settings;
 use util::{ResultExt, TryFutureExt};
 
 use crate::{
@@ -372,13 +375,13 @@ async fn install_prettier_packages(
             .chain(Some(&"prettier".into()))
             .map(|package_name| async {
                 let returned_package_name = package_name.to_string();
-                let latest_version = node
+                let asset_version = node
                     .npm_package_latest_version(package_name)
                     .await
                     .with_context(|| {
                         format!("fetching latest npm version for package {returned_package_name}")
                     })?;
-                anyhow::Ok((returned_package_name, latest_version))
+                anyhow::Ok(asset_version)
             }),
     )
     .await
@@ -399,11 +402,7 @@ async fn install_prettier_packages(
     }
 
     log::info!("Installing default prettier and plugins: {packages_to_versions:?}");
-    let borrowed_packages = packages_to_versions
-        .iter()
-        .map(|(package, version)| (package.as_str(), version.as_str()))
-        .collect::<Vec<_>>();
-    node.npm_install_packages(default_prettier_dir, &borrowed_packages)
+    node.npm_install_packages(default_prettier_dir, &packages_to_versions)
         .await
         .context("fetching formatter packages")?;
     anyhow::Ok(())
@@ -632,6 +631,7 @@ impl Project {
         plugins: impl Iterator<Item = Arc<str>>,
         cx: &mut ModelContext<Self>,
     ) {
+        let install_dependencies = AllLanguageSettings::get_global(cx).dependency_management;
         if cfg!(any(test, feature = "test-support")) {
             self.default_prettier.installed_plugins.extend(plugins);
             self.default_prettier.prettier = PrettierInstallation::Installed(PrettierInstance {
@@ -746,7 +746,13 @@ impl Project {
                             let installed_plugins = new_plugins.clone();
                             cx.background_executor()
                                 .spawn(async move {
-                                    install_prettier_packages(fs.as_ref(), new_plugins, node).await?;
+                                    match install_dependencies {
+                                        DependencyManagement::Automatic => {
+                                            install_prettier_packages(fs.as_ref(), new_plugins, node).await?
+                                        },
+                                        DependencyManagement::None => Err(anyhow!("No prettier installed"))?,
+                                    }
+
                                     // Save the server file last, so the reinstall need could be determined by the absence of the file.
                                     save_prettier_server_file(fs.as_ref()).await?;
                                     anyhow::Ok(())

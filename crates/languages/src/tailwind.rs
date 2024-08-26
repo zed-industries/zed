@@ -5,18 +5,17 @@ use futures::StreamExt;
 use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeAssetVersion, NodeRuntime};
 use project::project_settings::ProjectSettings;
 use serde_json::{json, Value};
 use settings::Settings;
 use smol::fs;
 use std::{
-    any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{maybe, ResultExt};
+use util::{maybe, AssetVersion, ResultExt};
 
 #[cfg(target_os = "windows")]
 const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server.ps1";
@@ -82,7 +81,7 @@ impl LspAdapter for TailwindLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Any + Send>> {
+    ) -> Result<Box<dyn AssetVersion>> {
         Ok(Box::new(
             self.node
                 .npm_package_latest_version("@tailwindcss/language-server")
@@ -92,22 +91,25 @@ impl LspAdapter for TailwindLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn AssetVersion>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<String>().unwrap();
+        let latest_version = latest_version
+            .as_any()
+            .downcast_ref::<NodeAssetVersion>()
+            .unwrap()
+            .clone();
         let server_path = container_dir.join(SERVER_PATH);
-        let package_name = "@tailwindcss/language-server";
 
         let should_install_language_server = self
             .node
-            .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
+            .should_install_npm_package(&latest_version, &server_path, &container_dir)
             .await;
 
         if should_install_language_server {
             self.node
-                .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
+                .npm_install_packages(&container_dir, &[latest_version])
                 .await?;
         }
 

@@ -6,16 +6,15 @@ use language::{
     language_settings::all_language_settings, LanguageServerName, LspAdapter, LspAdapterDelegate,
 };
 use lsp::LanguageServerBinary;
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeAssetVersion, NodeRuntime};
 use serde_json::Value;
 use smol::fs;
 use std::{
-    any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{maybe, ResultExt};
+use util::{maybe, AssetVersion, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/yaml-language-server/bin/yaml-language-server";
 
@@ -42,7 +41,7 @@ impl LspAdapter for YamlLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Any + Send>> {
+    ) -> Result<Box<dyn AssetVersion>> {
         Ok(Box::new(
             self.node
                 .npm_package_latest_version("yaml-language-server")
@@ -52,22 +51,27 @@ impl LspAdapter for YamlLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn AssetVersion>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<String>().unwrap();
+        let latest_version = &latest_version.as_any().downcast_ref::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
         let package_name = "yaml-language-server";
 
+        let node_asset = NodeAssetVersion {
+            name: package_name.to_string(),
+            version: latest_version.to_string(),
+        };
+
         let should_install_language_server = self
             .node
-            .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
+            .should_install_npm_package(&node_asset, &server_path, &container_dir)
             .await;
 
         if should_install_language_server {
             self.node
-                .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
+                .npm_install_packages(&container_dir, &[node_asset])
                 .await?;
         }
 

@@ -14,13 +14,14 @@ use serde_json::{json, Value};
 use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
-    any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{fs::remove_matching, maybe, AssetVersion, ResultExt};
+
+use crate::TypeScriptVersions;
 
 pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
@@ -86,11 +87,6 @@ impl TypeScriptLspAdapter {
     }
 }
 
-struct TypeScriptVersions {
-    typescript_version: String,
-    server_version: String,
-}
-
 #[async_trait(?Send)]
 impl LspAdapter for TypeScriptLspAdapter {
     fn name(&self) -> LanguageServerName {
@@ -100,7 +96,7 @@ impl LspAdapter for TypeScriptLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+    ) -> Result<Box<dyn AssetVersion>> {
         Ok(Box::new(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
             server_version: self
@@ -112,21 +108,22 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn AssetVersion>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
+        let latest_version = &latest_version
+            .as_any()
+            .downcast_ref::<TypeScriptVersions>()
+            .unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
-        let package_name = "typescript";
 
         let should_install_language_server = self
             .node
             .should_install_npm_package(
-                package_name,
+                &latest_version.typescript_version,
                 &server_path,
                 &container_dir,
-                latest_version.typescript_version.as_str(),
             )
             .await;
 
@@ -135,11 +132,8 @@ impl LspAdapter for TypeScriptLspAdapter {
                 .npm_install_packages(
                     &container_dir,
                     &[
-                        (package_name, latest_version.typescript_version.as_str()),
-                        (
-                            "typescript-language-server",
-                            latest_version.server_version.as_str(),
-                        ),
+                        latest_version.typescript_version.clone(),
+                        latest_version.server_version.clone(),
                     ],
                 )
                 .await?;
@@ -410,7 +404,7 @@ impl LspAdapter for EsLintLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _delegate: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+    ) -> Result<Box<dyn AssetVersion>> {
         let url = build_asset_url(
             "microsoft/vscode-eslint",
             Self::CURRENT_VERSION,
@@ -425,11 +419,14 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        version: Box<dyn AssetVersion>,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let version = &version
+            .as_any()
+            .downcast_ref::<GitHubLspBinaryVersion>()
+            .unwrap();
         let destination_path = container_dir.join(format!("vscode-eslint-{}", version.name));
         let server_path = destination_path.join(Self::SERVER_PATH);
 

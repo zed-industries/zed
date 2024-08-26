@@ -4,12 +4,15 @@ use anyhow::{anyhow, bail, Context, Result};
 pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
+use futures::channel::mpsc;
+use futures::channel::oneshot;
 use futures::AsyncReadExt;
 use http_client::HttpClient;
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex, process::Command};
+use std::fmt::Display;
 use std::io;
 use std::process::{Output, Stdio};
 use std::{
@@ -17,7 +20,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::ResultExt;
+use util::{AssetVersion, ResultExt};
 
 #[cfg(windows)]
 use smol::process::windows::CommandExt;
@@ -52,6 +55,28 @@ pub struct NpmInfoDistTags {
     latest: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct NodeAssetVersion {
+    pub name: String,
+    pub version: String,
+}
+
+impl Display for NodeAssetVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}@{}", self.name, self.version))
+    }
+}
+
+impl util::AssetVersion for NodeAssetVersion {
+    fn description(&self) -> String {
+        format!("node module {}@{}", self.name, self.version)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 #[async_trait::async_trait]
 pub trait NodeRuntime: Send + Sync {
     async fn binary_path(&self) -> Result<PathBuf>;
@@ -63,10 +88,13 @@ pub trait NodeRuntime: Send + Sync {
         args: &[&str],
     ) -> Result<Output>;
 
-    async fn npm_package_latest_version(&self, name: &str) -> Result<String>;
+    async fn npm_package_latest_version(&self, name: &str) -> Result<NodeAssetVersion>;
 
-    async fn npm_install_packages(&self, directory: &Path, packages: &[(&str, &str)])
-        -> Result<()>;
+    async fn npm_install_packages(
+        &self,
+        directory: &Path,
+        packages: &[NodeAssetVersion],
+    ) -> Result<()>;
 
     async fn npm_package_installed_version(
         &self,
@@ -76,10 +104,9 @@ pub trait NodeRuntime: Send + Sync {
 
     async fn should_install_npm_package(
         &self,
-        package_name: &str,
+        package: &NodeAssetVersion,
         local_executable_path: &Path,
         local_package_directory: &PathBuf,
-        latest_version: &str,
     ) -> bool {
         // In the case of the local system not having the package installed,
         // or in the instances where we fail to parse package.json data,
@@ -89,7 +116,7 @@ pub trait NodeRuntime: Send + Sync {
         }
 
         let Some(installed_version) = self
-            .npm_package_installed_version(local_package_directory, package_name)
+            .npm_package_installed_version(local_package_directory, &package.name)
             .await
             .log_err()
             .flatten()
@@ -100,7 +127,7 @@ pub trait NodeRuntime: Send + Sync {
         let Some(installed_version) = Version::parse(&installed_version).log_err() else {
             return true;
         };
-        let Some(latest_version) = Version::parse(&latest_version).log_err() else {
+        let Some(latest_version) = Version::parse(&package.version).log_err() else {
             return true;
         };
 
@@ -111,17 +138,37 @@ pub trait NodeRuntime: Send + Sync {
 pub struct RealNodeRuntime {
     http: Arc<dyn HttpClient>,
     installation_lock: Mutex<()>,
+    check_can_install: mpsc::UnboundedSender<(Box<dyn AssetVersion>, oneshot::Sender<Result<()>>)>,
 }
 
 impl RealNodeRuntime {
-    pub fn new(http: Arc<dyn HttpClient>) -> Arc<dyn NodeRuntime> {
+    pub fn new(
+        http: Arc<dyn HttpClient>,
+        check_can_install: mpsc::UnboundedSender<(
+            Box<dyn AssetVersion>,
+            oneshot::Sender<Result<()>>,
+        )>,
+    ) -> Arc<dyn NodeRuntime> {
         Arc::new(RealNodeRuntime {
             http,
             installation_lock: Mutex::new(()),
+            check_can_install,
         })
     }
 
     async fn install_if_needed(&self) -> Result<PathBuf> {
+        let (tx, rx) = oneshot::channel();
+        self.check_can_install
+            .unbounded_send((
+                Box::new(NodeAssetVersion {
+                    name: "node".to_string(),
+                    version: VERSION.to_string(),
+                }),
+                tx,
+            ))
+            .ok();
+        rx.await??;
+
         let _lock = self.installation_lock.lock().await;
         log::info!("Node runtime install_if_needed");
 
@@ -327,7 +374,7 @@ impl NodeRuntime for RealNodeRuntime {
         output.map_err(|e| anyhow!("{e}"))
     }
 
-    async fn npm_package_latest_version(&self, name: &str) -> Result<String> {
+    async fn npm_package_latest_version(&self, name: &str) -> Result<NodeAssetVersion> {
         let output = self
             .run_npm_subcommand(
                 None,
@@ -346,10 +393,16 @@ impl NodeRuntime for RealNodeRuntime {
             .await?;
 
         let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
-        info.dist_tags
+        let version = info
+            .dist_tags
             .latest
             .or_else(|| info.versions.pop())
-            .ok_or_else(|| anyhow!("no version found for npm package {}", name))
+            .ok_or_else(|| anyhow!("no version found for npm package {}", name))?;
+
+        Ok(NodeAssetVersion {
+            name: name.to_string(),
+            version,
+        })
     }
 
     async fn npm_package_installed_version(
@@ -385,11 +438,23 @@ impl NodeRuntime for RealNodeRuntime {
     async fn npm_install_packages(
         &self,
         directory: &Path,
-        packages: &[(&str, &str)],
+        packages: &[NodeAssetVersion],
     ) -> Result<()> {
+        if packages.len() == 0 {
+            return Ok(());
+        }
+
+        let (tx, rx) = oneshot::channel();
+        self.check_can_install
+            .unbounded_send((Box::new(packages[0].clone()), tx))
+            .ok();
+        rx.await??;
+
         let packages: Vec<_> = packages
             .into_iter()
-            .map(|(name, version)| format!("{name}@{version}"))
+            .map(|node_asset_version| {
+                format!("{}@{}", node_asset_version.name, node_asset_version.version)
+            })
             .collect();
 
         let mut arguments: Vec<_> = packages.iter().map(|p| p.as_str()).collect();
@@ -432,7 +497,7 @@ impl NodeRuntime for FakeNodeRuntime {
         unreachable!("Should not run npm subcommand '{subcommand}' with args {args:?}")
     }
 
-    async fn npm_package_latest_version(&self, name: &str) -> anyhow::Result<String> {
+    async fn npm_package_latest_version(&self, name: &str) -> anyhow::Result<NodeAssetVersion> {
         unreachable!("Should not query npm package '{name}' for latest version")
     }
 
@@ -447,7 +512,7 @@ impl NodeRuntime for FakeNodeRuntime {
     async fn npm_install_packages(
         &self,
         _: &Path,
-        packages: &[(&str, &str)],
+        packages: &[NodeAssetVersion],
     ) -> anyhow::Result<()> {
         unreachable!("Should not install packages {packages:?}")
     }

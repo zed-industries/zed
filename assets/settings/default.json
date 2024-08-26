@@ -570,6 +570,12 @@
     // A list of globs representing files that inline completions should be disabled for.
     "disabled_globs": [".env"]
   },
+  // Configuration for how Zed should handle missing binary dependencies (like language servers)
+  // required by zed or the extensions you install.
+  // By default "automatic" will use, install, and update dependencies on your behalf (if they are not already available)
+  // "never" will silently ignore requests
+  // If you choose never, you must maintain the required binaries yourself.
+  "dependency_management": "automatic",
   // Settings specific to journaling
   "journal": {
     // The path of the directory where journal entries are stored

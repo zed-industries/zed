@@ -44,8 +44,8 @@ use http_client::HttpClient;
 use itertools::Itertools;
 use language::{
     language_settings::{
-        language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
-        LanguageSettings, SelectedFormatter,
+        language_settings, AllLanguageSettings, DependencyManagement, FormatOnSave, Formatter,
+        InlayHintKind, LanguageSettings, SelectedFormatter,
     },
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{
@@ -3058,16 +3058,15 @@ impl Project {
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let lsp_adapter_delegate = ProjectLspAdapterDelegate::new(self, worktree_handle, cx);
-        let pending_server = match self.languages.create_pending_language_server(
+        let Some(pending_server) = self.languages.create_pending_language_server(
             stderr_capture.clone(),
             language.clone(),
             adapter.clone(),
             Arc::clone(&worktree_path),
             lsp_adapter_delegate.clone(),
             cx,
-        ) {
-            Some(pending_server) => pending_server,
-            None => return,
+        ) else {
+            return;
         };
 
         let project_settings = ProjectSettings::get(
@@ -3091,7 +3090,7 @@ impl Project {
             cx.spawn(move |this, mut cx| async move {
                 let result = Self::setup_and_insert_language_server(
                     this.clone(),
-                    lsp_adapter_delegate,
+                    lsp_adapter_delegate.clone(),
                     override_options,
                     pending_server,
                     adapter.clone(),
@@ -3110,6 +3109,22 @@ impl Project {
 
                     Err(err) => {
                         log::error!("failed to start language server {server_name:?}: {err}");
+                        let install_dependencies = cx
+                            .update(|cx| AllLanguageSettings::get_global(cx).dependency_management)
+                            .log_err();
+                        if install_dependencies != Some(DependencyManagement::Automatic) {
+                            cx.update(move |cx| {
+                                lsp_adapter_delegate.show_notification(
+                                    format!(
+                                        "failed to start language server {server_name:?}: {err}"
+                                    )
+                                    .as_ref(),
+                                    cx,
+                                );
+                            })
+                            .log_err();
+                            return None;
+                        }
                         log::error!("server stderr: {:?}", stderr_capture.lock().take());
 
                         let this = this.upgrade()?;
@@ -3119,6 +3134,16 @@ impl Project {
                         if attempt_count >= MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
                             let max = MAX_SERVER_REINSTALL_ATTEMPT_COUNT;
                             log::error!("Hit {max} reinstallation attempts for {server_name:?}");
+                            cx.update(move |cx| {
+                                lsp_adapter_delegate.show_notification(
+                                    format!(
+                                        "failed to start language server {server_name:?}: {err}"
+                                    )
+                                    .as_ref(),
+                                    cx,
+                                );
+                            })
+                            .log_err();
                             return None;
                         }
 

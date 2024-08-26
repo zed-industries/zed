@@ -1,6 +1,7 @@
 use crate::{
     language_settings::{
-        all_language_settings, AllLanguageSettingsContent, LanguageSettingsContent,
+        all_language_settings, AllLanguageSettings, AllLanguageSettingsContent,
+        DependencyManagement, LanguageSettingsContent,
     },
     task_context::ContextProvider,
     with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
@@ -19,6 +20,7 @@ use gpui::{AppContext, BackgroundExecutor, Task};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
+use settings::Settings;
 use std::{
     borrow::Cow,
     ffi::OsStr,
@@ -745,6 +747,8 @@ impl LanguageRegistry {
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
         let this = Arc::downgrade(self);
 
+        let dependency_management = AllLanguageSettings::get_global(cx).dependency_management;
+
         let task = cx.spawn({
             let container_dir = container_dir.clone();
             move |mut cx| async move {
@@ -752,15 +756,36 @@ impl LanguageRegistry {
                 // the login shell to be set on our process.
                 login_shell_env_loaded.await;
 
-                let binary_result = adapter
+                let binary_result = if let Some(binary) = adapter
                     .clone()
-                    .get_language_server_command(
-                        language.clone(),
-                        container_dir,
-                        delegate.clone(),
-                        &mut cx,
-                    )
-                    .await;
+                    .check_if_user_installed(delegate.clone(), &mut cx)
+                    .await
+                {
+                    log::info!(
+                        "found user-installed language server for {}. path: {:?}, arguments: {:?}",
+                        language.name(),
+                        binary.path,
+                        binary.arguments
+                    );
+                    Ok(binary)
+                } else {
+                    match dependency_management {
+                        DependencyManagement::Automatic => {
+                            adapter
+                                .clone()
+                                .get_language_server_command(
+                                    container_dir,
+                                    delegate.clone(),
+                                    &mut cx,
+                                )
+                                .await
+                        }
+                        DependencyManagement::None => Err(anyhow!(
+                            "No language server found for {}. Not installing because \"dependency_management\" is set to \"never\".",
+                            language.name()
+                        )),
+                    }
+                };
 
                 delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
 

@@ -5298,6 +5298,7 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
+ "util",
 ]
 
 [[package]]
@@ -6846,6 +6847,7 @@ dependencies = [
  "async-trait",
  "async_zip",
  "futures 0.3.30",
+ "gpui",
  "http_client",
  "log",
  "paths",

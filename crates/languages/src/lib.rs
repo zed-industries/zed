@@ -2,14 +2,14 @@ use anyhow::Context;
 use gpui::{AppContext, UpdateGlobal};
 use json::json_task_context;
 pub use language::*;
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeAssetVersion, NodeRuntime};
 use python::PythonContextProvider;
 use rust_embed::RustEmbed;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
-use std::{str, sync::Arc};
+use std::{any::Any, str, sync::Arc};
 use typescript::typescript_task_context;
-use util::{asset_str, ResultExt};
+use util::{asset_str, AssetVersion, ResultExt};
 
 use crate::{bash::bash_task_context, go::GoContextProvider, rust::RustContextProvider};
 
@@ -310,4 +310,23 @@ fn load_queries(name: &str) -> LanguageQueries {
         }
     }
     result
+}
+
+struct TypeScriptVersions {
+    typescript_version: NodeAssetVersion,
+    server_version: NodeAssetVersion,
+}
+
+impl AssetVersion for TypeScriptVersions {
+    fn description(&self) -> String {
+        format!(
+            "{} (LSP: {})",
+            self.typescript_version.description(),
+            self.server_version.description()
+        )
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }

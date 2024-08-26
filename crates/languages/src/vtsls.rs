@@ -9,12 +9,13 @@ use project::project_settings::{BinarySettings, ProjectSettings};
 use serde_json::{json, Value};
 use settings::Settings;
 use std::{
-    any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{maybe, ResultExt};
+use util::{maybe, AssetVersion, ResultExt};
+
+use crate::TypeScriptVersions;
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -44,11 +45,6 @@ impl VtslsLspAdapter {
     }
 }
 
-struct TypeScriptVersions {
-    typescript_version: String,
-    server_version: String,
-}
-
 const SERVER_NAME: &'static str = "vtsls";
 #[async_trait(?Send)]
 impl LspAdapter for VtslsLspAdapter {
@@ -59,7 +55,7 @@ impl LspAdapter for VtslsLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+    ) -> Result<Box<dyn AssetVersion>> {
         Ok(Box::new(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
             server_version: self
@@ -113,21 +109,22 @@ impl LspAdapter for VtslsLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn AssetVersion>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
+        let latest_version = &latest_version
+            .as_any()
+            .downcast_ref::<TypeScriptVersions>()
+            .unwrap();
         let server_path = container_dir.join(Self::SERVER_PATH);
-        let package_name = "typescript";
 
         let should_install_language_server = self
             .node
             .should_install_npm_package(
-                package_name,
+                &latest_version.typescript_version,
                 &server_path,
                 &container_dir,
-                latest_version.typescript_version.as_str(),
             )
             .await;
 
@@ -136,11 +133,8 @@ impl LspAdapter for VtslsLspAdapter {
                 .npm_install_packages(
                     &container_dir,
                     &[
-                        (package_name, latest_version.typescript_version.as_str()),
-                        (
-                            "@vtsls/language-server",
-                            latest_version.server_version.as_str(),
-                        ),
+                        latest_version.typescript_version.clone(),
+                        latest_version.server_version.clone(),
                     ],
                 )
                 .await?;

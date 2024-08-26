@@ -10,6 +10,16 @@ pub struct GitHubLspBinaryVersion {
     pub url: String,
 }
 
+impl util::AssetVersion for GitHubLspBinaryVersion {
+    fn description(&self) -> String {
+        format!("{} from {}", self.name, self.url)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 #[derive(Deserialize, Debug)]
 pub struct GithubRelease {
     pub tag_name: String,

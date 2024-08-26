@@ -15,12 +15,11 @@ use serde::Serialize;
 use serde_json::Value;
 use std::ops::Range;
 use std::{
-    any::Any,
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
 };
-use util::{maybe, ResultExt};
+use util::{maybe, AssetVersion, ResultExt};
 use wasmtime_wasi::WasiView as _;
 
 pub struct ExtensionLspAdapter {
@@ -38,7 +37,6 @@ impl LspAdapter for ExtensionLspAdapter {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        _: Arc<Language>,
         _: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
@@ -104,13 +102,13 @@ impl LspAdapter for ExtensionLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+    ) -> Result<Box<dyn AssetVersion>> {
         unreachable!("get_language_server_command is overridden")
     }
 
     async fn fetch_server_binary(
         &self,
-        _: Box<dyn 'static + Send + Any>,
+        _: Box<dyn AssetVersion>,
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {

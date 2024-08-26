@@ -9,7 +9,7 @@ use gpui::{AppContext, AsyncAppContext};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeAssetVersion, NodeRuntime};
 use project::ContextProviderWithTasks;
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
@@ -18,7 +18,6 @@ use smol::{
     io::BufReader,
 };
 use std::{
-    any::Any,
     env::consts,
     ffi::OsString,
     path::{Path, PathBuf},
@@ -26,7 +25,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{fs::remove_matching, maybe, AssetVersion, ResultExt};
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
@@ -142,7 +141,7 @@ impl LspAdapter for JsonLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+    ) -> Result<Box<dyn AssetVersion>> {
         Ok(Box::new(
             self.node
                 .npm_package_latest_version("vscode-langservers-extracted")
@@ -152,22 +151,25 @@ impl LspAdapter for JsonLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn AssetVersion>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<String>().unwrap();
+        let latest_version = latest_version
+            .as_any()
+            .downcast_ref::<NodeAssetVersion>()
+            .unwrap()
+            .clone();
         let server_path = container_dir.join(SERVER_PATH);
-        let package_name = "vscode-langservers-extracted";
 
         let should_install_language_server = self
             .node
-            .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
+            .should_install_npm_package(&latest_version, &server_path, &container_dir)
             .await;
 
         if should_install_language_server {
             self.node
-                .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
+                .npm_install_packages(&container_dir, &[latest_version])
                 .await?;
         }
 
@@ -277,7 +279,7 @@ impl LspAdapter for NodeVersionAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+    ) -> Result<Box<dyn AssetVersion>> {
         let release = latest_github_release(
             "zed-industries/package-version-server",
             true,
@@ -310,11 +312,14 @@ impl LspAdapter for NodeVersionAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn AssetVersion>,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = latest_version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let version = latest_version
+            .as_any()
+            .downcast_ref::<GitHubLspBinaryVersion>()
+            .unwrap();
         let destination_path = container_dir.join(format!(
             "package-version-server-{}{}",
             version.name,

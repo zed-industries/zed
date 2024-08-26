@@ -24,7 +24,7 @@ use std::{
     },
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{fs::remove_matching, maybe, AssetVersion, ResultExt};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
@@ -44,6 +44,20 @@ lazy_static! {
     static ref GO_ESCAPE_SUBTEST_NAME_REGEX: Regex = Regex::new(r#"[.*+?^${}()|\[\]\\]"#).unwrap();
 }
 
+struct GoLspAssetVersion {
+    version: Option<String>,
+}
+
+impl util::AssetVersion for GoLspAssetVersion {
+    fn description(&self) -> String {
+        format!("gopls version {:?}", self.version)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 #[async_trait(?Send)]
 impl super::LspAdapter for GoLspAdapter {
     fn name(&self) -> LanguageServerName {
@@ -53,7 +67,7 @@ impl super::LspAdapter for GoLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+    ) -> Result<Box<dyn AssetVersion>> {
         let release =
             latest_github_release("golang/tools", false, false, delegate.http_client()).await?;
         let version: Option<String> = release.tag_name.strip_prefix("gopls/v").map(str::to_string);
@@ -63,7 +77,7 @@ impl super::LspAdapter for GoLspAdapter {
                 release.tag_name
             );
         }
-        Ok(Box::new(version) as Box<_>)
+        Ok(Box::new(GoLspAssetVersion { version }) as Box<_>)
     }
 
     async fn check_if_user_installed(
@@ -138,14 +152,18 @@ impl super::LspAdapter for GoLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        version: Box<dyn AssetVersion>,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<Option<String>>().unwrap();
+        let version = &version
+            .as_any()
+            .downcast_ref::<GoLspAssetVersion>()
+            .unwrap()
+            .version;
         let this = *self;
 
-        if let Some(version) = *version {
+        if let Some(version) = version {
             let binary_path = container_dir.join(&format!("gopls_{version}"));
             if let Ok(metadata) = fs::metadata(&binary_path).await {
                 if metadata.is_file() {

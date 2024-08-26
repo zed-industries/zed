@@ -3,16 +3,15 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeAssetVersion, NodeRuntime};
 use serde_json::json;
 use smol::fs;
 use std::{
-    any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{maybe, ResultExt};
+use util::{maybe, AssetVersion, ResultExt};
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-css-language-server";
@@ -40,7 +39,7 @@ impl LspAdapter for CssLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Any + Send>> {
+    ) -> Result<Box<dyn AssetVersion>> {
         Ok(Box::new(
             self.node
                 .npm_package_latest_version("vscode-langservers-extracted")
@@ -50,22 +49,25 @@ impl LspAdapter for CssLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: Box<dyn AssetVersion>,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<String>().unwrap();
+        let latest_version = latest_version
+            .as_any()
+            .downcast_ref::<NodeAssetVersion>()
+            .unwrap()
+            .clone();
         let server_path = container_dir.join(SERVER_PATH);
-        let package_name = "vscode-langservers-extracted";
 
         let should_install_language_server = self
             .node
-            .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
+            .should_install_npm_package(&latest_version, &server_path, &container_dir)
             .await;
 
         if should_install_language_server {
             self.node
-                .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
+                .npm_install_packages(&container_dir, &[latest_version.clone()])
                 .await?;
         }
 

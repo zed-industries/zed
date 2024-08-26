@@ -10,3 +10,8 @@ This list should be updated as we notice things that should be changed so that w
 
 - Rename `SlashCommand.tooltip_text` to `SlashCommand.menu_text`
   - We may even want to remove it entirely, as right now this is only used for featured slash commands, and slash commands defined by extensions aren't currently able to be featured.
+
+### Expose extension binaries
+
+- At a basic level, we want to be able to know what language servers an extension may install so that the user can approve them.
+- This may tie in to a more general extension capability system.

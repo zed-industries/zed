@@ -16,14 +16,17 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use env_logger::Builder;
 use fs::{Fs, RealFs};
-use futures::{future, StreamExt};
+use futures::{channel::mpsc, future, StreamExt};
 use git::GitHostingProviderRegistry;
 use gpui::{
     Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, Task,
     UpdateGlobal as _, VisualContext,
 };
 use image_viewer;
-use language::LanguageRegistry;
+use language::{
+    language_settings::{AllLanguageSettings, DependencyManagement},
+    LanguageRegistry,
+};
 use log::LevelFilter;
 
 use assets::Assets;
@@ -448,7 +451,26 @@ fn main() {
             LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
-        let node_runtime = RealNodeRuntime::new(client.http_client());
+
+        let (server_tx, mut server_rx) = mpsc::unbounded();
+        let node_runtime = RealNodeRuntime::new(client.http_client(), server_tx);
+        cx.spawn(|cx| {
+            async move {
+                while let Some((asset_version, response)) = server_rx.next().await {
+                    let install_dependencies = cx
+                        .update(|cx| AllLanguageSettings::get_global(cx).dependency_management)
+                        .log_err();
+                    if install_dependencies == Some(DependencyManagement::Automatic) {
+                        response.send(Ok(())).ok();
+                    } else {
+                        response.send(
+                        Err(
+                            anyhow!("Could not find {}. Not installing because \"dependency_management\" is set to \"never\".", asset_version.description()))).ok();
+                    }
+                }
+            }
+        })
+        .detach();
 
         language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
@@ -483,6 +505,7 @@ fn main() {
             session: app_session,
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
+
 
         auto_update::init(client.http_client(), cx);
         reliability::init(client.http_client(), installation_id, cx);

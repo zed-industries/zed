@@ -8,6 +8,7 @@ pub mod test;
 use futures::Future;
 use rand::{seq::SliceRandom, Rng};
 use regex::Regex;
+use std::any::Any;
 use std::sync::OnceLock;
 use std::{
     borrow::Cow,
@@ -325,6 +326,19 @@ pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
         result
     } else {
         f()
+    }
+}
+
+pub trait AssetVersion: Sync + Send + 'static {
+    fn description(&self) -> String;
+    fn as_any(&self) -> &dyn Any;
+}
+
+impl std::fmt::Debug for dyn AssetVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("dyn AssetVersion")
+            .field("description", &self.description())
+            .finish()
     }
 }
 

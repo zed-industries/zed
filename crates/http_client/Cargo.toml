@@ -26,3 +26,4 @@ serde.workspace = true
 serde_json.workspace = true
 futures-lite.workspace = true
 url.workspace = true
+util.workspace = true
