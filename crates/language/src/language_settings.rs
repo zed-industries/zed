@@ -21,7 +21,7 @@ use serde::{
 use serde_json::Value;
 use settings::{add_references_to_properties, Settings, SettingsLocation, SettingsSources};
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
-use util::serde::default_true;
+use util::{serde::default_true, ResultExt};
 
 /// Initializes the language settings.
 pub fn init(cx: &mut AppContext) {
@@ -49,49 +49,49 @@ fn editorconfig_settings(
     file: Option<&Arc<dyn File>>,
     cx: &AppContext,
 ) -> Option<EditorConfigContent> {
-    file.and_then(|f| f.as_local())
-        // If we don't hit an `editorconfig` file, we don't update configs. This
-        // avoids a performance hit of cloning settings. We could consider showing
-        // the error to the user though (it may be a parsing error).
-        .and_then(|local_file| ec4rs::properties_of(local_file.abs_path(cx)).ok())
-        .and_then(|cfg| if cfg.is_empty() { None } else { Some(cfg) })
-        .map(|mut cfg| {
-            cfg.use_fallbacks();
-            let max_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
-                MaxLineLen::Value(u) => Some(u as u32),
-                MaxLineLen::Off => None,
-            });
-            EditorConfigContent {
-                tab_size: cfg.get::<IndentSize>().ok().and_then(|v| match v {
-                    IndentSize::Value(u) => NonZeroU32::new(u as u32),
-                    IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
-                        TabWidth::Value(u) => NonZeroU32::new(u as u32),
-                    }),
-                }),
-                hard_tabs: cfg
-                    .get::<IndentStyle>()
-                    .map(|v| v.eq(&IndentStyle::Tabs))
-                    .ok(),
-                ensure_final_newline_on_save: cfg
-                    .get::<FinalNewline>()
-                    .map(|v| match v {
-                        FinalNewline::Value(b) => b,
-                    })
-                    .ok(),
-                remove_trailing_whitespace_on_save: cfg
-                    .get::<TrimTrailingWs>()
-                    .map(|v| match v {
-                        TrimTrailingWs::Value(b) => b,
-                    })
-                    .ok(),
-                preferred_line_length: max_line_length,
-                soft_wrap: if max_line_length.is_some() {
-                    Some(SoftWrap::PreferredLineLength)
-                } else {
-                    None
-                },
-            }
-        })
+    let file_path = file?.as_local()?.abs_path(cx);
+    // TODO kb
+    let mut cfg = ec4rs::properties_of(file_path).log_err()?;
+    if cfg.is_empty() {
+        return None;
+    }
+
+    cfg.use_fallbacks();
+    let max_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
+        MaxLineLen::Value(u) => Some(u as u32),
+        MaxLineLen::Off => None,
+    });
+    let editorconfig = EditorConfigContent {
+        tab_size: cfg.get::<IndentSize>().ok().and_then(|v| match v {
+            IndentSize::Value(u) => NonZeroU32::new(u as u32),
+            IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
+                TabWidth::Value(u) => NonZeroU32::new(u as u32),
+            }),
+        }),
+        hard_tabs: cfg
+            .get::<IndentStyle>()
+            .map(|v| v.eq(&IndentStyle::Tabs))
+            .ok(),
+        ensure_final_newline_on_save: cfg
+            .get::<FinalNewline>()
+            .map(|v| match v {
+                FinalNewline::Value(b) => b,
+            })
+            .ok(),
+        remove_trailing_whitespace_on_save: cfg
+            .get::<TrimTrailingWs>()
+            .map(|v| match v {
+                TrimTrailingWs::Value(b) => b,
+            })
+            .ok(),
+        preferred_line_length: max_line_length,
+        soft_wrap: if max_line_length.is_some() {
+            Some(SoftWrap::PreferredLineLength)
+        } else {
+            None
+        },
+    };
+    Some(editorconfig)
 }
 
 /// Returns the settings for all languages from the provided file.
