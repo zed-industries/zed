@@ -1,8 +1,8 @@
-use anyhow::Result;
+use anyhow::{Error, Result};
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::scroll::Autoscroll;
 use editor::Editor;
-use gpui::{actions, AppContext, ViewContext, WindowContext};
+use gpui::{actions, AppContext, ViewContext, WindowContext, WindowHandle};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use workspace::{AppState, OpenVisible, Workspace};
+use workspace::{AppState, ItemHandle, OpenVisible, Workspace};
 
 actions!(journal, [NewJournalEntry]);
 
@@ -86,8 +86,6 @@ pub fn new_journal_entry(workspace: &mut Workspace, cx: &mut WindowContext) {
     let now = now.time();
     let entry_heading = heading_entry(now, &settings.hour_format);
 
-    let binding = journal_dir.clone();
-    let journal_dir_path = binding.as_os_str();
     let create_entry = cx.background_executor().spawn(async move {
         std::fs::create_dir_all(month_dir)?;
         OpenOptions::new()
@@ -98,24 +96,22 @@ pub fn new_journal_entry(workspace: &mut Workspace, cx: &mut WindowContext) {
         Ok::<_, std::io::Error>((journal_dir, entry_path))
     });
 
-    let app_state = workspace.app_state().clone();
-    let workspace_handle = workspace.weak_handle();
-
     let worktrees = workspace.visible_worktrees(cx).collect::<Vec<_>>();
-    println!("Current worktrees:");
     let mut open_new_workspace = true;
-    for (index, worktree) in worktrees.iter().enumerate() {
+    for worktree in worktrees.iter() {
         let root_name = worktree.read(cx).root_name();
-        println!("Worktree {}: {:?}", index, root_name);
-        println!("journal_dir_path: {journal_dir_path:?}");
         if root_name == "journal" {
             open_new_workspace = false;
             break;
         }
     }
 
+    let app_state = workspace.app_state().clone();
+    let workspace_handle = workspace.weak_handle().clone();
+
     cx.spawn(|mut cx| async move {
         let (journal_dir, entry_path) = create_entry.await?;
+        let opened: Vec<Option<Result<Box<dyn ItemHandle>, Error>>>;
         if open_new_workspace {
             let (workspace, _) = cx
                 .update(|cx| {
@@ -127,12 +123,18 @@ pub fn new_journal_entry(workspace: &mut Workspace, cx: &mut WindowContext) {
                     )
                 })?
                 .await?;
+            opened = workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.open_paths(vec![entry_path], OpenVisible::All, None, cx)
+                })?
+                .await;
+        } else {
+            opened = workspace_handle
+                .update(&mut cx, |workspace, cx| {
+                    workspace.open_paths(vec![entry_path], OpenVisible::All, None, cx)
+                })?
+                .await;
         }
-        let opened = workspace_handle
-            .update(&mut cx, |workspace, cx| {
-                workspace.open_paths(vec![entry_path], OpenVisible::All, None, cx)
-            })?
-            .await;
 
         if let Some(Some(Ok(item))) = opened.first() {
             if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
