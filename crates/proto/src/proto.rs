@@ -410,8 +410,8 @@ messages!(
     (LspExtSwitchSourceHeaderResponse, Background),
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
-    (FindSearchCandidates, Foreground),
-    (FindSearchCandidatesResponse, Foreground)
+    (FindSearchCandidates, Background),
+    (FindSearchCandidatesResponse, Background)
 );
 
 request_messages!(

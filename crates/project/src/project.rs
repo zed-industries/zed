@@ -7278,16 +7278,12 @@ impl Project {
         let (result_tx, result_rx) = smol::channel::bounded(1024);
 
         let matching_buffers_rx =
-            self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES, cx);
+            self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx);
 
         cx.spawn(|_, cx| async move {
-            let mut matching_buffers = matching_buffers_rx
-                .take(MAX_SEARCH_RESULT_FILES + 1)
-                .collect::<Vec<_>>()
-                .await;
-            // todo!() check we still notice max results
+            let mut matching_buffers = matching_buffers_rx.collect::<Vec<_>>().await;
             let mut limit_reached = if matching_buffers.len() > MAX_SEARCH_RESULT_FILES {
-                matching_buffers.pop();
+                matching_buffers.truncate(MAX_SEARCH_RESULT_FILES);
                 true
             } else {
                 false
