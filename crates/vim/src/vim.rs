@@ -23,8 +23,8 @@ use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, AppContext, EventEmitter, KeyContext, KeystrokeEvent, Render,
-    View, ViewContext, WeakView,
+    actions, impl_actions, Action, AppContext, Entity, EventEmitter, KeyContext, KeystrokeEvent,
+    Render, View, ViewContext, WeakView,
 };
 use insert::NormalBefore;
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -38,7 +38,7 @@ use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{ops::Range, sync::Arc};
 use surrounds::SurroundsType;
-use ui::{IntoElement, VisualContext};
+use ui::{Element, IntoElement, VisualContext};
 use workspace::{self, Pane, Workspace};
 
 use crate::state::ReplayableAction;
@@ -634,6 +634,31 @@ impl Vim {
 
         cx.emit(VimEvent::Focused);
         self.sync_vim_settings(cx);
+
+        if let Some(old_vim) = Vim::globals(cx).vim() {
+            if old_vim.entity_id() == cx.view().entity_id() {
+                return;
+            } else {
+                if VimSettings::get_global(cx).toggle_relative_line_numbers {
+                    old_vim.update(cx, |vim, cx| {
+                        vim.update_editor(cx, |_, editor, cx| {
+                            editor.set_relative_line_number(None, cx)
+                        });
+                    });
+                    self.update_editor(cx, |_, editor, cx| {
+                        editor.set_relative_line_number(Some(true), cx)
+                    });
+                }
+                Vim::globals(cx).vim = Some(cx.view().downgrade());
+            }
+        } else {
+            if VimSettings::get_global(cx).toggle_relative_line_numbers {
+                self.update_editor(cx, |_, editor, cx| {
+                    editor.set_relative_line_number(Some(true), cx)
+                });
+            }
+            Vim::globals(cx).vim = Some(cx.view().downgrade());
+        }
     }
 
     fn blurred(&mut self, cx: &mut ViewContext<Self>) {
