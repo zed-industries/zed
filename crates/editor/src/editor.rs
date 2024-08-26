@@ -10910,7 +10910,7 @@ impl Editor {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 if let Some(path) = file.path().to_str() {
                     let selection = self.selections.newest::<Point>(cx).start.row + 1;
-                    cx.write_to_clipboard(ClipboardItem::new(format!("{path}:{selection}")));
+                    cx.write_to_clipboard(ClipboardItem::new_string(format!("{path}:{selection}")));
                 }
             }
         }
