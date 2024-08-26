@@ -176,7 +176,9 @@ pub enum Event {
     ActivateItem {
         local: bool,
     },
-    Remove { focus_on_pane: Option<View<Pane>> },
+    Remove {
+        focus_on_pane: Option<View<Pane>>,
+    },
     RemoveItem {
         idx: usize,
     },
