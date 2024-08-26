@@ -895,7 +895,8 @@
       "api_url": "https://generativelanguage.googleapis.com"
     },
     "ollama": {
-      "api_url": "http://localhost:11434"
+      "api_url": "http://localhost:11434",
+      "low_speed_timeout_in_seconds": 60
     },
     "openai": {
       "version": "1",
