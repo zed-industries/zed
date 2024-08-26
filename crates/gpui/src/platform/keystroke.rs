@@ -165,7 +165,7 @@ fn is_printable_key(key: &str) -> bool {
         "f1" | "f2" | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9" | "f10" | "f11" | "f12"
         | "f13" | "f14" | "f15" | "f16" | "f17" | "f18" | "f19" | "up" | "down" | "left"
         | "right" | "pageup" | "pagedown" | "home" | "end" | "delete" | "insert" | "escape"
-        | "backspace" | "pause" | "break" | "scrolllock" | "printscreen" | "sysrq" => false,
+        | "backspace" => false,
         _ => true,
     }
 }
