@@ -60,15 +60,15 @@ pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
 
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
-            workspace.register_action(|mut workspace, _: &NewJournalEntry, cx| {
-                new_journal_entry(&mut workspace, cx);
+            workspace.register_action(|workspace, _: &NewJournalEntry, cx| {
+                new_journal_entry(&workspace, cx);
             });
         },
     )
     .detach();
 }
 
-pub fn new_journal_entry(workspace: &mut Workspace, cx: &mut WindowContext) {
+pub fn new_journal_entry(workspace: &Workspace, cx: &mut WindowContext) {
     let settings = JournalSettings::get_global(cx);
     let journal_dir = match journal_dir(settings.path.as_ref().unwrap()) {
         Some(journal_dir) => journal_dir,
