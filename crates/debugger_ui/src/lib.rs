@@ -6,6 +6,7 @@ use settings::Settings;
 use ui::ViewContext;
 use workspace::{StartDebugger, Workspace};
 
+mod console;
 pub mod debugger_panel;
 mod debugger_panel_item;
 mod variable_list;

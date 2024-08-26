@@ -1,5 +1,7 @@
+use crate::console::Console;
 use crate::debugger_panel::{DebugPanel, DebugPanelEvent};
 use crate::variable_list::VariableList;
+
 use anyhow::Result;
 use dap::client::{DebugAdapterClient, DebugAdapterClientId, ThreadState, ThreadStatus};
 use dap::{
@@ -43,6 +45,7 @@ pub enum ThreadEntry {
 pub struct DebugPanelItem {
     thread_id: u64,
     variable_list: View<VariableList>,
+    console: View<Console>,
     focus_handle: FocusHandle,
     stack_frame_list: ListState,
     output_editor: View<Editor>,
@@ -91,6 +94,7 @@ impl DebugPanelItem {
 
         let model = cx.model().clone();
         let variable_list = cx.new_view(|cx| VariableList::new(model, cx));
+        let console = cx.new_view(|cx| Console::new(cx));
 
         let weakview = cx.view().downgrade();
         let stack_frame_list =
@@ -143,6 +147,7 @@ impl DebugPanelItem {
             workspace,
             focus_handle,
             variable_list,
+            console,
             output_editor,
             _subscriptions,
             stack_frame_list,
@@ -201,23 +206,44 @@ impl DebugPanelItem {
             return;
         }
 
-        if event
+        // The default value of an event category is console
+        // so we assume that is the output type if it doesn't exist
+        let output_category = event
             .category
             .as_ref()
-            .map(|c| *c == OutputEventCategory::Telemetry)
-            .unwrap_or(false)
-        {
-            return;
+            .unwrap_or(&OutputEventCategory::Console);
+
+        match output_category {
+            OutputEventCategory::Console => {
+                this.console.update(cx, |console, cx| {
+                    console.add_message(&event.output, cx);
+                });
+            }
+            // OutputEventCategory::Stderr => {}
+            OutputEventCategory::Stdout => {
+                this.output_editor.update(cx, |editor, cx| {
+                    editor.set_read_only(false);
+                    editor.move_to_end(&editor::actions::MoveToEnd, cx);
+                    editor.insert(format!("{}\n", &event.output.trim_end()).as_str(), cx);
+                    editor.set_read_only(true);
+
+                    cx.notify();
+                });
+            }
+            // OutputEventCategory::Unknown => {}
+            // OutputEventCategory::Important => {}
+            OutputEventCategory::Telemetry => {}
+            _ => {
+                this.output_editor.update(cx, |editor, cx| {
+                    editor.set_read_only(false);
+                    editor.move_to_end(&editor::actions::MoveToEnd, cx);
+                    editor.insert(format!("{}\n", &event.output.trim_end()).as_str(), cx);
+                    editor.set_read_only(true);
+
+                    cx.notify();
+                });
+            }
         }
-
-        this.output_editor.update(cx, |editor, cx| {
-            editor.set_read_only(false);
-            editor.move_to_end(&editor::actions::MoveToEnd, cx);
-            editor.insert(format!("{}\n", &event.output.trim_end()).as_str(), cx);
-            editor.set_read_only(true);
-
-            cx.notify();
-        });
     }
 
     fn handle_client_stopped_event(
@@ -715,6 +741,9 @@ impl Render for DebugPanelItem {
                     })
                     .when(*active_thread_item == ThreadItem::Output, |this| {
                         this.child(self.output_editor.clone())
+                    })
+                    .when(*active_thread_item == ThreadItem::Console, |this| {
+                        this.child(self.console.clone())
                     }),
             )
             .into_any()

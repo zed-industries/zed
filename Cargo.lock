@@ -3317,6 +3317,7 @@ dependencies = [
  "settings",
  "task",
  "tasks_ui",
+ "theme",
  "ui",
  "util",
  "workspace",
