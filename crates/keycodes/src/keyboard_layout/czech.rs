@@ -9,7 +9,7 @@ pub(crate) fn map_keystroke(keystroke: &str) -> String {
         ";" => "ů",
         "'" => "§",
         "," => ",",
-        // "." => ".",
+        // "." => ".", same on both layouts
         "/" => "-",
         "1" => "+",
         "2" => "ě",
@@ -21,6 +21,8 @@ pub(crate) fn map_keystroke(keystroke: &str) -> String {
         "8" => "á",
         "9" => "í",
         "0" => "é",
+        // mapping shift-;
+        ":" => "\"",
         _ => keystroke,
     }
     .to_string()
