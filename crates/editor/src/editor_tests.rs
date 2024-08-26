@@ -6885,7 +6885,7 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(true);
+                settings.auto_signature_help = true;
             });
         });
     });
@@ -7026,8 +7026,8 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(false);
-                settings.show_signature_help_after_edits = Some(false);
+                settings.auto_signature_help = false;
+                settings.show_signature_help_after_edits = false;
             });
         });
     });
@@ -7153,8 +7153,8 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(false);
-                settings.show_signature_help_after_edits = Some(true);
+                settings.auto_signature_help = false;
+                settings.show_signature_help_after_edits = true;
             });
         });
     });
@@ -7195,8 +7195,8 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(true);
-                settings.show_signature_help_after_edits = Some(false);
+                settings.auto_signature_help = true;
+                settings.show_signature_help_after_edits = false;
             });
         });
     });
@@ -7239,7 +7239,7 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(true);
+                settings.auto_signature_help = true;
             });
         });
     });
@@ -7648,7 +7648,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     _ = cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.show_completions_on_input = Some(false);
+                settings.show_completions_on_input = false;
             });
         })
     });
