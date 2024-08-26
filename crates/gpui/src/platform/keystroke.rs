@@ -50,6 +50,7 @@ impl Keystroke {
     /// ime_key syntax is only used for generating test events,
     /// when matching a key with an ime_key set will be matched without it.
     pub fn parse(source: &str) -> anyhow::Result<Self> {
+        println!("  => parsing: {}", source);
         let mut control = false;
         let mut alt = false;
         let mut shift = false;
@@ -60,6 +61,7 @@ impl Keystroke {
 
         let mut components = source.split('-').peekable();
         while let Some(component) = components.next() {
+            println!("      => this: {}", component);
             match component {
                 "ctrl" => control = true,
                 "alt" => alt = true,
@@ -68,22 +70,36 @@ impl Keystroke {
                 "cmd" | "super" | "win" => platform = true,
                 _ => {
                     if let Some(next) = components.peek() {
+                        println!("      => next: {}", next);
                         if next.is_empty() && source.ends_with('-') {
-                            key = Some(String::from("-"));
+                            // key = Some(String::from("-"));
+                            key = Some(keycodes::translate_key(
+                                "-",
+                                keycodes::KeyboardLayout::Czech,
+                            ));
                             break;
                         } else if next.len() > 1 && next.starts_with('>') {
-                            key = Some(String::from(component));
+                            // key = Some(String::from(component));
+                            key = Some(keycodes::translate_key(
+                                component,
+                                keycodes::KeyboardLayout::Czech,
+                            ));
                             ime_key = Some(String::from(&next[1..]));
                             components.next();
                         } else {
                             return Err(anyhow!("Invalid keystroke `{}`", source));
                         }
                     } else {
-                        key = Some(String::from(component));
+                        // key = Some(String::from(component));
+                        key = Some(keycodes::translate_key(
+                            component,
+                            keycodes::KeyboardLayout::Czech,
+                        ));
                     }
                 }
             }
         }
+        println!("      => res: {:?}", key);
 
         //Allow for the user to specify a keystroke modifier as the key itself
         //This sets the `key` to the modifier, and disables the modifier

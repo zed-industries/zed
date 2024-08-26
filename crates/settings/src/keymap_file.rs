@@ -47,7 +47,9 @@ impl KeymapFile {
         if content.is_empty() {
             return Ok(Self::default());
         }
-        parse_json_with_comments::<Self>(content)
+        let ret = parse_json_with_comments::<Self>(content);
+        // println!("-> {:#?}", ret);
+        ret
     }
 
     pub fn add_to_cx(self, cx: &mut AppContext) -> Result<()> {
@@ -55,6 +57,7 @@ impl KeymapFile {
             let bindings = bindings
                 .into_iter()
                 .filter_map(|(keystroke, action)| {
+                    println!("-> Keystroke: {}, action: {:?}", keystroke, action);
                     let action = action.0;
 
                     // This is a workaround for a limitation in serde: serde-rs/json#497

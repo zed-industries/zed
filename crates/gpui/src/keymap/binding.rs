@@ -33,10 +33,12 @@ impl KeyBinding {
             None
         };
 
+        let key = keystrokes.to_string();
         let keystrokes = keystrokes
             .split_whitespace()
             .map(Keystroke::parse)
             .collect::<Result<_>>()?;
+        println!("--> key: {} => {:?}", key, keystrokes);
 
         Ok(Self {
             keystrokes,
