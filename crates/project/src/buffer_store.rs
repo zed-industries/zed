@@ -806,7 +806,7 @@ impl BufferStore {
             worktree_store.find_search_candidates(query.clone(), limit, open_buffers, fs, cx)
         });
 
-        const MAX_CONCURRENT_BUFFER_OPENS: usize = 8;
+        const MAX_CONCURRENT_BUFFER_OPENS: usize = 64;
 
         for _ in 0..MAX_CONCURRENT_BUFFER_OPENS {
             let mut match_rx = match_rx.clone();
@@ -826,53 +826,6 @@ impl BufferStore {
             .detach();
         }
         rx
-    }
-
-    /// Returns open buffers filtered by filename
-    /// Does *not* check the buffer content, the caller must do that
-    fn find_open_search_candidates(
-        &self,
-        query: &SearchQuery,
-        cx: &ModelContext<Self>,
-    ) -> Vec<Model<Buffer>> {
-        let include_root = self
-            .worktree_store
-            .read(cx)
-            .visible_worktrees(cx)
-            .collect::<Vec<_>>()
-            .len()
-            > 1;
-        self.buffers()
-            .filter_map(|buffer| {
-                let handle = buffer.clone();
-                buffer.read_with(cx, |buffer, cx| {
-                    let worktree_store = self.worktree_store.read(cx);
-                    let entry_id = buffer.entry_id(cx);
-                    let is_ignored = entry_id
-                        .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
-                        .map_or(false, |entry| entry.is_ignored);
-
-                    if is_ignored && !query.include_ignored() {
-                        return None;
-                    }
-                    if let Some(file) = buffer.file() {
-                        let matched_path = if include_root {
-                            query.file_matches(Some(&file.full_path(cx)))
-                        } else {
-                            query.file_matches(Some(file.path()))
-                        };
-
-                        if matched_path {
-                            Some(handle)
-                        } else {
-                            None
-                        }
-                    } else {
-                        Some(handle)
-                    }
-                })
-            })
-            .collect()
     }
 
     fn on_buffer_event(

@@ -11,6 +11,7 @@ use editor::{
     Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer,
     MAX_TAB_TITLE_LEN,
 };
+use futures::StreamExt;
 use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, EntityId, EventEmitter,
     FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement, KeyContext, Model,
@@ -20,7 +21,6 @@ use gpui::{
 use menu::Confirm;
 use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
 use settings::Settings;
-use smol::stream::StreamExt;
 use std::{
     any::{Any, TypeId},
     mem,
@@ -209,7 +209,7 @@ impl ProjectSearch {
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
-            let mut matches = search;
+            let mut matches = search.ready_chunks(1024);
             let this = this.upgrade()?;
             this.update(&mut cx, |this, cx| {
                 this.match_ranges.clear();
@@ -220,33 +220,35 @@ impl ProjectSearch {
             .ok()?;
 
             let mut limit_reached = false;
-            while let Some(result) = matches.next().await {
-                match result {
-                    project::search::SearchResult::Buffer { buffer, ranges } => {
-                        let mut match_ranges = this
-                            .update(&mut cx, |this, cx| {
-                                this.excerpts.update(cx, |excerpts, cx| {
-                                    excerpts.stream_excerpts_with_context_lines(
-                                        buffer,
-                                        ranges,
-                                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                                        cx,
-                                    )
+            while let Some(results) = matches.next().await {
+                for result in results {
+                    match result {
+                        project::search::SearchResult::Buffer { buffer, ranges } => {
+                            let mut match_ranges = this
+                                .update(&mut cx, |this, cx| {
+                                    this.excerpts.update(cx, |excerpts, cx| {
+                                        excerpts.stream_excerpts_with_context_lines(
+                                            buffer,
+                                            ranges,
+                                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                                            cx,
+                                        )
+                                    })
                                 })
-                            })
-                            .ok()?;
+                                .ok()?;
 
-                        while let Some(range) = match_ranges.next().await {
-                            this.update(&mut cx, |this, _| {
-                                this.no_results = Some(false);
-                                this.match_ranges.push(range)
-                            })
-                            .ok()?;
+                            while let Some(range) = match_ranges.next().await {
+                                this.update(&mut cx, |this, _| {
+                                    this.no_results = Some(false);
+                                    this.match_ranges.push(range)
+                                })
+                                .ok()?;
+                            }
+                            this.update(&mut cx, |_, cx| cx.notify()).ok()?;
                         }
-                        this.update(&mut cx, |_, cx| cx.notify()).ok()?;
-                    }
-                    project::search::SearchResult::LimitReached => {
-                        limit_reached = true;
+                        project::search::SearchResult::LimitReached => {
+                            limit_reached = true;
+                        }
                     }
                 }
             }

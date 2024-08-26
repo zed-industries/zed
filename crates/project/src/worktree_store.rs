@@ -1,11 +1,7 @@
 use std::{
-    cmp,
     collections::VecDeque,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc,
-    },
+    sync::Arc,
 };
 
 use anyhow::{anyhow, Context as _, Result};
@@ -325,7 +321,7 @@ impl WorktreeStore {
             let query = &query;
             executor
                 .scoped(move |scope| {
-                    for _ in 0..workers {
+                    for _ in 0..64 {
                         let filter_rx = filter_rx.clone();
                         scope.spawn(async move {
                             Self::filter_paths(fs, filter_rx, query).await.log_err();
@@ -341,14 +337,16 @@ impl WorktreeStore {
                     let Some(path) = receiver.next().await else {
                         continue;
                     };
-                    matching_paths_tx.send(path).await.log_err();
+                    let Ok(_) = matching_paths_tx.send(path).await else {
+                        break;
+                    };
                     matched += 1;
                     if matched == limit {
                         break;
                     }
                 }
                 drop(input);
-                drop(filters)
+                drop(filters);
             })
             .detach();
         return matching_paths_rx;
