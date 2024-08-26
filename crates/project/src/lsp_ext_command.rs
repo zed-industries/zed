@@ -135,3 +135,97 @@ impl LspCommand for ExpandMacro {
         BufferId::new(message.buffer_id)
     }
 }
+
+pub enum LspSwitchSourceHeader {}
+
+impl lsp::request::Request for LspSwitchSourceHeader {
+    type Params = SwitchSourceHeaderParams;
+    type Result = Option<SwitchSourceHeaderResult>;
+    const METHOD: &'static str = "textDocument/switchSourceHeader";
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchSourceHeaderParams(lsp::TextDocumentIdentifier);
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchSourceHeaderResult(pub String);
+
+#[derive(Default, Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchSourceHeader;
+
+#[async_trait(?Send)]
+impl LspCommand for SwitchSourceHeader {
+    type Response = SwitchSourceHeaderResult;
+    type LspRequest = LspSwitchSourceHeader;
+    type ProtoRequest = proto::LspExtSwitchSourceHeader;
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> SwitchSourceHeaderParams {
+        SwitchSourceHeaderParams(lsp::TextDocumentIdentifier {
+            uri: lsp::Url::from_file_path(path).unwrap(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<SwitchSourceHeaderResult>,
+        _: Model<Project>,
+        _: Model<Buffer>,
+        _: LanguageServerId,
+        _: AsyncAppContext,
+    ) -> anyhow::Result<SwitchSourceHeaderResult> {
+        Ok(message
+            .map(|message| SwitchSourceHeaderResult(message.0))
+            .unwrap_or_default())
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LspExtSwitchSourceHeader {
+        proto::LspExtSwitchSourceHeader {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+        }
+    }
+
+    async fn from_proto(
+        _: Self::ProtoRequest,
+        _: Model<Project>,
+        _: Model<Buffer>,
+        _: AsyncAppContext,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {})
+    }
+
+    fn response_to_proto(
+        response: SwitchSourceHeaderResult,
+        _: &mut Project,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut AppContext,
+    ) -> proto::LspExtSwitchSourceHeaderResponse {
+        proto::LspExtSwitchSourceHeaderResponse {
+            target_file: response.0,
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::LspExtSwitchSourceHeaderResponse,
+        _: Model<Project>,
+        _: Model<Buffer>,
+        _: AsyncAppContext,
+    ) -> anyhow::Result<SwitchSourceHeaderResult> {
+        Ok(SwitchSourceHeaderResult(message.target_file))
+    }
+
+    fn buffer_id_from_proto(message: &proto::LspExtSwitchSourceHeader) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}

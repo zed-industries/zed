@@ -406,8 +406,12 @@ messages!(
     (UpdateContext, Foreground),
     (SynchronizeContexts, Foreground),
     (SynchronizeContextsResponse, Foreground),
+    (LspExtSwitchSourceHeader, Background),
+    (LspExtSwitchSourceHeaderResponse, Background),
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
+    (FindSearchCandidates, Background),
+    (FindSearchCandidatesResponse, Background)
 );
 
 request_messages!(
@@ -496,6 +500,7 @@ request_messages!(
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
     (SearchProject, SearchProjectResponse),
+    (FindSearchCandidates, FindSearchCandidatesResponse),
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
     (SetChannelVisibility, Ack),
@@ -528,6 +533,7 @@ request_messages!(
     (OpenContext, OpenContextResponse),
     (CreateContext, CreateContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
+    (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
 );
 
@@ -544,6 +550,7 @@ entity_messages!(
     CreateProjectEntry,
     DeleteProjectEntry,
     ExpandProjectEntry,
+    FindSearchCandidates,
     FormatBuffers,
     GetCodeActions,
     GetCompletions,
@@ -597,6 +604,7 @@ entity_messages!(
     CreateContext,
     UpdateContext,
     SynchronizeContexts,
+    LspExtSwitchSourceHeader
 );
 
 entity_messages!(

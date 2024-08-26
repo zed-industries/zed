@@ -3041,4 +3041,12 @@ impl LineEnding {
             text
         }
     }
+
+    pub fn normalize_cow(text: Cow<str>) -> Cow<str> {
+        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
+            replaced.into()
+        } else {
+            text
+        }
+    }
 }

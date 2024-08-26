@@ -743,8 +743,29 @@ impl Worktree {
             Worktree::Local(this) => this.delete_entry(entry_id, trash, cx),
             Worktree::Remote(this) => this.delete_entry(entry_id, trash, cx),
         }?;
-        cx.emit(Event::DeletedEntry(entry_id));
+
+        let entry = match self {
+            Worktree::Local(ref this) => this.entry_for_id(entry_id),
+            Worktree::Remote(ref this) => this.entry_for_id(entry_id),
+        }?;
+
+        let mut ids = vec![entry_id];
+        let path = &*entry.path;
+
+        self.get_children_ids_recursive(path, &mut ids);
+
+        for id in ids {
+            cx.emit(Event::DeletedEntry(id));
+        }
         Some(task)
+    }
+
+    fn get_children_ids_recursive(&self, path: &Path, ids: &mut Vec<ProjectEntryId>) {
+        let children_iter = self.child_entries(path);
+        for child in children_iter {
+            ids.push(child.id);
+            self.get_children_ids_recursive(&child.path, ids);
+        }
     }
 
     pub fn rename_entry(
@@ -3165,6 +3186,7 @@ pub struct Entry {
     /// Whether this entry is considered to be a `.env` file.
     pub is_private: bool,
     pub char_bag: CharBag,
+    pub is_fifo: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -3225,6 +3247,7 @@ impl Entry {
             is_private: false,
             git_status: None,
             char_bag,
+            is_fifo: metadata.is_fifo,
         }
     }
 
@@ -5085,6 +5108,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
             git_status: entry.git_status.map(git_status_to_proto),
+            is_fifo: entry.is_fifo,
         }
     }
 }
@@ -5113,6 +5137,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             is_private: false,
             is_symlink: entry.is_symlink,
             char_bag,
+            is_fifo: entry.is_fifo,
         })
     }
 }

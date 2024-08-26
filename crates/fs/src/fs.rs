@@ -9,6 +9,9 @@ use std::{fs::File, os::fd::AsFd};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
+#[cfg(unix)]
+use std::os::unix::fs::FileTypeExt;
+
 use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
 use git::repository::{GitRepository, RealGitRepository};
@@ -149,6 +152,7 @@ pub struct Metadata {
     pub mtime: SystemTime,
     pub is_symlink: bool,
     pub is_dir: bool,
+    pub is_fifo: bool,
 }
 
 #[derive(Default)]
@@ -351,6 +355,16 @@ impl Fs for RealFs {
                 // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
                 // See https://github.com/zed-industries/zed/pull/8437 for more details.
                 NamedTempFile::new_in(path.parent().unwrap_or(&paths::temp_dir()))
+            } else if cfg!(target_os = "windows") {
+                // If temp dir is set to a different drive than the destination,
+                // we receive error:
+                //
+                // failed to persist temporary file:
+                // The system cannot move the file to a different disk drive. (os error 17)
+                //
+                // So we use the directory of the destination as a temp dir to avoid it.
+                // https://github.com/zed-industries/zed/issues/16571
+                NamedTempFile::new_in(path.parent().unwrap_or(&paths::temp_dir()))
             } else {
                 NamedTempFile::new()
             }?;
@@ -418,11 +432,18 @@ impl Fs for RealFs {
         #[cfg(windows)]
         let inode = file_id(path).await?;
 
+        #[cfg(windows)]
+        let is_fifo = false;
+
+        #[cfg(unix)]
+        let is_fifo = metadata.file_type().is_fifo();
+
         Ok(Some(Metadata {
             inode,
             mtime: metadata.modified().unwrap(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
+            is_fifo,
         }))
     }
 
@@ -1527,12 +1548,14 @@ impl Fs for FakeFs {
                     mtime: *mtime,
                     is_dir: false,
                     is_symlink,
+                    is_fifo: false,
                 },
                 FakeFsEntry::Dir { inode, mtime, .. } => Metadata {
                     inode: *inode,
                     mtime: *mtime,
                     is_dir: true,
                     is_symlink,
+                    is_fifo: false,
                 },
                 FakeFsEntry::Symlink { .. } => unreachable!(),
             }))

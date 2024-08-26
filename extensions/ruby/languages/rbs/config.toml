@@ -1,4 +1,4 @@
-name = "rbs"
+name = "RBS"
 grammar = "rbs"
 path_suffixes = ["rbs"]
 autoclose_before = "]})"

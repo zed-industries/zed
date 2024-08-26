@@ -3,11 +3,11 @@
 # General
 
 - [Getting Started](./getting-started.md)
-  - [System Requirements](./system-requirements.md)
-  - [Linux](./linux.md)
-  - [Windows](./windows.md)
-  - [Telemetry](./telemetry.md)
-  - [Additional Learning Materials](./additional-learning-materials.md)
+- [System Requirements](./system-requirements.md)
+- [Linux](./linux.md)
+- [Windows](./windows.md)
+- [Telemetry](./telemetry.md)
+- [Additional Learning Materials](./additional-learning-materials.md)
 
 # Configuration
 
@@ -32,13 +32,13 @@
 
 # Assistant
 
-- [Assistant](./assistant/assistant.md)
-  - [Configuration](./assistant/configuration.md)
-  - [Assistant Panel](./assistant/assistant-panel.md)
-  - [Contexts](./assistant/contexts.md)
-  - [Inline Assistant](./assistant/inline-assistant.md)
-  - [Commands](./assistant/commands.md)
-  - [Prompts](./assistant/prompting.md)
+- [Overview](./assistant/assistant.md)
+- [Configuration](./assistant/configuration.md)
+- [Assistant Panel](./assistant/assistant-panel.md)
+- [Contexts](./assistant/contexts.md)
+- [Inline Assistant](./assistant/inline-assistant.md)
+- [Commands](./assistant/commands.md)
+- [Prompts](./assistant/prompting.md)
 
 # Extensions
 

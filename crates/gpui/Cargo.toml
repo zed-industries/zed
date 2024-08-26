@@ -178,3 +178,7 @@ path = "examples/input.rs"
 [[example]]
 name = "shadow"
 path = "examples/shadow.rs"
+
+[[example]]
+name = "text_wrapper"
+path = "examples/text_wrapper.rs"
