@@ -916,35 +916,26 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
                 start_offset += newline_offset + 1;
             }
             let log_suffix = &log[start_offset..];
+            let header = concat!(
+                "// Zed collects anonymous usage data to help us understand how people are using the app.\n",
+                "// Telemetry can be disabled via the `settings.json` file.\n",
+                "// Here is the data that has been reported for the current session:\n",
+            );
+            let content = format!("{}\n{}", header, log_suffix);
             let json = app_state.languages.language_for_name("JSON").await.log_err();
 
             workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project().clone();
-                let buffer = project
-                    .update(cx, |project, cx| project.create_local_buffer("", None, cx));
-                buffer.update(cx, |buffer, cx| {
-                    buffer.set_language(json, cx);
-                    buffer.edit(
-                        [(
-                            0..0,
-                            concat!(
-                                "// Zed collects anonymous usage data to help us understand how people are using the app.\n",
-                                "// Telemetry can be disabled via the `settings.json` file.\n",
-                                "// Here is the data that has been reported for the current session:\n",
-                                "\n"
-                            ),
-                        )],
-                        None,
-                        cx,
-                    );
-                    buffer.edit([(buffer.len()..buffer.len(), log_suffix)], None, cx);
-                });
-
+                let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json, cx));
                 let buffer = cx.new_model(|cx| {
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
                 workspace.add_item_to_active_pane(
-                    Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), true, cx))),
+                    Box::new(cx.new_view(|cx| {
+                        let mut editor = Editor::for_multibuffer(buffer, Some(project), true, cx);
+                        editor.set_breadcrumb_header("Telemetry Log".into());
+                        editor
+                    })),
                     None,
                     true,
                     cx,
@@ -979,7 +970,11 @@ fn open_bundled_file(
                     });
                     workspace.add_item_to_active_pane(
                         Box::new(cx.new_view(|cx| {
-                            Editor::for_multibuffer(buffer, Some(project.clone()), true, cx)
+                            let mut editor =
+                                Editor::for_multibuffer(buffer, Some(project.clone()), true, cx);
+                            editor.set_read_only(true);
+                            editor.set_breadcrumb_header(title.into());
+                            editor
                         })),
                         None,
                         true,
