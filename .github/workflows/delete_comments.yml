@@ -31,15 +31,3 @@ jobs:
               repo: context.repo.repo,
               comment_id: commentId
             });
-
-      - name: Block user if comment contains any of the specific strings
-        if: steps.check_comment.outputs.result == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const userId = context.payload.comment.user.id;
-            await github.rest.users.block({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              user_id: userId
-            });
