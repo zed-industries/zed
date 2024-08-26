@@ -7706,7 +7706,7 @@ impl Project {
                 for candidate in candidates.iter() {
                     let path = worktree
                         .update(&mut cx, |worktree, _| {
-                            let root_entry_path = &worktree.root_entry().unwrap().path;
+                            let root_entry_path = &worktree.root_entry()?.path;
 
                             let resolved = resolve_path(&root_entry_path, candidate);
 
