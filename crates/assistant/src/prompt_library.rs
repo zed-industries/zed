@@ -1,6 +1,4 @@
-use crate::{
-    slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssist, InlineAssistant,
-};
+use crate::{slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssistant};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
@@ -44,6 +42,7 @@ use ui::{
 use util::{ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::Workspace;
+use zed_actions::InlineAssist;
 
 actions!(
     prompt_library,

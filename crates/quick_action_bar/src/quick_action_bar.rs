@@ -1,5 +1,5 @@
 use assistant::assistant_settings::AssistantSettings;
-use assistant::{AssistantPanel, InlineAssist};
+use assistant::AssistantPanel;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
     GoToPrevDiagnostic, GoToPrevHunk, MoveLineDown, MoveLineUp, SelectAll, SelectLargerSyntaxNode,
@@ -20,6 +20,7 @@ use ui::{
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
+use zed_actions::InlineAssist;
 
 mod repl_menu;
 mod toggle_markdown_preview;
