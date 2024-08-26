@@ -57,7 +57,6 @@ g <space>  Open the current search excerpt
 <ctrl-w> g D      Go to type definition in a split
 
 # Insert mode
-i a / a a      Select the function argument the cursor is in
 ctrl-x ctrl-o  Open the completion menu
 ctrl-x ctrl-c  Request GitHub Copilot suggestion (if configured)
 ctrl-x ctrl-a  Open the inline AI assistant (if configured)
