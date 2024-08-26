@@ -19,18 +19,20 @@ use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
 use git::GitHostingProviderRegistry;
 use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
-use http::FakeHttpClient;
+use http_client::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
+use remote::SshSession;
 use rpc::{
     proto::{self, ChannelRole},
     RECEIVE_TIMEOUT,
 };
 use semantic_version::SemanticVersion;
 use serde_json::json;
+use session::{AppSession, Session};
 use settings::SettingsStore;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -155,6 +157,8 @@ impl TestServer {
     }
 
     pub async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
+        let fs = FakeFs::new(cx.executor());
+
         cx.update(|cx| {
             if cx.has_global::<SettingsStore>() {
                 panic!("Same cx used to create two test clients")
@@ -240,6 +244,7 @@ impl TestServer {
                                 client_name,
                                 Principal::User(user),
                                 ZedVersion(SemanticVersion::new(1, 0, 0)),
+                                None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
                             ))
@@ -263,10 +268,10 @@ impl TestServer {
         git_hosting_provider_registry
             .register_hosting_provider(Arc::new(git_hosting_providers::Github));
 
-        let fs = FakeFs::new(cx.executor());
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
@@ -275,6 +280,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
+            session,
         });
 
         let os_keymap = "keymaps/default-macos.json";
@@ -294,7 +300,7 @@ impl TestServer {
             menu::init();
             dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
-            assistant::FakeCompletionProvider::setup_test(cx);
+            language_model::LanguageModelRegistry::test(cx);
             assistant::context_store::init(&client);
         });
 
@@ -372,6 +378,7 @@ impl TestServer {
                                 "dev-server".to_string(),
                                 Principal::DevServer(dev_server),
                                 ZedVersion(SemanticVersion::new(1, 0, 0)),
+                                None,
                                 Some(connection_id_tx),
                                 Executor::Deterministic(cx.background_executor().clone()),
                             ))
@@ -394,6 +401,7 @@ impl TestServer {
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
@@ -402,6 +410,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: FakeNodeRuntime::new(),
+            session,
         });
 
         cx.update(|cx| {
@@ -629,6 +638,7 @@ impl TestServer {
             db: test_db.db().clone(),
             live_kit_client: Some(Arc::new(live_kit_test_server.create_api_client())),
             blob_store_client: None,
+            stripe_client: None,
             rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             clickhouse_client: None,
@@ -641,6 +651,10 @@ impl TestServer {
                 live_kit_server: None,
                 live_kit_key: None,
                 live_kit_secret: None,
+                llm_database_url: None,
+                llm_database_max_connections: None,
+                llm_database_migrations_path: None,
+                llm_api_secret: None,
                 rust_log: None,
                 log_json: None,
                 zed_environment: "test".into(),
@@ -652,6 +666,8 @@ impl TestServer {
                 openai_api_key: None,
                 google_ai_api_key: None,
                 anthropic_api_key: None,
+                anthropic_staff_api_key: None,
+                llm_closed_beta_model_name: None,
                 clickhouse_url: None,
                 clickhouse_user: None,
                 clickhouse_password: None,
@@ -661,7 +677,12 @@ impl TestServer {
                 auto_join_channel_id: None,
                 migrations_path: None,
                 seed_path: None,
+                stripe_api_key: None,
+                stripe_price_id: None,
                 supermaven_admin_api_key: None,
+                qwen2_7b_api_key: None,
+                qwen2_7b_api_url: None,
+                user_backfiller_github_access_token: None,
             },
         })
     }
@@ -811,6 +832,30 @@ impl TestClient {
         worktree
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
+        (project, worktree.read_with(cx, |tree, _| tree.id()))
+    }
+
+    pub async fn build_ssh_project(
+        &self,
+        root_path: impl AsRef<Path>,
+        ssh: Arc<SshSession>,
+        cx: &mut TestAppContext,
+    ) -> (Model<Project>, WorktreeId) {
+        let project = cx.update(|cx| {
+            Project::ssh(
+                ssh,
+                self.client().clone(),
+                self.app_state.node_runtime.clone(),
+                self.app_state.user_store.clone(),
+                self.app_state.languages.clone(),
+                self.app_state.fs.clone(),
+                cx,
+            )
+        });
+        let (worktree, _) = project
+            .update(cx, |p, cx| p.find_or_create_worktree(root_path, true, cx))
+            .await
+            .unwrap();
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
 

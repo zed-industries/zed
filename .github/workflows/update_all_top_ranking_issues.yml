@@ -8,8 +8,8 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository_owner == 'zed-industries'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+      - uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # v5
         with:
           python-version: "3.11"
           architecture: "x64"

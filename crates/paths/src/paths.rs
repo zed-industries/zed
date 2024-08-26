@@ -170,6 +170,12 @@ pub fn contexts_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path within the contexts directory where images from contexts are stored.
+pub fn context_images_dir() -> &'static PathBuf {
+    static CONTEXT_IMAGES_DIR: OnceLock<PathBuf> = OnceLock::new();
+    CONTEXT_IMAGES_DIR.get_or_init(|| contexts_dir().join("images"))
+}
+
 /// Returns the path to the contexts directory.
 ///
 /// This is where the prompts for use with the Assistant are stored.
@@ -182,6 +188,33 @@ pub fn prompts_dir() -> &'static PathBuf {
             support_dir().join("prompts")
         }
     })
+}
+
+/// Returns the path to the prompt templates directory.
+///
+/// This is where the prompt templates for core features can be overridden with templates.
+///
+/// # Arguments
+///
+/// * `dev_mode` - If true, assumes the current working directory is the Zed repository.
+pub fn prompt_overrides_dir(repo_path: Option<&Path>) -> PathBuf {
+    if let Some(path) = repo_path {
+        let dev_path = path.join("assets").join("prompts");
+        if dev_path.exists() {
+            return dev_path;
+        }
+    }
+
+    static PROMPT_TEMPLATES_DIR: OnceLock<PathBuf> = OnceLock::new();
+    PROMPT_TEMPLATES_DIR
+        .get_or_init(|| {
+            if cfg!(target_os = "macos") {
+                config_dir().join("prompt_overrides")
+            } else {
+                support_dir().join("prompt_overrides")
+            }
+        })
+        .clone()
 }
 
 /// Returns the path to the semantic search's embeddings directory.
@@ -224,26 +257,28 @@ pub fn default_prettier_dir() -> &'static PathBuf {
     DEFAULT_PRETTIER_DIR.get_or_init(|| support_dir().join("prettier"))
 }
 
+/// Returns the path to the remote server binaries directory.
+pub fn remote_servers_dir() -> &'static PathBuf {
+    static REMOTE_SERVERS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    REMOTE_SERVERS_DIR.get_or_init(|| support_dir().join("remote_servers"))
+}
+
 /// Returns the relative path to a `.zed` folder within a project.
 pub fn local_settings_folder_relative_path() -> &'static Path {
-    static LOCAL_SETTINGS_FOLDER_RELATIVE_PATH: OnceLock<&Path> = OnceLock::new();
-    LOCAL_SETTINGS_FOLDER_RELATIVE_PATH.get_or_init(|| Path::new(".zed"))
+    Path::new(".zed")
 }
 
 /// Returns the relative path to a `settings.json` file within a project.
 pub fn local_settings_file_relative_path() -> &'static Path {
-    static LOCAL_SETTINGS_FILE_RELATIVE_PATH: OnceLock<&Path> = OnceLock::new();
-    LOCAL_SETTINGS_FILE_RELATIVE_PATH.get_or_init(|| Path::new(".zed/settings.json"))
+    Path::new(".zed/settings.json")
 }
 
 /// Returns the relative path to a `tasks.json` file within a project.
 pub fn local_tasks_file_relative_path() -> &'static Path {
-    static LOCAL_TASKS_FILE_RELATIVE_PATH: OnceLock<&Path> = OnceLock::new();
-    LOCAL_TASKS_FILE_RELATIVE_PATH.get_or_init(|| Path::new(".zed/tasks.json"))
+    Path::new(".zed/tasks.json")
 }
 
 /// Returns the relative path to a `.vscode/tasks.json` file within a project.
 pub fn local_vscode_tasks_file_relative_path() -> &'static Path {
-    static LOCAL_VSCODE_TASKS_FILE_RELATIVE_PATH: OnceLock<&Path> = OnceLock::new();
-    LOCAL_VSCODE_TASKS_FILE_RELATIVE_PATH.get_or_init(|| Path::new(".vscode/tasks.json"))
+    Path::new(".vscode/tasks.json")
 }

@@ -69,6 +69,7 @@ impl DiagnosticEntry<PointUtf16> {
             severity: Some(self.diagnostic.severity),
             source: self.diagnostic.source.clone(),
             message: self.diagnostic.message.clone(),
+            data: self.diagnostic.data.clone(),
             ..Default::default()
         }
     }

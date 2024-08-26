@@ -1,6 +1,6 @@
 # syntax = docker/dockerfile:1.2
 
-FROM rust:1.79-bookworm as builder
+FROM rust:1.80-bookworm as builder
 WORKDIR app
 COPY . .
 
@@ -27,5 +27,7 @@ RUN apt-get update; \
 WORKDIR app
 COPY --from=builder /app/collab /app/collab
 COPY --from=builder /app/crates/collab/migrations /app/migrations
+COPY --from=builder /app/crates/collab/migrations_llm /app/migrations_llm
 ENV MIGRATIONS_PATH=/app/migrations
+ENV LLM_DATABASE_MIGRATIONS_PATH=/app/migrations_llm
 ENTRYPOINT ["/app/collab"]

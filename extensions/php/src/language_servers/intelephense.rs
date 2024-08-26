@@ -1,6 +1,7 @@
 use std::{env, fs};
 
-use zed_extension_api::{self as zed, LanguageServerId, Result};
+use zed_extension_api::settings::LspSettings;
+use zed_extension_api::{self as zed, serde_json, LanguageServerId, Result};
 
 const SERVER_PATH: &str = "node_modules/intelephense/lib/intelephense.js";
 const PACKAGE_NAME: &str = "intelephense";
@@ -88,5 +89,19 @@ impl Intelephense {
 
         self.did_find_server = true;
         Ok(SERVER_PATH.to_string())
+    }
+
+    pub fn language_server_workspace_configuration(
+        &mut self,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        let settings = LspSettings::for_worktree("intelephense", worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.settings.clone())
+            .unwrap_or_default();
+
+        Ok(Some(serde_json::json!({
+            "intelephense": settings
+        })))
     }
 }

@@ -1,14 +1,14 @@
-use std::{path::Path, str, sync::Arc};
+use std::{path::Path, str};
 
 use collections::HashMap;
 
-use gpui::{AppContext, AssetSource, Global};
+use gpui::{AppContext, AssetSource, Global, SharedString};
 use serde_derive::Deserialize;
 use util::{maybe, paths::PathExt};
 
 #[derive(Deserialize, Debug)]
 struct TypeConfig {
-    icon: Arc<str>,
+    icon: SharedString,
 }
 
 #[derive(Deserialize, Debug)]
@@ -48,7 +48,7 @@ impl FileIcons {
             })
     }
 
-    pub fn get_icon(path: &Path, cx: &AppContext) -> Option<Arc<str>> {
+    pub fn get_icon(path: &Path, cx: &AppContext) -> Option<SharedString> {
         let this = cx.try_global::<Self>()?;
 
         // FIXME: Associate a type with the languages and have the file's language
@@ -67,13 +67,13 @@ impl FileIcons {
         .or_else(|| this.get_type_icon("default"))
     }
 
-    pub fn get_type_icon(&self, typ: &str) -> Option<Arc<str>> {
+    pub fn get_type_icon(&self, typ: &str) -> Option<SharedString> {
         self.types
             .get(typ)
             .map(|type_config| type_config.icon.clone())
     }
 
-    pub fn get_folder_icon(expanded: bool, cx: &AppContext) -> Option<Arc<str>> {
+    pub fn get_folder_icon(expanded: bool, cx: &AppContext) -> Option<SharedString> {
         let this = cx.try_global::<Self>()?;
 
         let key = if expanded {
@@ -85,7 +85,7 @@ impl FileIcons {
         this.get_type_icon(key)
     }
 
-    pub fn get_chevron_icon(expanded: bool, cx: &AppContext) -> Option<Arc<str>> {
+    pub fn get_chevron_icon(expanded: bool, cx: &AppContext) -> Option<SharedString> {
         let this = cx.try_global::<Self>()?;
 
         let key = if expanded {

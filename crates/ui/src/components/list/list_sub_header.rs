@@ -39,7 +39,7 @@ impl Selectable for ListSubHeader {
 
 impl RenderOnce for ListSubHeader {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        h_flex().flex_1().w_full().relative().py_1().child(
+        h_flex().flex_1().w_full().relative().pb_1().px_0p5().child(
             div()
                 .h_6()
                 .when(self.inset, |this| this.px_2())

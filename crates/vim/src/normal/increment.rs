@@ -1,10 +1,9 @@
 use std::ops::Range;
 
-use editor::{scroll::Autoscroll, MultiBufferSnapshot, ToOffset, ToPoint};
-use gpui::{impl_actions, ViewContext, WindowContext};
+use editor::{scroll::Autoscroll, Editor, MultiBufferSnapshot, ToOffset, ToPoint};
+use gpui::{impl_actions, ViewContext};
 use language::{Bias, Point};
 use serde::Deserialize;
-use workspace::Workspace;
 
 use crate::{state::Mode, Vim};
 
@@ -24,91 +23,90 @@ struct Decrement {
 
 impl_actions!(vim, [Increment, Decrement]);
 
-pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-    workspace.register_action(|_: &mut Workspace, action: &Increment, cx| {
-        Vim::update(cx, |vim, cx| {
-            vim.record_current_action(cx);
-            let count = vim.take_count(cx).unwrap_or(1);
-            let step = if action.step { 1 } else { 0 };
-            increment(vim, count as i32, step, cx)
-        })
+pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+    Vim::action(editor, cx, |vim, action: &Increment, cx| {
+        vim.record_current_action(cx);
+        let count = vim.take_count(cx).unwrap_or(1);
+        let step = if action.step { 1 } else { 0 };
+        vim.increment(count as i32, step, cx)
     });
-    workspace.register_action(|_: &mut Workspace, action: &Decrement, cx| {
-        Vim::update(cx, |vim, cx| {
-            vim.record_current_action(cx);
-            let count = vim.take_count(cx).unwrap_or(1);
-            let step = if action.step { -1 } else { 0 };
-            increment(vim, count as i32 * -1, step, cx)
-        })
+    Vim::action(editor, cx, |vim, action: &Decrement, cx| {
+        vim.record_current_action(cx);
+        let count = vim.take_count(cx).unwrap_or(1);
+        let step = if action.step { -1 } else { 0 };
+        vim.increment(count as i32 * -1, step, cx)
     });
 }
 
-fn increment(vim: &mut Vim, mut delta: i32, step: i32, cx: &mut WindowContext) {
-    vim.update_active_editor(cx, |vim, editor, cx| {
-        let mut edits = Vec::new();
-        let mut new_anchors = Vec::new();
-
-        let snapshot = editor.buffer().read(cx).snapshot(cx);
-        for selection in editor.selections.all_adjusted(cx) {
-            if !selection.is_empty() {
-                if vim.state().mode != Mode::VisualBlock || new_anchors.is_empty() {
-                    new_anchors.push((true, snapshot.anchor_before(selection.start)))
-                }
-            }
-            for row in selection.start.row..=selection.end.row {
-                let start = if row == selection.start.row {
-                    selection.start
-                } else {
-                    Point::new(row, 0)
-                };
-
-                if let Some((range, num, radix)) = find_number(&snapshot, start) {
-                    if let Ok(val) = i32::from_str_radix(&num, radix) {
-                        let result = val + delta;
-                        delta += step;
-                        let replace = match radix {
-                            10 => format!("{}", result),
-                            16 => {
-                                if num.to_ascii_lowercase() == num {
-                                    format!("{:x}", result)
-                                } else {
-                                    format!("{:X}", result)
-                                }
-                            }
-                            2 => format!("{:b}", result),
-                            _ => unreachable!(),
-                        };
-                        edits.push((range.clone(), replace));
-                    }
-                    if selection.is_empty() {
-                        new_anchors.push((false, snapshot.anchor_after(range.end)))
-                    }
-                } else {
-                    if selection.is_empty() {
-                        new_anchors.push((true, snapshot.anchor_after(start)))
-                    }
-                }
-            }
-        }
-        editor.transact(cx, |editor, cx| {
-            editor.edit(edits, cx);
+impl Vim {
+    fn increment(&mut self, mut delta: i32, step: i32, cx: &mut ViewContext<Self>) {
+        self.store_visual_marks(cx);
+        self.update_editor(cx, |vim, editor, cx| {
+            let mut edits = Vec::new();
+            let mut new_anchors = Vec::new();
 
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                let mut new_ranges = Vec::new();
-                for (visual, anchor) in new_anchors.iter() {
-                    let mut point = anchor.to_point(&snapshot);
-                    if !*visual && point.column > 0 {
-                        point.column -= 1;
-                        point = snapshot.clip_point(point, Bias::Left)
+            for selection in editor.selections.all_adjusted(cx) {
+                if !selection.is_empty() {
+                    if vim.mode != Mode::VisualBlock || new_anchors.is_empty() {
+                        new_anchors.push((true, snapshot.anchor_before(selection.start)))
                     }
-                    new_ranges.push(point..point);
                 }
-                s.select_ranges(new_ranges)
-            })
+                for row in selection.start.row..=selection.end.row {
+                    let start = if row == selection.start.row {
+                        selection.start
+                    } else {
+                        Point::new(row, 0)
+                    };
+
+                    if let Some((range, num, radix)) = find_number(&snapshot, start) {
+                        if let Ok(val) = i32::from_str_radix(&num, radix) {
+                            let result = val + delta;
+                            delta += step;
+                            let replace = match radix {
+                                10 => format!("{}", result),
+                                16 => {
+                                    if num.to_ascii_lowercase() == num {
+                                        format!("{:x}", result)
+                                    } else {
+                                        format!("{:X}", result)
+                                    }
+                                }
+                                2 => format!("{:b}", result),
+                                _ => unreachable!(),
+                            };
+                            edits.push((range.clone(), replace));
+                        }
+                        if selection.is_empty() {
+                            new_anchors.push((false, snapshot.anchor_after(range.end)))
+                        }
+                    } else {
+                        if selection.is_empty() {
+                            new_anchors.push((true, snapshot.anchor_after(start)))
+                        }
+                    }
+                }
+            }
+            editor.transact(cx, |editor, cx| {
+                editor.edit(edits, cx);
+
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    let mut new_ranges = Vec::new();
+                    for (visual, anchor) in new_anchors.iter() {
+                        let mut point = anchor.to_point(&snapshot);
+                        if !*visual && point.column > 0 {
+                            point.column -= 1;
+                            point = snapshot.clip_point(point, Bias::Left)
+                        }
+                        new_ranges.push(point..point);
+                    }
+                    s.select_ranges(new_ranges)
+                })
+            });
         });
-    });
-    vim.switch_mode(Mode::Normal, true, cx)
+        self.switch_mode(Mode::Normal, true, cx)
+    }
 }
 
 fn find_number(

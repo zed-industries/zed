@@ -1,14 +1,16 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+mod socks;
 pub mod telemetry;
 pub mod user;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
+    client::IntoClientRequest,
     error::Error as WebsocketError,
-    http::{Request, StatusCode},
+    http::{HeaderValue, Request, StatusCode},
 };
 use clock::SystemClock;
 use collections::HashMap;
@@ -20,8 +22,7 @@ use futures::{
 use gpui::{
     actions, AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Global, Model, Task, WeakModel,
 };
-use http::{HttpClient, HttpClientWithUrl};
-use lazy_static::lazy_static;
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
 use proto::ProtoClient;
@@ -31,6 +32,7 @@ use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, Requ
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use socks::connect_socks_proxy_stream;
 use std::fmt;
 use std::pin::Pin;
 use std::{
@@ -42,7 +44,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Weak,
+        Arc, LazyLock, Weak,
     },
     time::{Duration, Instant},
 };
@@ -64,27 +66,35 @@ impl fmt::Display for DevServerToken {
     }
 }
 
-lazy_static! {
-    static ref ZED_SERVER_URL: Option<String> = std::env::var("ZED_SERVER_URL").ok();
-    static ref ZED_RPC_URL: Option<String> = std::env::var("ZED_RPC_URL").ok();
-    /// An environment variable whose presence indicates that the development auth
-    /// provider should be used.
-    ///
-    /// Only works in development. Setting this environment variable in other release
-    /// channels is a no-op.
-    pub static ref ZED_DEVELOPMENT_AUTH: bool =
-        std::env::var("ZED_DEVELOPMENT_AUTH").map_or(false, |value| !value.is_empty());
-    pub static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
+static ZED_SERVER_URL: LazyLock<Option<String>> =
+    LazyLock::new(|| std::env::var("ZED_SERVER_URL").ok());
+static ZED_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZED_RPC_URL").ok());
+
+/// An environment variable whose presence indicates that the development auth
+/// provider should be used.
+///
+/// Only works in development. Setting this environment variable in other release
+/// channels is a no-op.
+pub static ZED_DEVELOPMENT_AUTH: LazyLock<bool> = LazyLock::new(|| {
+    std::env::var("ZED_DEVELOPMENT_AUTH").map_or(false, |value| !value.is_empty())
+});
+pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
+    std::env::var("ZED_IMPERSONATE")
         .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) });
-    pub static ref ADMIN_API_TOKEN: Option<String> = std::env::var("ZED_ADMIN_API_TOKEN")
+        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+});
+
+pub static ADMIN_API_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| {
+    std::env::var("ZED_ADMIN_API_TOKEN")
         .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) });
-    pub static ref ZED_APP_PATH: Option<PathBuf> =
-        std::env::var("ZED_APP_PATH").ok().map(PathBuf::from);
-    pub static ref ZED_ALWAYS_ACTIVE: bool =
-        std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty());
-}
+        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+});
+
+pub static ZED_APP_PATH: LazyLock<Option<PathBuf>> =
+    LazyLock::new(|| std::env::var("ZED_APP_PATH").ok().map(PathBuf::from));
+
+pub static ZED_ALWAYS_ACTIVE: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty()));
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
 pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);
@@ -233,7 +243,9 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    Http(#[from] http::Error),
+    Http(#[from] http_client::Error),
+    #[error("{0}")]
+    InvalidHeaderValue(#[from] async_tungstenite::tungstenite::http::header::InvalidHeaderValue),
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
@@ -538,9 +550,16 @@ impl Client {
     }
 
     pub fn production(cx: &mut AppContext) -> Arc<Self> {
+        let user_agent = format!(
+            "Zed/{} ({}; {})",
+            AppVersion::global(cx),
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
         let clock = Arc::new(clock::RealSystemClock);
         let http = Arc::new(HttpClientWithUrl::new(
             &ClientSettings::get_global(cx).server_url,
+            Some(user_agent),
             ProxySettings::get_global(cx).proxy.clone(),
         ));
         Self::new(clock, http.clone(), cx)
@@ -1159,31 +1178,64 @@ impl Client {
             .ok()
             .unwrap_or_default();
 
-        let request = Request::builder()
-            .header("Authorization", credentials.authorization_header())
-            .header("x-zed-protocol-version", rpc::PROTOCOL_VERSION)
-            .header("x-zed-app-version", app_version)
-            .header(
-                "x-zed-release-channel",
-                release_channel.map(|r| r.dev_name()).unwrap_or("unknown"),
-            );
-
         let http = self.http.clone();
+        let proxy = http.proxy().cloned();
+        let credentials = credentials.clone();
         let rpc_url = self.rpc_url(http, release_channel);
         cx.background_executor().spawn(async move {
+            use HttpOrHttps::*;
+
+            #[derive(Debug)]
+            enum HttpOrHttps {
+                Http,
+                Https,
+            }
+
             let mut rpc_url = rpc_url.await?;
+            let url_scheme = match rpc_url.scheme() {
+                "https" => Https,
+                "http" => Http,
+                _ => Err(anyhow!("invalid rpc url: {}", rpc_url))?,
+            };
             let rpc_host = rpc_url
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
                 .ok_or_else(|| anyhow!("missing host in rpc url"))?;
-            let stream = smol::net::TcpStream::connect(rpc_host).await?;
+            let stream = connect_socks_proxy_stream(proxy.as_ref(), rpc_host).await?;
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
-            match rpc_url.scheme() {
-                "https" => {
-                    rpc_url.set_scheme("wss").unwrap();
-                    let request = request.uri(rpc_url.as_str()).body(())?;
+            rpc_url
+                .set_scheme(match url_scheme {
+                    Https => "wss",
+                    Http => "ws",
+                })
+                .unwrap();
+
+            // We call `into_client_request` to let `tungstenite` construct the WebSocket request
+            // for us from the RPC URL.
+            //
+            // Among other things, it will generate and set a `Sec-WebSocket-Key` header for us.
+            let mut request = rpc_url.into_client_request()?;
+
+            // We then modify the request to add our desired headers.
+            let request_headers = request.headers_mut();
+            request_headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&credentials.authorization_header())?,
+            );
+            request_headers.insert(
+                "x-zed-protocol-version",
+                HeaderValue::from_str(&rpc::PROTOCOL_VERSION.to_string())?,
+            );
+            request_headers.insert("x-zed-app-version", HeaderValue::from_str(&app_version)?);
+            request_headers.insert(
+                "x-zed-release-channel",
+                HeaderValue::from_str(&release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
+            );
+
+            match url_scheme {
+                Https => {
                     let (stream, _) =
                         async_tungstenite::async_std::client_async_tls(request, stream).await?;
                     Ok(Connection::new(
@@ -1192,9 +1244,7 @@ impl Client {
                             .sink_map_err(|error| anyhow!(error)),
                     ))
                 }
-                "http" => {
-                    rpc_url.set_scheme("ws").unwrap();
-                    let request = request.uri(rpc_url.as_str()).body(())?;
+                Http => {
                     let (stream, _) = async_tungstenite::client_async(request, stream).await?;
                     Ok(Connection::new(
                         stream
@@ -1202,7 +1252,6 @@ impl Client {
                             .sink_map_err(|error| anyhow!(error)),
                     ))
                 }
-                _ => Err(anyhow!("invalid rpc url: {}", rpc_url))?,
             }
         })
     }
@@ -1346,12 +1395,65 @@ impl Client {
             id: u64,
         }
 
+        let github_user = {
+            #[derive(Deserialize)]
+            struct GithubUser {
+                id: i32,
+                login: String,
+            }
+
+            let request = {
+                let mut request_builder =
+                    Request::get(&format!("https://api.github.com/users/{login}"));
+                if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
+                    request_builder =
+                        request_builder.header("Authorization", format!("Bearer {}", github_token));
+                }
+
+                request_builder.body(AsyncBody::empty())?
+            };
+
+            let mut response = http
+                .send(request)
+                .await
+                .context("error fetching GitHub user")?;
+
+            let mut body = Vec::new();
+            response
+                .body_mut()
+                .read_to_end(&mut body)
+                .await
+                .context("error reading GitHub user")?;
+
+            if !response.status().is_success() {
+                let text = String::from_utf8_lossy(body.as_slice());
+                bail!(
+                    "status error {}, response: {text:?}",
+                    response.status().as_u16()
+                );
+            }
+
+            let user = serde_json::from_slice::<GithubUser>(body.as_slice()).map_err(|err| {
+                log::error!("Error deserializing: {:?}", err);
+                log::error!(
+                    "GitHub API response text: {:?}",
+                    String::from_utf8_lossy(body.as_slice())
+                );
+                anyhow!("error deserializing GitHub user")
+            })?;
+
+            user
+        };
+
         // Use the collab server's admin API to retrieve the id
         // of the impersonated user.
         let mut url = self.rpc_url(http.clone(), None).await?;
         url.set_path("/user");
-        url.set_query(Some(&format!("github_login={login}")));
-        let request = Request::get(url.as_str())
+        url.set_query(Some(&format!(
+            "github_login={}&github_user_id={}",
+            github_user.login, github_user.id
+        )));
+        let request: http_client::Request<AsyncBody> = Request::get(url.as_str())
             .header("Authorization", format!("token {api_token}"))
             .body("".into())?;
 
@@ -1410,7 +1512,7 @@ impl Client {
         self.peer.send(self.connection_id()?, message)
     }
 
-    fn send_dynamic(&self, envelope: proto::Envelope) -> Result<()> {
+    pub fn send_dynamic(&self, envelope: proto::Envelope) -> Result<()> {
         let connection_id = self.connection_id()?;
         self.peer.send_dynamic(connection_id, envelope)
     }
@@ -1783,7 +1885,7 @@ mod tests {
 
     use clock::FakeSystemClock;
     use gpui::{BackgroundExecutor, Context, TestAppContext};
-    use http::FakeHttpClient;
+    use http_client::FakeHttpClient;
     use parking_lot::Mutex;
     use proto::TypedEnvelope;
     use settings::SettingsStore;

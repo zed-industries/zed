@@ -1,13 +1,12 @@
-use crate::outputs::{ExecutionView, LineHeight};
-use alacritty_terminal::vte::{
-    ansi::{Attr, Color, NamedColor, Rgb},
-    Params, ParamsIter, Parser, Perform,
-};
-use core::iter;
-use gpui::{font, prelude::*, AnyElement, StyledText, TextRun};
+use crate::outputs::{ExecutionView, SupportsClipboard};
+use alacritty_terminal::{grid::Dimensions as _, term::Config, vte::ansi::Processor};
+use gpui::{canvas, size, AnyElement, ClipboardItem, FontStyle, TextStyle, WhiteSpace};
 use settings::Settings as _;
+use std::mem;
+use terminal::ZedListener;
+use terminal_view::terminal_element::TerminalElement;
 use theme::ThemeSettings;
-use ui::{div, prelude::*, IntoElement, ViewContext, WindowContext};
+use ui::{prelude::*, IntoElement, ViewContext};
 
 /// Implements the most basic of terminal output for use by Jupyter outputs
 /// whether:
@@ -17,377 +16,188 @@ use ui::{div, prelude::*, IntoElement, ViewContext, WindowContext};
 /// * text/plain
 /// * traceback from an error output
 ///
-/// Ideally, we would instead use alacritty::vte::Processor to collect the
-/// output and then render up to u8::MAX lines of text. However, it's likely
-/// overkill for 95% of outputs.
-///
-/// Instead, this implementation handles:
-///
-/// * ANSI color codes (background, foreground), including 256 color
-/// * Carriage returns/line feeds
-///
-/// There is no support for cursor movement, clearing the screen, and other text styles
 pub struct TerminalOutput {
-    parser: Parser,
-    handler: TerminalHandler,
+    parser: Processor,
+    handler: alacritty_terminal::Term<ZedListener>,
+}
+
+const DEFAULT_NUM_LINES: usize = 32;
+const DEFAULT_NUM_COLUMNS: usize = 128;
+
+pub fn text_style(cx: &mut WindowContext) -> TextStyle {
+    let settings = ThemeSettings::get_global(cx).clone();
+
+    let font_family = settings.buffer_font.family;
+    let font_features = settings.buffer_font.features;
+    let font_weight = settings.buffer_font.weight;
+    let font_fallbacks = settings.buffer_font.fallbacks;
+
+    let theme = cx.theme();
+
+    let text_style = TextStyle {
+        font_family,
+        font_features,
+        font_weight,
+        font_fallbacks,
+        font_size: theme::get_buffer_font_size(cx).into(),
+        font_style: FontStyle::Normal,
+        // todo
+        line_height: cx.line_height().into(),
+        background_color: Some(theme.colors().terminal_background),
+        white_space: WhiteSpace::Normal,
+        truncate: None,
+        // These are going to be overridden per-cell
+        underline: None,
+        strikethrough: None,
+        color: theme.colors().terminal_foreground,
+    };
+
+    text_style
+}
+
+pub fn terminal_size(cx: &mut WindowContext) -> terminal::TerminalSize {
+    let text_style = text_style(cx);
+    let text_system = cx.text_system();
+
+    let line_height = cx.line_height();
+
+    let font_pixels = text_style.font_size.to_pixels(cx.rem_size());
+    let font_id = text_system.resolve_font(&text_style.font());
+
+    let cell_width = text_system
+        .advance(font_id, font_pixels, 'w')
+        .unwrap()
+        .width;
+
+    let num_lines = DEFAULT_NUM_LINES;
+    let columns = DEFAULT_NUM_COLUMNS;
+
+    // Reversed math from terminal::TerminalSize to get pixel width according to terminal width
+    let width = columns as f32 * cell_width;
+    let height = num_lines as f32 * cx.line_height();
+
+    terminal::TerminalSize {
+        cell_width,
+        line_height,
+        size: size(width, height),
+    }
 }
 
 impl TerminalOutput {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut WindowContext) -> Self {
+        let (events_tx, events_rx) = futures::channel::mpsc::unbounded();
+        let term = alacritty_terminal::Term::new(
+            Config::default(),
+            &terminal_size(cx),
+            terminal::ZedListener(events_tx.clone()),
+        );
+
+        mem::forget(events_rx);
         Self {
-            parser: Parser::new(),
-            handler: TerminalHandler::new(),
+            parser: Processor::new(),
+            handler: term,
         }
     }
 
-    pub fn from(text: &str) -> Self {
-        let mut output = Self::new();
+    pub fn from(text: &str, cx: &mut WindowContext) -> Self {
+        let mut output = Self::new(cx);
         output.append_text(text);
         output
     }
 
     pub fn append_text(&mut self, text: &str) {
         for byte in text.as_bytes() {
-            self.parser.advance(&mut self.handler, *byte);
+            if *byte == b'\n' {
+                // Dirty (?) hack to move the cursor down
+                self.parser.advance(&mut self.handler, b'\r');
+                self.parser.advance(&mut self.handler, b'\n');
+            } else {
+                self.parser.advance(&mut self.handler, *byte);
+            }
+
+            // self.parser.advance(&mut self.handler, *byte);
         }
     }
 
-    pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
-        let theme = cx.theme();
-        let buffer_font = ThemeSettings::get_global(cx).buffer_font.family.clone();
-        let runs = self
+    pub fn render(&self, cx: &mut ViewContext<ExecutionView>) -> AnyElement {
+        let text_style = text_style(cx);
+        let text_system = cx.text_system();
+
+        let grid = self
             .handler
-            .text_runs
-            .iter()
-            .chain(Some(&self.handler.current_text_run))
-            .map(|ansi_run| {
-                let color = terminal_view::terminal_element::convert_color(&ansi_run.fg, theme);
-                let background_color = Some(terminal_view::terminal_element::convert_color(
-                    &ansi_run.bg,
-                    theme,
-                ));
+            .renderable_content()
+            .display_iter
+            .map(|ic| terminal::IndexedCell {
+                point: ic.point,
+                cell: ic.cell.clone(),
+            });
+        let (cells, rects) = TerminalElement::layout_grid(grid, &text_style, text_system, None, cx);
 
-                TextRun {
-                    len: ansi_run.len,
-                    color,
-                    background_color,
-                    underline: Default::default(),
-                    font: font(buffer_font.clone()),
-                    strikethrough: None,
+        // lines are 0-indexed, so we must add 1 to get the number of lines
+        let text_line_height = text_style.line_height_in_pixels(cx.rem_size());
+        let num_lines = cells.iter().map(|c| c.point.line).max().unwrap_or(0) + 1;
+        let height = num_lines as f32 * text_line_height;
+
+        let font_pixels = text_style.font_size.to_pixels(cx.rem_size());
+        let font_id = text_system.resolve_font(&text_style.font());
+
+        let cell_width = text_system
+            .advance(font_id, font_pixels, 'w')
+            .map(|advance| advance.width)
+            .unwrap_or(Pixels(0.0));
+
+        canvas(
+            // prepaint
+            move |_bounds, _| {},
+            // paint
+            move |bounds, _, cx| {
+                for rect in rects {
+                    rect.paint(
+                        bounds.origin,
+                        &terminal::TerminalSize {
+                            cell_width,
+                            line_height: text_line_height,
+                            size: bounds.size,
+                        },
+                        cx,
+                    );
                 }
-            })
-            .collect::<Vec<TextRun>>();
 
-        let text = StyledText::new(self.handler.buffer.trim_end().to_string()).with_runs(runs);
-        div()
-            .font_family(buffer_font)
-            .child(text)
-            .into_any_element()
-    }
-}
-
-impl LineHeight for TerminalOutput {
-    fn num_lines(&self, _cx: &mut WindowContext) -> u8 {
-        self.handler.buffer.lines().count() as u8
-    }
-}
-
-#[derive(Clone)]
-struct AnsiTextRun {
-    len: usize,
-    fg: alacritty_terminal::vte::ansi::Color,
-    bg: alacritty_terminal::vte::ansi::Color,
-}
-
-impl AnsiTextRun {
-    fn default() -> Self {
-        Self {
-            len: 0,
-            fg: Color::Named(NamedColor::Foreground),
-            bg: Color::Named(NamedColor::Background),
-        }
-    }
-}
-
-struct TerminalHandler {
-    text_runs: Vec<AnsiTextRun>,
-    current_text_run: AnsiTextRun,
-    buffer: String,
-}
-
-impl TerminalHandler {
-    fn new() -> Self {
-        Self {
-            text_runs: Vec::new(),
-            current_text_run: AnsiTextRun {
-                len: 0,
-                fg: Color::Named(NamedColor::Foreground),
-                bg: Color::Named(NamedColor::Background),
+                for cell in cells {
+                    cell.paint(
+                        bounds.origin,
+                        &terminal::TerminalSize {
+                            cell_width,
+                            line_height: text_line_height,
+                            size: bounds.size,
+                        },
+                        bounds,
+                        cx,
+                    );
+                }
             },
-            buffer: String::new(),
-        }
-    }
-
-    fn add_text(&mut self, c: char) {
-        self.buffer.push(c);
-        self.current_text_run.len += 1;
-    }
-
-    fn reset(&mut self) {
-        if self.current_text_run.len > 0 {
-            self.text_runs.push(self.current_text_run.clone());
-        }
-
-        self.current_text_run = AnsiTextRun::default();
-    }
-
-    fn terminal_attribute(&mut self, attr: Attr) {
-        // println!("[terminal_attribute] attr={:?}", attr);
-        if Attr::Reset == attr {
-            self.reset();
-            return;
-        }
-
-        if self.current_text_run.len > 0 {
-            self.text_runs.push(self.current_text_run.clone());
-        }
-
-        let mut text_run = AnsiTextRun {
-            len: 0,
-            fg: self.current_text_run.fg,
-            bg: self.current_text_run.bg,
-        };
-
-        match attr {
-            Attr::Foreground(color) => text_run.fg = color,
-            Attr::Background(color) => text_run.bg = color,
-            _ => {}
-        }
-
-        self.current_text_run = text_run;
-    }
-
-    fn process_carriage_return(&mut self) {
-        // Find last carriage return's position
-        let last_cr = self.buffer.rfind('\r').unwrap_or(0);
-        self.buffer = self.buffer.chars().take(last_cr).collect();
-
-        // First work through our current text run
-        let mut total_len = self.current_text_run.len;
-        if total_len > last_cr {
-            // We are in the current text run
-            self.current_text_run.len = self.current_text_run.len - last_cr;
-        } else {
-            let mut last_cr_run = 0;
-            // Find the last run before the last carriage return
-            for (i, run) in self.text_runs.iter().enumerate() {
-                total_len += run.len;
-                if total_len > last_cr {
-                    last_cr_run = i;
-                    break;
-                }
-            }
-            self.text_runs = self.text_runs[..last_cr_run].to_vec();
-            self.current_text_run = self.text_runs.pop().unwrap_or(AnsiTextRun::default());
-        }
-
-        self.buffer.push('\r');
-        self.current_text_run.len += 1;
+        )
+        // We must set the height explicitly for the editor block to size itself correctly
+        .h(height)
+        .into_any_element()
     }
 }
 
-impl Perform for TerminalHandler {
-    fn print(&mut self, c: char) {
-        // println!("[print] c={:?}", c);
-        self.add_text(c);
+impl SupportsClipboard for TerminalOutput {
+    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+        let start = alacritty_terminal::index::Point::new(
+            alacritty_terminal::index::Line(0),
+            alacritty_terminal::index::Column(0),
+        );
+        let end = alacritty_terminal::index::Point::new(
+            alacritty_terminal::index::Line(self.handler.screen_lines() as i32 - 1),
+            alacritty_terminal::index::Column(self.handler.columns() - 1),
+        );
+        let text = self.handler.bounds_to_string(start, end);
+        Some(ClipboardItem::new_string(text.trim().into()))
     }
 
-    fn execute(&mut self, byte: u8) {
-        match byte {
-            b'\n' => {
-                self.add_text('\n');
-            }
-            b'\r' => {
-                self.process_carriage_return();
-            }
-            _ => {
-                // Format as hex
-                println!("[execute] byte={:02x}", byte);
-            }
-        }
-    }
-
-    fn hook(&mut self, _params: &Params, _intermediates: &[u8], _ignore: bool, _c: char) {
-        // noop
-        // println!(
-        //     "[hook] params={:?}, intermediates={:?}, c={:?}",
-        //     _params, _intermediates, _c
-        // );
-    }
-
-    fn put(&mut self, _byte: u8) {
-        // noop
-        // println!("[put] byte={:02x}", _byte);
-    }
-
-    fn unhook(&mut self) {
-        // noop
-    }
-
-    fn osc_dispatch(&mut self, _params: &[&[u8]], _bell_terminated: bool) {
-        // noop
-        // println!("[osc_dispatch] params={:?}", _params);
-    }
-
-    fn csi_dispatch(
-        &mut self,
-        params: &alacritty_terminal::vte::Params,
-        intermediates: &[u8],
-        _ignore: bool,
-        action: char,
-    ) {
-        // println!(
-        //     "[csi_dispatch] action={:?}, params={:?}, intermediates={:?}",
-        //     action, params, intermediates
-        // );
-
-        let mut params_iter = params.iter();
-        // Collect colors
-        match (action, intermediates) {
-            ('m', []) => {
-                if params.is_empty() {
-                    self.terminal_attribute(Attr::Reset);
-                } else {
-                    for attr in attrs_from_sgr_parameters(&mut params_iter) {
-                        match attr {
-                            Some(attr) => self.terminal_attribute(attr),
-                            None => return,
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, _byte: u8) {
-        // noop
-        // println!(
-        //     "[esc_dispatch] intermediates={:?}, byte={:?}",
-        //     _intermediates, _byte
-        // );
-    }
-}
-
-// The following was pulled from vte::ansi
-#[inline]
-fn attrs_from_sgr_parameters(params: &mut ParamsIter<'_>) -> Vec<Option<Attr>> {
-    let mut attrs = Vec::with_capacity(params.size_hint().0);
-
-    while let Some(param) = params.next() {
-        let attr = match param {
-            [0] => Some(Attr::Reset),
-            [1] => Some(Attr::Bold),
-            [2] => Some(Attr::Dim),
-            [3] => Some(Attr::Italic),
-            [4, 0] => Some(Attr::CancelUnderline),
-            [4, 2] => Some(Attr::DoubleUnderline),
-            [4, 3] => Some(Attr::Undercurl),
-            [4, 4] => Some(Attr::DottedUnderline),
-            [4, 5] => Some(Attr::DashedUnderline),
-            [4, ..] => Some(Attr::Underline),
-            [5] => Some(Attr::BlinkSlow),
-            [6] => Some(Attr::BlinkFast),
-            [7] => Some(Attr::Reverse),
-            [8] => Some(Attr::Hidden),
-            [9] => Some(Attr::Strike),
-            [21] => Some(Attr::CancelBold),
-            [22] => Some(Attr::CancelBoldDim),
-            [23] => Some(Attr::CancelItalic),
-            [24] => Some(Attr::CancelUnderline),
-            [25] => Some(Attr::CancelBlink),
-            [27] => Some(Attr::CancelReverse),
-            [28] => Some(Attr::CancelHidden),
-            [29] => Some(Attr::CancelStrike),
-            [30] => Some(Attr::Foreground(Color::Named(NamedColor::Black))),
-            [31] => Some(Attr::Foreground(Color::Named(NamedColor::Red))),
-            [32] => Some(Attr::Foreground(Color::Named(NamedColor::Green))),
-            [33] => Some(Attr::Foreground(Color::Named(NamedColor::Yellow))),
-            [34] => Some(Attr::Foreground(Color::Named(NamedColor::Blue))),
-            [35] => Some(Attr::Foreground(Color::Named(NamedColor::Magenta))),
-            [36] => Some(Attr::Foreground(Color::Named(NamedColor::Cyan))),
-            [37] => Some(Attr::Foreground(Color::Named(NamedColor::White))),
-            [38] => {
-                let mut iter = params.map(|param| param[0]);
-                parse_sgr_color(&mut iter).map(Attr::Foreground)
-            }
-            [38, params @ ..] => handle_colon_rgb(params).map(Attr::Foreground),
-            [39] => Some(Attr::Foreground(Color::Named(NamedColor::Foreground))),
-            [40] => Some(Attr::Background(Color::Named(NamedColor::Black))),
-            [41] => Some(Attr::Background(Color::Named(NamedColor::Red))),
-            [42] => Some(Attr::Background(Color::Named(NamedColor::Green))),
-            [43] => Some(Attr::Background(Color::Named(NamedColor::Yellow))),
-            [44] => Some(Attr::Background(Color::Named(NamedColor::Blue))),
-            [45] => Some(Attr::Background(Color::Named(NamedColor::Magenta))),
-            [46] => Some(Attr::Background(Color::Named(NamedColor::Cyan))),
-            [47] => Some(Attr::Background(Color::Named(NamedColor::White))),
-            [48] => {
-                let mut iter = params.map(|param| param[0]);
-                parse_sgr_color(&mut iter).map(Attr::Background)
-            }
-            [48, params @ ..] => handle_colon_rgb(params).map(Attr::Background),
-            [49] => Some(Attr::Background(Color::Named(NamedColor::Background))),
-            [58] => {
-                let mut iter = params.map(|param| param[0]);
-                parse_sgr_color(&mut iter).map(|color| Attr::UnderlineColor(Some(color)))
-            }
-            [58, params @ ..] => {
-                handle_colon_rgb(params).map(|color| Attr::UnderlineColor(Some(color)))
-            }
-            [59] => Some(Attr::UnderlineColor(None)),
-            [90] => Some(Attr::Foreground(Color::Named(NamedColor::BrightBlack))),
-            [91] => Some(Attr::Foreground(Color::Named(NamedColor::BrightRed))),
-            [92] => Some(Attr::Foreground(Color::Named(NamedColor::BrightGreen))),
-            [93] => Some(Attr::Foreground(Color::Named(NamedColor::BrightYellow))),
-            [94] => Some(Attr::Foreground(Color::Named(NamedColor::BrightBlue))),
-            [95] => Some(Attr::Foreground(Color::Named(NamedColor::BrightMagenta))),
-            [96] => Some(Attr::Foreground(Color::Named(NamedColor::BrightCyan))),
-            [97] => Some(Attr::Foreground(Color::Named(NamedColor::BrightWhite))),
-            [100] => Some(Attr::Background(Color::Named(NamedColor::BrightBlack))),
-            [101] => Some(Attr::Background(Color::Named(NamedColor::BrightRed))),
-            [102] => Some(Attr::Background(Color::Named(NamedColor::BrightGreen))),
-            [103] => Some(Attr::Background(Color::Named(NamedColor::BrightYellow))),
-            [104] => Some(Attr::Background(Color::Named(NamedColor::BrightBlue))),
-            [105] => Some(Attr::Background(Color::Named(NamedColor::BrightMagenta))),
-            [106] => Some(Attr::Background(Color::Named(NamedColor::BrightCyan))),
-            [107] => Some(Attr::Background(Color::Named(NamedColor::BrightWhite))),
-            _ => None,
-        };
-        attrs.push(attr);
-    }
-
-    attrs
-}
-
-/// Handle colon separated rgb color escape sequence.
-#[inline]
-fn handle_colon_rgb(params: &[u16]) -> Option<Color> {
-    let rgb_start = if params.len() > 4 { 2 } else { 1 };
-    let rgb_iter = params[rgb_start..].iter().copied();
-    let mut iter = iter::once(params[0]).chain(rgb_iter);
-
-    parse_sgr_color(&mut iter)
-}
-
-/// Parse a color specifier from list of attributes.
-fn parse_sgr_color(params: &mut dyn Iterator<Item = u16>) -> Option<Color> {
-    match params.next() {
-        Some(2) => Some(Color::Spec(Rgb {
-            r: u8::try_from(params.next()?).ok()?,
-            g: u8::try_from(params.next()?).ok()?,
-            b: u8::try_from(params.next()?).ok()?,
-        })),
-        Some(5) => Some(Color::Indexed(u8::try_from(params.next()?).ok()?)),
-        _ => None,
+    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+        true
     }
 }

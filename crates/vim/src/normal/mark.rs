@@ -6,7 +6,7 @@ use editor::{
     scroll::Autoscroll,
     Anchor, Bias, DisplayPoint,
 };
-use gpui::WindowContext;
+use gpui::ViewContext;
 use language::SelectionGoal;
 
 use crate::{
@@ -15,56 +15,62 @@ use crate::{
     Vim,
 };
 
-pub fn create_mark(vim: &mut Vim, text: Arc<str>, tail: bool, cx: &mut WindowContext) {
-    let Some(anchors) = vim.update_active_editor(cx, |_, editor, _| {
-        editor
-            .selections
-            .disjoint_anchors()
-            .iter()
-            .map(|s| if tail { s.tail() } else { s.head() })
-            .collect::<Vec<_>>()
-    }) else {
-        return;
-    };
-    vim.update_state(|state| state.marks.insert(text.to_string(), anchors));
-    vim.clear_operator(cx);
-}
+impl Vim {
+    pub fn create_mark(&mut self, text: Arc<str>, tail: bool, cx: &mut ViewContext<Self>) {
+        let Some(anchors) = self.update_editor(cx, |_, editor, _| {
+            editor
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .map(|s| if tail { s.tail() } else { s.head() })
+                .collect::<Vec<_>>()
+        }) else {
+            return;
+        };
+        self.marks.insert(text.to_string(), anchors);
+        self.clear_operator(cx);
+    }
 
-pub fn create_visual_marks(vim: &mut Vim, mode: Mode, cx: &mut WindowContext) {
-    let mut starts = vec![];
-    let mut ends = vec![];
-    let mut reversed = vec![];
-
-    vim.update_active_editor(cx, |_, editor, cx| {
-        let (map, selections) = editor.selections.all_display(cx);
-        for selection in selections {
-            let end = movement::saturating_left(&map, selection.end);
-            ends.push(
-                map.buffer_snapshot
-                    .anchor_before(end.to_offset(&map, Bias::Left)),
-            );
-            starts.push(
-                map.buffer_snapshot
-                    .anchor_after(selection.start.to_offset(&map, Bias::Right)),
-            );
-            reversed.push(selection.reversed)
+    // When handling an action, you must create visual marks if you will switch to normal
+    // mode without the default selection behavior.
+    pub(crate) fn store_visual_marks(&mut self, cx: &mut ViewContext<Self>) {
+        if self.mode.is_visual() {
+            self.create_visual_marks(self.mode, cx);
         }
-    });
+    }
 
-    vim.update_state(|state| {
-        state.marks.insert("<".to_string(), starts);
-        state.marks.insert(">".to_string(), ends);
-        state.stored_visual_mode.replace((mode, reversed));
-    });
-    vim.clear_operator(cx);
-}
+    pub(crate) fn create_visual_marks(&mut self, mode: Mode, cx: &mut ViewContext<Self>) {
+        let mut starts = vec![];
+        let mut ends = vec![];
+        let mut reversed = vec![];
 
-pub fn jump(text: Arc<str>, line: bool, cx: &mut WindowContext) {
-    let anchors = Vim::update(cx, |vim, cx| {
-        vim.pop_operator(cx);
+        self.update_editor(cx, |_, editor, cx| {
+            let (map, selections) = editor.selections.all_display(cx);
+            for selection in selections {
+                let end = movement::saturating_left(&map, selection.end);
+                ends.push(
+                    map.buffer_snapshot
+                        .anchor_before(end.to_offset(&map, Bias::Left)),
+                );
+                starts.push(
+                    map.buffer_snapshot
+                        .anchor_after(selection.start.to_offset(&map, Bias::Right)),
+                );
+                reversed.push(selection.reversed)
+            }
+        });
 
-        match &*text {
-            "{" | "}" => vim.update_active_editor(cx, |_, editor, cx| {
+        self.marks.insert("<".to_string(), starts);
+        self.marks.insert(">".to_string(), ends);
+        self.stored_visual_mode.replace((mode, reversed));
+        self.clear_operator(cx);
+    }
+
+    pub fn jump(&mut self, text: Arc<str>, line: bool, cx: &mut ViewContext<Self>) {
+        self.pop_operator(cx);
+
+        let anchors = match &*text {
+            "{" | "}" => self.update_editor(cx, |_, editor, cx| {
                 let (map, selections) = editor.selections.all_display(cx);
                 selections
                     .into_iter()
@@ -79,28 +85,26 @@ pub fn jump(text: Arc<str>, line: bool, cx: &mut WindowContext) {
                     })
                     .collect::<Vec<Anchor>>()
             }),
-            "." => vim.state().change_list.last().cloned(),
-            _ => vim.state().marks.get(&*text).cloned(),
-        }
-    });
+            "." => self.change_list.last().cloned(),
+            _ => self.marks.get(&*text).cloned(),
+        };
 
-    let Some(anchors) = anchors else { return };
+        let Some(anchors) = anchors else { return };
 
-    let is_active_operator = Vim::read(cx).state().active_operator().is_some();
-    if is_active_operator {
-        if let Some(anchor) = anchors.last() {
-            motion::motion(
-                Motion::Jump {
-                    anchor: *anchor,
-                    line,
-                },
-                cx,
-            )
-        }
-        return;
-    } else {
-        Vim::update(cx, |vim, cx| {
-            vim.update_active_editor(cx, |_, editor, cx| {
+        let is_active_operator = self.active_operator().is_some();
+        if is_active_operator {
+            if let Some(anchor) = anchors.last() {
+                self.motion(
+                    Motion::Jump {
+                        anchor: *anchor,
+                        line,
+                    },
+                    cx,
+                )
+            }
+            return;
+        } else {
+            self.update_editor(cx, |_, editor, cx| {
                 let map = editor.snapshot(cx);
                 let mut ranges: Vec<Range<Anchor>> = Vec::new();
                 for mut anchor in anchors {
@@ -120,7 +124,7 @@ pub fn jump(text: Arc<str>, line: bool, cx: &mut WindowContext) {
                     s.select_anchor_ranges(ranges)
                 })
             });
-        })
+        }
     }
 }
 

@@ -258,7 +258,9 @@ impl Render for ProjectIndexDebugView {
                     list.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
                     list
                 },
-                |_, mut list, cx| list.paint(cx),
+                |_, mut list, cx| {
+                    list.paint(cx);
+                },
             )
             .size_full()
             .into_any_element()

@@ -14,9 +14,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, AppContext, EventEmitter, Flatten, FocusableView, FontStyle,
-    InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    actions, uniform_list, AppContext, EventEmitter, Flatten, FocusableView, InteractiveElement,
+    KeyContext, ParentElement, Render, Styled, Task, TextStyle, UniformListScrollHandle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
@@ -48,10 +48,10 @@ pub fn init(cx: &mut AppContext) {
                     .find_map(|item| item.downcast::<ExtensionsPage>());
 
                 if let Some(existing) = existing {
-                    workspace.activate_item(&existing, cx);
+                    workspace.activate_item(&existing, true, true, cx);
                 } else {
                     let extensions_page = ExtensionsPage::new(workspace, cx);
-                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, cx)
+                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, true, cx)
                 }
             })
             .register_action(move |workspace, _: &InstallDevExtension, cx| {
@@ -134,6 +134,7 @@ impl ExtensionFilter {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum Feature {
     Git,
+    OpenIn,
     Vim,
     LanguageBash,
     LanguageC,
@@ -150,6 +151,19 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     KEYWORDS_BY_FEATURE.get_or_init(|| {
         BTreeMap::from_iter([
             (Feature::Git, vec!["git"]),
+            (
+                Feature::OpenIn,
+                vec![
+                    "github",
+                    "gitlab",
+                    "bitbucket",
+                    "codeberg",
+                    "sourcehut",
+                    "permalink",
+                    "link",
+                    "open in",
+                ],
+            ),
             (Feature::Vim, vec!["vim"]),
             (Feature::LanguageBash, vec!["sh", "bash"]),
             (Feature::LanguageC, vec!["c", "clang"]),
@@ -802,14 +816,11 @@ impl ExtensionsPage {
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
 
         EditorElement::new(
@@ -914,7 +925,7 @@ impl ExtensionsPage {
         if let Some(workspace) = self.workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
             let selection = *selection;
-            settings::update_settings_file::<T>(fs, cx, move |settings| {
+            settings::update_settings_file::<T>(fs, cx, move |settings, _| {
                 let value = match selection {
                     Selection::Unselected => false,
                     Selection::Selected => true,
@@ -961,6 +972,11 @@ impl ExtensionsPage {
                     "Zed comes with basic Git support. More Git features are coming in the future.",
                 )
                 .docs_url("https://zed.dev/docs/git"),
+                Feature::OpenIn => FeatureUpsell::new(
+                    telemetry,
+                    "Zed supports linking to a source line on GitHub and others.",
+                )
+                .docs_url("https://zed.dev/docs/git#git-integrations"),
                 Feature::Vim => FeatureUpsell::new(telemetry, "Vim support is built-in to Zed!")
                     .docs_url("https://zed.dev/docs/vim")
                     .child(CheckboxWithLabel::new(

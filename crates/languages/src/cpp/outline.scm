@@ -147,3 +147,5 @@
                     ")" @context)))
     ]
     (type_qualifier)? @context) @item
+
+(comment) @annotation
