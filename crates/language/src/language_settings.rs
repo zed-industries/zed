@@ -35,63 +35,7 @@ pub fn language_settings<'a>(
     cx: &'a AppContext,
 ) -> Cow<'a, LanguageSettings> {
     let language_name = language.map(|l| l.name());
-    let settings = all_language_settings(file, cx).language(language_name.as_ref());
-    if let Some(content) = editorconfig_settings(file, cx) {
-        let mut settings = settings.clone();
-        merge_with_editorconfig(&mut settings, &content);
-        Cow::Owned(settings)
-    } else {
-        Cow::Borrowed(settings)
-    }
-}
-
-fn editorconfig_settings(
-    file: Option<&Arc<dyn File>>,
-    cx: &AppContext,
-) -> Option<EditorConfigContent> {
-    let file_path = file?.as_local()?.abs_path(cx);
-    // TODO kb
-    let mut cfg = ec4rs::properties_of(file_path).log_err()?;
-    if cfg.is_empty() {
-        return None;
-    }
-
-    cfg.use_fallbacks();
-    let max_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
-        MaxLineLen::Value(u) => Some(u as u32),
-        MaxLineLen::Off => None,
-    });
-    let editorconfig = EditorConfigContent {
-        tab_size: cfg.get::<IndentSize>().ok().and_then(|v| match v {
-            IndentSize::Value(u) => NonZeroU32::new(u as u32),
-            IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
-                TabWidth::Value(u) => NonZeroU32::new(u as u32),
-            }),
-        }),
-        hard_tabs: cfg
-            .get::<IndentStyle>()
-            .map(|v| v.eq(&IndentStyle::Tabs))
-            .ok(),
-        ensure_final_newline_on_save: cfg
-            .get::<FinalNewline>()
-            .map(|v| match v {
-                FinalNewline::Value(b) => b,
-            })
-            .ok(),
-        remove_trailing_whitespace_on_save: cfg
-            .get::<TrimTrailingWs>()
-            .map(|v| match v {
-                TrimTrailingWs::Value(b) => b,
-            })
-            .ok(),
-        preferred_line_length: max_line_length,
-        soft_wrap: if max_line_length.is_some() {
-            Some(SoftWrap::PreferredLineLength)
-        } else {
-            None
-        },
-    };
-    Some(editorconfig)
+    all_language_settings(file, cx).language(file, language_name.as_ref(), cx)
 }
 
 /// Returns the settings for all languages from the provided file.
@@ -869,13 +813,23 @@ impl InlayHintSettings {
 
 impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
-    pub fn language<'a>(&'a self, language_name: Option<&LanguageName>) -> &'a LanguageSettings {
-        if let Some(name) = language_name {
-            if let Some(overrides) = self.languages.get(name) {
-                return overrides;
-            }
+    pub fn language<'a>(
+        &'a self,
+        file: Option<&Arc<dyn File>>,
+        language_name: Option<&LanguageName>,
+        cx: &'a AppContext,
+    ) -> Cow<'a, LanguageSettings> {
+        let settings = language_name
+            .and_then(|name| self.languages.get(name))
+            .unwrap_or(&self.defaults);
+
+        if let Some(content) = self.editorconfig_settings(file, cx) {
+            let mut settings = settings.clone();
+            merge_with_editorconfig(&mut settings, &content);
+            Cow::Owned(settings)
+        } else {
+            Cow::Borrowed(settings)
         }
-        &self.defaults
     }
 
     /// Returns whether inline completions are enabled for the given path.
@@ -891,16 +845,67 @@ impl AllLanguageSettings {
     pub fn inline_completions_enabled(
         &self,
         language: Option<&Arc<Language>>,
-        path: Option<&Path>,
+        file: Option<&Arc<dyn File>>,
+        cx: &AppContext,
     ) -> bool {
-        if let Some(path) = path {
+        if let Some(path) = file.map(|f| f.path()) {
             if !self.inline_completions_enabled_for_path(path) {
                 return false;
             }
         }
 
-        self.language(language.map(|l| l.name()).as_ref())
+        self.language(file, language.map(|l| l.name()).as_ref(), cx)
             .show_inline_completions
+    }
+
+    fn editorconfig_settings(
+        &self,
+        file: Option<&Arc<dyn File>>,
+        cx: &AppContext,
+    ) -> Option<EditorConfigContent> {
+        let file_path = file?.as_local()?.abs_path(cx);
+        // TODO kb this goes recursively up the directory tree
+        let mut cfg = ec4rs::properties_of(file_path).log_err()?;
+        if cfg.is_empty() {
+            return None;
+        }
+
+        cfg.use_fallbacks();
+        let max_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
+            MaxLineLen::Value(u) => Some(u as u32),
+            MaxLineLen::Off => None,
+        });
+        let editorconfig = EditorConfigContent {
+            tab_size: cfg.get::<IndentSize>().ok().and_then(|v| match v {
+                IndentSize::Value(u) => NonZeroU32::new(u as u32),
+                IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
+                    TabWidth::Value(u) => NonZeroU32::new(u as u32),
+                }),
+            }),
+            hard_tabs: cfg
+                .get::<IndentStyle>()
+                .map(|v| v.eq(&IndentStyle::Tabs))
+                .ok(),
+            ensure_final_newline_on_save: cfg
+                .get::<FinalNewline>()
+                .map(|v| match v {
+                    FinalNewline::Value(b) => b,
+                })
+                .ok(),
+            remove_trailing_whitespace_on_save: cfg
+                .get::<TrimTrailingWs>()
+                .map(|v| match v {
+                    TrimTrailingWs::Value(b) => b,
+                })
+                .ok(),
+            preferred_line_length: max_line_length,
+            soft_wrap: if max_line_length.is_some() {
+                Some(SoftWrap::PreferredLineLength)
+            } else {
+                None
+            },
+        };
+        Some(editorconfig)
     }
 }
 
