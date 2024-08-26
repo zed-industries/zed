@@ -11,6 +11,7 @@ use std::{
     path::Path,
     sync::{Arc, OnceLock},
 };
+use text::BufferId;
 use util::paths::PathMatcher;
 
 static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: OnceLock<Regex> = OnceLock::new();
@@ -20,6 +21,7 @@ pub struct SearchInputs {
     query: Arc<str>,
     files_to_include: PathMatcher,
     files_to_exclude: PathMatcher,
+    buffer_ids: Option<Vec<BufferId>>,
 }
 
 impl SearchInputs {
@@ -31,6 +33,9 @@ impl SearchInputs {
     }
     pub fn files_to_exclude(&self) -> &PathMatcher {
         &self.files_to_exclude
+    }
+    pub fn buffer_ids(&self) -> &Option<Vec<BufferId>> {
+        &self.buffer_ids
     }
 }
 #[derive(Clone, Debug)]
@@ -63,6 +68,7 @@ impl SearchQuery {
         include_ignored: bool,
         files_to_include: PathMatcher,
         files_to_exclude: PathMatcher,
+        buffer_ids: Option<Vec<BufferId>>,
     ) -> Result<Self> {
         let query = query.to_string();
         let search = AhoCorasickBuilder::new()
@@ -72,6 +78,7 @@ impl SearchQuery {
             query: query.into(),
             files_to_exclude,
             files_to_include,
+            buffer_ids,
         };
         Ok(Self::Text {
             search: Arc::new(search),
@@ -90,6 +97,7 @@ impl SearchQuery {
         include_ignored: bool,
         files_to_include: PathMatcher,
         files_to_exclude: PathMatcher,
+        buffer_ids: Option<Vec<BufferId>>,
     ) -> Result<Self> {
         let mut query = query.to_string();
         let initial_query = Arc::from(query.as_str());
@@ -110,6 +118,7 @@ impl SearchQuery {
             query: initial_query,
             files_to_exclude,
             files_to_include,
+            buffer_ids,
         };
         Ok(Self::Regex {
             regex,
@@ -131,6 +140,7 @@ impl SearchQuery {
                 message.include_ignored,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
+                None, // search opened only don't need search remote
             )
         } else {
             Self::text(
@@ -140,6 +150,7 @@ impl SearchQuery {
                 message.include_ignored,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
+                None, // search opened only don't need search remote
             )
         }
     }
@@ -374,6 +385,14 @@ impl SearchQuery {
 
     pub fn files_to_exclude(&self) -> &PathMatcher {
         self.as_inner().files_to_exclude()
+    }
+
+    pub fn buffer_ids(&self) -> &Option<Vec<BufferId>> {
+        self.as_inner().buffer_ids()
+    }
+
+    pub fn is_opened_only(&self) -> bool {
+        self.as_inner().buffer_ids.is_some()
     }
 
     pub fn file_matches(&self, file_path: Option<&Path>) -> bool {

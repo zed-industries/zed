@@ -17,6 +17,7 @@ use gpui::{
     ModelContext, ParentElement, Point, Render, SharedString, Styled, Subscription, Task,
     TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
 };
+use language::BufferId;
 use menu::Confirm;
 use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
 use settings::Settings;
@@ -856,27 +857,28 @@ impl ProjectSearchView {
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
         let text = self.query_editor.read(cx).text(cx);
-        let matcher = if self.included_opened_only {
-            self.opened_editor_paths_matcher(cx)
+        let opened_buffer_ids = if self.included_opened_only {
+            self.opened_editor_buffer_ids(cx)
         } else {
-            Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx))
+            None
         };
-        let included_files = match matcher {
-            Ok(included_files) => {
-                let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Include);
-                if should_unmark_error {
-                    cx.notify();
+        let included_files =
+            match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx)) {
+                Ok(included_files) => {
+                    let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Include);
+                    if should_unmark_error {
+                        cx.notify();
+                    }
+                    included_files
                 }
-                included_files
-            }
-            Err(_e) => {
-                let should_mark_error = self.panels_with_errors.insert(InputPanel::Include);
-                if should_mark_error {
-                    cx.notify();
+                Err(_e) => {
+                    let should_mark_error = self.panels_with_errors.insert(InputPanel::Include);
+                    if should_mark_error {
+                        cx.notify();
+                    }
+                    PathMatcher::default()
                 }
-                PathMatcher::default()
-            }
-        };
+            };
         let excluded_files =
             match Self::parse_path_matches(&self.excluded_files_editor.read(cx).text(cx)) {
                 Ok(excluded_files) => {
@@ -904,6 +906,7 @@ impl ProjectSearchView {
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                 included_files,
                 excluded_files,
+                opened_buffer_ids,
             ) {
                 Ok(query) => {
                     let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Query);
@@ -930,6 +933,7 @@ impl ProjectSearchView {
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                 included_files,
                 excluded_files,
+                opened_buffer_ids,
             ) {
                 Ok(query) => {
                     let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Query);
@@ -958,23 +962,22 @@ impl ProjectSearchView {
         query
     }
 
-    fn opened_editor_paths_matcher(
-        &self,
-        cx: &mut ViewContext<Self>,
-    ) -> anyhow::Result<PathMatcher> {
-        let res = self.workspace.update(cx, |workspace, cx| {
-            let mut open_files = Vec::new();
+    fn opened_editor_buffer_ids(&self, cx: &mut ViewContext<Self>) -> Option<Vec<BufferId>> {
+        let buffer_ids = self.workspace.update(cx, |workspace, cx| {
+            let mut buffer_ids = Vec::new();
             for editor in workspace.items_of_type::<Editor>(cx) {
                 if let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
-                    let snapshot = buffer.read(cx).snapshot();
-                    if let Some(full_path) = snapshot.resolve_file_path(cx, false) {
-                        open_files.push(full_path.to_string_lossy().to_string());
-                    }
+                    let buffer_id = buffer.read(cx).remote_id();
+                    buffer_ids.push(buffer_id);
                 }
             }
-            open_files
-        })?;
-        Ok(PathMatcher::new(&res.clone())?)
+            buffer_ids
+        });
+        if let Ok(buffer_ids) = buffer_ids {
+            Some(buffer_ids)
+        } else {
+            None
+        }
     }
 
     fn parse_path_matches(text: &str) -> anyhow::Result<PathMatcher> {
