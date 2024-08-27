@@ -250,9 +250,9 @@ impl WorkflowStep {
                     }),
                     Err(error) => Err(Arc::new(error)),
                 });
-                this.context
-                    .update(cx, |context, cx| context.workflow_step_updated(range, cx))
-                    .ok();
+                // this.context
+                //     .update(cx, |context, cx| context.workflow_step_updated(range, cx))
+                //     .ok();
                 cx.notify();
             })
             .ok();
@@ -261,11 +261,11 @@ impl WorkflowStep {
     }
 
     fn result_updated(&mut self, cx: &mut ModelContext<Self>) {
-        self.context
-            .update(cx, |context, cx| {
-                context.workflow_step_updated(self.context_buffer_range.clone(), cx)
-            })
-            .ok();
+        // self.context
+        //     .update(cx, |context, cx| {
+        //         context.workflow_step_updated(self.context_buffer_range.clone(), cx)
+        //     })
+        //     .ok();
     }
 }
 
@@ -330,7 +330,7 @@ impl WorkflowSuggestion {
         }
     }
 
-    fn try_merge(&mut self, other: &Self, buffer: &BufferSnapshot) -> bool {
+    pub fn try_merge(&mut self, other: &Self, buffer: &BufferSnapshot) -> bool {
         let range = self.range();
         let other_range = other.range();
 
@@ -521,7 +521,7 @@ pub mod tool {
     }
 
     impl WorkflowStepEdit {
-        pub(super) async fn resolve(
+        pub async fn resolve(
             &self,
             project: Model<Project>,
             mut cx: AsyncAppContext,

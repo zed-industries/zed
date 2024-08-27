@@ -261,17 +261,6 @@ impl FocusableView for WorkflowStepView {
 impl Item for WorkflowStepView {
     type Event = EditorEvent;
 
-    fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
-        let step = self.step.upgrade()?.read(cx);
-        let context = step.context.upgrade()?.read(cx);
-        let buffer = context.buffer().read(cx);
-        let index = context
-            .workflow_step_index_for_range(&step.context_buffer_range, buffer)
-            .ok()?
-            + 1;
-        Some(format!("Step {index}").into())
-    }
-
     fn tab_icon(&self, _cx: &WindowContext) -> Option<ui::Icon> {
         Some(Icon::new(IconName::SearchCode))
     }
