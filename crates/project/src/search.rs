@@ -425,23 +425,18 @@ impl SearchQuery {
             && self.files_to_include().sources().is_empty())
     }
 
-    pub fn file_matches(&self, file_path: Option<&Path>) -> bool {
-        match file_path {
-            Some(file_path) => {
-                let mut path = file_path.to_path_buf();
-                loop {
-                    if self.files_to_exclude().is_match(&path) {
-                        return false;
-                    } else if self.files_to_include().sources().is_empty()
-                        || self.files_to_include().is_match(&path)
-                    {
-                        return true;
-                    } else if !path.pop() {
-                        return false;
-                    }
-                }
+    pub fn file_matches(&self, file_path: &Path) -> bool {
+        let mut path = file_path.to_path_buf();
+        loop {
+            if self.files_to_exclude().is_match(&path) {
+                return false;
+            } else if self.files_to_include().sources().is_empty()
+                || self.files_to_include().is_match(&path)
+            {
+                return true;
+            } else if !path.pop() {
+                return false;
             }
-            None => self.files_to_include().sources().is_empty(),
         }
     }
     pub fn as_inner(&self) -> &SearchInputs {

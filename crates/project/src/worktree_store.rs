@@ -356,6 +356,7 @@ impl WorktreeStore {
         snapshot: &'a worktree::Snapshot,
         path: &'a Path,
         query: &'a SearchQuery,
+        include_root: bool,
         filter_tx: &'a Sender<MatchingEntry>,
         output_tx: &'a Sender<oneshot::Receiver<ProjectPath>>,
     ) -> BoxFuture<'a, Result<()>> {
@@ -395,6 +396,18 @@ impl WorktreeStore {
             });
             for (path, is_file) in results {
                 if is_file {
+                    if query.filters_path() {
+                        let matched_path = if include_root {
+                            let mut full_path = PathBuf::from(snapshot.root_name());
+                            full_path.push(&path);
+                            query.file_matches(&full_path)
+                        } else {
+                            query.file_matches(&path)
+                        };
+                        if !matched_path {
+                            continue;
+                        }
+                    }
                     let (tx, rx) = oneshot::channel();
                     output_tx.send(rx).await?;
                     filter_tx
@@ -408,8 +421,16 @@ impl WorktreeStore {
                         })
                         .await?;
                 } else {
-                    Self::scan_ignored_dir(fs, snapshot, &path, query, filter_tx, output_tx)
-                        .await?;
+                    Self::scan_ignored_dir(
+                        fs,
+                        snapshot,
+                        &path,
+                        query,
+                        include_root,
+                        filter_tx,
+                        output_tx,
+                    )
+                    .await?;
                 }
             }
             Ok(())
@@ -437,6 +458,7 @@ impl WorktreeStore {
                             &snapshot,
                             &entry.path,
                             &query,
+                            include_root,
                             &filter_tx,
                             &output_tx,
                         )
@@ -464,9 +486,9 @@ impl WorktreeStore {
                     let matched_path = if include_root {
                         let mut full_path = PathBuf::from(snapshot.root_name());
                         full_path.push(&entry.path);
-                        query.file_matches(Some(&full_path))
+                        query.file_matches(&full_path)
                     } else {
-                        query.file_matches(Some(&entry.path))
+                        query.file_matches(&entry.path)
                     };
                     if !matched_path {
                         continue;

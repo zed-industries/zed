@@ -4495,7 +4495,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         "Unrestricted search with ignored directories should find every file with the query"
     );
 
-    let files_to_include = PathMatcher::new(&["/dir/node_modules/prettier/**".to_owned()]).unwrap();
+    let files_to_include = PathMatcher::new(&["node_modules/prettier/**".to_owned()]).unwrap();
     let files_to_exclude = PathMatcher::new(&["*.ts".to_owned()]).unwrap();
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
     assert_eq!(
