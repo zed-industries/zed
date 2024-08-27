@@ -85,6 +85,7 @@ pub struct ExtensionManifest {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind")]
 pub enum ExtensionCapability {
     #[serde(rename = "github:download")]
     GithubDownload { owner: String, repo: String },
