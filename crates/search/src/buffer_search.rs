@@ -718,11 +718,19 @@ impl BufferSearchBar {
         }
     }
 
-    fn toggle_search_option(&mut self, search_option: SearchOptions, cx: &mut ViewContext<Self>) {
+    pub fn toggle_search_option(
+        &mut self,
+        search_option: SearchOptions,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.search_options.toggle(search_option);
         self.default_options = self.search_options;
         drop(self.update_matches(cx));
         cx.notify();
+    }
+
+    pub fn should_search_option(&mut self, search_option: SearchOptions) -> bool {
+        self.search_options.contains(search_option)
     }
 
     pub fn enable_search_option(
