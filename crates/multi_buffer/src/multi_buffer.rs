@@ -1123,6 +1123,7 @@ impl MultiBuffer {
             let mut excerpt_ranges = Vec::new();
             let mut range_counts = Vec::new();
             cx.background_executor()
+                .scoped(|scope| {
                     scope.spawn(async {
                         let (ranges, counts) =
                             build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
