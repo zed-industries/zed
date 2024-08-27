@@ -7294,6 +7294,26 @@ impl Editor {
         });
     }
 
+    pub fn delete_to_previous_word_end(
+        &mut self,
+        _: &DeleteToPreviousWordEnd,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.transact(cx, |this, cx| {
+            this.select_autoclose_pair(cx);
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                let line_mode = s.line_mode;
+                s.move_with(|map, selection| {
+                    if selection.is_empty() && !line_mode {
+                        let cursor = movement::previous_word_end(map, selection.head());
+                        selection.set_head(cursor, SelectionGoal::None);
+                    }
+                });
+            });
+            this.insert("", cx);
+        });
+    }
+
     pub fn delete_to_previous_subword_start(
         &mut self,
         _: &DeleteToPreviousSubwordStart,
@@ -7361,6 +7381,25 @@ impl Editor {
                 s.move_with(|map, selection| {
                     if selection.is_empty() && !line_mode {
                         let cursor = movement::next_word_end(map, selection.head());
+                        selection.set_head(cursor, SelectionGoal::None);
+                    }
+                });
+            });
+            this.insert("", cx);
+        });
+    }
+
+    pub fn delete_to_next_word_start(
+        &mut self,
+        _: &DeleteToNextWordStart,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.transact(cx, |this, cx| {
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                let line_mode = s.line_mode;
+                s.move_with(|map, selection| {
+                    if selection.is_empty() && !line_mode {
+                        let cursor = movement::next_word_start(map, selection.head());
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });

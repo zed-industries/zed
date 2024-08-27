@@ -200,9 +200,11 @@ impl EditorElement {
         register_action(view, cx, Editor::convert_to_upper_camel_case);
         register_action(view, cx, Editor::convert_to_lower_camel_case);
         register_action(view, cx, Editor::convert_to_opposite_case);
+        register_action(view, cx, Editor::delete_to_previous_word_end);
         register_action(view, cx, Editor::delete_to_previous_word_start);
         register_action(view, cx, Editor::delete_to_previous_subword_start);
         register_action(view, cx, Editor::delete_to_next_word_end);
+        register_action(view, cx, Editor::delete_to_next_word_start);
         register_action(view, cx, Editor::delete_to_next_subword_end);
         register_action(view, cx, Editor::delete_to_beginning_of_line);
         register_action(view, cx, Editor::delete_to_end_of_line);

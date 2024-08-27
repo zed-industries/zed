@@ -272,6 +272,18 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     })
 }
 
+/// Returns a position of the end of the previous word, where a word character is defined as either
+/// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
+pub fn previous_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let raw_point = point.to_point(map);
+    let scope = map.buffer_snapshot.language_scope_at(raw_point);
+
+    find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
+        (char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace())
+            || left == '\n'
+    })
+}
+
 /// Returns a position of the previous subword boundary, where a subword is defined as a run of
 /// word characters of the same "subkind" - where subcharacter kinds are '_' character,
 /// lowerspace characters and uppercase characters.
@@ -297,6 +309,18 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
         (char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace())
             || right == '\n'
+    })
+}
+
+/// Returns a position of the start of the next word, where a word character is defined as either
+/// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
+pub fn next_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let raw_point = point.to_point(map);
+    let scope = map.buffer_snapshot.language_scope_at(raw_point);
+
+    find_boundary(map, point, FindRange::MultiLine, |left, right| {
+        (char_kind(&scope, left) != char_kind(&scope, right) && !right.is_whitespace())
+            || left == '\n'
     })
 }
 
