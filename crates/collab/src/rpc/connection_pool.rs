@@ -42,6 +42,10 @@ impl ZedVersion {
     pub fn with_list_directory() -> ZedVersion {
         ZedVersion(SemanticVersion::new(0, 145, 0))
     }
+
+    pub fn with_search_candidates() -> ZedVersion {
+        ZedVersion(SemanticVersion::new(0, 151, 0))
+    }
 }
 
 pub trait VersionedMessage {
