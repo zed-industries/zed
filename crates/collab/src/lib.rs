@@ -172,6 +172,8 @@ pub struct Config {
     pub llm_closed_beta_model_name: Option<Arc<str>>,
     pub qwen2_7b_api_key: Option<Arc<str>>,
     pub qwen2_7b_api_url: Option<Arc<str>>,
+    pub summarization_api_key: Option<Arc<str>>,
+    pub summarization_api_url: Option<Arc<str>>,
     pub zed_client_checksum_seed: Option<String>,
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,

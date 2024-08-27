@@ -644,6 +644,12 @@ impl Server {
                         app_state.config.openai_api_key.clone(),
                     )
                 })
+            })
+            .add_request_handler({
+                let app_state = app_state.clone();
+                user_handler(move |request, response, session| {
+                    compute_summary(request, response, session, &app_state.config)
+                })
             });
 
         Arc::new(server)
@@ -4695,6 +4701,25 @@ async fn get_cached_embeddings(
             .map(|(digest, dimensions)| proto::Embedding { digest, dimensions })
             .collect(),
     })?;
+    Ok(())
+}
+
+async fn compute_summary(
+    request: proto::ComputeSummary,
+    response: Response<proto::ComputeSummary>,
+    session: UserSession,
+    config: &Config,
+) -> Result<()> {
+    let api_url = config
+        .summarization_api_url
+        .as_ref()
+        .context("no summarization API URL configured on the server")?;
+    let api_key = config
+        .summarization_api_key
+        .as_ref()
+        .context("no summarization API key configured on the server")?;
+
+    response.send(proto::ComputeSummaryResponse { summary: todo!() });
     Ok(())
 }
 

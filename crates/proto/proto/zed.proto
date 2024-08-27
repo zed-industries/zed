@@ -205,6 +205,8 @@ message Envelope {
         GetCachedEmbeddingsResponse get_cached_embeddings_response = 190;
         ComputeEmbeddings compute_embeddings = 191;
         ComputeEmbeddingsResponse compute_embeddings_response = 192;
+        ComputeSummary compute_summary = 243;
+        ComputeSummaryResponse compute_summary_response = 244; // current max
 
         UpdateChannelMessage update_channel_message = 170;
         ChannelMessageUpdate channel_message_update = 171;
@@ -275,7 +277,7 @@ message Envelope {
         GetLlmTokenResponse get_llm_token_response = 236;
 
         LspExtSwitchSourceHeader lsp_ext_switch_source_header = 241;
-        LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242; // current max
+        LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
     }
 
     reserved 158 to 161;
@@ -2139,6 +2141,14 @@ message ComputeEmbeddingsResponse {
 message Embedding {
     bytes digest = 1;
     repeated float dimensions = 2;
+}
+
+message ComputeSummary {
+    string text = 1;
+}
+
+message ComputeSummaryResponse {
+    string summary = 1;
 }
 
 message BlameBuffer {
