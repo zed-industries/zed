@@ -221,36 +221,56 @@ impl ProjectSearch {
 
             let mut limit_reached = false;
             while let Some(results) = matches.next().await {
-                for result in results {
-                    match result {
-                        project::search::SearchResult::Buffer { buffer, ranges } => {
-                            let mut match_ranges = this
-                                .update(&mut cx, |this, cx| {
-                                    this.excerpts.update(cx, |excerpts, cx| {
-                                        excerpts.stream_excerpts_with_context_lines(
-                                            buffer,
-                                            ranges,
-                                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                                            cx,
-                                        )
-                                    })
-                                })
-                                .ok()?;
+                let tasks = results
+                    .into_iter()
+                    .map(|result| {
+                        let this = this.clone();
 
-                            while let Some(range) = match_ranges.next().await {
-                                this.update(&mut cx, |this, _| {
-                                    this.no_results = Some(false);
-                                    this.match_ranges.push(range)
-                                })
-                                .ok()?;
+                        cx.spawn(|mut cx| async move {
+                            match result {
+                                project::search::SearchResult::Buffer { buffer, ranges } => {
+                                    let mut match_ranges_rx =
+                                        this.update(&mut cx, |this, cx| {
+                                            this.excerpts.update(cx, |excerpts, cx| {
+                                                excerpts.stream_excerpts_with_context_lines(
+                                                    buffer,
+                                                    ranges,
+                                                    editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                                                    cx,
+                                                )
+                                            })
+                                        })?;
+
+                                    let mut match_ranges = vec![];
+                                    while let Some(range) = match_ranges_rx.next().await {
+                                        match_ranges.push(range);
+                                    }
+                                    anyhow::Ok((match_ranges, false))
+                                }
+                                project::search::SearchResult::LimitReached => {
+                                    anyhow::Ok((vec![], true))
+                                }
                             }
-                            this.update(&mut cx, |_, cx| cx.notify()).ok()?;
-                        }
-                        project::search::SearchResult::LimitReached => {
-                            limit_reached = true;
-                        }
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                let result_ranges = futures::future::join_all(tasks).await;
+                let mut combined_ranges = vec![];
+                for (ranges, result_limit_reached) in result_ranges.into_iter().flatten() {
+                    combined_ranges.extend(ranges);
+                    if result_limit_reached {
+                        limit_reached = result_limit_reached;
                     }
                 }
+                this.update(&mut cx, |this, cx| {
+                    if !combined_ranges.is_empty() {
+                        this.no_results = Some(false);
+                        this.match_ranges.extend(combined_ranges);
+                        cx.notify();
+                    }
+                })
+                .ok()?;
             }
 
             this.update(&mut cx, |this, cx| {
