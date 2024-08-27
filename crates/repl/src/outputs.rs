@@ -38,6 +38,7 @@ use std::time::Duration;
 
 use gpui::{
     percentage, Animation, AnimationExt, AnyElement, ClipboardItem, Render, Transformation, View,
+    WeakView,
 };
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, Tooltip, ViewContext};
@@ -56,6 +57,7 @@ use plain::TerminalOutput;
 
 mod user_error;
 use user_error::ErrorView;
+use workspace::Workspace;
 
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
@@ -193,13 +195,20 @@ pub enum ExecutionStatus {
 /// It can hold zero or more outputs, which the user
 /// sees as "the output" for a single execution.
 pub struct ExecutionView {
+    #[allow(unused)]
+    workspace: WeakView<Workspace>,
     pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
 }
 
 impl ExecutionView {
-    pub fn new(status: ExecutionStatus, _cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        status: ExecutionStatus,
+        workspace: WeakView<Workspace>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Self {
         Self {
+            workspace,
             outputs: Default::default(),
             status,
         }
