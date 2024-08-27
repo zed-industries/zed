@@ -287,7 +287,6 @@ impl WorktreeStore {
                 Some((tree.snapshot(), tree.as_local()?.settings()))
             })
             .collect::<Vec<_>>();
-        let workers = cx.background_executor().num_cpus();
 
         let executor = cx.background_executor().clone();
 

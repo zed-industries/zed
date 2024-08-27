@@ -7280,7 +7280,6 @@ impl Project {
 
         let matching_buffers_rx =
             self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx);
-        let start = Instant::now();
 
         cx.spawn(|_, cx| async move {
             let mut range_count = 0;
@@ -7341,7 +7340,6 @@ impl Project {
             if limit_reached {
                 result_tx.send(SearchResult::LimitReached).await?;
             }
-            dbg!(start.elapsed());
 
             println!("search took: {:?}", start.elapsed());
             anyhow::Ok(())
