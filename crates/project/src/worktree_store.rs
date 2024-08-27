@@ -276,7 +276,7 @@ impl WorktreeStore {
         fs: Arc<dyn Fs>,
         cx: &ModelContext<Self>,
     ) -> Receiver<ProjectPath> {
-        let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
+        let (matching_paths_tx, matching_paths_rx) = smol::channel::unbounded();
         let snapshots = self
             .visible_worktrees(cx)
             .filter_map(|tree| {

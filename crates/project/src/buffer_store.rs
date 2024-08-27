@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
 use fs::Fs;
-use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt as _};
+use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt};
 use git::blame::Blame;
 use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Task, WeakModel,
@@ -788,7 +788,9 @@ impl BufferStore {
         fs: Arc<dyn Fs>,
         cx: &mut ModelContext<Self>,
     ) -> Receiver<Model<Buffer>> {
-        let (tx, rx) = smol::channel::unbounded();
+        const MAGIC_NUMBER: usize = 64;
+        let (tx, rx) = smol::channel::bounded(MAGIC_NUMBER);
+
         let open_buffers = self.find_open_search_candidates(query, cx);
         let skip_entries: HashSet<_> = open_buffers
             .iter()
@@ -796,33 +798,38 @@ impl BufferStore {
             .collect();
 
         let limit = limit.saturating_sub(open_buffers.len());
-        for open_buffer in open_buffers {
-            tx.send_blocking(open_buffer).ok();
-        }
 
-        let match_rx = self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.find_search_candidates(query.clone(), limit, skip_entries, fs, cx)
-        });
+        let mut project_paths_rx = self
+            .worktree_store
+            .update(cx, |worktree_store, cx| {
+                worktree_store.find_search_candidates(query.clone(), limit, skip_entries, fs, cx)
+            })
+            .chunks(MAGIC_NUMBER);
 
-        const MAX_CONCURRENT_BUFFER_OPENS: usize = 8;
+        cx.spawn(|this, mut cx| async move {
+            for open_buffer in open_buffers {
+                tx.send(open_buffer).await.ok();
+            }
 
-        for _ in 0..MAX_CONCURRENT_BUFFER_OPENS {
-            let mut match_rx = match_rx.clone();
-            let tx = tx.clone();
-            cx.spawn(|this, mut cx| async move {
-                while let Some(project_path) = match_rx.next().await {
-                    let buffer = this
-                        .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))?
-                        .await
-                        .log_err();
-                    if let Some(buffer) = buffer {
-                        tx.send_blocking(buffer).ok();
+            while let Some(project_paths) = project_paths_rx.next().await {
+                let buffers = this.update(&mut cx, |this, cx| {
+                    project_paths
+                        .into_iter()
+                        .map(|project_path| this.open_buffer(project_path, cx))
+                        .collect::<Vec<_>>()
+                })?;
+                for buffer_task in buffers {
+                    if let Some(buffer) = buffer_task.await.log_err() {
+                        if tx.send(buffer).await.is_err() {
+                            println!("other end dropped, returning");
+                            return anyhow::Ok(());
+                        }
                     }
                 }
-                anyhow::Ok(())
-            })
-            .detach();
-        }
+            }
+            anyhow::Ok(())
+        })
+        .detach();
         rx
     }
 
@@ -833,13 +840,9 @@ impl BufferStore {
         query: &SearchQuery,
         cx: &ModelContext<Self>,
     ) -> Vec<Model<Buffer>> {
-        let include_root = self
-            .worktree_store
-            .read(cx)
-            .visible_worktrees(cx)
-            .collect::<Vec<_>>()
-            .len()
-            > 1;
+        let worktree_count = self.worktree_store.read(cx).visible_worktrees(cx).count();
+        let include_root = worktree_count > 1;
+
         self.buffers()
             .filter_map(|buffer| {
                 let handle = buffer.clone();
