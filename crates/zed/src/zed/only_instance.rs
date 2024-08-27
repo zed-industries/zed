@@ -38,8 +38,10 @@ fn address() -> SocketAddr {
     let mut sys = System::new_all();
     sys.refresh_all();
     if let Ok(current_pid) = sysinfo::get_current_pid() {
-        if let Some(uid) = sys.process(current_pid)
-                              .and_then(|process| process.user_id()) {
+        if let Some(uid) = sys
+            .process(current_pid)
+            .and_then(|process| process.user_id())
+        {
             let uid_u32 = *uid.clone();
             // Ensure that the user ID is not too large to avoid overflow when
             // calculating the port number. This seems unlikely but it doesn't
