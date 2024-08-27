@@ -420,6 +420,11 @@ impl SearchQuery {
         self.as_inner().files_to_exclude()
     }
 
+    pub fn filters_path(&self) -> bool {
+        !(self.files_to_exclude().sources().is_empty()
+            && self.files_to_include().sources().is_empty())
+    }
+
     pub fn file_matches(&self, file_path: Option<&Path>) -> bool {
         match file_path {
             Some(file_path) => {

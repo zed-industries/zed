@@ -93,7 +93,7 @@ use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
     cell::RefCell,
-    cmp::{self, Ordering},
+    cmp::Ordering,
     convert::TryInto,
     env,
     ffi::OsStr,
@@ -7275,51 +7275,38 @@ impl Project {
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
     ) -> Receiver<SearchResult> {
-        let (result_tx, result_rx) = smol::channel::bounded(1024);
+        let (result_tx, result_rx) = smol::channel::unbounded();
 
         let matching_buffers_rx =
             self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx);
 
         cx.spawn(|_, cx| async move {
-            let mut matching_buffers = matching_buffers_rx.collect::<Vec<_>>().await;
-            let mut limit_reached = if matching_buffers.len() > MAX_SEARCH_RESULT_FILES {
-                matching_buffers.truncate(MAX_SEARCH_RESULT_FILES);
-                true
-            } else {
-                false
-            };
-            cx.update(|cx| {
-                sort_search_matches(&mut matching_buffers, cx);
-            })?;
-
             let mut range_count = 0;
+            let mut buffer_count = 0;
+            let mut limit_reached = false;
             let query = Arc::new(query);
+            let mut chunks = matching_buffers_rx.ready_chunks(64);
 
             // Now that we know what paths match the query, we will load at most
             // 64 buffers at a time to avoid overwhelming the main thread. For each
             // opened buffer, we will spawn a background task that retrieves all the
             // ranges in the buffer matched by the query.
-            'outer: for matching_buffer_chunk in matching_buffers.chunks(64) {
+            'outer: while let Some(matching_buffer_chunk) = chunks.next().await {
                 let mut chunk_results = Vec::new();
                 for buffer in matching_buffer_chunk {
                     let buffer = buffer.clone();
                     let query = query.clone();
-                    chunk_results.push(cx.spawn(|cx| async move {
-                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
-                        let ranges = cx
-                            .background_executor()
-                            .spawn(async move {
-                                query
-                                    .search(&snapshot, None)
-                                    .await
-                                    .iter()
-                                    .map(|range| {
-                                        snapshot.anchor_before(range.start)
-                                            ..snapshot.anchor_after(range.end)
-                                    })
-                                    .collect::<Vec<_>>()
+                    let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+                    chunk_results.push(cx.background_executor().spawn(async move {
+                        let ranges = query
+                            .search(&snapshot, None)
+                            .await
+                            .iter()
+                            .map(|range| {
+                                snapshot.anchor_before(range.start)
+                                    ..snapshot.anchor_after(range.end)
                             })
-                            .await;
+                            .collect::<Vec<_>>();
                         anyhow::Ok((buffer, ranges))
                     }));
                 }
@@ -7328,10 +7315,13 @@ impl Project {
                 for result in chunk_results {
                     if let Some((buffer, ranges)) = result.log_err() {
                         range_count += ranges.len();
+                        buffer_count += 1;
                         result_tx
                             .send(SearchResult::Buffer { buffer, ranges })
                             .await?;
-                        if range_count > MAX_SEARCH_RESULT_RANGES {
+                        if buffer_count > MAX_SEARCH_RESULT_FILES
+                            || range_count > MAX_SEARCH_RESULT_RANGES
+                        {
                             limit_reached = true;
                             break 'outer;
                         }
@@ -11367,21 +11357,5 @@ pub fn sort_worktree_entries(entries: &mut Vec<Entry>) {
             (&entry_a.path, entry_a.is_file()),
             (&entry_b.path, entry_b.is_file()),
         )
-    });
-}
-
-fn sort_search_matches(search_matches: &mut Vec<Model<Buffer>>, cx: &AppContext) {
-    search_matches.sort_by(|buffer_a, buffer_b| {
-        let path_a = buffer_a.read(cx).file().map(|file| file.path());
-        let path_b = buffer_b.read(cx).file().map(|file| file.path());
-
-        match (path_a, path_b) {
-            (None, None) => cmp::Ordering::Equal,
-            (None, Some(_)) => cmp::Ordering::Less,
-            (Some(_), None) => cmp::Ordering::Greater,
-            (Some(path_a), Some(path_b)) => {
-                compare_paths((path_a.as_ref(), true), (path_b.as_ref(), true))
-            }
-        }
     });
 }
