@@ -647,26 +647,26 @@ impl EditorElement {
             if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
                 return;
             }
-            if !EditorSettings::get_global(cx).linux_middle_click_paste {
-                return;
-            }
-            #[cfg(target_os = "linux")]
-            if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
-                let point_for_position =
-                    position_map.point_for_position(text_hitbox.bounds, event.position);
-                let position = point_for_position.previous_valid;
 
-                editor.select(
-                    SelectPhase::Begin {
-                        position,
-                        add: false,
-                        click_count: 1,
-                    },
-                    cx,
-                );
-                editor.insert(&text, cx);
+            #[cfg(target_os = "linux")]
+            if EditorSettings::get_global(cx).middle_click_paste {
+                if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
+                    let point_for_position =
+                        position_map.point_for_position(text_hitbox.bounds, event.position);
+                    let position = point_for_position.previous_valid;
+
+                    editor.select(
+                        SelectPhase::Begin {
+                            position,
+                            add: false,
+                            click_count: 1,
+                        },
+                        cx,
+                    );
+                    editor.insert(&text, cx);
+                }
+                cx.stop_propagation()
             }
-            cx.stop_propagation()
         }
     }
 

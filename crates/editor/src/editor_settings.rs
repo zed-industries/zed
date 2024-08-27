@@ -23,7 +23,7 @@ pub struct EditorSettings {
     pub multi_cursor_modifier: MultiCursorModifier,
     pub redact_private_values: bool,
     pub expand_excerpt_lines: u32,
-    pub linux_middle_click_paste: bool,
+    pub middle_click_paste: bool,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
     pub search_wrap: bool,
@@ -237,7 +237,7 @@ pub struct EditorSettingsContent {
     /// Whether to enable middle-click paste on Linux
     ///
     /// Default: true
-    pub linux_middle_click_paste: Option<bool>,
+    pub middle_click_paste: Option<bool>,
 
     /// What to do when multibuffer is double clicked in some of its excerpts
     /// (parts of singleton buffers).
