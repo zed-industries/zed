@@ -801,8 +801,6 @@ impl BufferStore {
             };
         }
 
-        let limit = limit.saturating_sub(open_buffers.len());
-
         const MAX_CONCURRENT_BUFFER_OPENS: usize = 64;
         let mut project_paths_rx = self
             .worktree_store

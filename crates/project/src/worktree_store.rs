@@ -448,6 +448,7 @@ impl WorktreeStore {
                     })
                     .await?;
                     output_tx.send(rx).await?;
+                    continue;
                 }
 
                 if query.filters_path() {
