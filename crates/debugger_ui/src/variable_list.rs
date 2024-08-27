@@ -183,7 +183,7 @@ impl VariableList {
 
                         let debug_item = this.debug_panel_item.read(cx);
 
-                        // if we already opend the variable/we already fetched it
+                        // if we already opened the variable/we already fetched it
                         // we can just toggle it because we already have the nested variable
                         if disclosed.unwrap_or(true)
                             || debug_item
