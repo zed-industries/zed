@@ -1636,14 +1636,6 @@ impl Render for ProjectSearchBar {
                         .child(self.render_text_input(&search.included_files_editor, cx)),
                 )
                 .child(
-                    IconButton::new("project-search-opened-only", IconName::Book)
-                        .selected(self.is_opened_only_enabled(cx))
-                        .tooltip(|cx| Tooltip::text("Search only in Opened Editors", cx))
-                        .on_click(cx.listener(|this, _, cx| {
-                            this.toggle_opened_only(cx);
-                        })),
-                )
-                .child(
                     h_flex()
                         .flex_1()
                         .min_w(rems(10.25))
@@ -1655,6 +1647,14 @@ impl Render for ProjectSearchBar {
                         .border_color(search.border_color_for(InputPanel::Exclude, cx))
                         .rounded_lg()
                         .child(self.render_text_input(&search.excluded_files_editor, cx)),
+                )
+                .child(
+                    IconButton::new("project-search-opened-only", IconName::FileDoc)
+                        .selected(self.is_opened_only_enabled(cx))
+                        .tooltip(|cx| Tooltip::text("Search only in Opened Editors", cx))
+                        .on_click(cx.listener(|this, _, cx| {
+                            this.toggle_opened_only(cx);
+                        })),
                 )
                 .child(
                     SearchOptions::INCLUDE_IGNORED.as_button(
