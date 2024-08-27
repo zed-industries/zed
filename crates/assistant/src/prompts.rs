@@ -294,11 +294,7 @@ impl PromptBuilder {
     }
 
     pub fn generate_workflow_prompt(&self) -> Result<String, RenderError> {
-        self.handlebars.lock().render("edit_workflow", &())
-    }
-
-    pub fn generate_edit_suggestions_prompt(&self) -> Result<String, RenderError> {
-        self.handlebars.lock().render("edit_suggestions", &())
+        self.handlebars.lock().render("workflow_2", &())
     }
 
     pub fn generate_step_resolution_prompt(

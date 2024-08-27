@@ -481,7 +481,7 @@ pub mod tool {
         pub step_title: String,
         /// A sequence of operations to apply to the codebase.
         /// When multiple operations are required for a step, be sure to include multiple operations in this list.
-        pub suggestions: Vec<WorkflowSuggestionTool>,
+        pub suggestions: Vec<WorkflowStepEdit>,
     }
 
     impl LanguageModelTool for WorkflowStepResolutionTool {
@@ -513,14 +513,14 @@ pub mod tool {
     /// programmatic changes to source code. It provides a structured way to describe
     /// edits for features like refactoring tools or AI-assisted coding suggestions.
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-    pub struct WorkflowSuggestionTool {
+    pub struct WorkflowStepEdit {
         /// The path to the file containing the relevant operation
         pub path: String,
         #[serde(flatten)]
-        pub kind: WorkflowSuggestionToolKind,
+        pub kind: WorkflowStepEditKind,
     }
 
-    impl WorkflowSuggestionTool {
+    impl WorkflowStepEdit {
         pub(super) async fn resolve(
             &self,
             project: Model<Project>,
@@ -560,7 +560,7 @@ pub mod tool {
             let outline = snapshot.outline(None).context("no outline for buffer")?;
 
             let suggestion = match kind {
-                WorkflowSuggestionToolKind::Update {
+                WorkflowStepEditKind::Update {
                     symbol,
                     description,
                 } => {
@@ -580,10 +580,10 @@ pub mod tool {
                         symbol_path,
                     }
                 }
-                WorkflowSuggestionToolKind::Create { description } => {
+                WorkflowStepEditKind::Create { description } => {
                     WorkflowSuggestion::CreateFile { description }
                 }
-                WorkflowSuggestionToolKind::InsertSiblingBefore {
+                WorkflowStepEditKind::InsertSiblingBefore {
                     symbol,
                     description,
                 } => {
@@ -601,7 +601,7 @@ pub mod tool {
                         symbol_path,
                     }
                 }
-                WorkflowSuggestionToolKind::InsertSiblingAfter {
+                WorkflowStepEditKind::InsertSiblingAfter {
                     symbol,
                     description,
                 } => {
@@ -613,7 +613,7 @@ pub mod tool {
                         symbol_path,
                     }
                 }
-                WorkflowSuggestionToolKind::PrependChild {
+                WorkflowStepEditKind::PrependChild {
                     symbol,
                     description,
                 } => {
@@ -639,7 +639,7 @@ pub mod tool {
                         }
                     }
                 }
-                WorkflowSuggestionToolKind::AppendChild {
+                WorkflowStepEditKind::AppendChild {
                     symbol,
                     description,
                 } => {
@@ -665,7 +665,7 @@ pub mod tool {
                         }
                     }
                 }
-                WorkflowSuggestionToolKind::Delete { symbol } => {
+                WorkflowStepEditKind::Delete { symbol } => {
                     let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
                     let start = symbol
                         .annotation_range
@@ -739,8 +739,8 @@ pub mod tool {
     }
 
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-    #[serde(tag = "kind")]
-    pub enum WorkflowSuggestionToolKind {
+    #[serde(tag = "operation")]
+    pub enum WorkflowStepEditKind {
         /// Rewrites the specified symbol entirely based on the given description.
         /// This operation completely replaces the existing symbol with new content.
         Update {

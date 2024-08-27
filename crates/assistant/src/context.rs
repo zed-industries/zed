@@ -2,8 +2,11 @@
 mod context_tests;
 
 use crate::{
-    prompts::PromptBuilder, slash_command::SlashCommandLine, workflow::WorkflowStep, MessageId,
-    MessageStatus,
+    prompts::PromptBuilder,
+    slash_command::SlashCommandLine,
+    tool::{WorkflowStepEdit, WorkflowStepEditKind},
+    workflow::WorkflowStep,
+    MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -375,8 +378,8 @@ pub struct Message {
     pub image_offsets: SmallVec<[(usize, MessageImage); 1]>,
     pub offset_range: Range<usize>,
     pub index_range: Range<usize>,
+    pub anchor_range: Range<language::Anchor>,
     pub id: MessageId,
-    pub anchor: language::Anchor,
     pub role: Role,
     pub status: MessageStatus,
     pub cache: Option<MessageCacheMetadata>,
@@ -456,14 +459,7 @@ pub struct WorkflowStepV2 {
     pub range: Range<language::Anchor>,
     pub leading_tags_end: text::Anchor,
     pub trailing_tag_start: Option<text::Anchor>,
-    pub parameters: WorkflowStepParameters,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WorkflowStepParameters {
-    path: Option<String>,
-    location: Option<String>,
-    operation: Option<EditSuggestionOperation>,
+    pub edits: Vec<WorkflowStepEdit>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, strum::EnumString)]
@@ -485,11 +481,13 @@ pub struct XmlTag {
 #[derive(Copy, Clone, Debug, strum::EnumString, PartialEq, Eq, strum::AsRefStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum XmlTagKind {
-    EditStep,
+    Step,
+    Edit,
     Path,
-    Location,
+    Symbol,
     Within,
     Operation,
+    Description,
 }
 
 pub struct Context {
@@ -1441,18 +1439,18 @@ impl Context {
         // Rebuild the XML tags in the edited range.
         let intersecting_tags_range =
             self.indices_intersecting_buffer_range(&self.xml_tags, buffer_start..buffer_end, cx);
-        let new_tags = xml_tags_in_range(buffer, buffer_start..buffer_end);
+        let new_tags = self.parse_xml_tags_in_range(buffer, buffer_start..buffer_end, cx);
         self.xml_tags
             .splice(intersecting_tags_range.clone(), new_tags);
 
-        // Find which suggestions intersect the changed range.
+        // Find which steps intersect the changed range.
         let intersecting_steps_range = self.indices_intersecting_buffer_range(
             &self.workflow_steps_v2,
             buffer_start..buffer_end,
             cx,
         );
 
-        // Reparse all tags after the last unchanged suggestion before the change.
+        // Reparse all tags after the last unchanged step before the change.
         let mut tags_start_ix = 0;
         if let Some(preceding_unchanged_step) =
             self.workflow_steps_v2[..intersecting_steps_range.start].last()
@@ -1468,6 +1466,82 @@ impl Context {
         }
 
         // Rebuild the edit suggestions in the range.
+        let new_steps = self.parse_steps(tags_start_ix, buffer_end, buffer);
+
+        updated.extend(new_steps.iter().map(|step| step.range.clone()));
+        let removed_steps = self
+            .workflow_steps_v2
+            .splice(intersecting_steps_range, new_steps);
+        removed.extend(
+            removed_steps
+                .map(|step| step.range)
+                .filter(|range| !updated.contains(&range)),
+        );
+    }
+
+    fn parse_xml_tags_in_range(
+        &self,
+        buffer: &BufferSnapshot,
+        range: Range<text::Anchor>,
+        cx: &AppContext,
+    ) -> Vec<XmlTag> {
+        let mut messages = self.messages(cx).peekable();
+
+        let mut tags = Vec::new();
+        let mut lines = buffer.text_for_range(range).lines();
+        let mut offset = lines.offset();
+
+        while let Some(line) = lines.next() {
+            while let Some(message) = messages.peek() {
+                if message.offset_range.end <= offset {
+                    messages.next();
+                } else {
+                    break;
+                }
+            }
+
+            let is_assistant_message = messages
+                .peek()
+                .map_or(false, |message| message.role == Role::Assistant);
+            if !is_assistant_message {
+                continue;
+            }
+
+            for (start_ix, _) in line.match_indices('<') {
+                let mut name_start_ix = start_ix + 1;
+                let closing_bracket_ix = line[start_ix..].find('>').map(|i| start_ix + i);
+                if let Some(closing_bracket_ix) = closing_bracket_ix {
+                    let end_ix = closing_bracket_ix + 1;
+                    let mut is_open_tag = true;
+                    if line[name_start_ix..closing_bracket_ix].starts_with('/') {
+                        name_start_ix += 1;
+                        is_open_tag = false;
+                    }
+                    let tag_inner = &line[name_start_ix..closing_bracket_ix];
+                    let tag_name_len = tag_inner
+                        .find(|c: char| c.is_whitespace())
+                        .unwrap_or(tag_inner.len());
+                    if let Ok(kind) = XmlTagKind::from_str(&tag_inner[..tag_name_len]) {
+                        tags.push(XmlTag {
+                            range: buffer.anchor_after(offset + start_ix)
+                                ..buffer.anchor_before(offset + end_ix),
+                            is_open_tag,
+                            kind,
+                        });
+                    };
+                }
+            }
+            offset = lines.offset();
+        }
+        tags
+    }
+
+    fn parse_steps(
+        &mut self,
+        tags_start_ix: usize,
+        buffer_end: text::Anchor,
+        buffer: &BufferSnapshot,
+    ) -> Vec<WorkflowStepV2> {
         let mut new_steps = Vec::new();
         let mut pending_step = None;
         let mut edit_step_depth = 0;
@@ -1477,62 +1551,114 @@ impl Context {
                 break;
             }
 
-            if tag.kind == XmlTagKind::EditStep && tag.is_open_tag {
+            if tag.kind == XmlTagKind::Step && tag.is_open_tag {
                 edit_step_depth += 1;
                 let edit_start = tag.range.start;
                 let mut step = WorkflowStepV2 {
                     range: edit_start..edit_start,
                     leading_tags_end: tag.range.end,
                     trailing_tag_start: None,
-                    parameters: WorkflowStepParameters {
-                        path: None,
-                        location: None,
-                        operation: None,
-                    },
+                    edits: Vec::new(),
                 };
 
                 while let Some(tag) = tags.next() {
-                    if tag.kind == XmlTagKind::EditStep && !tag.is_open_tag {
+                    step.trailing_tag_start.get_or_insert(tag.range.start);
+
+                    if tag.kind == XmlTagKind::Step && !tag.is_open_tag {
                         edit_step_depth -= 1;
                         if edit_step_depth == 0 {
-                            step.trailing_tag_start = Some(tag.range.start);
                             step.range.end = tag.range.end;
                             new_steps.push(step);
                             continue 'tags;
                         }
                     }
 
-                    step.leading_tags_end = tag.range.end;
+                    if tag.kind == XmlTagKind::Edit && tag.is_open_tag {
+                        let mut path = None;
+                        let mut symbol = None;
+                        let mut operation = None;
+                        let mut description = None;
 
-                    if tag.is_open_tag
-                        && [
-                            XmlTagKind::Path,
-                            XmlTagKind::Location,
-                            XmlTagKind::Operation,
-                        ]
-                        .contains(&tag.kind)
-                    {
-                        let kind = tag.kind;
-                        let content_start = tag.range.end;
                         while let Some(tag) = tags.next() {
-                            if tag.kind == kind && !tag.is_open_tag {
-                                let content_end = tag.range.start;
-                                step.leading_tags_end = tag.range.end;
-                                let content = buffer
-                                    .text_for_range(content_start..content_end)
-                                    .collect::<String>();
-                                match kind {
-                                    XmlTagKind::Path => step.parameters.path = Some(content),
-                                    XmlTagKind::Location => {
-                                        step.parameters.location = Some(content)
+                            if tag.kind == XmlTagKind::Edit && !tag.is_open_tag {
+                                if let Some(path) = path {
+                                    let kind = match (operation.as_deref(), symbol, description) {
+                                        (Some("update"), Some(symbol), Some(description)) => {
+                                            Some(WorkflowStepEditKind::Update {
+                                                symbol,
+                                                description,
+                                            })
+                                        }
+                                        (
+                                            Some("insert_sibling_before"),
+                                            Some(symbol),
+                                            Some(description),
+                                        ) => Some(WorkflowStepEditKind::InsertSiblingBefore {
+                                            symbol,
+                                            description,
+                                        }),
+                                        (
+                                            Some("insert_sibling_after"),
+                                            Some(symbol),
+                                            Some(description),
+                                        ) => Some(WorkflowStepEditKind::InsertSiblingAfter {
+                                            symbol,
+                                            description,
+                                        }),
+                                        (Some("prepend_child"), symbol, Some(description)) => {
+                                            Some(WorkflowStepEditKind::PrependChild {
+                                                symbol,
+                                                description,
+                                            })
+                                        }
+                                        (Some("append_child"), symbol, Some(description)) => {
+                                            Some(WorkflowStepEditKind::AppendChild {
+                                                symbol,
+                                                description,
+                                            })
+                                        }
+                                        (Some("delete"), Some(symbol), _) => {
+                                            Some(WorkflowStepEditKind::Delete { symbol })
+                                        }
+                                        (Some("create"), _, Some(description)) => {
+                                            Some(WorkflowStepEditKind::Create { description })
+                                        }
+                                        _ => None,
+                                    };
+                                    if let Some(kind) = kind {
+                                        step.edits.push(WorkflowStepEdit { path, kind });
                                     }
-                                    XmlTagKind::Operation => {
-                                        step.parameters.operation =
-                                            EditSuggestionOperation::from_str(&content).ok()
-                                    }
-                                    _ => {}
                                 }
                                 break;
+                            }
+
+                            if tag.is_open_tag
+                                && [
+                                    XmlTagKind::Path,
+                                    XmlTagKind::Symbol,
+                                    XmlTagKind::Operation,
+                                    XmlTagKind::Description,
+                                ]
+                                .contains(&tag.kind)
+                            {
+                                let kind = tag.kind;
+                                let content_start = tag.range.end;
+                                while let Some(tag) = tags.next() {
+                                    if tag.kind == kind && !tag.is_open_tag {
+                                        let content_end = tag.range.start;
+                                        let content = buffer
+                                            .text_for_range(content_start..content_end)
+                                            .collect::<String>();
+                                        match kind {
+                                            XmlTagKind::Path => path = Some(content),
+                                            XmlTagKind::Symbol => symbol = Some(content),
+                                            XmlTagKind::Operation => operation = Some(content),
+                                            XmlTagKind::Description => description = Some(content),
+                                            _ => {}
+                                        }
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
@@ -1547,15 +1673,7 @@ impl Context {
             new_steps.push(pending_step);
         }
 
-        updated.extend(new_steps.iter().map(|step| step.range.clone()));
-        let removed_steps = self
-            .workflow_steps_v2
-            .splice(intersecting_steps_range, new_steps);
-        removed.extend(
-            removed_steps
-                .map(|step| step.range)
-                .filter(|range| !updated.contains(&range)),
-        );
+        new_steps
     }
 
     fn prune_invalid_workflow_steps(&mut self, inclusive: bool, cx: &mut ModelContext<Self>) {
@@ -1612,79 +1730,6 @@ impl Context {
             Ok(ix) | Err(ix) => ix,
         };
         start_ix..end_ix
-    }
-
-    fn parse_workflow_steps_in_range(&mut self, range: Range<usize>, cx: &mut ModelContext<Self>) {
-        let weak_self = cx.weak_model();
-        let mut new_edit_steps = Vec::new();
-        let mut edits = Vec::new();
-
-        let buffer = self.buffer.read(cx).snapshot();
-        let mut message_lines = buffer.as_rope().chunks_in_range(range).lines();
-        let mut in_step = false;
-        let mut step_open_tag_start_ix = 0;
-        let mut line_start_offset = message_lines.offset();
-
-        while let Some(line) = message_lines.next() {
-            if let Some(step_start_index) = line.find("<step>") {
-                if !in_step {
-                    in_step = true;
-                    step_open_tag_start_ix = line_start_offset + step_start_index;
-                }
-            }
-
-            if let Some(step_end_index) = line.find("</step>") {
-                if in_step {
-                    let mut step_open_tag_end_ix = step_open_tag_start_ix + "<step>".len();
-                    if buffer.chars_at(step_open_tag_end_ix).next() == Some('\n') {
-                        step_open_tag_end_ix += 1;
-                    }
-                    let mut step_end_tag_start_ix = line_start_offset + step_end_index;
-                    let step_end_tag_end_ix = step_end_tag_start_ix + "</step>".len();
-                    if buffer.reversed_chars_at(step_end_tag_start_ix).next() == Some('\n') {
-                        step_end_tag_start_ix -= 1;
-                    }
-                    edits.push((step_open_tag_start_ix..step_open_tag_end_ix, ""));
-                    edits.push((step_end_tag_start_ix..step_end_tag_end_ix, ""));
-                    let tagged_range = buffer.anchor_after(step_open_tag_end_ix)
-                        ..buffer.anchor_before(step_end_tag_start_ix);
-
-                    // Check if a step with the same range already exists
-                    let existing_step_index =
-                        self.workflow_step_index_for_range(&tagged_range, &buffer);
-
-                    if let Err(ix) = existing_step_index {
-                        new_edit_steps.push((
-                            ix,
-                            WorkflowStepEntry {
-                                step: cx.new_model(|_| {
-                                    WorkflowStep::new(tagged_range.clone(), weak_self.clone())
-                                }),
-                                range: tagged_range,
-                            },
-                        ));
-                    }
-
-                    in_step = false;
-                }
-            }
-
-            line_start_offset = message_lines.offset();
-        }
-
-        let mut updated = Vec::new();
-        for (index, step) in new_edit_steps.into_iter().rev() {
-            let step_range = step.range.clone();
-            updated.push(step_range.clone());
-            self.workflow_steps.insert(index, step);
-            self.resolve_workflow_step(step_range, cx);
-        }
-
-        // Delete <step> tags, making sure we don't accidentally invalidate
-        // the step we just parsed.
-        self.buffer
-            .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
-        self.edits_since_last_workflow_step_prune.consume();
     }
 
     pub fn resolve_workflow_step(
@@ -1951,27 +1996,22 @@ impl Context {
                                 .message_anchors
                                 .iter()
                                 .position(|message| message.id == assistant_message_id)?;
-                            let message_range = this.buffer.update(cx, |buffer, cx| {
-                                let message_start_offset =
-                                    this.message_anchors[message_ix].start.to_offset(buffer);
+                            this.buffer.update(cx, |buffer, cx| {
                                 let message_old_end_offset = this.message_anchors[message_ix + 1..]
                                     .iter()
                                     .find(|message| message.start.is_valid(buffer))
                                     .map_or(buffer.len(), |message| {
                                         message.start.to_offset(buffer).saturating_sub(1)
                                     });
-                                let message_new_end_offset = message_old_end_offset + chunk.len();
                                 buffer.edit(
                                     [(message_old_end_offset..message_old_end_offset, chunk)],
                                     None,
                                     cx,
                                 );
-                                message_start_offset..message_new_end_offset
                             });
 
                             // Use `inclusive = false` as edits might occur at the end of a parsed step.
                             this.prune_invalid_workflow_steps(false, cx);
-                            this.parse_workflow_steps_in_range(message_range, cx);
                             cx.emit(ContextEvent::StreamedCompletion);
 
                             Some(())
@@ -2062,11 +2102,35 @@ impl Context {
     }
 
     pub fn cycle_message_roles(&mut self, ids: HashSet<MessageId>, cx: &mut ModelContext<Self>) {
+        let mut ranges = Vec::new();
+        for message in self.messages(cx) {
+            if ids.contains(&message.id) {
+                ranges.push(message.anchor_range.clone());
+            }
+        }
+
         for id in ids {
             if let Some(metadata) = self.messages_metadata.get(&id) {
                 let role = metadata.role.cycle();
                 self.update_metadata(id, cx, |metadata| metadata.role = role);
             }
+        }
+
+        let buffer = self.buffer.read(cx).text_snapshot();
+        let mut updated = Vec::new();
+        let mut removed = Vec::new();
+        for range in ranges {
+            self.reparse_workflow_steps_v2_in_range(
+                range.start,
+                range.end,
+                &buffer,
+                &mut updated,
+                &mut removed,
+                cx,
+            );
+        }
+        if !updated.is_empty() || !removed.is_empty() {
+            cx.emit(ContextEvent::WorkflowStepsV2Updated { removed, updated })
         }
     }
 
@@ -2530,8 +2594,8 @@ impl Context {
                 return Some(Message {
                     index_range: start_ix..end_ix,
                     offset_range: message_start..message_end,
+                    anchor_range: message_anchor.start..message_end_anchor,
                     id: message_anchor.id,
-                    anchor: message_anchor.start,
                     role: metadata.role,
                     status: metadata.status.clone(),
                     cache: metadata.cache.clone(),
@@ -2662,40 +2726,6 @@ impl Context {
         summary.text = custom_summary;
         cx.emit(ContextEvent::SummaryChanged);
     }
-}
-
-fn xml_tags_in_range(buffer: &BufferSnapshot, range: Range<text::Anchor>) -> Vec<XmlTag> {
-    let mut tags = Vec::new();
-    let mut lines = buffer.text_for_range(range).lines();
-    let mut offset = lines.offset();
-    while let Some(line) = lines.next() {
-        for (start_ix, _) in line.match_indices('<') {
-            let mut name_start_ix = start_ix + 1;
-            let closing_bracket_ix = line[start_ix..].find('>').map(|i| start_ix + i);
-            if let Some(closing_bracket_ix) = closing_bracket_ix {
-                let end_ix = closing_bracket_ix + 1;
-                let mut is_open_tag = true;
-                if line[name_start_ix..closing_bracket_ix].starts_with('/') {
-                    name_start_ix += 1;
-                    is_open_tag = false;
-                }
-                let tag_inner = &line[name_start_ix..closing_bracket_ix];
-                let tag_name_len = tag_inner
-                    .find(|c: char| c.is_whitespace())
-                    .unwrap_or(tag_inner.len());
-                if let Ok(kind) = XmlTagKind::from_str(&tag_inner[..tag_name_len]) {
-                    tags.push(XmlTag {
-                        range: buffer.anchor_after(offset + start_ix)
-                            ..buffer.anchor_before(offset + end_ix),
-                        is_open_tag,
-                        kind,
-                    });
-                };
-            }
-        }
-        offset = lines.offset();
-    }
-    tags
 }
 
 #[derive(Debug, Default)]

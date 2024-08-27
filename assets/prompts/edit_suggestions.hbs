@@ -7,7 +7,27 @@ particular location in a source code file.
 
 # Output Format
 
+<edit_step>
+  LONG DESCRIPTION
+
+  <edit_suggestion>
+    <path>src/lib.rs</path>
+    <operation>insert_before</operation>
+    <location>struct Person</location>
+
+    Add a method
+  </edit_suggestion>
+
+  <edit_suggestion>
+  </edit_suggestion>
+</edit_step>
+
 Surround each step with an `<edit_step></edit_step>` XML tag. Each `<edit_step>` may contain the following child tags:
+
+First, each `<edit_step>` must contain a written description of the change that should
+be made. The description should begin with a high-level overview, and can contain markdown code blocks as well. The description
+should be self-contained and actionable.
+
 
 ## `<path>` (required)
 
@@ -31,10 +51,6 @@ This tag indicates what type of change should be made, relative to the given loc
 * `delete`: delete the content in the specified location.
 * `insert_before`: add new content before the specified location.
 * `insert_after`: add new content after the specified location.
-
-After these child tags, each `<edit_step>` must contain a written description of the change that should
-be made. The description should begin with a high-level overview, and can contain markdown code blocks as well. The description
-should be self-contained and actionable.
 
 # Examples
 

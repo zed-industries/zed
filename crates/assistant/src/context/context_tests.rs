@@ -1,4 +1,4 @@
-use super::{MessageCacheMetadata, WorkflowStepParameters};
+use super::{MessageCacheMetadata, WorkflowStepEdit};
 use crate::{
     assistant_panel, prompt_library, slash_command::file_command, workflow::tool, CacheStatus,
     Context, ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
@@ -9,15 +9,13 @@ use assistant_slash_command::{
     SlashCommandRegistry,
 };
 use collections::HashSet;
-use fs::{FakeFs, Fs as _};
+use fs::FakeFs;
 use gpui::{AppContext, Model, SharedString, Task, TestAppContext, WeakView};
-use indoc::indoc;
 use language::{Buffer, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
 use project::Project;
 use rand::prelude::*;
-use rope::Point;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
@@ -28,7 +26,7 @@ use std::{
     rc::Rc,
     sync::{atomic::AtomicBool, Arc},
 };
-use text::{network::Network, OffsetRangeExt as _, ReplicaId, ToPoint as _};
+use text::{network::Network, OffsetRangeExt as _, ReplicaId};
 use ui::{Context as _, WindowContext};
 use unindent::Unindent;
 use util::{
@@ -483,195 +481,6 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     cx.set_global(settings_store);
     cx.update(Project::init_settings);
     let fs = FakeFs::new(cx.executor());
-    fs.as_fake()
-        .insert_tree(
-            "/root",
-            json!({
-                "hello.rs": r#"
-                    fn hello() {
-                        println!("Hello, World!");
-                    }
-                "#.unindent()
-            }),
-        )
-        .await;
-    let project = Project::test(fs, [Path::new("/root")], cx).await;
-    cx.update(LanguageModelRegistry::test);
-
-    let model = cx.read(|cx| {
-        LanguageModelRegistry::read_global(cx)
-            .active_model()
-            .unwrap()
-    });
-    cx.update(assistant_panel::init);
-    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-
-    // Create a new context
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
-            registry.clone(),
-            Some(project),
-            None,
-            prompt_builder.clone(),
-            cx,
-        )
-    });
-    let buffer = context.read_with(cx, |context, _| context.buffer.clone());
-
-    // Simulate user input
-    let user_message = indoc! {r#"
-        Please add unnecessary complexity to this code:
-
-        ```hello.rs
-        fn main() {
-            println!("Hello, World!");
-        }
-        ```
-    "#};
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, user_message)], None, cx);
-    });
-
-    // Simulate LLM response with edit steps
-    let llm_response = indoc! {r#"
-        Sure, I can help you with that. Here's a step-by-step process:
-
-        <step>
-        First, let's extract the greeting into a separate function:
-
-        ```rust
-        fn greet() {
-            println!("Hello, World!");
-        }
-
-        fn main() {
-            greet();
-        }
-        ```
-        </step>
-
-        <step>
-        Now, let's make the greeting customizable:
-
-        ```rust
-        fn greet(name: &str) {
-            println!("Hello, {}!", name);
-        }
-
-        fn main() {
-            greet("World");
-        }
-        ```
-        </step>
-
-        These changes make the code more modular and flexible.
-    "#};
-
-    // Simulate the assist method to trigger the LLM response
-    context.update(cx, |context, cx| context.assist(cx));
-    cx.run_until_parked();
-
-    // Retrieve the assistant response message's start from the context
-    let response_start_row = context.read_with(cx, |context, cx| {
-        let buffer = context.buffer.read(cx);
-        context.message_anchors[1].start.to_point(buffer).row
-    });
-
-    // Simulate the LLM completion
-    model
-        .as_fake()
-        .stream_last_completion_response(llm_response.to_string());
-    model.as_fake().end_last_completion_stream();
-
-    // Wait for the completion to be processed
-    cx.run_until_parked();
-
-    // Verify that the edit steps were parsed correctly
-    context.read_with(cx, |context, cx| {
-        assert_eq!(
-            workflow_steps(context, cx),
-            vec![
-                (
-                    Point::new(response_start_row + 2, 0)..Point::new(response_start_row + 12, 3),
-                    WorkflowStepTestStatus::Pending
-                ),
-                (
-                    Point::new(response_start_row + 14, 0)..Point::new(response_start_row + 24, 3),
-                    WorkflowStepTestStatus::Pending
-                ),
-            ]
-        );
-    });
-
-    model
-        .as_fake()
-        .respond_to_last_tool_use(tool::WorkflowStepResolutionTool {
-            step_title: "Title".into(),
-            suggestions: vec![tool::WorkflowSuggestionTool {
-                path: "/root/hello.rs".into(),
-                // Simulate a symbol name that's slightly different than our outline query
-                kind: tool::WorkflowSuggestionToolKind::Update {
-                    symbol: "fn main()".into(),
-                    description: "Extract a greeting function".into(),
-                },
-            }],
-        });
-
-    // Wait for tool use to be processed.
-    cx.run_until_parked();
-
-    // Verify that the first edit step is not pending anymore.
-    context.read_with(cx, |context, cx| {
-        assert_eq!(
-            workflow_steps(context, cx),
-            vec![
-                (
-                    Point::new(response_start_row + 2, 0)..Point::new(response_start_row + 12, 3),
-                    WorkflowStepTestStatus::Resolved
-                ),
-                (
-                    Point::new(response_start_row + 14, 0)..Point::new(response_start_row + 24, 3),
-                    WorkflowStepTestStatus::Pending
-                ),
-            ]
-        );
-    });
-
-    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-    enum WorkflowStepTestStatus {
-        Pending,
-        Resolved,
-        Error,
-    }
-
-    fn workflow_steps(
-        context: &Context,
-        cx: &AppContext,
-    ) -> Vec<(Range<Point>, WorkflowStepTestStatus)> {
-        context
-            .workflow_steps
-            .iter()
-            .map(|step| {
-                let buffer = context.buffer.read(cx);
-                let status = match &step.step.read(cx).resolution {
-                    None => WorkflowStepTestStatus::Pending,
-                    Some(Ok(_)) => WorkflowStepTestStatus::Resolved,
-                    Some(Err(_)) => WorkflowStepTestStatus::Error,
-                };
-                (step.range.to_point(buffer), status)
-            })
-            .collect()
-    }
-}
-
-#[gpui::test]
-async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
-    cx.update(prompt_library::init);
-    let settings_store = cx.update(SettingsStore::test);
-    cx.set_global(settings_store);
-    cx.update(Project::init_settings);
-    let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [Path::new("/root")], cx).await;
     cx.update(LanguageModelRegistry::test);
 
@@ -699,7 +508,7 @@ async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
         »",
         cx,
     );
-    expect_suggestion_ranges(
+    expect_steps(
         &context,
         "
         one
@@ -716,45 +525,53 @@ async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
         one
         two
         «
-        <edit_step»",
+        <step»",
         cx,
     );
-    expect_suggestion_ranges(
+    expect_steps(
         &context,
         "
         one
         two
 
-        <edit_step",
+        <step",
         &[],
         cx,
     );
 
-    // The rest of the edit tag is added. The unclosed
-    // edit_step is treated as an incomplete suggestion.
+    // The rest of the step tag is added. The unclosed
+    // step is treated as incomplete.
     edit(
         &context,
         "
         one
         two
 
-        <edit_step«>
-        <path>»",
+        <step«>
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+
+        <edit>»",
         cx,
     );
-    expect_suggestion_ranges(
+    expect_steps(
         &context,
         "
         one
         two
 
-        «<edit_step>
-        <path>»",
-        &[WorkflowStepParameters {
-            path: None,
-            location: None,
-            operation: None,
-        }],
+        «<step>
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+
+        <edit>»",
+        &[&[]],
         cx,
     );
 
@@ -765,109 +582,110 @@ async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        <edit_step>
-        <path>«src/lib.rs</path>
-        <location>fn one() {}</location>
-
+        <step>
         Add a second function
 
         ```rust
         fn two() {}
         ```
-        </edit_step>
+
+        <edit>«
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>fn one</symbol>
+        <description>add a `two` function</description>
+        </edit>
+        </step>
 
         also,»",
         cx,
     );
-    expect_suggestion_ranges(
+    expect_steps(
         &context,
         "
         one
         two
 
-        «<edit_step>
-        <path>src/lib.rs</path>
-        <location>fn one() {}</location>
-
+        «<step>
         Add a second function
 
         ```rust
         fn two() {}
         ```
-        </edit_step>»
+
+        <edit>
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>fn one</symbol>
+        <description>add a `two` function</description>
+        </edit>
+        </step>»
 
         also,",
-        &[WorkflowStepParameters {
-            path: Some("src/lib.rs".into()),
-            location: Some("fn one() {}".into()),
-            operation: None,
-        }],
+        &[&[WorkflowStepEdit {
+            path: "src/lib.rs".into(),
+            kind: tool::WorkflowStepEditKind::InsertSiblingAfter {
+                symbol: "fn one".into(),
+                description: "add a `two` function".into(),
+            },
+        }]],
         cx,
     );
 
-    // Another partial suggestion is added
+    // The step is manually edited.
     edit(
         &context,
         "
         one
         two
 
-        <edit_step>
-        <path>src/lib.rs</path>
-        <location>fn one() {}</location>
-
+        <step>
         Add a second function
 
         ```rust
         fn two() {}
         ```
-        </edit_step>
 
-        also,«
+        <edit>
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>«fn zero»</symbol>
+        <description>add a `two` function</description>
+        </edit>
+        </step>
 
-        <edit_step>
-        <path>src/main.rs</path>
-        <location>one();</location>
-
-        Call the new function»",
+        also,",
         cx,
     );
-    expect_suggestion_ranges(
+    expect_steps(
         &context,
         "
         one
         two
 
-        «<edit_step>
-        <path>src/lib.rs</path>
-        <location>fn one() {}</location>
-
+        «<step>
         Add a second function
 
         ```rust
         fn two() {}
         ```
-        </edit_step>»
 
-        also,
+        <edit>
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>fn zero</symbol>
+        <description>add a `two` function</description>
+        </edit>
+        </step>»
 
-        «<edit_step>
-        <path>src/main.rs</path>
-        <location>one();</location>
-
-        Call the new function»",
-        &[
-            WorkflowStepParameters {
-                path: Some("src/lib.rs".into()),
-                location: Some("fn one() {}".into()),
-                operation: None,
+        also,",
+        &[&[WorkflowStepEdit {
+            path: "src/lib.rs".into(),
+            kind: tool::WorkflowStepEditKind::InsertSiblingAfter {
+                symbol: "fn zero".into(),
+                description: "add a `two` function".into(),
             },
-            WorkflowStepParameters {
-                path: Some("src/main.rs".into()),
-                location: Some("one();".into()),
-                operation: None,
-            },
-        ],
+        }]],
         cx,
     );
 
@@ -880,10 +698,10 @@ async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
         cx.executor().run_until_parked();
     }
 
-    fn expect_suggestion_ranges(
+    fn expect_steps(
         context: &Model<Context>,
         expected_marked_text: &str,
-        expected_suggestions: &[WorkflowStepParameters],
+        expected_suggestions: &[&[WorkflowStepEdit]],
         cx: &mut TestAppContext,
     ) {
         context.update(cx, |context, cx| {
@@ -902,7 +720,7 @@ async fn test_edit_suggestion_parsing(cx: &mut TestAppContext) {
                     expected_marked_text,
                     "unexpected suggestion ranges. actual: {ranges:?}, expected: {expected_ranges:?}"
                 );
-                let suggestions = context.workflow_steps_v2.iter().map(|step| step.parameters.clone()).collect::<Vec<_>>();
+                let suggestions = context.workflow_steps_v2.iter().map(|step| step.edits.clone()).collect::<Vec<_>>();
                 assert_eq!(suggestions, expected_suggestions);
             });
         });

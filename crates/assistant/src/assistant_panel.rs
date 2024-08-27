@@ -2806,7 +2806,10 @@ impl ContextEditor {
                                                 .filter(|workflow_step_range| {
                                                     workflow_step_range
                                                         .start
-                                                        .cmp(&parent_message.anchor, &snapshot)
+                                                        .cmp(
+                                                            &parent_message.anchor_range.start,
+                                                            &snapshot,
+                                                        )
                                                         .is_ge()
                                                         && workflow_step_range
                                                             .end
@@ -3325,7 +3328,7 @@ impl ContextEditor {
                 .messages(cx)
                 .map(|message| BlockProperties {
                     position: buffer
-                        .anchor_in_excerpt(excerpt_id, message.anchor)
+                        .anchor_in_excerpt(excerpt_id, message.anchor_range.start)
                         .unwrap(),
                     height: 2,
                     style: BlockStyle::Sticky,
@@ -3876,7 +3879,7 @@ impl ContextEditor {
             .filter(|workflow_step_range| {
                 workflow_step_range
                     .start
-                    .cmp(&parent_message.anchor, &snapshot)
+                    .cmp(&parent_message.anchor_range.start, &snapshot)
                     .is_ge()
                     && workflow_step_range.end.cmp(&range.end, &snapshot).is_le()
             })
