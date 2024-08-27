@@ -4522,6 +4522,60 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_search_ordering(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            ".gitignore": "**/target\n/node_modules\n",
+            "aaa.txt": "key:value",
+            "bbb": {
+                "index.txt": "index_key:index_value"
+            },
+            "node_modules": {
+                "10 eleven": "key",
+                "1 two": "key"
+            },
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let mut search = project.update(cx, |project, cx| {
+        project.search(
+            SearchQuery::text(
+                "key",
+                false,
+                false,
+                true,
+                Default::default(),
+                Default::default(),
+            )
+            .unwrap(),
+            cx,
+        )
+    });
+
+    fn file_name(search_result: Option<SearchResult>, cx: &mut gpui::TestAppContext) -> String {
+        match search_result.unwrap() {
+            SearchResult::Buffer { buffer, .. } => buffer.read_with(cx, |buffer, _| {
+                buffer.file().unwrap().path().to_string_lossy().to_string()
+            }),
+            _ => panic!("Expected buffer"),
+        }
+    }
+
+    assert_eq!(file_name(search.next().await, cx), "bbb/index.txt");
+    assert_eq!(file_name(search.next().await, cx), "node_modules/1 two");
+    assert_eq!(file_name(search.next().await, cx), "node_modules/10 eleven");
+    assert_eq!(file_name(search.next().await, cx), "aaa.txt");
+    assert!(search.next().await.is_none())
+}
+
 #[test]
 fn test_glob_literal_prefix() {
     assert_eq!(glob_literal_prefix("**/*.js"), "");

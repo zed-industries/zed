@@ -1,8 +1,6 @@
 use std::{
-    collections::VecDeque,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Instant,
 };
 
 use anyhow::{anyhow, Context as _, Result};
@@ -388,11 +386,13 @@ impl WorktreeStore {
                     continue;
                 }
                 results.push((
-                    abs_path.strip_prefix(snapshot.abs_path())?,
+                    file.strip_prefix(snapshot.abs_path())?.to_path_buf(),
                     !metadata.is_dir,
                 ))
             }
-            results.sort_by(|a, b| compare_paths(*a, *b));
+            results.sort_by(|(a_path, a_is_file), (b_path, b_is_file)| {
+                compare_paths((a_path, *a_is_file), (b_path, *b_is_file))
+            });
             for (path, is_file) in results {
                 if is_file {
                     let (tx, rx) = oneshot::channel();
@@ -408,7 +408,8 @@ impl WorktreeStore {
                         })
                         .await?;
                 } else {
-                    Self::scan_ignored_dir(fs, snapshot, path, query, filter_tx, output_tx).await?;
+                    Self::scan_ignored_dir(fs, snapshot, &path, query, filter_tx, output_tx)
+                        .await?;
                 }
             }
             Ok(())
