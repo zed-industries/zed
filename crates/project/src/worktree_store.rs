@@ -424,7 +424,7 @@ impl WorktreeStore {
                         Self::scan_ignored_dir(
                             &fs,
                             &snapshot,
-                            &*entry.path,
+                            &entry.path,
                             &query,
                             &filter_tx,
                             &output_tx,
