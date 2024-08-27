@@ -1,6 +1,6 @@
 use crate::{
-    humanize_token_count, prompts::generate_terminal_assistant_prompt, AssistantPanel,
-    AssistantPanelEvent, LanguageModelCompletionProvider, ModelSelector,
+    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
+    ModelSelector, DEFAULT_CONTEXT_LINES,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -16,7 +16,9 @@ use gpui::{
     Subscription, Task, TextStyle, UpdateGlobal, View, WeakView,
 };
 use language::Buffer;
-use language_model::{LanguageModelRequest, LanguageModelRequestMessage, Role};
+use language_model::{
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+};
 use settings::Settings;
 use std::{
     cmp,
@@ -30,8 +32,13 @@ use ui::{prelude::*, IconButtonShape, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
-pub fn init(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut AppContext) {
-    cx.set_global(TerminalInlineAssistant::new(fs, telemetry));
+pub fn init(
+    fs: Arc<dyn Fs>,
+    prompt_builder: Arc<PromptBuilder>,
+    telemetry: Arc<Telemetry>,
+    cx: &mut AppContext,
+) {
+    cx.set_global(TerminalInlineAssistant::new(fs, prompt_builder, telemetry));
 }
 
 const PROMPT_HISTORY_MAX_LEN: usize = 20;
@@ -53,18 +60,24 @@ pub struct TerminalInlineAssistant {
     prompt_history: VecDeque<String>,
     telemetry: Option<Arc<Telemetry>>,
     fs: Arc<dyn Fs>,
+    prompt_builder: Arc<PromptBuilder>,
 }
 
 impl Global for TerminalInlineAssistant {}
 
 impl TerminalInlineAssistant {
-    pub fn new(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>) -> Self {
+    pub fn new(
+        fs: Arc<dyn Fs>,
+        prompt_builder: Arc<PromptBuilder>,
+        telemetry: Arc<Telemetry>,
+    ) -> Self {
         Self {
             next_assist_id: TerminalInlineAssistId::default(),
             assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             telemetry: Some(telemetry),
             fs,
+            prompt_builder,
         }
     }
 
@@ -215,17 +228,18 @@ impl TerminalInlineAssistant {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
         let shell = std::env::var("SHELL").ok();
-        let working_directory = assist
+        let (latest_output, working_directory) = assist
             .terminal
             .update(cx, |terminal, cx| {
-                terminal
-                    .model()
-                    .read(cx)
+                let terminal = terminal.model().read(cx);
+                let latest_output = terminal.last_n_non_empty_lines(DEFAULT_CONTEXT_LINES);
+                let working_directory = terminal
                     .working_directory()
-                    .map(|path| path.to_string_lossy().to_string())
+                    .map(|path| path.to_string_lossy().to_string());
+                (latest_output, working_directory)
             })
             .ok()
-            .flatten();
+            .unwrap_or_default();
 
         let context_request = if assist.include_context {
             assist.workspace.as_ref().and_then(|workspace| {
@@ -243,7 +257,7 @@ impl TerminalInlineAssistant {
             None
         };
 
-        let prompt = generate_terminal_assistant_prompt(
+        let prompt = self.prompt_builder.generate_terminal_assistant_prompt(
             &assist
                 .prompt_editor
                 .clone()
@@ -252,7 +266,8 @@ impl TerminalInlineAssistant {
                 .prompt(cx),
             shell.as_deref(),
             working_directory.as_deref(),
-        );
+            &latest_output,
+        )?;
 
         let mut messages = Vec::new();
         if let Some(context_request) = context_request {
@@ -261,7 +276,8 @@ impl TerminalInlineAssistant {
 
         messages.push(LanguageModelRequestMessage {
             role: Role::User,
-            content: prompt,
+            content: vec![prompt.into()],
+            cache: false,
         });
 
         Ok(LanguageModelRequest {
@@ -548,7 +564,7 @@ impl Render for PromptEditor {
                     .gap_2()
                     .child(ModelSelector::new(
                         self.fs.clone(),
-                        IconButton::new("context", IconName::Settings)
+                        IconButton::new("context", IconName::SlidersAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
@@ -556,7 +572,7 @@ impl Render for PromptEditor {
                                 Tooltip::with_meta(
                                     format!(
                                         "Using {}",
-                                        LanguageModelCompletionProvider::read_global(cx)
+                                        LanguageModelRegistry::read_global(cx)
                                             .active_model()
                                             .map(|model| model.name().0)
                                             .unwrap_or_else(|| "No model selected".into()),
@@ -700,6 +716,9 @@ impl PromptEditor {
 
     fn count_tokens(&mut self, cx: &mut ViewContext<Self>) {
         let assist_id = self.id;
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return;
+        };
         self.pending_token_count = cx.spawn(|this, mut cx| async move {
             cx.background_executor().timer(Duration::from_secs(1)).await;
             let request =
@@ -707,18 +726,11 @@ impl PromptEditor {
                     inline_assistant.request_for_inline_assist(assist_id, cx)
                 })??;
 
-            if let Some(token_count) = cx.update(|cx| {
-                LanguageModelCompletionProvider::read_global(cx).count_tokens(request, cx)
-            })? {
-                let token_count = token_count.await?;
-
-                this.update(&mut cx, |this, cx| {
-                    this.token_count = Some(token_count);
-                    cx.notify();
-                })
-            } else {
-                Ok(())
-            }
+            let token_count = cx.update(|cx| model.count_tokens(request, cx))?.await?;
+            this.update(&mut cx, |this, cx| {
+                this.token_count = Some(token_count);
+                cx.notify();
+            })
         })
     }
 
@@ -843,7 +855,7 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
-        let model = LanguageModelCompletionProvider::read_global(cx).active_model()?;
+        let model = LanguageModelRegistry::read_global(cx).active_model()?;
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
 
@@ -985,19 +997,16 @@ impl Codegen {
     }
 
     pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut ModelContext<Self>) {
-        self.status = CodegenStatus::Pending;
-        self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return;
+        };
 
         let telemetry = self.telemetry.clone();
-        let model_telemetry_id = LanguageModelCompletionProvider::read_global(cx)
-            .active_model()
-            .map(|m| m.telemetry_id())
-            .unwrap_or_default();
-        let response =
-            LanguageModelCompletionProvider::read_global(cx).stream_completion(prompt, cx);
-
+        self.status = CodegenStatus::Pending;
+        self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
         self.generation = cx.spawn(|this, mut cx| async move {
-            let response = response.await;
+            let model_telemetry_id = model.telemetry_id();
+            let response = model.stream_completion(prompt, &cx).await;
             let generate = async {
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 

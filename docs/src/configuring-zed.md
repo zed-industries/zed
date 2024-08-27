@@ -6,9 +6,16 @@ In addition to the settings described here, you may also want to change your [th
 
 ## Settings files
 
-Your settings file can be opened with `cmd-,` (on macOS) or `ctrl-,` (on Linux). By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
+<!--
+TBD: Settings files. Rewrite with "remote settings" in mind (e.g. `local settings` on the remote host).
+Consider renaming `zed: Open Local Settings` to `zed: Open Project Settings`.
 
-This configuration is merged with any local configuration inside your projects. You can open the project settings by running `zed: Open Local Settings` from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
+TBD: Add settings documentation about how settings are merged as overlays. E.g. project>local>default. Note how settings that are maps are merged, but settings that are arrays are replaced and must include the defaults.
+-->
+
+Your settings file can be opened with {#kb zed::OpenSettings}. By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
+
+This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenLocalSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
 
 Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
 
@@ -16,7 +23,7 @@ The syntax for configuration files is a super-set of JSON that allows `//` comme
 
 ## Default settings
 
-You can find the default settings for your current Zed by running `zed: Open Default Settings` from the command palette.
+You can find the default settings for your current Zed by running {#action zed::OpenDefaultSettings} from the command palette.
 
 Extensions that provide language servers may also provide default settings for those language servers.
 
@@ -220,7 +227,7 @@ There are two options to choose from:
 
 - Description: A list of globs representing files that inline completions should be disabled for.
 - Setting: `disabled_globs`
-- Default: [".env"]
+- Default: `[".env"]`
 
 **Options**
 
@@ -586,7 +593,7 @@ To override settings for a language, add an entry for that language server's nam
 }
 ```
 
-3. Or to use code actions provided by the connected language servers, use `"code_actions"` (requires Zed `0.130.x`):
+3. Or to use code actions provided by the connected language servers, use `"code_actions"`:
 
 ```json
 {
@@ -602,6 +609,7 @@ To override settings for a language, add an entry for that language server's nam
 ```
 
 4. Or to use multiple formatters consecutively, use an array of formatters:
+
 ```json
 {
   "formatter": [
@@ -613,6 +621,7 @@ To override settings for a language, add an entry for that language server's nam
   ]
 }
 ```
+
 Here `rust-analyzer` will be used first to format the code, followed by a call of sed.
 If any of the formatters fails, the subsequent ones will still be executed.
 
@@ -623,6 +632,10 @@ If any of the formatters fails, the subsequent ones will still be executed.
 - Default: `{}`, except for Go it's `{ "source.organizeImports": true }`
 
 **Examples**
+
+<!--
+TBD: Add Python Ruff source.organizeImports example
+-->
 
 1. Organize imports on format in TypeScript and TSX buffers:
 
@@ -643,7 +656,7 @@ If any of the formatters fails, the subsequent ones will still be executed.
 }
 ```
 
-2. Run ESLint `fixAll` code action when formatting (requires Zed `0.125.0`):
+2. Run ESLint `fixAll` code action when formatting:
 
 ```json
 {
@@ -657,7 +670,7 @@ If any of the formatters fails, the subsequent ones will still be executed.
 }
 ```
 
-3. Run only a single ESLint rule when using `fixAll` (requires Zed `0.125.0`):
+3. Run only a single ESLint rule when using `fixAll`:
 
 ```json
 {
@@ -777,7 +790,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 ### Indent Guides
 
-- Description: Configuration related to indent guides (requires Zed `0.138.0`). Indent guides can be configured separately for each language.
+- Description: Configuration related to indent guides. Indent guides can be configured separately for each language.
 - Setting: `indent_guides`
 - Default:
 
@@ -846,7 +859,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 ### Inline Git Blame
 
-- Description: Whether or not to show git blame information inline, on the currently focused line (requires Zed `0.132.0`).
+- Description: Whether or not to show git blame information inline, on the currently focused line.
 - Setting: `inline_blame`
 - Default:
 
@@ -1033,7 +1046,6 @@ These values take in the same options as the root-level settings with the same n
 ## Preview tabs
 
 - Description:
-  (requires Zed `0.132.x`) \
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
 
@@ -1066,7 +1078,7 @@ These values take in the same options as the root-level settings with the same n
 
 ### Enable preview from code navigation
 
-- Description: Determines whether a preview tab gets replaced when code navigation is used to navigate away from the tab (requires Zed `0.134.x`).
+- Description: Determines whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
 - Setting: `enable_preview_from_code_navigation`
 - Default: `false`
 
@@ -1242,25 +1254,39 @@ List of `integer` column numbers
 - Default:
 
 ```json
-"terminal": {
-  "alternate_scroll": "off",
-  "blinking": "terminal_controlled",
-  "copy_on_select": false,
-  "env": {},
-  "font_family": null,
-  "font_features": null,
-  "font_size": null,
-  "option_as_meta": false,
-  "button": false,
-  "shell": {},
-  "toolbar": {
-    "title": true
-  },
-  "working_directory": "current_project_directory"
+{
+  "terminal": {
+    "alternate_scroll": "off",
+    "blinking": "terminal_controlled",
+    "copy_on_select": false,
+    "dock": "bottom",
+    "env": {},
+    "font_family": null,
+    "font_features": null,
+    "font_size": null,
+    "line_height": "comfortable",
+    "option_as_meta": true,
+    "button": false,
+    "shell": {},
+    "toolbar": {
+      "title": true
+    },
+    "working_directory": "current_project_directory"
+  }
 }
 ```
 
-### Alternate Scroll
+### Terminal: Dock
+
+- Description: Control the position of the dock
+- Setting: `dock`
+- Default: `bottom`
+
+**Options**
+
+`"bottom"`, `"left"` or `"right"`
+
+### Terminal: Alternate Scroll
 
 - Description: Set whether Alternate Scroll mode (DECSET code: `?1007`) is active by default. Alternate Scroll mode converts mouse scroll events into up / down key presses when in the alternate screen (e.g. when running applications like vim or less). The terminal can still set and unset this mode with ANSI escape codes.
 - Setting: `alternate_scroll`
@@ -1272,7 +1298,9 @@ List of `integer` column numbers
 
 ```json
 {
-  "alternate_scroll": "on"
+  "terminal": {
+    "alternate_scroll": "on"
+  }
 }
 ```
 
@@ -1280,11 +1308,13 @@ List of `integer` column numbers
 
 ```json
 {
-  "alternate_scroll": "off"
+  "terminal": {
+    "alternate_scroll": "off"
+  }
 }
 ```
 
-### Blinking
+### Terminal: Blinking
 
 - Description: Set the cursor blinking behavior in the terminal
 - Setting: `blinking`
@@ -1296,7 +1326,9 @@ List of `integer` column numbers
 
 ```json
 {
-  "blinking": "off"
+  "terminal": {
+    "blinking": "off"
+  }
 }
 ```
 
@@ -1304,17 +1336,23 @@ List of `integer` column numbers
 
 ```json
 {
-  "blinking": "terminal_controlled"
+  "terminal": {
+    "blinking": "terminal_controlled"
+  }
 }
 ```
 
 3. Always blink the cursor, ignore the terminal mode
 
 ```json
-"blinking": "on",
+{
+  "terminal": {
+    "blinking": "on"
+  }
+}
 ```
 
-### Copy On Select
+### Terminal: Copy On Select
 
 - Description: Whether or not selecting text in the terminal will automatically copy to the system clipboard.
 - Setting: `copy_on_select`
@@ -1324,7 +1362,17 @@ List of `integer` column numbers
 
 `boolean` values
 
-### Env
+**Example**
+
+```json
+{
+  "terminal": {
+    "copy_on_select": true
+  }
+}
+```
+
+### Terminal: Env
 
 - Description: Any key-value pairs added to this object will be added to the terminal's environment. Keys must be unique, use `:` to separate multiple values in a single variable
 - Setting: `env`
@@ -1333,13 +1381,17 @@ List of `integer` column numbers
 **Example**
 
 ```json
-"env": {
-  "ZED": "1",
-  "KEY": "value1:value2"
+{
+  "terminal": {
+    "env": {
+      "ZED": "1",
+      "KEY": "value1:value2"
+    }
+  }
 }
 ```
 
-### Font Size
+### Terminal: Font Size
 
 - Description: What font size to use for the terminal. When not set defaults to matching the editor's font size
 - Setting: `font_size`
@@ -1349,7 +1401,15 @@ List of `integer` column numbers
 
 `integer` values
 
-### Font Family
+```json
+{
+  "terminal": {
+    "font_size": 15
+  }
+}
+```
+
+### Terminal: Font Family
 
 - Description: What font to use for the terminal. When not set, defaults to matching the editor's font.
 - Setting: `font_family`
@@ -1359,7 +1419,15 @@ List of `integer` column numbers
 
 The name of any font family installed on the user's system
 
-### Font Features
+```json
+{
+  "terminal": {
+    "font_family": "Berkeley Mono"
+  }
+}
+```
+
+### Terminal: Font Features
 
 - Description: What font features to use for the terminal. When not set, defaults to matching the editor's font features.
 - Setting: `font_features`
@@ -1369,7 +1437,58 @@ The name of any font family installed on the user's system
 
 See Buffer Font Features
 
-### Option As Meta
+```jsonc
+{
+  "terminal": {
+    "font_features": {
+      "calt": false,
+      // See Buffer Font Features for more features
+    },
+  },
+}
+```
+
+### Terminal: Line Height
+
+- Description: Set the terminal's line height.
+- Setting: `line_height`
+- Default: `comfortable`
+
+**Options**
+
+1. Use a line height that's `comfortable` for reading, 1.618. (default)
+
+```jsonc
+{
+  "terminal": {
+    "line_height": "comfortable",
+  },
+}
+```
+
+2. Use a `standard` line height, 1.3. This option is useful for TUIs, particularly if they use box characters
+
+```jsonc
+{
+  "terminal": {
+    "line_height": "standard",
+  },
+}
+```
+
+3.  Use a custom line height.
+
+```jsonc
+{
+  "terminal": {
+    "line_height": {
+      "custom": 2,
+    },
+  },
+}
+```
+
+### Terminal: Option As Meta
 
 - Description: Re-interprets the option keys to act like a 'meta' key, like in Emacs.
 - Setting: `option_as_meta`
@@ -1379,7 +1498,15 @@ See Buffer Font Features
 
 `boolean` values
 
-### Shell
+```json
+{
+  "terminal": {
+    "option_as_meta": true
+  }
+}
+```
+
+### Terminal: Shell
 
 - Description: What shell to use when launching the terminal.
 - Setting: `shell`
@@ -1391,46 +1518,60 @@ See Buffer Font Features
 
 ```json
 {
-  "shell": "system"
+  "terminal": {
+    "shell": "system"
+  }
 }
 ```
 
 2. A program to launch:
 
 ```json
-"shell": {
-    "program": "sh"
+{
+  "terminal": {
+    "shell": {
+      "program": "sh"
+    }
+  }
 }
 ```
 
 3. A program with arguments:
 
 ```json
-"shell": {
-  "with_arguments": {
-    "program": "/bin/bash",
-    "args": ["--login"]
+{
+  "terminal": {
+    "shell": {
+      "with_arguments": {
+        "program": "/bin/bash",
+        "args": ["--login"]
+      }
+    }
   }
 }
 ```
 
-## Terminal Toolbar
+## Terminal: Toolbar
 
 - Description: Whether or not to show various elements in the terminal toolbar. It only affects terminals placed in the editor pane.
 - Setting: `toolbar`
 - Default:
 
 ```json
-"toolbar": {
-  "title": true,
-},
+{
+  "terminal": {
+    "toolbar": {
+      "title": true
+    }
+  }
+}
 ```
 
 **Options**
 
 At the moment, only the `title` option is available, it controls displaying of the terminal title that can be changed via `PROMPT_COMMAND`. If the title is hidden, the terminal toolbar is not displayed.
 
-### Terminal Button
+### Terminal: Button
 
 - Description: Control to show or hide the terminal button in the status bar
 - Setting: `button`
@@ -1440,7 +1581,15 @@ At the moment, only the `title` option is available, it controls displaying of t
 
 `boolean` values
 
-### Working Directory
+```json
+{
+  "terminal": {
+    "button": false
+  }
+}
+```
+
+### Terminal: Working Directory
 
 - Description: What working directory to use when launching the terminal.
 - Setting: `working_directory`
@@ -1452,7 +1601,9 @@ At the moment, only the `title` option is available, it controls displaying of t
 
 ```json
 {
-  "working_directory": "current_project_directory"
+  "terminal": {
+    "working_directory": "current_project_directory"
+  }
 }
 ```
 
@@ -1460,7 +1611,9 @@ At the moment, only the `title` option is available, it controls displaying of t
 
 ```json
 {
-  "working_directory": "first_project_directory"
+  "terminal": {
+    "working_directory": "first_project_directory"
+  }
 }
 ```
 
@@ -1468,16 +1621,22 @@ At the moment, only the `title` option is available, it controls displaying of t
 
 ```json
 {
-  "working_directory": "always_home"
+  "terminal": {
+    "working_directory": "always_home"
+  }
 }
 ```
 
 4. Always use a specific directory. This value will be shell expanded. If this path is not a valid directory the terminal will default to this platform's home directory.
 
 ```json
-"working_directory": {
-  "always": {
-    "directory": "~/zed/projects/"
+{
+  "terminal": {
+    "working_directory": {
+      "always": {
+        "directory": "~/zed/projects/"
+      }
+    }
   }
 }
 ```
@@ -1567,20 +1726,22 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Default:
 
 ```json
-"project_panel": {
-  "button": true,
-  "dock": "left",
-  "git_status": true,
-  "default_width": "N/A - width in pixels",
-  "auto_reveal_entries": true,
-  "auto_fold_dirs": false,
-  "file_icons": true,
-  "folder_icons": true,
-  "indent_size" : 20,
-  "scrollbar": {
-    "show": "always"
+{
+  "project_panel": {
+    "button": true,
+    "default_width": 240,
+    "dock": "left",
+    "file_icons": true,
+    "folder_icons": true,
+    "git_status": true,
+    "indent_size": 20,
+    "auto_reveal_entries": true,
+    "auto_fold_dirs": true,
+    "scrollbar": {
+      "show": "always"
+    }
   }
-},
+}
 ```
 
 ### Dock
@@ -1653,7 +1814,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "auto_reveal_entries": true,
+  "auto_reveal_entries": true
 }
 ```
 
@@ -1661,7 +1822,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "auto_reveal_entries": false,
+  "auto_reveal_entries": false
 }
 ```
 
@@ -1669,7 +1830,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 - Description: Whether to fold directories automatically when directory has only one directory inside.
 - Setting: `auto_fold_dirs`
-- Default: `false`
+- Default: `true`
 
 **Options**
 
@@ -1677,7 +1838,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "auto_fold_dirs": true,
+  "auto_fold_dirs": true
 }
 ```
 
@@ -1685,7 +1846,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "auto_fold_dirs": false,
+  "auto_fold_dirs": false
 }
 ```
 
@@ -1699,10 +1860,13 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 - Description: Scrollbar related settings. Possible values: "always", "never".
 - Setting: `scrollbar`
-- Default: ```json
-    "scrollbar": {
-        "show": "always"
-    }```
+- Default:
+
+```json
+"scrollbar": {
+    "show": "always"
+}
+```
 
 **Options**
 
@@ -1710,9 +1874,9 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "scrollbar": {
-        "show": "always"
-    }
+  "scrollbar": {
+    "show": "always"
+  }
 }
 ```
 
@@ -1720,9 +1884,47 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 {
-    "scrollbar": {
-        "show": "never"
-    }
+  "scrollbar": {
+    "show": "never"
+  }
+}
+```
+
+## Assistant Panel
+
+- Description: Customize assistant panel
+- Setting: `assistant`
+- Default:
+
+```json
+"assistant": {
+  "enabled": true,
+  "button": true,
+  "dock": "right",
+  "default_width": 640,
+  "default_height": 320,
+  "provider": "openai",
+  "version": "1",
+},
+```
+
+## Outline Panel
+
+- Description: Customize outline Panel
+- Setting: `outline_panel`
+- Default:
+
+```json
+"outline_panel": {
+  "button": true,
+  "default_width": 240,
+  "dock": "left",
+  "file_icons": true,
+  "folder_icons": true,
+  "git_status": true,
+  "indent_size": 20,
+  "auto_reveal_entries": true,
+  "auto_fold_dirs": true,
 }
 ```
 
@@ -1739,6 +1941,27 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   // Share your project when you are the first to join a channel
   "share_on_join": false
 },
+```
+
+## Unnecessary Code Fade
+
+- Description: How much to fade out unused code.
+- Setting: `unnecessary_code_fade`
+- Default: `0.3`
+
+**Options**
+
+Float values between `0.0` and `0.9`, where:
+
+- `0.0` means no fading (unused code looks the same as used code)
+- `0.9` means maximum fading (unused code is very faint but still visible)
+
+**Example**
+
+```json
+{
+  "unnecessary_code_fade": 0.5
+}
 ```
 
 ## An example configuration:

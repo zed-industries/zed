@@ -260,6 +260,7 @@ impl RenderOnce for UiFontSizeControl {
             .gap_2()
             .child(Icon::new(IconName::FontSize))
             .child(NumericStepper::new(
+                "ui-font-size",
                 value.to_string(),
                 move |_, cx| {
                     Self::write(value - px(1.), cx);

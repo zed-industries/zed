@@ -96,6 +96,7 @@ impl Render for Toolbar {
         let has_right_items = self.right_items().count() > 0;
 
         v_flex()
+            .group("toolbar")
             .p(Spacing::Large.rems(cx))
             .when(has_left_items || has_right_items, |this| {
                 this.gap(Spacing::Large.rems(cx))
@@ -105,6 +106,7 @@ impl Render for Toolbar {
             .bg(cx.theme().colors().toolbar_background)
             .child(
                 h_flex()
+                    .min_h(rems_from_px(24.))
                     .justify_between()
                     .gap(Spacing::Large.rems(cx))
                     .when(has_left_items, |this| {

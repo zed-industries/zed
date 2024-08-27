@@ -60,7 +60,13 @@ async fn main() -> Result<()> {
 
     log::info!("compiling extension");
 
-    let http_client = Arc::new(HttpClientWithProxy::new(None));
+    let user_agent = format!(
+        "Zed Extension CLI/{} ({}; {})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    let http_client = Arc::new(HttpClientWithProxy::new(Some(user_agent), None));
     let builder = ExtensionBuilder::new(http_client, scratch_dir);
     builder
         .compile_extension(

@@ -2,13 +2,36 @@
 
 Ruby support is available through the [Ruby extension](https://github.com/zed-industries/zed/tree/main/extensions/ruby).
 
+- Tree-sitters:
+  - [tree-sitter-ruby](https://github.com/tree-sitter/tree-sitter-ruby)
+  - [tree-sitter-embedded-template](https://github.com/tree-sitter/tree-sitter-embedded-template)
+- Language Servers:
+  - [ruby-lsp](https://github.com/Shopify/ruby-lsp)
+  - [solargraph](https://github.com/castwide/solargraph)
+  - [rubocop](https://github.com/rubocop/rubocop)
+
 The Ruby extension also provides support for ERB files.
 
-## Choosing a language server
+## Language Servers
 
-The Ruby extension offers both `solargraph` and `ruby-lsp` language server support.
+There are multiple language servers available for Ruby. Zed supports the two following:
 
-`solargraph` is enabled by default.
+- [solargraph](https://github.com/castwide/solargraph)
+- [ruby-lsp](https://github.com/Shopify/ruby-lsp)
+
+They both have an overlapping feature set of autocomplete, diagnostics, code actions, etc. and it's up to you to decide which one you want to use. Note that you can't use both at the same time.
+
+In addition to these two language servers, Zed also supports [rubocop](https://github.com/rubocop/rubocop) which is a static code analyzer and linter for Ruby. Under the hood, it's also used by Zed as a language server, but its functionality is complimentary to that of solargraph and ruby-lsp.
+
+## Configuring a language server
+
+The [Ruby extension](https://github.com/zed-industries/zed/tree/main/extensions/ruby) offers both `solargraph` and `ruby-lsp` language server support.
+
+### Using `solargraph`
+
+`solargraph` is enabled by default in the Ruby extension.
+
+### Using `ruby-lsp`
 
 To switch to `ruby-lsp`, add the following to your `settings.json`:
 
@@ -22,14 +45,31 @@ To switch to `ruby-lsp`, add the following to your `settings.json`:
 }
 ```
 
-The Ruby extension also provides support for `rubocop` language server for offense detection and autocorrection. To enable it, add the following to your
-`settings.json`:
+That disables `solargraph` and `rubocop` and enables `ruby-lsp`.
+
+### Using `rubocop`
+
+The Ruby extension also provides support for `rubocop` language server for offense detection and autocorrection.
+
+To enable it, add the following to your `settings.json`:
 
 ```json
 {
   "languages": {
     "Ruby": {
-      "language_servers": ["rubocop", "ruby-lsp", "!solargraph", "..."]
+      "language_servers": ["ruby-lsp", "rubocop", "!solargraph", "..."]
+    }
+  }
+}
+```
+
+Or, conversely, you can disable `ruby-lsp` and enable `solargraph` and `rubocop` by adding the following to your `settings.json`:
+
+```json
+{
+  "languages": {
+    "Ruby": {
+      "language_servers": ["solargraph", "rubocop", "!ruby-lsp", "..."]
     }
   }
 }
@@ -41,13 +81,13 @@ Zed currently doesn't install Solargraph automatically. To use Solargraph, you n
 
 You can install the gem manually with the following command:
 
-```shell
+```sh
 gem install solargraph
 ```
 
 Alternatively, if your project uses Bundler, you can add the Solargraph gem to your `Gemfile`:
 
-```ruby
+```rb
 gem 'solargraph', group: :development
 ```
 
@@ -66,6 +106,20 @@ Solargraph has formatting and diagnostics disabled by default. We can tell Zed t
 }
 ```
 
+To use Solargraph in the context of the bundle, you can use [folder-specific settings](../configuring-zed.md#settings-files) and specify the absolute path to the [`binstub`](https://bundler.io/v2.5/man/bundle-binstubs.1.html) of Solargraph:
+
+```json
+{
+  "lsp": {
+    "solargraph": {
+      "binary": {
+        "path": "<path_to_your_project>/bin/solargraph"
+      }
+    }
+  }
+}
+```
+
 ### Configuration
 
 Solargraph reads its configuration from a file called `.solargraph.yml` in the root of your project. For more information about this file, see the [Solargraph configuration documentation](https://solargraph.org/guides/configuration).
@@ -76,7 +130,7 @@ Zed currently doesn't install Ruby LSP automatically. To use Ruby LSP, you need 
 
 You can install the gem manually with the following command:
 
-```shell
+```sh
 gem install ruby-lsp
 ```
 
@@ -102,7 +156,7 @@ Zed currently doesn't install `rubocop` automatically. To use `rubocop`, you nee
 
 You can install the gem manually with the following command:
 
-```shell
+```sh
 gem install rubocop
 ```
 
@@ -114,6 +168,20 @@ Rubocop has unsafe autocorrection disabled by default. We can tell Zed to enable
     "rubocop": {
       "initialization_options": {
         "safeAutocorrect": false
+      }
+    }
+  }
+}
+```
+
+To use Rubocop in the context of the bundle, you can use [folder-specific settings](../configuring-zed.md#settings-files) and specify the absolute path to the [`binstub`](https://bundler.io/v2.5/man/bundle-binstubs.1.html) of Rubocop:
+
+```json
+{
+  "lsp": {
+    "rubocop": {
+      "binary": {
+        "path": "<path_to_your_project>/bin/rubocop"
       }
     }
   }
@@ -151,7 +219,7 @@ In order to do that, you need to configure the language server so that it knows 
 
 With these settings you will get completions for Tailwind CSS classes in HTML attributes inside ERB files and inside Ruby/ERB strings that are coming after a `class:` key. Examples:
 
-```ruby
+```rb
 # Ruby file:
 def method
   div(class: "pl-2 <completion here>") do

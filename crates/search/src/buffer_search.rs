@@ -196,6 +196,7 @@ impl Render for BufferSearchBar {
         };
 
         let search_line = h_flex()
+            .mb_1()
             .child(
                 h_flex()
                     .id("editor-scroll")
@@ -295,7 +296,7 @@ impl Render for BufferSearchBar {
                         &SelectNextMatch,
                     ))
                     .when(!narrow_mode, |this| {
-                        this.child(h_flex().min_w(rems_from_px(40.)).child(
+                        this.child(h_flex().ml_2().min_w(rems_from_px(40.)).child(
                             Label::new(match_text).color(if self.active_match_index.is_some() {
                                 Color::Default
                             } else {
@@ -987,7 +988,11 @@ impl BufferSearchBar {
                                     .searchable_items_with_matches
                                     .get(&active_searchable_item.downgrade())
                                     .unwrap();
-                                active_searchable_item.update_matches(matches, cx);
+                                if matches.is_empty() {
+                                    active_searchable_item.clear_matches(cx);
+                                } else {
+                                    active_searchable_item.update_matches(matches, cx);
+                                }
                                 let _ = done_tx.send(());
                             }
                             cx.notify();

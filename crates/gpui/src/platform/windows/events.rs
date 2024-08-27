@@ -758,7 +758,7 @@ fn handle_dpi_changed_msg(
     let new_dpi = wparam.loword() as f32;
     let mut lock = state_ptr.state.borrow_mut();
     lock.scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
-    lock.border_offset.udpate(handle).log_err();
+    lock.border_offset.update(handle).log_err();
     drop(lock);
 
     let rect = unsafe { &*(lparam.0 as *const RECT) };
@@ -796,7 +796,7 @@ fn handle_dpi_changed_msg(
 fn handle_display_change_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     // NOTE:
     // Even the `lParam` holds the resolution of the screen, we just ignore it.
-    // Because WM_DPICHANGED, WM_MOVE, WM_SIEZ will come first, window reposition and resize
+    // Because WM_DPICHANGED, WM_MOVE, WM_SIZE will come first, window reposition and resize
     // are handled there.
     // So we only care about if monitor is disconnected.
     let previous_monitor = state_ptr.as_ref().state.borrow().display;
@@ -1087,7 +1087,7 @@ fn handle_system_settings_changed(
     // mouse double click
     lock.click_state.system_update();
     // window border offset
-    lock.border_offset.udpate(handle).log_err();
+    lock.border_offset.update(handle).log_err();
     Some(0)
 }
 

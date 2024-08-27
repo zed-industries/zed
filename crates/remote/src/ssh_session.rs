@@ -36,11 +36,18 @@ use std::{
 };
 use tempfile::TempDir;
 
+#[derive(Clone)]
+pub struct SshSocket {
+    connection_options: SshConnectionOptions,
+    socket_path: PathBuf,
+}
+
 pub struct SshSession {
     next_message_id: AtomicU32,
     response_channels: ResponseChannels,
     outgoing_tx: mpsc::UnboundedSender<Envelope>,
     spawn_process_tx: mpsc::UnboundedSender<SpawnRequest>,
+    client_socket: Option<SshSocket>,
     message_handlers: Mutex<
         HashMap<
             TypeId,
@@ -58,8 +65,7 @@ pub struct SshSession {
 }
 
 struct SshClientState {
-    connection_options: SshConnectionOptions,
-    socket_path: PathBuf,
+    socket: SshSocket,
     _master_process: process::Child,
     _temp_dir: TempDir,
 }
@@ -162,9 +168,10 @@ impl SshSession {
         let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
         let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
 
-        run_cmd(client_state.ssh_command(&remote_binary_path).arg("version")).await?;
+        let socket = client_state.socket.clone();
+        run_cmd(socket.ssh_command(&remote_binary_path).arg("version")).await?;
 
-        let mut remote_server_child = client_state
+        let mut remote_server_child = socket
             .ssh_command(&format!(
                 "RUST_LOG={} {:?} run",
                 std::env::var("RUST_LOG").unwrap_or(String::new()),
@@ -202,7 +209,7 @@ impl SshSession {
                         };
 
                         log::info!("spawn process: {:?}", request.command);
-                        let child = client_state
+                        let child = client_state.socket
                             .ssh_command(&request.command)
                             .spawn()
                             .context("failed to create channel")?;
@@ -268,7 +275,7 @@ impl SshSession {
             }
         }).detach();
 
-        cx.update(|cx| Self::new(incoming_rx, outgoing_tx, spawn_process_tx, cx))
+        cx.update(|cx| Self::new(incoming_rx, outgoing_tx, spawn_process_tx, Some(socket), cx))
     }
 
     pub fn server(
@@ -277,7 +284,7 @@ impl SshSession {
         cx: &AppContext,
     ) -> Arc<SshSession> {
         let (tx, _rx) = mpsc::unbounded();
-        Self::new(incoming_rx, outgoing_tx, tx, cx)
+        Self::new(incoming_rx, outgoing_tx, tx, None, cx)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -289,10 +296,24 @@ impl SshSession {
         let (client_to_server_tx, client_to_server_rx) = mpsc::unbounded();
         let (tx, _rx) = mpsc::unbounded();
         (
-            client_cx
-                .update(|cx| Self::new(server_to_client_rx, client_to_server_tx, tx.clone(), cx)),
-            server_cx
-                .update(|cx| Self::new(client_to_server_rx, server_to_client_tx, tx.clone(), cx)),
+            client_cx.update(|cx| {
+                Self::new(
+                    server_to_client_rx,
+                    client_to_server_tx,
+                    tx.clone(),
+                    None, // todo()
+                    cx,
+                )
+            }),
+            server_cx.update(|cx| {
+                Self::new(
+                    client_to_server_rx,
+                    server_to_client_tx,
+                    tx.clone(),
+                    None,
+                    cx,
+                )
+            }),
         )
     }
 
@@ -300,6 +321,7 @@ impl SshSession {
         mut incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         outgoing_tx: mpsc::UnboundedSender<Envelope>,
         spawn_process_tx: mpsc::UnboundedSender<SpawnRequest>,
+        client_socket: Option<SshSocket>,
         cx: &AppContext,
     ) -> Arc<SshSession> {
         let this = Arc::new(Self {
@@ -307,6 +329,7 @@ impl SshSession {
             response_channels: ResponseChannels::default(),
             outgoing_tx,
             spawn_process_tx,
+            client_socket,
             message_handlers: Default::default(),
         });
 
@@ -398,6 +421,10 @@ impl SshSession {
             })
             .ok();
         process_rx.await.unwrap()
+    }
+
+    pub fn ssh_args(&self) -> Vec<String> {
+        self.client_socket.as_ref().unwrap().ssh_args()
     }
 
     pub fn add_message_handler<M, E, H, F>(&self, entity: WeakModel<E>, handler: H)
@@ -559,8 +586,10 @@ impl SshClientState {
         }
 
         Ok(Self {
-            connection_options,
-            socket_path,
+            socket: SshSocket {
+                connection_options,
+                socket_path,
+            },
             _master_process: master_process,
             _temp_dir: temp_dir,
         })
@@ -578,12 +607,13 @@ impl SshClientState {
         dst_path_gz.set_extension("gz");
 
         if let Some(parent) = dst_path.parent() {
-            run_cmd(self.ssh_command("mkdir").arg("-p").arg(parent)).await?;
+            run_cmd(self.socket.ssh_command("mkdir").arg("-p").arg(parent)).await?;
         }
 
         let mut server_binary_exists = false;
         if cfg!(not(debug_assertions)) {
-            if let Ok(installed_version) = run_cmd(self.ssh_command(&dst_path).arg("version")).await
+            if let Ok(installed_version) =
+                run_cmd(self.socket.ssh_command(&dst_path).arg("version")).await
             {
                 if installed_version.trim() == version.to_string() {
                     server_binary_exists = true;
@@ -609,11 +639,18 @@ impl SshClientState {
         log::info!("uploaded remote development server in {:?}", t0.elapsed());
 
         delegate.set_status(Some("extracting remote development server"), cx);
-        run_cmd(self.ssh_command("gunzip").arg("--force").arg(&dst_path_gz)).await?;
+        run_cmd(
+            self.socket
+                .ssh_command("gunzip")
+                .arg("--force")
+                .arg(&dst_path_gz),
+        )
+        .await?;
 
         delegate.set_status(Some("unzipping remote development server"), cx);
         run_cmd(
-            self.ssh_command("chmod")
+            self.socket
+                .ssh_command("chmod")
                 .arg(format!("{:o}", server_mode))
                 .arg(&dst_path),
         )
@@ -623,8 +660,8 @@ impl SshClientState {
     }
 
     async fn query_platform(&self) -> Result<SshPlatform> {
-        let os = run_cmd(self.ssh_command("uname").arg("-s")).await?;
-        let arch = run_cmd(self.ssh_command("uname").arg("-m")).await?;
+        let os = run_cmd(self.socket.ssh_command("uname").arg("-s")).await?;
+        let arch = run_cmd(self.socket.ssh_command("uname").arg("-m")).await?;
 
         let os = match os.trim() {
             "Darwin" => "macos",
@@ -645,9 +682,11 @@ impl SshClientState {
     async fn upload_file(&self, src_path: &Path, dest_path: &Path) -> Result<()> {
         let mut command = process::Command::new("scp");
         let output = self
+            .socket
             .ssh_options(&mut command)
             .args(
-                self.connection_options
+                self.socket
+                    .connection_options
                     .port
                     .map(|port| vec!["-P".to_string(), port.to_string()])
                     .unwrap_or_default(),
@@ -655,7 +694,7 @@ impl SshClientState {
             .arg(&src_path)
             .arg(&format!(
                 "{}:{}",
-                self.connection_options.scp_url(),
+                self.socket.connection_options.scp_url(),
                 dest_path.display()
             ))
             .output()
@@ -672,7 +711,9 @@ impl SshClientState {
             ))
         }
     }
+}
 
+impl SshSocket {
     fn ssh_command<S: AsRef<OsStr>>(&self, program: S) -> process::Command {
         let mut command = process::Command::new("ssh");
         self.ssh_options(&mut command)
@@ -688,6 +729,16 @@ impl SshClientState {
             .stderr(Stdio::piped())
             .args(["-o", "ControlMaster=no", "-o"])
             .arg(format!("ControlPath={}", self.socket_path.display()))
+    }
+
+    fn ssh_args(&self) -> Vec<String> {
+        vec![
+            "-o".to_string(),
+            "ControlMaster=no".to_string(),
+            "-o".to_string(),
+            format!("ControlPath={}", self.socket_path.display()),
+            self.connection_options.ssh_url(),
+        ]
     }
 }
 

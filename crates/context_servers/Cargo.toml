@@ -1,0 +1,29 @@
+[package]
+name = "context_servers"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/context_servers.rs"
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+futures.workspace = true
+gpui.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+postage.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+smol.workspace = true
+url = { workspace = true, features = ["serde"] }
+util.workspace = true
+workspace.workspace = true

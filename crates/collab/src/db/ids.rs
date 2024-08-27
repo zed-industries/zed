@@ -3,6 +3,7 @@ use rpc::proto;
 use sea_orm::{entity::prelude::*, DbErr};
 use serde::{Deserialize, Serialize};
 
+#[macro_export]
 macro_rules! id_type {
     ($name:ident) => {
         #[derive(
@@ -68,6 +69,8 @@ macro_rules! id_type {
 }
 
 id_type!(AccessTokenId);
+id_type!(BillingCustomerId);
+id_type!(BillingSubscriptionId);
 id_type!(BufferId);
 id_type!(ChannelBufferCollaboratorId);
 id_type!(ChannelChatParticipantId);

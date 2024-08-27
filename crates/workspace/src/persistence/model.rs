@@ -216,6 +216,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
+    pub(crate) window_id: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -359,7 +360,9 @@ impl SerializedPaneGroup {
                 } else {
                     let pane = pane.upgrade()?;
                     workspace
-                        .update(cx, |workspace, cx| workspace.force_remove_pane(&pane, cx))
+                        .update(cx, |workspace, cx| {
+                            workspace.force_remove_pane(&pane, &None, cx)
+                        })
                         .log_err()?;
                     None
                 }

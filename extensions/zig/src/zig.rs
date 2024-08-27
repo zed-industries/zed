@@ -61,14 +61,9 @@ impl ZigExtension {
             &language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
-        // TODO: Once we're ready to release v0.0.7 of the Zed extension API we want to pin
-        // ZLS to a specific version with `zed::github_release_by_tag_name`.
-        // We're pinning ZLS to a release that has `.tar.gz` assets, since the latest release does not have
-        // them, at time of writing.
-        //
-        // ZLS tracking issue: https://github.com/zigtools/zls/issues/1879
-        // let release = zed::github_release_by_tag_name("zigtools/zls", "0.11.0")?;
 
+        // Note that in github releases and on zlstools.org the tar.gz asset is not shown
+        // but is available at https://builds.zigtools.org/zls-{os}-{arch}-{version}.tar.gz
         let release = zed::latest_github_release(
             "zigtools/zls",
             zed::GithubReleaseOptions {
@@ -77,33 +72,29 @@ impl ZigExtension {
             },
         )?;
 
-        let asset_name = format!(
-            "zls-{arch}-{os}.{extension}",
-            arch = match arch {
-                zed::Architecture::Aarch64 => "aarch64",
-                zed::Architecture::X86 => "x86",
-                zed::Architecture::X8664 => "x86_64",
-            },
-            os = match platform {
-                zed::Os::Mac => "macos",
-                zed::Os::Linux => "linux",
-                zed::Os::Windows => "windows",
-            },
-            extension = match platform {
-                zed::Os::Mac | zed::Os::Linux => "tar.gz",
-                zed::Os::Windows => "zip",
-            }
-        );
+        let arch: &str = match arch {
+            zed::Architecture::Aarch64 => "aarch64",
+            zed::Architecture::X86 => "x86",
+            zed::Architecture::X8664 => "x86_64",
+        };
 
-        let asset = release
-            .assets
-            .iter()
-            .find(|asset| asset.name == asset_name)
-            .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
+        let os: &str = match platform {
+            zed::Os::Mac => "macos",
+            zed::Os::Linux => "linux",
+            zed::Os::Windows => "windows",
+        };
+
+        let extension: &str = match platform {
+            zed::Os::Mac | zed::Os::Linux => "tar.gz",
+            zed::Os::Windows => "zip",
+        };
+
+        let asset_name: String = format!("zls-{}-{}-{}.{}", os, arch, release.version, extension);
+        let download_url = format!("https://builds.zigtools.org/{}", asset_name);
 
         let version_dir = format!("zls-{}", release.version);
         let binary_path = match platform {
-            zed::Os::Mac | zed::Os::Linux => format!("{version_dir}/bin/zls"),
+            zed::Os::Mac | zed::Os::Linux => format!("{version_dir}/zls"),
             zed::Os::Windows => format!("{version_dir}/zls.exe"),
         };
 
@@ -114,7 +105,7 @@ impl ZigExtension {
             );
 
             zed::download_file(
-                &asset.download_url,
+                &download_url,
                 &version_dir,
                 match platform {
                     zed::Os::Mac | zed::Os::Linux => zed::DownloadedFileType::GzipTar,

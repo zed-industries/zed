@@ -32,7 +32,8 @@ use ui::{
 };
 use util::{paths::PathExt, ResultExt};
 use workspace::{
-    AppState, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId, WORKSPACE_DB,
+    AppState, CloseIntent, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId,
+    WORKSPACE_DB,
 };
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -311,7 +312,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     cx.spawn(move |workspace, mut cx| async move {
                                         let continue_replacing = workspace
                                             .update(&mut cx, |workspace, cx| {
-                                                workspace.prepare_to_close(true, cx)
+                                                workspace.prepare_to_close(CloseIntent::ReplaceWindow, cx)
                                             })?
                                             .await?;
                                         if continue_replacing {
@@ -570,7 +571,7 @@ fn open_dev_server_project(
             cx.spawn(move |workspace, mut cx| async move {
                 let continue_replacing = workspace
                     .update(&mut cx, |workspace, cx| {
-                        workspace.prepare_to_close(true, cx)
+                        workspace.prepare_to_close(CloseIntent::ReplaceWindow, cx)
                     })?
                     .await?;
                 if continue_replacing {
@@ -668,7 +669,7 @@ impl RecentProjectsDelegate {
                     .unwrap_or_default();
                 this.update(&mut cx, move |picker, cx| {
                     picker.delegate.set_workspaces(workspaces);
-                    picker.delegate.set_selected_index(ix - 1, cx);
+                    picker.delegate.set_selected_index(ix.saturating_sub(1), cx);
                     picker.delegate.reset_selected_match_index = false;
                     picker.update_matches(picker.query(cx), cx)
                 })

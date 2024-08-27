@@ -7,7 +7,6 @@ use gpui::{
     Subscription, ViewContext, WindowContext,
 };
 use refineable::Refineable;
-use schemars::schema::ArrayValidation;
 use schemars::{
     gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
@@ -15,7 +14,7 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{Settings, SettingsJsonSchemaParams, SettingsSources};
+use settings::{add_references_to_properties, Settings, SettingsJsonSchemaParams, SettingsSources};
 use std::sync::Arc;
 use util::ResultExt as _;
 
@@ -92,6 +91,7 @@ pub struct ThemeSettings {
     pub active_theme: Arc<Theme>,
     pub theme_overrides: Option<ThemeStyleContent>,
     pub ui_density: UiDensity,
+    pub unnecessary_code_fade: f32,
 }
 
 impl ThemeSettings {
@@ -247,9 +247,11 @@ pub struct ThemeSettingsContent {
     pub ui_font_family: Option<String>,
     /// The font fallbacks to use for rendering in the UI.
     #[serde(default)]
+    #[schemars(default = "default_font_fallbacks")]
     pub ui_font_fallbacks: Option<Vec<String>>,
     /// The OpenType features to enable for text in the UI.
     #[serde(default)]
+    #[schemars(default = "default_font_features")]
     pub ui_font_features: Option<FontFeatures>,
     /// The weight of the UI font in CSS units from 100 to 900.
     #[serde(default)]
@@ -259,6 +261,7 @@ pub struct ThemeSettingsContent {
     pub buffer_font_family: Option<String>,
     /// The font fallbacks to use for rendering in text buffers.
     #[serde(default)]
+    #[schemars(default = "default_font_fallbacks")]
     pub buffer_font_fallbacks: Option<Vec<String>>,
     /// The default font size for rendering in text buffers.
     #[serde(default)]
@@ -271,6 +274,7 @@ pub struct ThemeSettingsContent {
     pub buffer_line_height: Option<BufferLineHeight>,
     /// The OpenType features to enable for rendering in text buffers.
     #[serde(default)]
+    #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeatures>,
     /// The name of the Zed theme to use.
     #[serde(default)]
@@ -282,11 +286,23 @@ pub struct ThemeSettingsContent {
     #[serde(rename = "unstable.ui_density", default)]
     pub ui_density: Option<UiDensity>,
 
+    /// How much to fade out unused code.
+    #[serde(default)]
+    pub unnecessary_code_fade: Option<f32>,
+
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
     /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
     pub theme_overrides: Option<ThemeStyleContent>,
+}
+
+fn default_font_features() -> Option<FontFeatures> {
+    Some(FontFeatures::default())
+}
+
+fn default_font_fallbacks() -> Option<FontFallbacks> {
+    Some(FontFallbacks::default())
 }
 
 impl ThemeSettingsContent {
@@ -545,6 +561,7 @@ impl settings::Settings for ThemeSettings {
                 .unwrap(),
             theme_overrides: None,
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
+            unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
         };
 
         for value in sources.user.into_iter().chain(sources.release_channel) {
@@ -597,6 +614,10 @@ impl settings::Settings for ThemeSettings {
                 value.buffer_font_size.map(Into::into),
             );
             merge(&mut this.buffer_line_height, value.buffer_line_height);
+
+            // Clamp the `unnecessary_code_fade` to ensure text can't disappear entirely.
+            merge(&mut this.unnecessary_code_fade, value.unnecessary_code_fade);
+            this.unnecessary_code_fade = this.unnecessary_code_fade.clamp(0.0, 0.9);
         }
 
         Ok(this)
@@ -620,59 +641,21 @@ impl settings::Settings for ThemeSettings {
             ..Default::default()
         };
 
-        let available_fonts = params
-            .font_names
-            .iter()
-            .cloned()
-            .map(Value::String)
-            .collect::<Vec<_>>();
-        let font_family_schema = SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            enum_values: Some(available_fonts),
-            ..Default::default()
-        };
-        let font_fallback_schema = SchemaObject {
-            instance_type: Some(InstanceType::Array.into()),
-            array: Some(Box::new(ArrayValidation {
-                items: Some(schemars::schema::SingleOrVec::Single(Box::new(
-                    font_family_schema.clone().into(),
-                ))),
-                unique_items: Some(true),
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-
         root_schema.definitions.extend([
             ("ThemeName".into(), theme_name_schema.into()),
-            ("FontFamilies".into(), font_family_schema.into()),
-            ("FontFallbacks".into(), font_fallback_schema.into()),
+            ("FontFamilies".into(), params.font_family_schema()),
+            ("FontFallbacks".into(), params.font_fallback_schema()),
         ]);
 
-        root_schema
-            .schema
-            .object
-            .as_mut()
-            .unwrap()
-            .properties
-            .extend([
-                (
-                    "buffer_font_family".to_owned(),
-                    Schema::new_ref("#/definitions/FontFamilies".into()),
-                ),
-                (
-                    "buffer_font_fallbacks".to_owned(),
-                    Schema::new_ref("#/definitions/FontFallbacks".into()),
-                ),
-                (
-                    "ui_font_family".to_owned(),
-                    Schema::new_ref("#/definitions/FontFamilies".into()),
-                ),
-                (
-                    "ui_font_fallbacks".to_owned(),
-                    Schema::new_ref("#/definitions/FontFallbacks".into()),
-                ),
-            ]);
+        add_references_to_properties(
+            &mut root_schema,
+            &[
+                ("buffer_font_family", "#/definitions/FontFamilies"),
+                ("buffer_font_fallbacks", "#/definitions/FontFallbacks"),
+                ("ui_font_family", "#/definitions/FontFamilies"),
+                ("ui_font_fallbacks", "#/definitions/FontFallbacks"),
+            ],
+        );
 
         root_schema
     }

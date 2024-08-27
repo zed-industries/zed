@@ -1,9 +1,11 @@
 use crate::{
+    search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    NoRepositoryError, ProjectPath,
+    Item, NoRepositoryError, ProjectPath,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::{hash_map, HashMap};
+use collections::{hash_map, HashMap, HashSet};
+use fs::Fs;
 use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt as _};
 use git::blame::Blame;
 use gpui::{
@@ -18,6 +20,7 @@ use rpc::{
     proto::{self, AnyProtoClient, EnvelopedMessage, PeerId},
     ErrorExt as _, TypedEnvelope,
 };
+use smol::channel::Receiver;
 use std::{io, path::Path, str::FromStr as _, sync::Arc};
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt as _};
@@ -776,6 +779,98 @@ impl BufferStore {
     pub fn discard_incomplete(&mut self) {
         self.opened_buffers
             .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
+    }
+
+    pub fn find_search_candidates(
+        &mut self,
+        query: &SearchQuery,
+        limit: usize,
+        fs: Arc<dyn Fs>,
+        cx: &mut ModelContext<Self>,
+    ) -> Receiver<Model<Buffer>> {
+        let (tx, rx) = smol::channel::unbounded();
+        let open_buffers = self.find_open_search_candidates(query, cx);
+        let skip_entries: HashSet<_> = open_buffers
+            .iter()
+            .filter_map(|buffer| buffer.read(cx).entry_id(cx))
+            .collect();
+
+        let limit = limit.saturating_sub(open_buffers.len());
+        for open_buffer in open_buffers {
+            tx.send_blocking(open_buffer).ok();
+        }
+
+        let match_rx = self.worktree_store.update(cx, |worktree_store, cx| {
+            worktree_store.find_search_candidates(query.clone(), limit, skip_entries, fs, cx)
+        });
+
+        const MAX_CONCURRENT_BUFFER_OPENS: usize = 8;
+
+        for _ in 0..MAX_CONCURRENT_BUFFER_OPENS {
+            let mut match_rx = match_rx.clone();
+            let tx = tx.clone();
+            cx.spawn(|this, mut cx| async move {
+                while let Some(project_path) = match_rx.next().await {
+                    let buffer = this
+                        .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))?
+                        .await
+                        .log_err();
+                    if let Some(buffer) = buffer {
+                        tx.send_blocking(buffer).ok();
+                    }
+                }
+                anyhow::Ok(())
+            })
+            .detach();
+        }
+        rx
+    }
+
+    /// Returns open buffers filtered by filename
+    /// Does *not* check the buffer content, the caller must do that
+    fn find_open_search_candidates(
+        &self,
+        query: &SearchQuery,
+        cx: &ModelContext<Self>,
+    ) -> Vec<Model<Buffer>> {
+        let include_root = self
+            .worktree_store
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>()
+            .len()
+            > 1;
+        self.buffers()
+            .filter_map(|buffer| {
+                let handle = buffer.clone();
+                buffer.read_with(cx, |buffer, cx| {
+                    let worktree_store = self.worktree_store.read(cx);
+                    let entry_id = buffer.entry_id(cx);
+                    let is_ignored = entry_id
+                        .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
+                        .map_or(false, |entry| entry.is_ignored);
+
+                    if is_ignored && !query.include_ignored() {
+                        return None;
+                    }
+                    if let Some(file) = buffer.file() {
+                        let matched_path = if include_root {
+                            query.file_matches(Some(&file.full_path(cx)))
+                        } else {
+                            query.file_matches(Some(file.path()))
+                        };
+
+                        if matched_path {
+                            Some(handle)
+                        } else {
+                            None
+                        }
+                    } else {
+                        Some(handle)
+                    }
+                })
+            })
+            .collect()
     }
 
     fn on_buffer_event(

@@ -10,7 +10,7 @@ use language::language_settings::{AllLanguageSettings, SoftWrap};
 use util::test::marked_text_offsets;
 
 use super::{neovim_connection::NeovimConnection, VimTestContext};
-use crate::{state::Mode, Vim};
+use crate::state::{Mode, VimGlobals};
 
 pub struct NeovimBackedTestContext {
     cx: VimTestContext,
@@ -247,7 +247,12 @@ impl NeovimBackedTestContext {
             register: '"',
             state: self.shared_state().await,
             neovim: self.neovim.read_register('"').await,
-            editor: self.read_from_clipboard().unwrap().text().clone(),
+            editor: self
+                .read_from_clipboard()
+                .unwrap()
+                .text()
+                .unwrap()
+                .to_owned(),
         }
     }
 
@@ -258,8 +263,7 @@ impl NeovimBackedTestContext {
             state: self.shared_state().await,
             neovim: self.neovim.read_register(register).await,
             editor: self.update(|cx| {
-                Vim::read(cx)
-                    .workspace_state
+                cx.global::<VimGlobals>()
                     .registers
                     .get(&register)
                     .cloned()

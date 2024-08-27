@@ -342,7 +342,7 @@ impl Render for LanguageServerPrompt {
                                         .on_click({
                                             let message = request.message.clone();
                                             move |_, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new(
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
                                                     message.clone(),
                                                 ))
                                             }

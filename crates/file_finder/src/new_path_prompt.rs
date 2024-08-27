@@ -248,7 +248,10 @@ impl PickerDelegate for NewPathDelegate {
         query: String,
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> gpui::Task<()> {
-        let query = query.trim().trim_start_matches('/');
+        let query = query
+            .trim()
+            .trim_start_matches("./")
+            .trim_start_matches('/');
         let (dir, suffix) = if let Some(index) = query.rfind('/') {
             let suffix = if index + 1 < query.len() {
                 Some(query[index + 1..].to_string())

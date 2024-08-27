@@ -1259,7 +1259,7 @@ impl LinuxClient for X11Client {
             .store(
                 state.clipboard.setter.atoms.primary,
                 state.clipboard.setter.atoms.utf8_string,
-                item.text().as_bytes(),
+                item.text().unwrap_or_default().as_bytes(),
             )
             .ok();
     }
@@ -1271,7 +1271,7 @@ impl LinuxClient for X11Client {
             .store(
                 state.clipboard.setter.atoms.clipboard,
                 state.clipboard.setter.atoms.utf8_string,
-                item.text().as_bytes(),
+                item.text().unwrap_or_default().as_bytes(),
             )
             .ok();
         state.clipboard_item.replace(item);
@@ -1287,10 +1287,7 @@ impl LinuxClient for X11Client {
                 state.clipboard.getter.atoms.property,
                 Duration::from_secs(3),
             )
-            .map(|text| crate::ClipboardItem {
-                text: String::from_utf8(text).unwrap(),
-                metadata: None,
-            })
+            .map(|text| crate::ClipboardItem::new_string(String::from_utf8(text).unwrap()))
             .ok()
     }
 
@@ -1318,10 +1315,7 @@ impl LinuxClient for X11Client {
                 state.clipboard.getter.atoms.property,
                 Duration::from_secs(3),
             )
-            .map(|text| crate::ClipboardItem {
-                text: String::from_utf8(text).unwrap(),
-                metadata: None,
-            })
+            .map(|text| crate::ClipboardItem::new_string(String::from_utf8(text).unwrap()))
             .ok()
     }
 
@@ -1344,6 +1338,48 @@ impl LinuxClient for X11Client {
                 .get(&focused_window)
                 .map(|window| window.handle())
         })
+    }
+
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        let state = self.0.borrow();
+        let root = state.xcb_connection.setup().roots[state.x_root_index].root;
+
+        let reply = state
+            .xcb_connection
+            .get_property(
+                false,
+                root,
+                state.atoms._NET_CLIENT_LIST_STACKING,
+                xproto::AtomEnum::WINDOW,
+                0,
+                u32::MAX,
+            )
+            .ok()?
+            .reply()
+            .ok()?;
+
+        let window_ids = reply
+            .value
+            .chunks_exact(4)
+            .map(|chunk| u32::from_ne_bytes(chunk.try_into().unwrap()))
+            .collect::<Vec<xproto::Window>>();
+
+        let mut handles = Vec::new();
+
+        // We need to reverse, since _NET_CLIENT_LIST_STACKING has
+        // a back-to-front order.
+        // See: https://specifications.freedesktop.org/wm-spec/1.3/ar01s03.html
+        for window_ref in window_ids
+            .iter()
+            .rev()
+            .filter_map(|&win| state.windows.get(&win))
+        {
+            if !window_ref.window.state.borrow().destroyed {
+                handles.push(window_ref.handle());
+            }
+        }
+
+        Some(handles)
     }
 }
 

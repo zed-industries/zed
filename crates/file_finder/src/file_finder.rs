@@ -28,7 +28,7 @@ use std::{
 };
 use text::Point;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
-use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
+use util::{paths::PathWithPosition, post_inc, ResultExt};
 use workspace::{item::PreviewTabsSettings, ModalView, Workspace};
 
 actions!(file_finder, [SelectPrev]);
@@ -158,7 +158,7 @@ pub struct FileFinderDelegate {
     search_count: usize,
     latest_search_id: usize,
     latest_search_did_cancel: bool,
-    latest_search_query: Option<PathLikeWithPosition<FileSearchQuery>>,
+    latest_search_query: Option<FileSearchQuery>,
     currently_opened_path: Option<FoundPath>,
     matches: Matches,
     selected_index: usize,
@@ -226,7 +226,7 @@ impl Matches {
         &'a mut self,
         history_items: impl IntoIterator<Item = &'a FoundPath> + Clone,
         currently_opened: Option<&'a FoundPath>,
-        query: Option<&PathLikeWithPosition<FileSearchQuery>>,
+        query: Option<&FileSearchQuery>,
         new_search_matches: impl Iterator<Item = ProjectPanelOrdMatch>,
         extend_old_matches: bool,
     ) {
@@ -303,7 +303,7 @@ impl Matches {
 fn matching_history_item_paths<'a>(
     history_items: impl IntoIterator<Item = &'a FoundPath>,
     currently_opened: Option<&'a FoundPath>,
-    query: Option<&PathLikeWithPosition<FileSearchQuery>>,
+    query: Option<&FileSearchQuery>,
 ) -> HashMap<Arc<Path>, Option<ProjectPanelOrdMatch>> {
     let Some(query) = query else {
         return history_items
@@ -318,6 +318,7 @@ fn matching_history_item_paths<'a>(
         .chain(currently_opened)
         .filter_map(|found_path| {
             let candidate = PathMatchCandidate {
+                is_dir: false, // You can't open directories as project items
                 path: &found_path.project.path,
                 // Only match history items names, otherwise their paths may match too many queries, producing false positives.
                 // E.g. `foo` would match both `something/foo/bar.rs` and `something/foo/foo.rs` and if the former is a history item,
@@ -351,7 +352,7 @@ fn matching_history_item_paths<'a>(
             fuzzy::match_fixed_path_set(
                 candidates,
                 worktree.to_usize(),
-                query.path_like.path_query(),
+                query.path_query(),
                 false,
                 max_results,
             )
@@ -400,6 +401,7 @@ pub enum Event {
 struct FileSearchQuery {
     raw_query: String,
     file_query_end: Option<usize>,
+    path_position: PathWithPosition,
 }
 
 impl FileSearchQuery {
@@ -456,7 +458,7 @@ impl FileFinderDelegate {
 
     fn spawn_search(
         &mut self,
-        query: PathLikeWithPosition<FileSearchQuery>,
+        query: FileSearchQuery,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Task<()> {
         let relative_to = self
@@ -491,7 +493,7 @@ impl FileFinderDelegate {
         cx.spawn(|picker, mut cx| async move {
             let matches = fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
-                query.path_like.path_query(),
+                query.path_query(),
                 relative_to,
                 false,
                 100,
@@ -516,18 +518,18 @@ impl FileFinderDelegate {
         &mut self,
         search_id: usize,
         did_cancel: bool,
-        query: PathLikeWithPosition<FileSearchQuery>,
+        query: FileSearchQuery,
         matches: impl IntoIterator<Item = ProjectPanelOrdMatch>,
         cx: &mut ViewContext<Picker<Self>>,
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
             let extend_old_matches = self.latest_search_did_cancel
-                && Some(query.path_like.path_query())
+                && Some(query.path_query())
                     == self
                         .latest_search_query
                         .as_ref()
-                        .map(|query| query.path_like.path_query());
+                        .map(|query| query.path_query());
             self.matches.push_new_matches(
                 &self.history_items,
                 self.currently_opened_path.as_ref(),
@@ -587,6 +589,7 @@ impl FileFinderDelegate {
                     positions: Vec::new(),
                     worktree_id: worktree_id.to_usize(),
                     path,
+                    is_dir: false, // File finder doesn't support directories
                     path_prefix: "".into(),
                     distance_to_relative_ancestor: usize::MAX,
                 };
@@ -658,7 +661,7 @@ impl FileFinderDelegate {
 
     fn lookup_absolute_path(
         &self,
-        query: PathLikeWithPosition<FileSearchQuery>,
+        query: FileSearchQuery,
         cx: &mut ViewContext<'_, Picker<Self>>,
     ) -> Task<()> {
         cx.spawn(|picker, mut cx| async move {
@@ -672,7 +675,7 @@ impl FileFinderDelegate {
                 return;
             };
 
-            let query_path = Path::new(query.path_like.path_query());
+            let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
             match fs.metadata(query_path).await.log_err() {
                 Some(Some(_metadata)) => {
@@ -687,6 +690,7 @@ impl FileFinderDelegate {
                                     worktree_id: worktree.read(cx).id().to_usize(),
                                     path: Arc::from(relative_path),
                                     path_prefix: "".into(),
+                                    is_dir: false, // File finder doesn't support directories
                                     distance_to_relative_ancestor: usize::MAX,
                                 }));
                             }
@@ -784,7 +788,7 @@ impl PickerDelegate for FileFinderDelegate {
                     project
                         .worktree_for_id(history_item.project.worktree_id, cx)
                         .is_some()
-                        || (project.is_local() && history_item.absolute.is_some())
+                        || (project.is_local_or_ssh() && history_item.absolute.is_some())
                 }),
                 self.currently_opened_path.as_ref(),
                 None,
@@ -796,20 +800,20 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
-            let query =
-                PathLikeWithPosition::parse_str(&raw_query, |normalized_query, path_like_str| {
-                    Ok::<_, std::convert::Infallible>(FileSearchQuery {
-                        raw_query: normalized_query.to_owned(),
-                        file_query_end: if path_like_str == raw_query {
-                            None
-                        } else {
-                            Some(path_like_str.len())
-                        },
-                    })
-                })
-                .expect("infallible");
+            let path_position = PathWithPosition::parse_str(&raw_query);
 
-            if Path::new(query.path_like.path_query()).is_absolute() {
+            let query = FileSearchQuery {
+                raw_query: raw_query.trim().to_owned(),
+                file_query_end: if path_position.path.to_str().unwrap_or(raw_query) == raw_query {
+                    None
+                } else {
+                    // Safe to unwrap as we won't get here when the unwrap in if fails
+                    Some(path_position.path.to_str().unwrap().len())
+                },
+                path_position,
+            };
+
+            if Path::new(query.path_query()).is_absolute() {
                 self.lookup_absolute_path(query, cx)
             } else {
                 self.spawn_search(query, cx)
@@ -898,12 +902,12 @@ impl PickerDelegate for FileFinderDelegate {
                 let row = self
                     .latest_search_query
                     .as_ref()
-                    .and_then(|query| query.row)
+                    .and_then(|query| query.path_position.row)
                     .map(|row| row.saturating_sub(1));
                 let col = self
                     .latest_search_query
                     .as_ref()
-                    .and_then(|query| query.column)
+                    .and_then(|query| query.path_position.column)
                     .unwrap_or(0)
                     .saturating_sub(1);
                 let finder = self.file_finder.clone();
@@ -1000,6 +1004,7 @@ mod tests {
                 path: Arc::from(Path::new("b0.5")),
                 path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
+                is_dir: false,
             }),
             ProjectPanelOrdMatch(PathMatch {
                 score: 1.0,
@@ -1008,6 +1013,7 @@ mod tests {
                 path: Arc::from(Path::new("c1.0")),
                 path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
+                is_dir: false,
             }),
             ProjectPanelOrdMatch(PathMatch {
                 score: 1.0,
@@ -1016,6 +1022,7 @@ mod tests {
                 path: Arc::from(Path::new("a1.0")),
                 path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
+                is_dir: false,
             }),
             ProjectPanelOrdMatch(PathMatch {
                 score: 0.5,
@@ -1024,6 +1031,7 @@ mod tests {
                 path: Arc::from(Path::new("a0.5")),
                 path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
+                is_dir: false,
             }),
             ProjectPanelOrdMatch(PathMatch {
                 score: 1.0,
@@ -1032,6 +1040,7 @@ mod tests {
                 path: Arc::from(Path::new("b1.0")),
                 path_prefix: Arc::default(),
                 distance_to_relative_ancestor: 0,
+                is_dir: false,
             }),
         ];
         file_finder_sorted_output.sort_by(|a, b| b.cmp(a));
@@ -1046,6 +1055,7 @@ mod tests {
                     path: Arc::from(Path::new("a1.0")),
                     path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
+                    is_dir: false,
                 }),
                 ProjectPanelOrdMatch(PathMatch {
                     score: 1.0,
@@ -1054,6 +1064,7 @@ mod tests {
                     path: Arc::from(Path::new("b1.0")),
                     path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
+                    is_dir: false,
                 }),
                 ProjectPanelOrdMatch(PathMatch {
                     score: 1.0,
@@ -1062,6 +1073,7 @@ mod tests {
                     path: Arc::from(Path::new("c1.0")),
                     path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
+                    is_dir: false,
                 }),
                 ProjectPanelOrdMatch(PathMatch {
                     score: 0.5,
@@ -1070,6 +1082,7 @@ mod tests {
                     path: Arc::from(Path::new("a0.5")),
                     path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
+                    is_dir: false,
                 }),
                 ProjectPanelOrdMatch(PathMatch {
                     score: 0.5,
@@ -1078,6 +1091,7 @@ mod tests {
                     path: Arc::from(Path::new("b0.5")),
                     path_prefix: Arc::default(),
                     distance_to_relative_ancestor: 0,
+                    is_dir: false,
                 }),
             ]
         );

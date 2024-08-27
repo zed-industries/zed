@@ -3785,6 +3785,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
                 disposition: BlockDisposition::Below,
                 height: 1,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             }],
             Some(Autoscroll::fit()),
             cx,
@@ -3955,8 +3956,9 @@ async fn test_clipboard(cx: &mut gpui::TestAppContext) {
         the lazy dog"});
     cx.update_editor(|e, cx| e.copy(&Copy, cx));
     assert_eq!(
-        cx.read_from_clipboard().map(|item| item.text().to_owned()),
-        Some("fox jumps over\n".to_owned())
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some("fox jumps over\n".to_string())
     );
 
     // Paste with three selections, noticing how the copied full-line selection is inserted
@@ -9089,6 +9091,43 @@ async fn go_to_prev_overlapping_diagnostic(
 }
 
 #[gpui::test]
+async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        fn func(abˇc def: i32) -> u32 {
+        }
+    "});
+    let project = cx.update_editor(|editor, _| editor.project.clone().unwrap());
+
+    cx.update(|cx| {
+        project.update(cx, |project, cx| {
+            project.update_diagnostics(
+                LanguageServerId(0),
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Url::from_file_path("/root/file").unwrap(),
+                    version: None,
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 12)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "we've had problems with <https://link.one>, and <https://link.two> is broken".to_string(),
+                        ..Default::default()
+                    }],
+                },
+                &[],
+                cx,
+            )
+        })
+    }).unwrap();
+    cx.run_until_parked();
+    cx.update_editor(|editor, cx| hover_popover::hover(editor, &Default::default(), cx));
+    cx.run_until_parked();
+    cx.update_editor(|editor, _| assert!(editor.hover_state.diagnostic_popover.is_some()))
+}
+
+#[gpui::test]
 async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -13102,6 +13141,242 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
         .unwrap();
     let snapshot = editor.update(cx, |editor, cx| editor.snapshot(cx)).unwrap();
     assert!(!snapshot.is_line_folded(MultiBufferRow(1)));
+}
+
+#[gpui::test]
+async fn test_input_text(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(
+        &r#"ˇone
+        two
+
+        three
+        fourˇ
+        five
+
+        siˇx"#
+            .unindent(),
+    );
+
+    cx.dispatch_action(HandleInput(String::new()));
+    cx.assert_editor_state(
+        &r#"ˇone
+        two
+
+        three
+        fourˇ
+        five
+
+        siˇx"#
+            .unindent(),
+    );
+
+    cx.dispatch_action(HandleInput("AAAA".to_string()));
+    cx.assert_editor_state(
+        &r#"AAAAˇone
+        two
+
+        three
+        fourAAAAˇ
+        five
+
+        siAAAAˇx"#
+            .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_scroll_cursor_center_top_bottom(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        r#"let foo = 1;
+let foo = 2;
+let foo = 3;
+let fooˇ = 4;
+let foo = 5;
+let foo = 6;
+let foo = 7;
+let foo = 8;
+let foo = 9;
+let foo = 10;
+let foo = 11;
+let foo = 12;
+let foo = 13;
+let foo = 14;
+let foo = 15;"#,
+    );
+
+    cx.update_editor(|e, cx| {
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Center,
+            "Default next scroll direction is center",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Top,
+            "After center, next scroll direction should be top",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Bottom,
+            "After top, next scroll direction should be bottom",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Center,
+            "After bottom, scrolling should start over",
+        );
+
+        e.scroll_cursor_center_top_bottom(&ScrollCursorCenterTopBottom, cx);
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Top,
+            "Scrolling continues if retriggered fast enough"
+        );
+    });
+
+    cx.executor()
+        .advance_clock(SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT + Duration::from_millis(200));
+    cx.executor().run_until_parked();
+    cx.update_editor(|e, _| {
+        assert_eq!(
+            e.next_scroll_position,
+            NextScrollCursorCenterTopBottom::Center,
+            "If scrolling is not triggered fast enough, it should reset"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_goto_definition_with_find_all_references_fallback(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let set_up_lsp_handlers = |empty_go_to_definition: bool, cx: &mut EditorLspTestContext| {
+        let go_to_definition = cx.lsp.handle_request::<lsp::request::GotoDefinition, _, _>(
+            move |params, _| async move {
+                if empty_go_to_definition {
+                    Ok(None)
+                } else {
+                    Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                        uri: params.text_document_position_params.text_document.uri,
+                        range: lsp::Range::new(lsp::Position::new(4, 3), lsp::Position::new(4, 6)),
+                    })))
+                }
+            },
+        );
+        let references =
+            cx.lsp
+                .handle_request::<lsp::request::References, _, _>(move |params, _| async move {
+                    Ok(Some(vec![lsp::Location {
+                        uri: params.text_document_position.text_document.uri,
+                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 11)),
+                    }]))
+                });
+        (go_to_definition, references)
+    };
+
+    cx.set_state(
+        &r#"fn one() {
+            let mut a = ˇtwo();
+        }
+
+        fn two() {}"#
+            .unindent(),
+    );
+    set_up_lsp_handlers(false, &mut cx);
+    let navigated = cx
+        .update_editor(|editor, cx| editor.go_to_definition(&GoToDefinition, cx))
+        .await
+        .expect("Failed to navigate to definition");
+    assert_eq!(
+        navigated,
+        Navigated::Yes,
+        "Should have navigated to definition from the GetDefinition response"
+    );
+    cx.assert_editor_state(
+        &r#"fn one() {
+            let mut a = two();
+        }
+
+        fn «twoˇ»() {}"#
+            .unindent(),
+    );
+
+    let editors = cx.update_workspace(|workspace, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, test_editor_cx| {
+        assert_eq!(
+            editors.len(),
+            1,
+            "Initially, only one, test, editor should be open in the workspace"
+        );
+        assert_eq!(
+            test_editor_cx.view(),
+            editors.last().expect("Asserted len is 1")
+        );
+    });
+
+    set_up_lsp_handlers(true, &mut cx);
+    let navigated = cx
+        .update_editor(|editor, cx| editor.go_to_definition(&GoToDefinition, cx))
+        .await
+        .expect("Failed to navigate to lookup references");
+    assert_eq!(
+        navigated,
+        Navigated::Yes,
+        "Should have navigated to references as a fallback after empty GoToDefinition response"
+    );
+    // We should not change the selections in the existing file,
+    // if opening another milti buffer with the references
+    cx.assert_editor_state(
+        &r#"fn one() {
+            let mut a = two();
+        }
+
+        fn «twoˇ»() {}"#
+            .unindent(),
+    );
+    let editors = cx.update_workspace(|workspace, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, test_editor_cx| {
+        assert_eq!(
+            editors.len(),
+            2,
+            "After falling back to references search, we open a new editor with the results"
+        );
+        let references_fallback_text = editors
+            .into_iter()
+            .find(|new_editor| new_editor != test_editor_cx.view())
+            .expect("Should have one non-test editor now")
+            .read(test_editor_cx)
+            .text(test_editor_cx);
+        assert_eq!(
+            references_fallback_text, "fn one() {\n    let mut a = two();\n}",
+            "Should use the range from the references response and not the GoToDefinition one"
+        );
+    });
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

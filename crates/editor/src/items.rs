@@ -680,6 +680,12 @@ impl Item for Editor {
         self.nav_history = Some(history);
     }
 
+    fn discarded(&self, _project: Model<Project>, cx: &mut ViewContext<Self>) {
+        for buffer in self.buffer().clone().read(cx).all_buffers() {
+            buffer.update(cx, |buffer, cx| buffer.discarded(cx))
+        }
+    }
+
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         let selection = self.selections.newest_anchor();
         self.push_to_nav_history(selection.head(), None, cx);
@@ -893,6 +899,10 @@ impl Item for Editor {
 
             _ => {}
         }
+    }
+
+    fn preserve_preview(&self, cx: &AppContext) -> bool {
+        self.buffer.read(cx).preserve_preview(cx)
     }
 }
 
@@ -1134,16 +1144,37 @@ pub(crate) enum BufferSearchHighlights {}
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
+    fn get_matches(&self, _: &mut WindowContext) -> Vec<Range<Anchor>> {
+        self.background_highlights
+            .get(&TypeId::of::<BufferSearchHighlights>())
+            .map_or(Vec::new(), |(_color, ranges)| {
+                ranges.iter().map(|range| range.clone()).collect()
+            })
+    }
+
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-        self.clear_background_highlights::<BufferSearchHighlights>(cx);
+        if self
+            .clear_background_highlights::<BufferSearchHighlights>(cx)
+            .is_some()
+        {
+            cx.emit(SearchEvent::MatchesInvalidated);
+        }
     }
 
     fn update_matches(&mut self, matches: &[Range<Anchor>], cx: &mut ViewContext<Self>) {
+        let existing_range = self
+            .background_highlights
+            .get(&TypeId::of::<BufferSearchHighlights>())
+            .map(|(_, range)| range.as_ref());
+        let updated = existing_range != Some(matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
             |theme| theme.search_match_background,
             cx,
         );
+        if updated {
+            cx.emit(SearchEvent::MatchesInvalidated);
+        }
     }
 
     fn has_filtered_search_ranges(&mut self) -> bool {
