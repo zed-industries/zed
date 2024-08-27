@@ -707,6 +707,20 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_backwards_n(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇa b a b a b a").await;
+        cx.simulate_shared_keystrokes("*").await;
+        cx.simulate_shared_keystrokes("n").await;
+        cx.shared_state().await.assert_eq("a b a b ˇa b a");
+        cx.simulate_shared_keystrokes("#").await;
+        cx.shared_state().await.assert_eq("a b ˇa b a b a");
+        cx.simulate_shared_keystrokes("n").await;
+        cx.shared_state().await.assert_eq("ˇa b a b a b a");
+    }
+
+    #[gpui::test]
     async fn test_v_search(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
