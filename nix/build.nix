@@ -1,6 +1,7 @@
 {
   lib,
   craneLib,
+  rustPlatform,
   clang,
   llvmPackages_18,
   mold-wrapped,
@@ -48,6 +49,17 @@
     // {
       inherit src stdenv;
 
+      nativeBuildInputs = [
+        clang
+        copyDesktopItems
+        curl
+        mold-wrapped
+        perl
+        pkg-config
+        protobuf
+        rustPlatform.bindgenHook
+      ];
+
       buildInputs = [
         curl
         fontconfig
@@ -57,20 +69,11 @@
         sqlite
         zlib
         zstd
+
         alsa-lib
         libxkbcommon
         wayland
         xorg.libxcb
-      ];
-
-      nativeBuildInputs = [
-        clang
-        copyDesktopItems
-        curl
-        mold-wrapped
-        perl
-        pkg-config
-        protobuf
       ];
 
       ZSTD_SYS_USE_PKG_CONFIG = true;
