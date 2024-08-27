@@ -41,7 +41,8 @@ use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
-    cmp::{self, Ordering},
+    cmp::Ordering,
+    collections::hash_map,
     convert::TryFrom,
     ffi::OsStr,
     fmt,
@@ -299,7 +300,7 @@ struct BackgroundScannerState {
     /// as part of the current update. These entry ids may be re-used
     /// if the same inode is discovered at a new path, or if the given
     /// path is re-created after being deleted.
-    removed_entry_ids: HashMap<(u64, SystemTime), ProjectEntryId>,
+    removed_entries: HashMap<u64, Entry>,
     changed_paths: Vec<Arc<Path>>,
     prev_snapshot: Snapshot,
 }
@@ -1001,7 +1002,7 @@ impl LocalWorktree {
                         scanned_dirs: Default::default(),
                         path_prefixes_to_scan: Default::default(),
                         paths_to_scan: Default::default(),
-                        removed_entry_ids: Default::default(),
+                        removed_entries: Default::default(),
                         changed_paths: Default::default(),
                     }),
                     phase: BackgroundScannerPhase::InitialScan,
@@ -2616,6 +2617,26 @@ impl LocalSnapshot {
     }
 
     #[cfg(test)]
+    fn check_git_invariants(&self) {
+        let dotgit_paths = self
+            .git_repositories
+            .iter()
+            .map(|repo| repo.1.git_dir_path.clone())
+            .collect::<HashSet<_>>();
+        let work_dir_paths = self
+            .repository_entries
+            .iter()
+            .map(|repo| repo.0.clone().0)
+            .collect::<HashSet<_>>();
+        assert_eq!(dotgit_paths.len(), work_dir_paths.len());
+        assert_eq!(self.repository_entries.iter().count(), work_dir_paths.len());
+        assert_eq!(self.git_repositories.iter().count(), work_dir_paths.len());
+        for (_, entry) in self.repository_entries.iter() {
+            self.git_repositories.get(&entry.work_directory).unwrap();
+        }
+    }
+
+    #[cfg(test)]
     pub fn entries_without_ids(&self, include_ignored: bool) -> Vec<(&Path, u64, bool)> {
         let mut paths = Vec::new();
         for entry in self.entries_by_path.cursor::<()>() {
@@ -2683,8 +2704,17 @@ impl BackgroundScannerState {
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
         if let Some(mtime) = entry.mtime {
-            if let Some(removed_entry_id) = self.removed_entry_ids.remove(&(entry.inode, mtime)) {
-                entry.id = removed_entry_id;
+            // If an entry with the same inode was removed from the worktree during this scan,
+            // then it *might* represent the same file or directory. But the OS might also have
+            // re-used the inode for a completely different file or directory.
+            //
+            // Conditionally reuse the old entry's id:
+            // * if the mtime is the same, the file was probably been renamed.
+            // * if the path is the same, the file may just have been updated
+            if let Some(removed_entry) = self.removed_entries.remove(&entry.inode) {
+                if removed_entry.mtime == Some(mtime) || removed_entry.path == entry.path {
+                    entry.id = removed_entry.id;
+                }
             } else if let Some(existing_entry) = self.snapshot.entry_for_path(&entry.path) {
                 entry.id = existing_entry.id;
             }
@@ -2776,29 +2806,46 @@ impl BackgroundScannerState {
         }
         self.snapshot.entries_by_path = new_entries;
 
-        let mut entries_by_id_edits = Vec::new();
+        let mut removed_ids = Vec::with_capacity(removed_entries.summary().count);
         for entry in removed_entries.cursor::<()>() {
-            if let Some(mtime) = entry.mtime {
-                let removed_entry_id = self
-                    .removed_entry_ids
-                    .entry((entry.inode, mtime))
-                    .or_insert(entry.id);
-                *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
+            match self.removed_entries.entry(entry.inode) {
+                hash_map::Entry::Occupied(mut e) => {
+                    let prev_removed_entry = e.get_mut();
+                    if entry.id > prev_removed_entry.id {
+                        *prev_removed_entry = entry.clone();
+                    }
+                }
+                hash_map::Entry::Vacant(e) => {
+                    e.insert(entry.clone());
+                }
             }
-            entries_by_id_edits.push(Edit::Remove(entry.id));
-        }
-        self.snapshot.entries_by_id.edit(entries_by_id_edits, &());
 
-        if path.file_name() == Some(&GITIGNORE) {
-            let abs_parent_path = self.snapshot.abs_path.join(path.parent().unwrap());
-            if let Some((_, needs_update)) = self
-                .snapshot
-                .ignores_by_parent_abs_path
-                .get_mut(abs_parent_path.as_path())
-            {
-                *needs_update = true;
+            if entry.path.file_name() == Some(&GITIGNORE) {
+                let abs_parent_path = self.snapshot.abs_path.join(entry.path.parent().unwrap());
+                if let Some((_, needs_update)) = self
+                    .snapshot
+                    .ignores_by_parent_abs_path
+                    .get_mut(abs_parent_path.as_path())
+                {
+                    *needs_update = true;
+                }
+            }
+
+            if let Err(ix) = removed_ids.binary_search(&entry.id) {
+                removed_ids.insert(ix, entry.id);
             }
         }
+
+        self.snapshot.entries_by_id.edit(
+            removed_ids.iter().map(|&id| Edit::Remove(id)).collect(),
+            &(),
+        );
+        self.snapshot
+            .git_repositories
+            .retain(|id, _| removed_ids.binary_search(&id).is_err());
+        self.snapshot
+            .repository_entries
+            .retain(|repo_path, _| !repo_path.0.starts_with(path));
 
         #[cfg(test)]
         self.snapshot.check_invariants(false);
@@ -3699,10 +3746,13 @@ impl BackgroundScanner {
         {
             let mut state = self.state.lock();
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
-            for (_, entry_id) in mem::take(&mut state.removed_entry_ids) {
-                state.scanned_dirs.remove(&entry_id);
+            for (_, entry) in mem::take(&mut state.removed_entries) {
+                state.scanned_dirs.remove(&entry.id);
             }
         }
+
+        #[cfg(test)]
+        self.state.lock().snapshot.check_git_invariants();
 
         self.send_status_update(false, None);
     }
@@ -4116,7 +4166,6 @@ impl BackgroundScanner {
 
                     let is_dir = fs_entry.is_dir();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
-
                     fs_entry.is_external = is_external;
                     fs_entry.is_private = self.is_path_private(path);
 
@@ -4145,7 +4194,6 @@ impl BackgroundScanner {
                     self.remove_repo_path(path, &mut state.snapshot);
                 }
                 Err(err) => {
-                    // TODO - create a special 'error' entry in the entries tree to mark this
                     log::error!("error reading file {abs_path:?} on event: {err:#}");
                 }
             }
@@ -4174,9 +4222,6 @@ impl BackgroundScanner {
                 return Some(());
             }
         }
-
-        // TODO statuses
-        // Track when a .git is removed and iterate over the file system there
 
         Some(())
     }

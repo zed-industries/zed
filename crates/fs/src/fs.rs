@@ -826,6 +826,35 @@ impl FakeFs {
         state.next_mtime = next_mtime;
     }
 
+    pub async fn touch_path(&self, path: impl AsRef<Path>) {
+        let mut state = self.state.lock();
+        let path = path.as_ref();
+        let new_mtime = state.next_mtime;
+        let new_inode = state.next_inode;
+        state.next_inode += 1;
+        state.next_mtime += Duration::from_nanos(1);
+        state
+            .write_path(path, move |entry| {
+                match entry {
+                    btree_map::Entry::Vacant(e) => {
+                        e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
+                            inode: new_inode,
+                            mtime: new_mtime,
+                            content: Vec::new(),
+                        })));
+                    }
+                    btree_map::Entry::Occupied(mut e) => match &mut *e.get_mut().lock() {
+                        FakeFsEntry::File { mtime, .. } => *mtime = new_mtime,
+                        FakeFsEntry::Dir { mtime, .. } => *mtime = new_mtime,
+                        FakeFsEntry::Symlink { .. } => {}
+                    },
+                }
+                Ok(())
+            })
+            .unwrap();
+        state.emit_event([path.to_path_buf()]);
+    }
+
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
         self.write_file_internal(path, content).unwrap()
     }
