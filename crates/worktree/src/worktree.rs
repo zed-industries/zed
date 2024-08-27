@@ -4168,8 +4168,32 @@ impl BackgroundScanner {
             }
         }
 
+        // Group all relative paths by their git repository.
         let mut paths_by_git_repo = HashMap::default();
-        let mut entries = vec![];
+        for relative_path in relative_paths.iter() {
+            if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(relative_path) {
+                if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, relative_path) {
+                    paths_by_git_repo
+                        .entry(repo.git_dir_path.clone())
+                        .or_insert_with(|| RepoPaths {
+                            repo: repo.repo_ptr.clone(),
+                            repo_paths: Vec::new(),
+                            relative_paths: Vec::new(),
+                        })
+                        .add_paths(&relative_path, repo_path);
+                }
+            }
+        }
+
+        // Now call `git status` once per repository and collect each file's git status.
+        let mut git_statuses_by_relative_path =
+            paths_by_git_repo
+                .into_values()
+                .fold(HashMap::default(), |mut map, repo_paths| {
+                    map.extend(repo_paths.into_git_file_statuses());
+                    map
+                });
+
         for (path, metadata) in relative_paths.iter().zip(metadata.into_iter()) {
             let abs_path: Arc<Path> = root_abs_path.join(&path).into();
             match metadata {
@@ -4195,7 +4219,7 @@ impl BackgroundScanner {
                     fs_entry.is_external = is_external;
                     fs_entry.is_private = self.is_path_private(path);
 
-                    if let (Some(scan_queue_tx), true) = (&scan_queue_tx, fs_entry.is_dir()) {
+                    if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
                         if state.should_scan_directory(&fs_entry)
                             || (fs_entry.path.as_os_str().is_empty()
                                 && abs_path.file_name() == Some(*DOT_GIT))
@@ -4206,20 +4230,11 @@ impl BackgroundScanner {
                         }
                     }
 
-                    if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(path) {
-                        if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, path) {
-                            let entry = paths_by_git_repo
-                                .entry(repo.git_dir_path.clone())
-                                .or_insert_with(|| RepoPaths {
-                                    repo: repo.repo_ptr.clone(),
-                                    repo_paths: Vec::new(),
-                                    relative_paths: Vec::new(),
-                                });
-                            entry.add_paths(&path, repo_path);
-                        }
+                    if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
+                        fs_entry.git_status = git_statuses_by_relative_path.remove(path);
                     }
 
-                    entries.push(fs_entry)
+                    state.insert_entry(fs_entry.clone(), self.fs.as_ref());
                 }
                 Ok(None) => {
                     self.remove_repo_path(path, &mut state.snapshot);
@@ -4228,19 +4243,6 @@ impl BackgroundScanner {
                     log::error!("error reading file {abs_path:?} on event: {err:#}");
                 }
             }
-        }
-
-        let mut git_statuses_by_relative_path = HashMap::default();
-        for repo_paths in paths_by_git_repo.into_values() {
-            git_statuses_by_relative_path.extend(repo_paths.into_git_file_statuses());
-        }
-
-        for mut entry in entries {
-            if !entry.is_dir() && !entry.is_ignored && !entry.is_external {
-                entry.git_status = git_statuses_by_relative_path.remove(&entry.path);
-            }
-
-            state.insert_entry(entry, self.fs.as_ref());
         }
 
         util::extend_sorted(
@@ -4401,11 +4403,12 @@ impl BackgroundScanner {
                 if !entry.is_dir() && !entry.is_ignored && !entry.is_external {
                     if let Some((ref repo_entry, local_repo)) = repo {
                         if let Ok(repo_path) = repo_entry.relativize(&snapshot, &entry.path) {
-                            if let Ok(git_status) =
-                                local_repo.repo_ptr.status(&[repo_path.0.clone()])
-                            {
-                                entry.git_status = git_status.get(&repo_path);
-                            }
+                            let status = local_repo
+                                .repo_ptr
+                                .status(&[repo_path.0.clone()])
+                                .ok()
+                                .and_then(|status| status.get(&repo_path));
+                            entry.git_status = status;
                         }
                     }
                 }
