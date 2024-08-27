@@ -36,6 +36,7 @@
 
 use std::time::Duration;
 
+use editor::Editor;
 use gpui::{
     percentage, Animation, AnimationExt, AnyElement, ClipboardItem, Render, Transformation, View,
     WeakView,
@@ -428,6 +429,8 @@ impl Render for ExecutionView {
                 .into_any_element();
         }
 
+        let workspace = self.workspace.clone();
+
         div()
             .w_full()
             .children(self.outputs.iter().enumerate().map(|(index, output)| {
@@ -442,26 +445,75 @@ impl Render for ExecutionView {
                         ),
                     )
                     .when(output.has_clipboard_content(cx), |el| {
-                        let clipboard_content = output.clipboard_content(cx);
+                        let clipboard_content = output.clipboard_content(cx).clone();
+
+                        let terminal = match output {
+                            OutputContent::Stream { content } => Some(content.clone()),
+                            _ => None,
+                        };
 
                         el.child(
-                            div().pl_1().child(
-                                IconButton::new(
-                                    ElementId::Name(format!("copy-output-{}", index).into()),
-                                    IconName::Copy,
+                            v_flex()
+                                .pl_1()
+                                .child(
+                                    IconButton::new(
+                                        ElementId::Name(format!("copy-output-{}", index).into()),
+                                        IconName::Copy,
+                                    )
+                                    .style(ButtonStyle::Transparent)
+                                    .tooltip(move |cx| Tooltip::text("Copy Output", cx))
+                                    .on_click(cx.listener(
+                                        move |_, _, cx| {
+                                            if let Some(clipboard_content) =
+                                                clipboard_content.as_ref()
+                                            {
+                                                cx.write_to_clipboard(clipboard_content.clone());
+                                                // todo!(): let the user know that the content was copied
+                                            }
+                                        },
+                                    )),
                                 )
-                                .style(ButtonStyle::Transparent)
-                                .tooltip(move |cx| Tooltip::text("Copy Output", cx))
-                                .on_click(cx.listener(
-                                    move |_, _, cx| {
-                                        if let Some(clipboard_content) = clipboard_content.as_ref()
-                                        {
-                                            cx.write_to_clipboard(clipboard_content.clone());
-                                            // todo!(): let the user know that the content was copied
-                                        }
-                                    },
-                                )),
-                            ),
+                                .when_some(terminal, |el, terminal| {
+                                    el.child(
+                                        IconButton::new(
+                                            ElementId::Name(
+                                                format!("open-in-buffer--{}", index).into(),
+                                            ),
+                                            IconName::Copy,
+                                        )
+                                        .style(ButtonStyle::Transparent)
+                                        .tooltip(move |cx| Tooltip::text("Open in Buffer", cx))
+                                        .on_click(
+                                            cx.listener({
+                                                let workspace = workspace.clone();
+
+                                                move |_, _, cx| {
+                                                    // For now we'll only do this for terminal output
+
+                                                    let editor =
+                                                        terminal.update(cx, |terminal, cx| {
+                                                            let buffer = terminal.create_buffer(cx);
+                                                            Box::new(cx.new_view(|cx| {
+                                                                Editor::for_buffer(
+                                                                    buffer.clone(),
+                                                                    None,
+                                                                    cx,
+                                                                )
+                                                            }))
+                                                        });
+
+                                                    workspace
+                                                        .update(cx, |workspace, cx| {
+                                                            workspace.add_item_to_active_pane(
+                                                                editor, None, true, cx,
+                                                            );
+                                                        })
+                                                        .ok();
+                                                }
+                                            }),
+                                        ),
+                                    )
+                                }),
                         )
                     })
             }))

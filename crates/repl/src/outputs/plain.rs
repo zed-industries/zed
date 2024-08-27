@@ -15,7 +15,12 @@
 //! - Error tracebacks
 //!
 
-use alacritty_terminal::{grid::Dimensions as _, term::Config, vte::ansi::Processor};
+use alacritty_terminal::{
+    grid::Dimensions as _,
+    index::{Column, Line, Point},
+    term::Config,
+    vte::ansi::Processor,
+};
 use gpui::{canvas, size, ClipboardItem, FontStyle, Model, TextStyle, WhiteSpace};
 use language::Buffer;
 use settings::Settings as _;
@@ -69,7 +74,6 @@ pub fn text_style(cx: &mut WindowContext) -> TextStyle {
         font_fallbacks,
         font_size: theme::get_buffer_font_size(cx).into(),
         font_style: FontStyle::Normal,
-        // todo
         line_height: cx.line_height().into(),
         background_color: Some(theme.colors().terminal_background),
         white_space: WhiteSpace::Normal,
@@ -132,6 +136,50 @@ impl TerminalOutput {
             handler: term,
             full_buffer: None,
         }
+    }
+
+    pub fn create_buffer(&mut self, cx: &mut WindowContext) -> Model<Buffer> {
+        let mut full_text = String::new();
+
+        // Get the total number of lines, including history
+        let total_lines = self.handler.grid().total_lines();
+        let visible_lines = self.handler.screen_lines();
+        let history_lines = total_lines - visible_lines;
+
+        // Capture history lines in correct order (oldest to newest)
+        for line in (0..history_lines).rev() {
+            let line_index = Line(-(line as i32) - 1);
+            let start = Point::new(line_index, Column(0));
+            let end = Point::new(line_index, Column(self.handler.columns() - 1));
+            let line_content = self.handler.bounds_to_string(start, end);
+
+            if !line_content.trim().is_empty() {
+                full_text.push_str(&line_content);
+                full_text.push('\n');
+            }
+        }
+
+        // Capture visible lines
+        for line in 0..visible_lines {
+            let line_index = Line(line as i32);
+            let start = Point::new(line_index, Column(0));
+            let end = Point::new(line_index, Column(self.handler.columns() - 1));
+            let line_content = self.handler.bounds_to_string(start, end);
+
+            if !line_content.trim().is_empty() {
+                full_text.push_str(&line_content);
+                full_text.push('\n');
+            }
+        }
+
+        // Trim any trailing newlines
+        full_text = full_text.trim_end().to_string();
+
+        let buffer = cx.new_model(|cx| {
+            Buffer::local(full_text, cx).with_language(language::PLAIN_TEXT.clone(), cx)
+        });
+        self.full_buffer = Some(buffer.clone());
+        buffer
     }
 
     /// Creates a new `TerminalOutput` instance with initial content.
