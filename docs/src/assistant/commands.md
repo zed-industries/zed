@@ -25,7 +25,7 @@ Slash commands enhance the assistant's capabilities. Begin by typing a `/` at th
 
 ## `/default`
 
-Read more about `/default` in the [Prompting: Editing the Default Prompt](./prompting.md#default-prompt) section.
+Read more about `/default` in the [Prompting: Editing the Default Prompt](./prompting#default-prompt) section.
 
 Usage: `/default`
 
