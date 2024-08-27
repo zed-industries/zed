@@ -347,6 +347,7 @@ impl EditorElement {
         register_action(view, cx, Editor::toggle_relative_line_numbers);
         register_action(view, cx, Editor::toggle_indent_guides);
         register_action(view, cx, Editor::toggle_inlay_hints);
+        register_action(view, cx, Editor::toggle_inline_completions);
         register_action(view, cx, hover_popover::hover);
         register_action(view, cx, Editor::reveal_in_finder);
         register_action(view, cx, Editor::copy_path);
