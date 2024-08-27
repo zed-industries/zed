@@ -38,6 +38,7 @@ use postage::{
 };
 use rpc::proto::{self, AnyProtoClient};
 use settings::{Settings, SettingsLocation, SettingsStore};
+use smallvec::{smallvec, SmallVec};
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
@@ -124,7 +125,7 @@ pub struct LocalWorktree {
 
 struct ScanRequest {
     relative_paths: Vec<Arc<Path>>,
-    done: barrier::Sender,
+    done: SmallVec<[barrier::Sender; 1]>,
 }
 
 pub struct RemoteWorktree {
@@ -339,7 +340,7 @@ enum ScanState {
     Updated {
         snapshot: LocalSnapshot,
         changes: UpdatedEntriesSet,
-        barrier: Option<barrier::Sender>,
+        barrier: SmallVec<[barrier::Sender; 1]>,
         scanning: bool,
     },
 }
@@ -1659,7 +1660,7 @@ impl LocalWorktree {
         self.scan_requests_tx
             .try_send(ScanRequest {
                 relative_paths: paths,
-                done: tx,
+                done: smallvec![tx],
             })
             .ok();
         rx
@@ -2699,7 +2700,7 @@ impl BackgroundScannerState {
                             work_directory: workdir_path,
                             statuses: repo
                                 .repo_ptr
-                                .statuses(&repo_path)
+                                .status(&[repo_path.0])
                                 .log_err()
                                 .unwrap_or_default(),
                         });
@@ -3568,7 +3569,7 @@ impl BackgroundScanner {
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
 
-        self.send_status_update(false, None);
+        self.send_status_update(false, SmallVec::new());
 
         // Process any any FS events that occurred while performing the initial scan.
         // For these events, update events cannot be as precise, because we didn't
@@ -3588,7 +3589,7 @@ impl BackgroundScanner {
             select_biased! {
                 // Process any path refresh requests from the worktree. Prioritize
                 // these before handling changes reported by the filesystem.
-                request = self.scan_requests_rx.recv().fuse() => {
+                request = self.next_scan_request().fuse() => {
                     let Ok(request) = request else { break };
                     if !self.process_scan_request(request, false).await {
                         return;
@@ -3669,7 +3670,7 @@ impl BackgroundScanner {
         )
         .await;
 
-        self.send_status_update(scanning, Some(request.done))
+        self.send_status_update(scanning, request.done)
     }
 
     async fn process_events(&mut self, mut abs_paths: Vec<PathBuf>) {
@@ -3777,7 +3778,7 @@ impl BackgroundScanner {
         #[cfg(test)]
         self.state.lock().snapshot.check_git_invariants();
 
-        self.send_status_update(false, None);
+        self.send_status_update(false, SmallVec::new());
     }
 
     async fn forcibly_load_paths(&self, paths: &[Arc<Path>]) -> bool {
@@ -3834,7 +3835,7 @@ impl BackgroundScanner {
                             select_biased! {
                                 // Process any path refresh requests before moving on to process
                                 // the scan queue, so that user operations are prioritized.
-                                request = self.scan_requests_rx.recv().fuse() => {
+                                request = self.next_scan_request().fuse() => {
                                     let Ok(request) = request else { break };
                                     if !self.process_scan_request(request, true).await {
                                         return;
@@ -3853,7 +3854,7 @@ impl BackgroundScanner {
                                     ) {
                                         Ok(_) => {
                                             last_progress_update_count += 1;
-                                            self.send_status_update(true, None);
+                                            self.send_status_update(true, SmallVec::new());
                                         }
                                         Err(count) => {
                                             last_progress_update_count = count;
@@ -3879,7 +3880,7 @@ impl BackgroundScanner {
             .await;
     }
 
-    fn send_status_update(&self, scanning: bool, barrier: Option<barrier::Sender>) -> bool {
+    fn send_status_update(&self, scanning: bool, barrier: SmallVec<[barrier::Sender; 1]>) -> bool {
         let mut state = self.state.lock();
         if state.changed_paths.is_empty() && scanning {
             return true;
@@ -3954,7 +3955,7 @@ impl BackgroundScanner {
                 if let Some((work_directory, repository)) = repo {
                     let t0 = Instant::now();
                     let statuses = repository
-                        .statuses(Path::new(""))
+                        .status(&[PathBuf::from("")])
                         .log_err()
                         .unwrap_or_default();
                     log::trace!("computed git status in {:?}", t0.elapsed());
@@ -4167,6 +4168,8 @@ impl BackgroundScanner {
             }
         }
 
+        let mut paths_by_git_repo = HashMap::default();
+        let mut entries = vec![];
         for (path, metadata) in relative_paths.iter().zip(metadata.into_iter()) {
             let abs_path: Arc<Path> = root_abs_path.join(&path).into();
             match metadata {
@@ -4192,14 +4195,6 @@ impl BackgroundScanner {
                     fs_entry.is_external = is_external;
                     fs_entry.is_private = self.is_path_private(path);
 
-                    if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
-                        if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(path) {
-                            if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, path) {
-                                fs_entry.git_status = repo.repo_ptr.status(&repo_path);
-                            }
-                        }
-                    }
-
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, fs_entry.is_dir()) {
                         if state.should_scan_directory(&fs_entry)
                             || (fs_entry.path.as_os_str().is_empty()
@@ -4211,7 +4206,20 @@ impl BackgroundScanner {
                         }
                     }
 
-                    state.insert_entry(fs_entry, self.fs.as_ref());
+                    if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(path) {
+                        if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, path) {
+                            let entry = paths_by_git_repo
+                                .entry(repo.git_dir_path.clone())
+                                .or_insert_with(|| RepoPaths {
+                                    repo: repo.repo_ptr.clone(),
+                                    repo_paths: Vec::new(),
+                                    relative_paths: Vec::new(),
+                                });
+                            entry.add_paths(&path, repo_path);
+                        }
+                    }
+
+                    entries.push(fs_entry)
                 }
                 Ok(None) => {
                     self.remove_repo_path(path, &mut state.snapshot);
@@ -4220,6 +4228,19 @@ impl BackgroundScanner {
                     log::error!("error reading file {abs_path:?} on event: {err:#}");
                 }
             }
+        }
+
+        let mut git_statuses_by_relative_path = HashMap::default();
+        for repo_paths in paths_by_git_repo.into_values() {
+            git_statuses_by_relative_path.extend(repo_paths.into_git_file_statuses());
+        }
+
+        for mut entry in entries {
+            if !entry.is_dir() && !entry.is_ignored && !entry.is_external {
+                entry.git_status = git_statuses_by_relative_path.remove(&entry.path);
+            }
+
+            state.insert_entry(entry, self.fs.as_ref());
         }
 
         util::extend_sorted(
@@ -4310,7 +4331,7 @@ impl BackgroundScanner {
                             select_biased! {
                                 // Process any path refresh requests before moving on to process
                                 // the queue of ignore statuses.
-                                request = self.scan_requests_rx.recv().fuse() => {
+                                request = self.next_scan_request().fuse() => {
                                     let Ok(request) = request else { break };
                                     if !self.process_scan_request(request, true).await {
                                         return;
@@ -4380,7 +4401,11 @@ impl BackgroundScanner {
                 if !entry.is_dir() && !entry.is_ignored && !entry.is_external {
                     if let Some((ref repo_entry, local_repo)) = repo {
                         if let Ok(repo_path) = repo_entry.relativize(&snapshot, &entry.path) {
-                            entry.git_status = local_repo.repo_ptr.status(&repo_path);
+                            if let Ok(git_status) =
+                                local_repo.repo_ptr.status(&[repo_path.0.clone()])
+                            {
+                                entry.git_status = git_status.get(&repo_path);
+                            }
                         }
                     }
                 }
@@ -4519,7 +4544,7 @@ impl BackgroundScanner {
                         select_biased! {
                             // Process any path refresh requests before moving on to process
                             // the queue of git statuses.
-                            request = self.scan_requests_rx.recv().fuse() => {
+                            request = self.next_scan_request().fuse() => {
                                 let Ok(request) = request else { break };
                                 if !self.process_scan_request(request, true).await {
                                     return;
@@ -4537,7 +4562,7 @@ impl BackgroundScanner {
     fn update_git_statuses(&self, job: UpdateGitStatusesJob) {
         log::trace!("updating git statuses for repo {:?}", job.work_directory.0);
         let t0 = Instant::now();
-        let Some(statuses) = job.repository.statuses(Path::new("")).log_err() else {
+        let Some(statuses) = job.repository.status(&[PathBuf::from("")]).log_err() else {
             return;
         };
         log::trace!(
@@ -4726,6 +4751,15 @@ impl BackgroundScanner {
     fn is_path_private(&self, path: &Path) -> bool {
         !self.share_private_files && self.settings.is_path_private(path)
     }
+
+    async fn next_scan_request(&self) -> Result<ScanRequest> {
+        let mut request = self.scan_requests_rx.recv().await?;
+        while let Ok(next_request) = self.scan_requests_rx.try_recv() {
+            request.relative_paths.extend(next_request.relative_paths);
+            request.done.extend(next_request.done);
+        }
+        Ok(request)
+    }
 }
 
 fn swap_to_front(child_paths: &mut Vec<PathBuf>, file: &OsStr) {
@@ -4746,6 +4780,31 @@ fn char_bag_for_path(root_char_bag: CharBag, path: &Path) -> CharBag {
             .map(|c| c.to_ascii_lowercase()),
     );
     result
+}
+
+struct RepoPaths {
+    repo: Arc<dyn GitRepository>,
+    relative_paths: Vec<Arc<Path>>,
+    repo_paths: Vec<PathBuf>,
+}
+
+impl RepoPaths {
+    fn add_paths(&mut self, relative_path: &Arc<Path>, repo_path: RepoPath) {
+        self.relative_paths.push(relative_path.clone());
+        self.repo_paths.push(repo_path.0);
+    }
+
+    fn into_git_file_statuses(self) -> HashMap<Arc<Path>, GitFileStatus> {
+        let mut statuses = HashMap::default();
+        if let Ok(status) = self.repo.status(&self.repo_paths) {
+            for (repo_path, relative_path) in self.repo_paths.into_iter().zip(self.relative_paths) {
+                if let Some(path_status) = status.get(&repo_path) {
+                    statuses.insert(relative_path, path_status);
+                }
+            }
+        }
+        statuses
+    }
 }
 
 struct ScanJob {
