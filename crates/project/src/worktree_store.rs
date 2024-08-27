@@ -16,12 +16,11 @@ use rpc::{
 };
 use smol::{
     channel::{Receiver, Sender},
-    lock::Semaphore,
     stream::StreamExt,
 };
 use text::ReplicaId;
 use util::ResultExt;
-use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeId, WorktreeSettings};
+use worktree::{Entry, ProjectEntryId, Worktree, WorktreeId, WorktreeSettings};
 
 use crate::{search::SearchQuery, ProjectPath};
 

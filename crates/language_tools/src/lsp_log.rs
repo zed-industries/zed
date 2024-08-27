@@ -647,7 +647,7 @@ impl LspLogView {
             editor.set_text(log_contents, cx);
             editor.move_to_end(&MoveToEnd, cx);
             editor.set_read_only(true);
-            editor.set_show_inline_completions(false);
+            editor.set_show_inline_completions(Some(false), cx);
             editor
         });
         let editor_subscription = cx.subscribe(

@@ -1,4 +1,3 @@
-use crate::outputs::{ExecutionView, SupportsClipboard};
 use alacritty_terminal::{grid::Dimensions as _, term::Config, vte::ansi::Processor};
 use gpui::{canvas, size, AnyElement, ClipboardItem, FontStyle, TextStyle, WhiteSpace};
 use settings::Settings as _;
@@ -6,7 +5,9 @@ use std::mem;
 use terminal::ZedListener;
 use terminal_view::terminal_element::TerminalElement;
 use theme::ThemeSettings;
-use ui::{prelude::*, IntoElement, ViewContext};
+use ui::{prelude::*, IntoElement};
+
+use crate::outputs::SupportsClipboard;
 
 /// Implements the most basic of terminal output for use by Jupyter outputs
 /// whether:
@@ -119,7 +120,7 @@ impl TerminalOutput {
         }
     }
 
-    pub fn render(&self, cx: &mut ViewContext<ExecutionView>) -> AnyElement {
+    pub fn render(&self, cx: &mut WindowContext) -> AnyElement {
         let text_style = text_style(cx);
         let text_system = cx.text_system();
 
