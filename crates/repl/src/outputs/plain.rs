@@ -16,7 +16,8 @@
 //!
 
 use alacritty_terminal::{grid::Dimensions as _, term::Config, vte::ansi::Processor};
-use gpui::{canvas, size, AnyElement, ClipboardItem, FontStyle, TextStyle, WhiteSpace};
+use gpui::{canvas, size, ClipboardItem, FontStyle, Model, TextStyle, WhiteSpace};
+use language::Buffer;
 use settings::Settings as _;
 use std::mem;
 use terminal::ZedListener;
@@ -40,6 +41,7 @@ use crate::outputs::SupportsClipboard;
 /// supporting ANSI escape sequences for text formatting and colors.
 ///
 pub struct TerminalOutput {
+    full_buffer: Option<Model<Buffer>>,
     /// ANSI escape sequence processor for parsing input text.
     parser: Processor,
     /// Alacritty terminal instance that manages the terminal state and content.
@@ -128,6 +130,7 @@ impl TerminalOutput {
         Self {
             parser: Processor::new(),
             handler: term,
+            full_buffer: None,
         }
     }
 
@@ -145,7 +148,7 @@ impl TerminalOutput {
     /// A new instance of `TerminalOutput` containing the provided text.
     pub fn from(text: &str, cx: &mut WindowContext) -> Self {
         let mut output = Self::new(cx);
-        output.append_text(text);
+        output.append_text(text, cx);
         output
     }
 
@@ -175,7 +178,7 @@ impl TerminalOutput {
     /// # Arguments
     ///
     /// * `text` - A string slice containing the text to be appended.
-    pub fn append_text(&mut self, text: &str) {
+    pub fn append_text(&mut self, text: &str, cx: &mut WindowContext) {
         for byte in text.as_bytes() {
             if *byte == b'\n' {
                 // Dirty (?) hack to move the cursor down
@@ -184,17 +187,23 @@ impl TerminalOutput {
             } else {
                 self.parser.advance(&mut self.handler, *byte);
             }
+        }
 
-            // self.parser.advance(&mut self.handler, *byte);
+        if let Some(buffer) = self.full_buffer.as_ref() {
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(buffer.len()..buffer.len(), text)], None, cx);
+            });
         }
     }
+}
 
+impl Render for TerminalOutput {
     /// Renders the terminal output as a GPUI element.
     ///
     /// Converts the current terminal state into a renderable GPUI element. It handles
     /// the layout of the terminal grid, calculates the dimensions of the output, and
     /// creates a canvas element that paints the terminal cells and background rectangles.
-    pub fn render(&self, cx: &mut WindowContext) -> AnyElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let text_style = text_style(cx);
         let text_system = cx.text_system();
 
@@ -254,7 +263,6 @@ impl TerminalOutput {
         )
         // We must set the height explicitly for the editor block to size itself correctly
         .h(height)
-        .into_any_element()
     }
 }
 

@@ -99,10 +99,10 @@ impl Output {
 impl SupportsClipboard for Output {
     fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem> {
         match &self.content {
-            OutputContent::Plain(terminal) => terminal.clipboard_content(cx),
-            OutputContent::Stream(terminal) => terminal.clipboard_content(cx),
+            OutputContent::Plain(terminal) => terminal.read(cx).clipboard_content(cx),
+            OutputContent::Stream(terminal) => terminal.read(cx).clipboard_content(cx),
             OutputContent::Image(image) => image.clipboard_content(cx),
-            OutputContent::ErrorOutput(error) => error.traceback.clipboard_content(cx),
+            OutputContent::ErrorOutput(error) => error.traceback.read(cx).clipboard_content(cx),
             OutputContent::Message(_) => None,
             OutputContent::Table(table) => table.clipboard_content(cx),
             OutputContent::Markdown(markdown) => markdown.read(cx).clipboard_content(cx),
@@ -112,10 +112,10 @@ impl SupportsClipboard for Output {
 
     fn has_clipboard_content(&self, cx: &WindowContext) -> bool {
         match &self.content {
-            OutputContent::Plain(terminal) => terminal.has_clipboard_content(cx),
-            OutputContent::Stream(terminal) => terminal.has_clipboard_content(cx),
+            OutputContent::Plain(terminal) => terminal.read(cx).has_clipboard_content(cx),
+            OutputContent::Stream(terminal) => terminal.read(cx).has_clipboard_content(cx),
             OutputContent::Image(image) => image.has_clipboard_content(cx),
-            OutputContent::ErrorOutput(error) => error.traceback.has_clipboard_content(cx),
+            OutputContent::ErrorOutput(_) => true,
             OutputContent::Message(_) => false,
             OutputContent::Table(table) => table.has_clipboard_content(cx),
             OutputContent::Markdown(markdown) => markdown.read(cx).has_clipboard_content(cx),
@@ -125,8 +125,8 @@ impl SupportsClipboard for Output {
 }
 
 pub enum OutputContent {
-    Plain(TerminalOutput),
-    Stream(TerminalOutput),
+    Plain(View<TerminalOutput>),
+    Stream(View<TerminalOutput>),
     Image(ImageView),
     ErrorOutput(ErrorView),
     Message(String),
@@ -140,9 +140,9 @@ impl OutputContent {
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
-            Self::Plain(stdio) => Some(stdio.render(cx)),
+            Self::Plain(stdio) => Some(stdio.clone().into_any_element()),
             Self::Markdown(markdown) => Some(markdown.clone().into_any_element()),
-            Self::Stream(stdio) => Some(stdio.render(cx)),
+            Self::Stream(stdio) => Some(stdio.clone().into_any_element()),
             Self::Image(image) => Some(image.render(cx)),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
             Self::Table(table) => Some(table.render(cx)),
@@ -155,7 +155,9 @@ impl OutputContent {
 
     pub fn new(data: &MimeBundle, cx: &mut WindowContext) -> Self {
         match data.richest(rank_mime_type) {
-            Some(MimeType::Plain(text)) => OutputContent::Plain(TerminalOutput::from(text, cx)),
+            Some(MimeType::Plain(text)) => {
+                OutputContent::Plain(cx.new_view(|cx| TerminalOutput::from(text, cx)))
+            }
             Some(MimeType::Markdown(text)) => {
                 let view = cx.new_view(|cx| MarkdownView::from(text.clone(), cx));
                 OutputContent::Markdown(view)
@@ -223,8 +225,8 @@ impl ExecutionView {
                 }
             }
             JupyterMessageContent::ErrorOutput(result) => {
-                let mut terminal = TerminalOutput::new(cx);
-                terminal.append_text(&result.traceback.join("\n"));
+                let terminal =
+                    cx.new_view(|cx| TerminalOutput::from(&result.traceback.join("\n"), cx));
 
                 Output::from(OutputContent::ErrorOutput(ErrorView {
                     ename: result.ename.clone(),
@@ -330,9 +332,12 @@ impl ExecutionView {
         if let Some(last_output) = self.outputs.last_mut() {
             match &mut last_output.content {
                 OutputContent::Stream(last_stream) => {
-                    last_stream.append_text(text);
                     // Don't need to add a new output, we already have a terminal output
-                    cx.notify();
+                    // and can just update the most recent terminal output
+                    last_stream.update(cx, |last_stream, cx| {
+                        last_stream.append_text(text, cx);
+                        cx.notify();
+                    });
                     return None;
                 }
                 // Edge case note: a clear output marker
@@ -346,9 +351,9 @@ impl ExecutionView {
             }
         }
 
-        let mut new_terminal = TerminalOutput::new(cx);
-        new_terminal.append_text(text);
-        Some(OutputContent::Stream(new_terminal))
+        Some(OutputContent::Stream(
+            cx.new_view(|cx| TerminalOutput::from(text, cx)),
+        ))
     }
 }
 
