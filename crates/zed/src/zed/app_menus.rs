@@ -13,6 +13,10 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu {
+                    name: "Services".into(),
+                    items: vec![],
+                }),
+                MenuItem::submenu(Menu {
                     name: "Preferences".into(),
                     items: vec![
                         MenuItem::action("Open Settings", super::OpenSettings),
