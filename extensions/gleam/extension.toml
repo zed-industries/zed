@@ -7,7 +7,7 @@ authors = ["Marshall Bowers <elliott.codes@gmail.com>"]
 repository = "https://github.com/zed-industries/zed"
 
 capabilities = [
-    { kind = "github:download", owner = "gleam-lang", repo = "gleam" },
+    { kind = "download-file", host = "github.com", path_prefix = "gleam-lang/gleam" },
 ]
 
 [language_servers.gleam]

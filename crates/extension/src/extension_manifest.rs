@@ -84,13 +84,26 @@ pub struct ExtensionManifest {
     pub snippets: Option<PathBuf>,
 }
 
+/// A capability for an extension.
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum ExtensionCapability {
-    #[serde(rename = "github:download")]
-    GithubDownload { owner: String, repo: String },
+    /// The capability to download a file from a server.
+    #[serde(rename = "download-file")]
+    DownloadFile {
+        /// The host name of the server from which the file will be downloaded (e.g., `github.com`).
+        host: String,
+        /// The path prefix to the file that will be downloaded.
+        ///
+        /// Any path that starts with this prefix will be allowed.
+        path_prefix: String,
+    },
+    /// The capability to install a package from npm.
     #[serde(rename = "npm:install")]
-    NpmInstall { package: String },
+    NpmInstall {
+        /// The name of the package.
+        package: String,
+    },
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
