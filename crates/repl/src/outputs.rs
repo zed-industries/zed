@@ -1,10 +1,7 @@
 use std::time::Duration;
 
-use crate::stdio::TerminalOutput;
-
 use gpui::{
-    percentage, Animation, AnimationExt, AnyElement, ClipboardItem, FontWeight, Render,
-    Transformation, View,
+    percentage, Animation, AnimationExt, AnyElement, ClipboardItem, Render, Transformation, View,
 };
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
 use ui::{div, prelude::*, v_flex, IntoElement, Styled, Tooltip, ViewContext};
@@ -17,6 +14,12 @@ use markdown::MarkdownView;
 
 mod table;
 use table::TableView;
+
+pub mod plain;
+use plain::TerminalOutput;
+
+mod user_error;
+use user_error::ErrorView;
 
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
@@ -34,51 +37,6 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
 pub(crate) trait SupportsClipboard {
     fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem>;
     fn has_clipboard_content(&self, cx: &WindowContext) -> bool;
-}
-
-/// Userspace error from the kernel
-pub struct ErrorView {
-    pub ename: String,
-    pub evalue: String,
-    pub traceback: TerminalOutput,
-}
-
-impl ErrorView {
-    fn render(&self, cx: &mut ViewContext<ExecutionView>) -> Option<AnyElement> {
-        let theme = cx.theme();
-
-        let padding = cx.line_height() / 2.;
-
-        Some(
-            v_flex()
-                .gap_3()
-                .child(
-                    h_flex()
-                        .font_buffer(cx)
-                        .child(
-                            Label::new(format!("{}: ", self.ename.clone()))
-                                // .size(LabelSize::Large)
-                                .color(Color::Error)
-                                .weight(FontWeight::BOLD),
-                        )
-                        .child(
-                            Label::new(self.evalue.clone())
-                                // .size(LabelSize::Large)
-                                .weight(FontWeight::BOLD),
-                        ),
-                )
-                .child(
-                    div()
-                        .w_full()
-                        .px(padding)
-                        .py(padding)
-                        .border_l_1()
-                        .border_color(theme.status().error_border)
-                        .child(self.traceback.render(cx)),
-                )
-                .into_any_element(),
-        )
-    }
 }
 
 pub struct Output {
@@ -193,6 +151,9 @@ pub enum ExecutionStatus {
     Restarting,
 }
 
+/// An ExecutionView shows the outputs of an execution.
+/// It can hold zero or more outputs, which the user
+/// sees as "the output" for a single execution.
 pub struct ExecutionView {
     pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
