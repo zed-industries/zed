@@ -35,37 +35,6 @@ pub fn apply_features_and_fallbacks(
     fallbacks: Option<&FontFallbacks>,
 ) -> anyhow::Result<()> {
     unsafe {
-        // let fallback_array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-
-        // if let Some(fallbacks) = fallbacks {
-        //     for user_fallback in fallbacks.fallback_list() {
-        //         let name = CFString::from(user_fallback.as_str());
-        //         let fallback_desc =
-        //             CTFontDescriptorCreateWithNameAndSize(name.as_concrete_TypeRef(), 0.0);
-        //         CFArrayAppendValue(fallback_array, fallback_desc as _);
-        //         CFRelease(fallback_desc as _);
-        //     }
-        // }
-
-        // {
-        //     let preferred_languages: CFArray<CFString> =
-        //         CFArray::wrap_under_create_rule(CFLocaleCopyPreferredLanguages());
-
-        //     let default_fallbacks = CTFontCopyDefaultCascadeListForLanguages(
-        //         font.native_font().as_concrete_TypeRef(),
-        //         preferred_languages.as_concrete_TypeRef(),
-        //     );
-        //     let default_fallbacks: CFArray<CTFontDescriptor> =
-        //         CFArray::wrap_under_create_rule(default_fallbacks);
-
-        //     default_fallbacks
-        //         .iter()
-        //         .filter(|desc| desc.font_path().is_some())
-        //         .map(|desc| {
-        //             CFArrayAppendValue(fallback_array, desc.as_concrete_TypeRef() as _);
-        //         });
-        // }
-
         let mut keys = vec![kCTFontFeatureSettingsAttribute];
         let mut values = vec![generate_feature_array(features)];
         if let Some(fallbacks) = fallbacks {
@@ -77,9 +46,6 @@ pub fn apply_features_and_fallbacks(
                 ));
             }
         }
-        // let feature_array = generate_feature_array(features);
-        // let keys = [kCTFontFeatureSettingsAttribute, kCTFontCascadeListAttribute];
-        // let values = [feature_array, fallback_array];
         let attrs = CFDictionaryCreate(
             kCFAllocatorDefault,
             keys.as_ptr() as _,
@@ -88,11 +54,6 @@ pub fn apply_features_and_fallbacks(
             &kCFTypeDictionaryKeyCallBacks,
             &kCFTypeDictionaryValueCallBacks,
         );
-        for array in values.iter() {
-            CFRelease(array as *const _ as _);
-        }
-        // CFRelease(feature_array as *const _ as _);
-        // CFRelease(fallback_array as *const _ as _);
         let new_descriptor = CTFontDescriptorCreateWithAttributes(attrs);
         CFRelease(attrs as _);
         let new_descriptor = CTFontDescriptor::wrap_under_create_rule(new_descriptor);
