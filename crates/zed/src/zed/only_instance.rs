@@ -62,7 +62,7 @@ fn get_uid_as_u32(uid: &sysinfo::Uid) -> u32 {
 }
 
 #[cfg(windows)]
-fn get_uid_as_u32(uid: &sysinfo::windows::sid::Sid) -> u32 {
+fn get_uid_as_u32(uid: &sysinfo::Uid) -> u32 {
     // Extract the RID which is an integer
     uid.to_string()
         .rsplit('-')
