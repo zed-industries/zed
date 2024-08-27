@@ -77,63 +77,56 @@ pub(crate) trait SupportsClipboard {
     fn has_clipboard_content(&self, cx: &WindowContext) -> bool;
 }
 
-pub struct Output {
-    content: OutputContent,
-    display_id: Option<String>,
-}
-
-impl Output {
-    pub fn new(data: &MimeBundle, display_id: Option<String>, cx: &mut WindowContext) -> Self {
-        Self {
-            content: OutputContent::new(data, cx),
-            display_id,
-        }
-    }
-
-    pub fn from(content: OutputContent) -> Self {
-        Self {
-            content,
-            display_id: None,
-        }
-    }
-}
-
-impl SupportsClipboard for Output {
+impl SupportsClipboard for OutputContent {
     fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem> {
-        match &self.content {
-            OutputContent::Plain(terminal) => terminal.read(cx).clipboard_content(cx),
-            OutputContent::Stream(terminal) => terminal.read(cx).clipboard_content(cx),
-            OutputContent::Image(image) => image.clipboard_content(cx),
+        match self {
+            OutputContent::Plain { content, .. } => content.read(cx).clipboard_content(cx),
+            OutputContent::Stream { content, .. } => content.read(cx).clipboard_content(cx),
+            OutputContent::Image { content, .. } => content.clipboard_content(cx),
             OutputContent::ErrorOutput(error) => error.traceback.read(cx).clipboard_content(cx),
             OutputContent::Message(_) => None,
-            OutputContent::Table(table) => table.clipboard_content(cx),
-            OutputContent::Markdown(markdown) => markdown.read(cx).clipboard_content(cx),
+            OutputContent::Table { content, .. } => content.clipboard_content(cx),
+            OutputContent::Markdown { content, .. } => content.read(cx).clipboard_content(cx),
             OutputContent::ClearOutputWaitMarker => None,
         }
     }
 
     fn has_clipboard_content(&self, cx: &WindowContext) -> bool {
-        match &self.content {
-            OutputContent::Plain(terminal) => terminal.read(cx).has_clipboard_content(cx),
-            OutputContent::Stream(terminal) => terminal.read(cx).has_clipboard_content(cx),
-            OutputContent::Image(image) => image.has_clipboard_content(cx),
+        match self {
+            OutputContent::Plain { content, .. } => content.read(cx).has_clipboard_content(cx),
+            OutputContent::Stream { content, .. } => content.read(cx).has_clipboard_content(cx),
+            OutputContent::Image { content, .. } => content.has_clipboard_content(cx),
             OutputContent::ErrorOutput(_) => true,
             OutputContent::Message(_) => false,
-            OutputContent::Table(table) => table.has_clipboard_content(cx),
-            OutputContent::Markdown(markdown) => markdown.read(cx).has_clipboard_content(cx),
+            OutputContent::Table { content, .. } => content.has_clipboard_content(cx),
+            OutputContent::Markdown { content, .. } => content.read(cx).has_clipboard_content(cx),
             OutputContent::ClearOutputWaitMarker => false,
         }
     }
 }
 
 pub enum OutputContent {
-    Plain(View<TerminalOutput>),
-    Stream(View<TerminalOutput>),
-    Image(ImageView),
+    Plain {
+        content: View<TerminalOutput>,
+        display_id: Option<String>,
+    },
+    Stream {
+        content: View<TerminalOutput>,
+    },
+    Image {
+        content: ImageView,
+        display_id: Option<String>,
+    },
     ErrorOutput(ErrorView),
     Message(String),
-    Table(TableView),
-    Markdown(View<MarkdownView>),
+    Table {
+        content: TableView,
+        display_id: Option<String>,
+    },
+    Markdown {
+        content: View<MarkdownView>,
+        display_id: Option<String>,
+    },
     ClearOutputWaitMarker,
 }
 
@@ -142,12 +135,12 @@ impl OutputContent {
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
-            Self::Plain(stdio) => Some(stdio.clone().into_any_element()),
-            Self::Markdown(markdown) => Some(markdown.clone().into_any_element()),
-            Self::Stream(stdio) => Some(stdio.clone().into_any_element()),
-            Self::Image(image) => Some(image.render(cx)),
+            Self::Plain { content, .. } => Some(content.clone().into_any_element()),
+            Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
+            Self::Stream { content, .. } => Some(content.clone().into_any_element()),
+            Self::Image { content, .. } => Some(content.render(cx)),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
-            Self::Table(table) => Some(table.render(cx)),
+            Self::Table { content, .. } => Some(content.render(cx)),
             Self::ErrorOutput(error_view) => error_view.render(cx),
             Self::ClearOutputWaitMarker => None,
         };
@@ -155,22 +148,43 @@ impl OutputContent {
         el
     }
 
-    pub fn new(data: &MimeBundle, cx: &mut WindowContext) -> Self {
+    pub fn display_id(&self) -> Option<String> {
+        match self {
+            OutputContent::Plain { display_id, .. } => display_id.clone(),
+            OutputContent::Stream { .. } => None,
+            OutputContent::Image { display_id, .. } => display_id.clone(),
+            OutputContent::ErrorOutput(_) => None,
+            OutputContent::Message(_) => None,
+            OutputContent::Table { display_id, .. } => display_id.clone(),
+            OutputContent::Markdown { display_id, .. } => display_id.clone(),
+            OutputContent::ClearOutputWaitMarker => None,
+        }
+    }
+
+    pub fn new(data: &MimeBundle, display_id: Option<String>, cx: &mut WindowContext) -> Self {
         match data.richest(rank_mime_type) {
-            Some(MimeType::Plain(text)) => {
-                OutputContent::Plain(cx.new_view(|cx| TerminalOutput::from(text, cx)))
-            }
+            Some(MimeType::Plain(text)) => OutputContent::Plain {
+                content: cx.new_view(|cx| TerminalOutput::from(text, cx)),
+                display_id,
+            },
             Some(MimeType::Markdown(text)) => {
                 let view = cx.new_view(|cx| MarkdownView::from(text.clone(), cx));
-                OutputContent::Markdown(view)
+                OutputContent::Markdown {
+                    content: view,
+                    display_id,
+                }
             }
             Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
-                Ok(view) => OutputContent::Image(view),
+                Ok(view) => OutputContent::Image {
+                    content: view,
+                    display_id,
+                },
                 Err(error) => OutputContent::Message(format!("Failed to load image: {}", error)),
             },
-            Some(MimeType::DataTable(data)) => {
-                OutputContent::Table(TableView::new(data.clone(), cx))
-            }
+            Some(MimeType::DataTable(data)) => OutputContent::Table {
+                content: TableView::new(data.clone(), cx),
+                display_id,
+            },
             // Any other media types are not supported
             _ => OutputContent::Message("Unsupported media type".to_string()),
         }
@@ -197,7 +211,7 @@ pub enum ExecutionStatus {
 pub struct ExecutionView {
     #[allow(unused)]
     workspace: WeakView<Workspace>,
-    pub outputs: Vec<Output>,
+    pub outputs: Vec<OutputContent>,
     pub status: ExecutionStatus,
 }
 
@@ -216,19 +230,19 @@ impl ExecutionView {
 
     /// Accept a Jupyter message belonging to this execution
     pub fn push_message(&mut self, message: &JupyterMessageContent, cx: &mut ViewContext<Self>) {
-        let output: Output = match message {
-            JupyterMessageContent::ExecuteResult(result) => Output::new(
+        let output: OutputContent = match message {
+            JupyterMessageContent::ExecuteResult(result) => OutputContent::new(
                 &result.data,
                 result.transient.as_ref().and_then(|t| t.display_id.clone()),
                 cx,
             ),
             JupyterMessageContent::DisplayData(result) => {
-                Output::new(&result.data, result.transient.display_id.clone(), cx)
+                OutputContent::new(&result.data, result.transient.display_id.clone(), cx)
             }
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
                 if let Some(new_terminal) = self.apply_terminal_text(&result.text, cx) {
-                    Output::from(new_terminal)
+                    new_terminal
                 } else {
                     return;
                 }
@@ -237,11 +251,11 @@ impl ExecutionView {
                 let terminal =
                     cx.new_view(|cx| TerminalOutput::from(&result.traceback.join("\n"), cx));
 
-                Output::from(OutputContent::ErrorOutput(ErrorView {
+                OutputContent::ErrorOutput(ErrorView {
                     ename: result.ename.clone(),
                     evalue: result.evalue.clone(),
                     traceback: terminal,
-                }))
+                })
             }
             JupyterMessageContent::ExecuteReply(reply) => {
                 for payload in reply.payload.iter() {
@@ -249,7 +263,7 @@ impl ExecutionView {
                         // Pager data comes in via `?` at the end of a statement in Python, used for showing documentation.
                         // Some UI will show this as a popup. For ease of implementation, it's included as an output here.
                         runtimelib::Payload::Page { data, .. } => {
-                            let output = Output::new(data, None, cx);
+                            let output = OutputContent::new(data, None, cx);
                             self.outputs.push(output);
                         }
 
@@ -282,7 +296,7 @@ impl ExecutionView {
                 }
 
                 // Create a marker to clear the output after we get in a new output
-                Output::from(OutputContent::ClearOutputWaitMarker)
+                OutputContent::ClearOutputWaitMarker
             }
             JupyterMessageContent::Status(status) => {
                 match status.execution_state {
@@ -301,7 +315,7 @@ impl ExecutionView {
 
         // Check for a clear output marker as the previous output, so we can clear it out
         if let Some(output) = self.outputs.last() {
-            if let OutputContent::ClearOutputWaitMarker = output.content {
+            if let OutputContent::ClearOutputWaitMarker = output {
                 self.outputs.clear();
             }
         }
@@ -320,9 +334,9 @@ impl ExecutionView {
         let mut any = false;
 
         self.outputs.iter_mut().for_each(|output| {
-            if let Some(other_display_id) = output.display_id.as_ref() {
+            if let Some(other_display_id) = output.display_id().as_ref() {
                 if other_display_id == display_id {
-                    output.content = OutputContent::new(data, cx);
+                    *output = OutputContent::new(data, Some(display_id.to_owned()), cx);
                     any = true;
                 }
             }
@@ -339,8 +353,10 @@ impl ExecutionView {
         cx: &mut ViewContext<Self>,
     ) -> Option<OutputContent> {
         if let Some(last_output) = self.outputs.last_mut() {
-            match &mut last_output.content {
-                OutputContent::Stream(last_stream) => {
+            match last_output {
+                OutputContent::Stream {
+                    content: last_stream,
+                } => {
                     // Don't need to add a new output, we already have a terminal output
                     // and can just update the most recent terminal output
                     last_stream.update(cx, |last_stream, cx| {
@@ -349,20 +365,15 @@ impl ExecutionView {
                     });
                     return None;
                 }
-                // Edge case note: a clear output marker
-                OutputContent::ClearOutputWaitMarker => {
-                    // Edge case note: a clear output marker is handled by the caller
-                    // since we will return a new output at the end here as a new terminal output
-                }
                 // A different output type is "in the way", so we need to create a new output,
-                // which is the same as having no prior output
+                // which is the same as having no prior stream/terminal text
                 _ => {}
             }
         }
 
-        Some(OutputContent::Stream(
-            cx.new_view(|cx| TerminalOutput::from(text, cx)),
-        ))
+        Some(OutputContent::Stream {
+            content: cx.new_view(|cx| TerminalOutput::from(text, cx)),
+        })
     }
 }
 
@@ -426,7 +437,6 @@ impl Render for ExecutionView {
                     .child(
                         div().flex_1().child(
                             output
-                                .content
                                 .render(cx)
                                 .unwrap_or_else(|| div().into_any_element()),
                         ),
