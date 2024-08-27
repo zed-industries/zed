@@ -413,6 +413,9 @@ impl WorktreeStore {
                     if skip_entries.contains(&entry.id) {
                         continue;
                     }
+                    if entry.is_fifo {
+                        continue;
+                    }
 
                     let matched_path = if include_root {
                         let mut full_path = PathBuf::from(snapshot.root_name());
