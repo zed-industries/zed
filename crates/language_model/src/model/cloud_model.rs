@@ -102,7 +102,6 @@ impl CloudModel {
                 | open_ai::Model::FourTurbo
                 | open_ai::Model::FourOmni
                 | open_ai::Model::FourOmniMini
-                | open_ai::Model::Qwen2
                 | open_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }

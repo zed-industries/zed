@@ -64,8 +64,6 @@ pub enum Model {
     #[default]
     FourOmni,
     #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini-2024-07-18")]
-    Qwen2,
-    #[serde(rename = "qwen2-7b-instruct", alias = "qwen2-7b-instruct")]
     FourOmniMini,
     #[serde(rename = "custom")]
     Custom {
@@ -83,7 +81,6 @@ impl Model {
             "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
             "gpt-4o" => Ok(Self::FourOmni),
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
-            "qwen2-7b-instruct" => Ok(Self::Qwen2),
             _ => Err(anyhow!("invalid model id")),
         }
     }
@@ -95,7 +92,6 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo-preview",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
-            Self::Qwen2 => "qwen2-7b-instruct",
             Self::Custom { name, .. } => name,
         }
     }
@@ -107,7 +103,6 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
-            Self::Qwen2 => "qwen2-7b-instruct",
             Self::Custom { name, .. } => name,
         }
     }
@@ -119,7 +114,6 @@ impl Model {
             Self::FourTurbo => 128000,
             Self::FourOmni => 128000,
             Self::FourOmniMini => 128000,
-            Self::Qwen2 => 131072, // Source: https://huggingface.co/Qwen/Qwen2-7B-Instruct
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -131,7 +125,6 @@ impl Model {
             Self::FourTurbo => Some(4096),
             Self::FourOmni => Some(4096),
             Self::FourOmniMini => Some(16384),
-            Self::Qwen2 => Some(131072), // Not sure what it is, so assuming it's no more than max input tokens
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,

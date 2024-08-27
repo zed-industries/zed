@@ -1,7 +1,7 @@
 use collections::HashMap;
 use std::{path::Path, sync::Arc, time::SystemTime};
 
-const MAX_FILES_BEFORE_RESUMMARIZE: usize = 1;
+const MAX_FILES_BEFORE_RESUMMARIZE: usize = 4;
 const MAX_BYTES_BEFORE_RESUMMARIZE: u64 = 1_000_000; // 1 MB
 
 #[derive(Default, Debug)]
