@@ -946,6 +946,7 @@
   },
   // Vim settings
   "vim": {
+    "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_multiline_find": false,
     "use_smartcase_find": false,

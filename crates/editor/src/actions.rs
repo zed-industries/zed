@@ -318,6 +318,7 @@ gpui::actions!(
         ToggleHunkDiff,
         ToggleInlayHints,
         ToggleLineNumbers,
+        ToggleRelativeLineNumbers,
         ToggleIndentGuides,
         ToggleSoftWrap,
         ToggleTabBar,
