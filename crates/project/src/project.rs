@@ -7275,8 +7275,7 @@ impl Project {
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
     ) -> Receiver<SearchResult> {
-        let start = std::time::Instant::now();
-        let (result_tx, result_rx) = smol::channel::bounded(1024);
+        let (result_tx, result_rx) = smol::channel::unbounded();
 
         let matching_buffers_rx =
             self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx);
@@ -7297,39 +7296,32 @@ impl Project {
                 for buffer in matching_buffer_chunk {
                     let buffer = buffer.clone();
                     let query = query.clone();
-                    chunk_results.push(cx.spawn(|cx| async move {
-                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
-                        let ranges = cx
-                            .background_executor()
-                            .spawn(async move {
-                                query
-                                    .search(&snapshot, None)
-                                    .await
-                                    .iter()
-                                    .map(|range| {
-                                        snapshot.anchor_before(range.start)
-                                            ..snapshot.anchor_after(range.end)
-                                    })
-                                    .collect::<Vec<_>>()
+                    let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+                    chunk_results.push(cx.background_executor().spawn(async move {
+                        let ranges = query
+                            .search(&snapshot, None)
+                            .await
+                            .iter()
+                            .map(|range| {
+                                snapshot.anchor_before(range.start)
+                                    ..snapshot.anchor_after(range.end)
                             })
-                            .await;
+                            .collect::<Vec<_>>();
                         anyhow::Ok((buffer, ranges))
                     }));
-                    buffer_count += 1;
-                    if buffer_count > MAX_SEARCH_RESULT_FILES {
-                        limit_reached = true;
-                    }
                 }
 
                 let chunk_results = futures::future::join_all(chunk_results).await;
                 for result in chunk_results {
                     if let Some((buffer, ranges)) = result.log_err() {
                         range_count += ranges.len();
-                        dbg!(start.elapsed());
+                        buffer_count += 1;
                         result_tx
                             .send(SearchResult::Buffer { buffer, ranges })
                             .await?;
-                        if range_count > MAX_SEARCH_RESULT_RANGES {
+                        if buffer_count > MAX_SEARCH_RESULT_FILES
+                            || range_count > MAX_SEARCH_RESULT_RANGES
+                        {
                             limit_reached = true;
                             break 'outer;
                         }
@@ -7341,7 +7333,6 @@ impl Project {
                 result_tx.send(SearchResult::LimitReached).await?;
             }
 
-            println!("search took: {:?}", start.elapsed());
             anyhow::Ok(())
         })
         .detach();
