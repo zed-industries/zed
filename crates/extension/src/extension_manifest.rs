@@ -64,6 +64,8 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub authors: Vec<String>,
     #[serde(default)]
+    pub capabilities: Vec<ExtensionCapability>,
+    #[serde(default)]
     pub lib: LibManifestEntry,
 
     #[serde(default)]
@@ -80,6 +82,14 @@ pub struct ExtensionManifest {
     pub indexed_docs_providers: BTreeMap<Arc<str>, IndexedDocsProviderEntry>,
     #[serde(default)]
     pub snippets: Option<PathBuf>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub enum ExtensionCapability {
+    #[serde(rename = "github:download")]
+    GithubDownload { owner: String, repo: String },
+    #[serde(rename = "npm:install")]
+    NpmInstall { package: String },
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -186,6 +196,7 @@ fn manifest_from_old_manifest(
         repository: manifest_json.repository,
         authors: manifest_json.authors,
         schema_version: SchemaVersion::ZERO,
+        capabilities: Vec::new(),
         lib: Default::default(),
         themes: {
             let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
