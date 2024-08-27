@@ -6858,6 +6858,7 @@ dependencies = [
  "tempfile",
  "util",
  "walkdir",
+ "which 6.0.2",
  "windows 0.58.0",
 ]
 

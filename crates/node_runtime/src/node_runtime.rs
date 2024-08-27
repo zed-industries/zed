@@ -7,6 +7,7 @@ use async_tar::Archive;
 use futures::channel::mpsc;
 use futures::channel::oneshot;
 use futures::AsyncReadExt;
+use gpui::SemanticVersion;
 use http_client::HttpClient;
 use semver::Version;
 use serde::Deserialize;
@@ -14,7 +15,10 @@ use smol::io::BufReader;
 use smol::{fs, lock::Mutex, process::Command};
 use std::fmt::Display;
 use std::io;
+use std::io::ErrorKind;
 use std::process::{Output, Stdio};
+use std::str::from_utf8;
+use std::str::FromStr;
 use std::{
     env::consts,
     path::{Path, PathBuf},
@@ -25,7 +29,7 @@ use util::{AssetVersion, ResultExt};
 #[cfg(windows)]
 use smol::process::windows::CommandExt;
 
-const VERSION: &str = "v22.5.1";
+const VERSION: SemanticVersion = SemanticVersion::new(22, 5, 1);
 
 #[cfg(not(windows))]
 const NODE_PATH: &str = "bin/node";
@@ -139,6 +143,8 @@ pub struct RealNodeRuntime {
     http: Arc<dyn HttpClient>,
     installation_lock: Mutex<()>,
     check_can_install: mpsc::UnboundedSender<(Box<dyn AssetVersion>, oneshot::Sender<Result<()>>)>,
+
+    can_use_dependencies: mpsc::UnboundedSender<oneshot::Sender<bool>>,
 }
 
 impl RealNodeRuntime {
@@ -148,29 +154,33 @@ impl RealNodeRuntime {
             Box<dyn AssetVersion>,
             oneshot::Sender<Result<()>>,
         )>,
+        can_use_dependencies: mpsc::UnboundedSender<oneshot::Sender<bool>>,
     ) -> Arc<dyn NodeRuntime> {
         Arc::new(RealNodeRuntime {
             http,
             installation_lock: Mutex::new(()),
             check_can_install,
+            can_use_dependencies,
         })
     }
 
-    async fn install_if_needed(&self) -> Result<PathBuf> {
+    async fn check_dependency(&self, asset_version: impl AssetVersion) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.check_can_install
-            .unbounded_send((
-                Box::new(NodeAssetVersion {
-                    name: "node".to_string(),
-                    version: VERSION.to_string(),
-                }),
-                tx,
-            ))
+            .unbounded_send((Box::new(asset_version), tx))
             .ok();
-        rx.await??;
+        rx.await?
+    }
 
-        let _lock = self.installation_lock.lock().await;
+    async fn can_install_dependencies(&self) -> bool {
+        let (tx, rx) = oneshot::channel();
+        self.can_use_dependencies.unbounded_send(tx).ok();
+        rx.await.unwrap_or(false)
+    }
+
+    async fn install_if_needed(&self) -> Result<(PathBuf, PathBuf, PathBuf)> {
         log::info!("Node runtime install_if_needed");
+        let _lock = self.installation_lock.lock().await;
 
         let os = match consts::OS {
             "macos" => "darwin",
@@ -185,24 +195,101 @@ impl RealNodeRuntime {
             other => bail!("Running on unsupported architecture: {other}"),
         };
 
-        let folder_name = format!("node-{VERSION}-{os}-{arch}");
+        let mut found_node_version: Option<SemanticVersion> = None;
+
+        #[cfg(not(windows))]
+        let node_path_binary = "node";
+        #[cfg(not(windows))]
+        let npm_path_binary = "npm";
+
+        #[cfg(windows)]
+        let node_path_binary = "node.exe";
+        #[cfg(windows)]
+        let npm_path_binary = "npm.exe"; // ???
+
+        if let Some(node_path) = which::which(node_path_binary).log_err() {
+            if let Some(npm_path) = which::which(npm_path_binary).log_err() {
+                let mut path_command = Command::new(dbg!(&node_path));
+                path_command
+                    .env_clear()
+                    .arg("--version")
+                    .stdin(Stdio::null())
+                    .stderr(Stdio::null());
+
+                #[cfg(windows)]
+                path_command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+
+                let output = path_command.output().await;
+
+                if let Some(output) = output.log_err() {
+                    if output.status.success() {
+                        if let Ok(output) = from_utf8(&output.stdout) {
+                            let output = output.trim();
+                            let output = if let Some(output) = output.strip_prefix("v") {
+                                output
+                            } else {
+                                output
+                            };
+
+                            if let Some(node_version) = SemanticVersion::from_str(output).log_err()
+                            {
+                                found_node_version = Some(node_version);
+                                if node_version >= VERSION {
+                                    let folder_name = format!("node-v{node_version}-{os}-{arch}");
+                                    let node_containing_dir = paths::support_dir().join("node");
+                                    let node_dir = node_containing_dir.join(folder_name);
+
+                                    // Make sure the proper file structure is setup
+                                    if fs::metadata(&node_dir)
+                                        .await
+                                        .is_err_and(|e| e.kind() == ErrorKind::NotFound)
+                                    {
+                                        _ = fs::create_dir_all(node_dir.join("cache")).await;
+                                        _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
+                                        _ = fs::write(node_dir.join("blank_global_npmrc"), [])
+                                            .await;
+                                    }
+
+                                    return Ok((node_path, npm_path, node_dir));
+                                } else {
+                                    log::error!(
+                                        "node version on PATH is too old: v{}, Zed requires: v{}",
+                                        node_version,
+                                        VERSION
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !self.can_install_dependencies().await {
+            let err = if let Some(node_version) = found_node_version {
+                anyhow!(
+                    "Node version on $PATH is too old. Verion required: {}, version found: {}",
+                    VERSION,
+                    node_version
+                )
+            } else {
+                anyhow!("Could not find or use node on $PATH")
+            };
+            return Err(err);
+        }
+
+        let folder_name = format!("node-v{VERSION}-{os}-{arch}");
         let node_containing_dir = paths::support_dir().join("node");
         let node_dir = node_containing_dir.join(folder_name);
         let node_binary = node_dir.join(NODE_PATH);
-        let npm_file = node_dir.join(NPM_PATH);
 
         let mut command = Command::new(&node_binary);
-
         command
             .env_clear()
-            .arg(npm_file)
             .arg("--version")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .args(["--cache".into(), node_dir.join("cache")])
-            .args(["--userconfig".into(), node_dir.join("blank_user_npmrc")])
-            .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")]);
+            .stdout(Stdio::null());
 
         #[cfg(windows)]
         command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
@@ -211,6 +298,12 @@ impl RealNodeRuntime {
         let valid = matches!(result, Ok(status) if status.success());
 
         if !valid {
+            self.check_dependency(NodeAssetVersion {
+                name: "node".to_string(),
+                version: format!("{}", VERSION),
+            })
+            .await?;
+
             _ = fs::remove_dir_all(&node_containing_dir).await;
             fs::create_dir(&node_containing_dir)
                 .await
@@ -223,13 +316,13 @@ impl RealNodeRuntime {
             };
 
             let file_name = format!(
-                "node-{VERSION}-{os}-{arch}.{extension}",
+                "node-v{VERSION}-{os}-{arch}.{extension}",
                 extension = match archive_type {
                     ArchiveType::TarGz => "tar.gz",
                     ArchiveType::Zip => "zip",
                 }
             );
-            let url = format!("https://nodejs.org/dist/{VERSION}/{file_name}");
+            let url = format!("https://nodejs.org/dist/v{VERSION}/{file_name}");
             let mut response = self
                 .http
                 .get(&url, Default::default(), true)
@@ -245,22 +338,21 @@ impl RealNodeRuntime {
                 }
                 ArchiveType::Zip => archive::extract_zip(&node_containing_dir, body).await?,
             }
+
+            _ = fs::create_dir(node_dir.join("cache")).await;
+            _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
+            _ = fs::write(node_dir.join("blank_global_npmrc"), []).await;
         }
 
-        // Note: Not in the `if !valid {}` so we can populate these for existing installations
-        _ = fs::create_dir(node_dir.join("cache")).await;
-        _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
-        _ = fs::write(node_dir.join("blank_global_npmrc"), []).await;
-
-        anyhow::Ok(node_dir)
+        anyhow::Ok((node_dir.join(NODE_PATH), node_dir.join(NPM_PATH), node_dir))
     }
 }
 
 #[async_trait::async_trait]
 impl NodeRuntime for RealNodeRuntime {
     async fn binary_path(&self) -> Result<PathBuf> {
-        let installation_path = self.install_if_needed().await?;
-        Ok(installation_path.join(NODE_PATH))
+        let (binary_path, _, _) = self.install_if_needed().await?;
+        Ok(binary_path)
     }
 
     async fn run_npm_subcommand(
@@ -270,10 +362,8 @@ impl NodeRuntime for RealNodeRuntime {
         args: &[&str],
     ) -> Result<Output> {
         let attempt = || async move {
-            let installation_path = self.install_if_needed().await?;
+            let (node_binary, npm_path, node_dir) = self.install_if_needed().await?;
 
-            let node_binary = installation_path.join(NODE_PATH);
-            let npm_file = installation_path.join(NPM_PATH);
             let mut env_path = vec![node_binary
                 .parent()
                 .expect("invalid node binary path")
@@ -291,23 +381,17 @@ impl NodeRuntime for RealNodeRuntime {
                 return Err(anyhow!("missing node binary file"));
             }
 
-            if smol::fs::metadata(&npm_file).await.is_err() {
+            if smol::fs::metadata(&npm_path).await.is_err() {
                 return Err(anyhow!("missing npm file"));
             }
 
             let mut command = Command::new(node_binary);
             command.env_clear();
             command.env("PATH", env_path);
-            command.arg(npm_file).arg(subcommand);
-            command.args(["--cache".into(), installation_path.join("cache")]);
-            command.args([
-                "--userconfig".into(),
-                installation_path.join("blank_user_npmrc"),
-            ]);
-            command.args([
-                "--globalconfig".into(),
-                installation_path.join("blank_global_npmrc"),
-            ]);
+            command.arg(&npm_path).arg(subcommand);
+            command.args(["--cache".into(), node_dir.join("cache")]);
+            command.args(["--userconfig".into(), node_dir.join("blank_user_npmrc")]);
+            command.args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")]);
             command.args(args);
 
             if let Some(directory) = directory {
@@ -444,11 +528,7 @@ impl NodeRuntime for RealNodeRuntime {
             return Ok(());
         }
 
-        let (tx, rx) = oneshot::channel();
-        self.check_can_install
-            .unbounded_send((Box::new(packages[0].clone()), tx))
-            .ok();
-        rx.await??;
+        self.check_dependency(packages[0].clone()).await?;
 
         let packages: Vec<_> = packages
             .into_iter()

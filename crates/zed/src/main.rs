@@ -452,11 +452,12 @@ fn main() {
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
 
-        let (server_tx, mut server_rx) = mpsc::unbounded();
-        let node_runtime = RealNodeRuntime::new(client.http_client(), server_tx);
+        let (check_server_tx, mut check_server_rx) = mpsc::unbounded();
+        let (can_use_server_tx, mut can_use_server_rx) = mpsc::unbounded();
+        let node_runtime = RealNodeRuntime::new(client.http_client(), check_server_tx, can_use_server_tx);
         cx.spawn(|cx| {
             async move {
-                while let Some((asset_version, response)) = server_rx.next().await {
+                while let Some((asset_version, response)) = check_server_rx.next().await {
                     let install_dependencies = cx
                         .update(|cx| AllLanguageSettings::get_global(cx).dependency_management)
                         .log_err();
@@ -467,6 +468,22 @@ fn main() {
                         Err(
                             anyhow!("Could not find {}. Not installing because \"dependency_management\" is set to \"never\".", asset_version.description()))).ok();
                     }
+                }
+            }
+        })
+        .detach();
+
+        cx.spawn(|cx| {
+            async move {
+                while let Some(response) = can_use_server_rx.next().await {
+                    let install_dependencies = cx
+                        .update(|cx| AllLanguageSettings::get_global(cx).dependency_management)
+                        .log_err();
+
+                    match install_dependencies {
+                        Some(DependencyManagement::Automatic) => response.send(true).ok(),
+                        _ => response.send(false).ok(),
+                    };
                 }
             }
         })
