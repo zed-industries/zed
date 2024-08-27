@@ -201,7 +201,7 @@ pub struct SettingsStore {
     setting_file_updates_tx: mpsc::UnboundedSender<
         Box<dyn FnOnce(AsyncAppContext) -> LocalBoxFuture<'static, Result<()>>>,
     >,
-    editorconfig_files: HashSet<PathBuf>,
+    dirs_with_editorconfig: HashSet<PathBuf>,
     resolved_editorconfig_chains: Arc<RwLock<HashMap<EditorConfigKey, EditorConfigContent>>>,
 }
 
@@ -258,7 +258,7 @@ impl SettingsStore {
                     (setting_file_update)(cx.clone()).await.log_err();
                 }
             }),
-            editorconfig_files: HashSet::default(),
+            dirs_with_editorconfig: HashSet::default(),
             resolved_editorconfig_chains: Arc::default(),
         }
     }
@@ -822,18 +822,18 @@ impl SettingsStore {
         Ok(())
     }
 
-    pub fn unregister_editorconfig_path(&mut self, abs_path: &PathBuf) {
+    pub fn unregister_editorconfig_directory(&mut self, abs_path: &PathBuf) {
         self.resolved_editorconfig_chains
             .write()
             .retain(|key, _| !key.editorconfig_chain.contains(abs_path));
-        self.editorconfig_files.remove(abs_path);
+        self.dirs_with_editorconfig.remove(abs_path);
     }
 
-    pub fn register_editorconfig_path(&mut self, abs_path: PathBuf) {
+    pub fn register_editorconfig_directory(&mut self, abs_path: PathBuf) {
         self.resolved_editorconfig_chains
             .write()
             .retain(|key, _| !key.editorconfig_chain.contains(&abs_path));
-        self.editorconfig_files.insert(abs_path);
+        self.dirs_with_editorconfig.insert(abs_path);
     }
 
     pub fn editorconfig_settings(
@@ -844,7 +844,7 @@ impl SettingsStore {
     ) -> Option<EditorConfigContent> {
         let mut editorconfig_chain = SmallVec::new();
         for ancestor_path in file_abs_path.ancestors() {
-            if self.editorconfig_files.contains(ancestor_path) {
+            if self.dirs_with_editorconfig.contains(ancestor_path) {
                 editorconfig_chain.push(ancestor_path.to_owned());
             }
         }

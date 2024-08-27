@@ -95,7 +95,6 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     init_test(cx);
-    cx.executor().allow_parking();
 
     let dir = temp_tree(json!({
         ".editorconfig": r#"
@@ -107,7 +106,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 			insert_final_newline = true
 			trim_trailing_whitespace = true
 			max_line_length = 80
-			[*.rb]
+			[*.js]
 			tab_width = 10
 		"#,
         ".zed": {
@@ -129,14 +128,20 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 			"#,
             "b.rs": "fn b() {\n    B\n}",
         },
-        "c.rb": "def c\n  C\nend",
-        "README.md": "tabs are better\n",
+        "c.js": "def c\n  C\nend",
+        "README.json": "tabs are better\n",
     }));
 
     let path = dir.path();
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree_from_real_fs(path, path).await;
     let project = Project::test(fs, [path], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(js_lang());
+    language_registry.add(json_lang());
+    language_registry.add(rust_lang());
+
     let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
 
     cx.executor().run_until_parked();
@@ -144,20 +149,23 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let tree = worktree.read(cx);
         let settings_for = |path: &str| {
-            language_settings(
-                None,
-                Some(
-                    &(File::for_entry(tree.entry_for_path(path).unwrap().clone(), worktree.clone())
-                        as _),
-                ),
-                cx,
-            )
+            let file_entry = tree.entry_for_path(path).unwrap().clone();
+            let file = File::for_entry(file_entry, worktree.clone());
+            let file_language = project
+                .read(cx)
+                .languages()
+                .language_for_file_path(file.path.as_ref());
+            let file_language = cx
+                .background_executor()
+                .block(file_language)
+                .expect("Failed to get file language");
+            language_settings(Some(&file_language), Some(&(file as _)), cx)
         };
 
         let settings_a = settings_for("a.rs");
         let settings_b = settings_for("b/b.rs");
-        let settings_c = settings_for("c.rb");
-        let settings_readme = settings_for("README.md");
+        let settings_c = settings_for("c.js");
+        let settings_readme = settings_for("README.json");
 
         // .editorconfig overrides .zed/settings
         assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));

@@ -3813,10 +3813,13 @@ impl Project {
                 })
             } else if path.ends_with(EDITORCONFIG_FILE_NAME) {
                 let settings_store = cx.global_mut::<SettingsStore>();
-                if removed {
-                    settings_store.unregister_editorconfig_path(&abs_path);
-                } else {
-                    settings_store.register_editorconfig_path(abs_path);
+                if let Some(directory_abs_path) = abs_path.parent() {
+                    let directory_abs_path = directory_abs_path.to_owned();
+                    if removed {
+                        settings_store.unregister_editorconfig_directory(&directory_abs_path);
+                    } else {
+                        settings_store.register_editorconfig_directory(directory_abs_path);
+                    }
                 }
             }
         }
