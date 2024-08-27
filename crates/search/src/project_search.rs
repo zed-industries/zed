@@ -257,12 +257,10 @@ impl ProjectSearch {
 
                 let result_ranges = futures::future::join_all(tasks).await;
                 let mut combined_ranges = vec![];
-                for result in result_ranges {
-                    if let Ok((ranges, result_limit_reached)) = result {
-                        combined_ranges.extend(ranges);
-                        if result_limit_reached {
-                            limit_reached = result_limit_reached;
-                        }
+                for (ranges, result_limit_reached) in result_ranges.into_iter().flatten() {
+                    combined_ranges.extend(ranges);
+                    if result_limit_reached {
+                        limit_reached = result_limit_reached;
                     }
                 }
                 this.update(&mut cx, |this, cx| {
