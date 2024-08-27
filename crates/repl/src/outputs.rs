@@ -1,3 +1,39 @@
+//! # REPL Output Module
+//!
+//! This module provides the core functionality for handling and displaying
+//! various types of output from Jupyter kernels.
+//!
+//! ## Key Components
+//!
+//! - `Output`: Represents a single output item, which can be of various types.
+//! - `OutputContent`: An enum that encapsulates different types of output content.
+//! - `ExecutionView`: Manages the display of outputs for a single execution.
+//! - `ExecutionStatus`: Represents the current status of an execution.
+//!
+//! ## Output Types
+//!
+//! The module supports several output types, including:
+//! - Plain text
+//! - Markdown
+//! - Images (PNG and JPEG)
+//! - Tables
+//! - Error messages
+//!
+//! ## Clipboard Support
+//!
+//! Most output types implement the `SupportsClipboard` trait, allowing
+//! users to easily copy output content to the system clipboard.
+//!
+//! ## Rendering
+//!
+//! The module provides rendering capabilities for each output type,
+//! ensuring proper display within the REPL interface.
+//!
+//! ## Jupyter Integration
+//!
+//! This module is designed to work with Jupyter message protocols,
+//! interpreting and displaying various types of Jupyter output.
+
 use std::time::Duration;
 
 use gpui::{
