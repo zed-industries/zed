@@ -4,13 +4,9 @@ use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
-use ec4rs::property::{
-    FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs,
-};
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
-use parking_lot::RwLock;
 use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
@@ -20,14 +16,12 @@ use serde::{
     Deserialize, Deserializer, Serialize,
 };
 use serde_json::Value;
-use settings::{add_references_to_properties, Settings, SettingsLocation, SettingsSources};
-use std::{
-    borrow::Cow,
-    num::NonZeroU32,
-    path::{Path, PathBuf},
-    sync::Arc,
+use settings::{
+    add_references_to_properties, EditorConfigContent, Settings, SettingsLocation, SettingsSources,
+    SettingsStore, SoftWrap,
 };
-use util::{serde::default_true, ResultExt};
+use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
+use util::serde::default_true;
 
 /// Initializes the language settings.
 pub fn init(cx: &mut AppContext) {
@@ -64,8 +58,6 @@ pub struct AllLanguageSettings {
     defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
-    pub editorconfig_files: HashSet<PathBuf>,
-    pub resolved_editorconfig_chains: Arc<RwLock<HashMap<Vec<PathBuf>, EditorConfigContent>>>,
 }
 
 /// The settings for a particular language.
@@ -222,17 +214,6 @@ pub struct AllLanguageSettingsContent {
     pub file_types: HashMap<Arc<str>, Vec<String>>,
 }
 
-/// The settings available in `.editorconfig` files and compatible with Zed.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct EditorConfigContent {
-    hard_tabs: Option<bool>,
-    tab_size: Option<NonZeroU32>,
-    ensure_final_newline_on_save: Option<bool>,
-    remove_trailing_whitespace_on_save: Option<bool>,
-    preferred_line_length: Option<u32>,
-    soft_wrap: Option<SoftWrap>,
-}
-
 /// The settings for a particular language.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageSettingsContent {
@@ -385,22 +366,6 @@ pub struct FeaturesContent {
     pub copilot: Option<bool>,
     /// Determines which inline completion provider to use.
     pub inline_completion_provider: Option<InlineCompletionProvider>,
-}
-
-/// Controls the soft-wrapping behavior in the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SoftWrap {
-    /// Do not soft wrap.
-    None,
-    /// Prefer a single line generally, unless an overly long line is encountered.
-    PreferLine,
-    /// Soft wrap lines that exceed the editor width
-    EditorWidth,
-    /// Soft wrap lines at the preferred line length
-    PreferredLineLength,
-    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller)
-    Bounded,
 }
 
 /// Controls the behavior of formatting files when they are saved.
@@ -831,7 +796,17 @@ impl AllLanguageSettings {
             .and_then(|name| self.languages.get(name))
             .unwrap_or(&self.defaults);
 
-        if let Some(content) = self.editorconfig_settings(file, cx) {
+        let editorconfig_settings = file
+            .and_then(|file| file.as_local())
+            .map(|file| (file.worktree_id(), file.abs_path(cx)))
+            .and_then(|(worktree_id, file_abs_path)| {
+                cx.global::<SettingsStore>().editorconfig_settings(
+                    worktree_id,
+                    language_name.map(ToOwned::to_owned),
+                    &file_abs_path,
+                )
+            });
+        if let Some(content) = editorconfig_settings {
             let mut settings = settings.clone();
             merge_with_editorconfig(&mut settings, &content);
             Cow::Owned(settings)
@@ -864,93 +839,6 @@ impl AllLanguageSettings {
 
         self.language(file, language.map(|l| l.name()).as_ref(), cx)
             .show_inline_completions
-    }
-
-    pub fn unregister_editorconfig_path(&mut self, abs_path: &PathBuf) {
-        self.resolved_editorconfig_chains
-            .write()
-            .retain(|chain, _| !chain.contains(abs_path));
-        self.editorconfig_files.remove(abs_path);
-    }
-
-    pub fn register_editorconfig_path(&mut self, abs_path: PathBuf) {
-        self.resolved_editorconfig_chains
-            .write()
-            .retain(|chain, _| !chain.contains(&abs_path));
-        self.editorconfig_files.insert(abs_path);
-    }
-
-    fn editorconfig_settings(
-        &self,
-        file: Option<&Arc<dyn File>>,
-        cx: &AppContext,
-    ) -> Option<EditorConfigContent> {
-        let file_path = file?.as_local()?.abs_path(cx);
-        let mut editorconfig_chain = Vec::new();
-        for file_path in file_path.ancestors() {
-            if self.editorconfig_files.contains(file_path) {
-                editorconfig_chain.push(file_path.to_owned());
-            }
-        }
-        if editorconfig_chain.is_empty() {
-            return None;
-        }
-
-        {
-            let resolved_editorconfig_chains = self.resolved_editorconfig_chains.read();
-            if let Some(content) = resolved_editorconfig_chains.get(&editorconfig_chain) {
-                return Some(content.clone());
-            }
-            drop(resolved_editorconfig_chains);
-        }
-
-        // FS operation that goes recursively up the directory tree, may be slow
-        let mut cfg = ec4rs::properties_of(file_path).log_err()?;
-        if cfg.is_empty() {
-            return None;
-        }
-
-        cfg.use_fallbacks();
-        let max_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
-            MaxLineLen::Value(u) => Some(u as u32),
-            MaxLineLen::Off => None,
-        });
-        let editorconfig = EditorConfigContent {
-            tab_size: cfg.get::<IndentSize>().ok().and_then(|v| match v {
-                IndentSize::Value(u) => NonZeroU32::new(u as u32),
-                IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
-                    TabWidth::Value(u) => NonZeroU32::new(u as u32),
-                }),
-            }),
-            hard_tabs: cfg
-                .get::<IndentStyle>()
-                .map(|v| v.eq(&IndentStyle::Tabs))
-                .ok(),
-            ensure_final_newline_on_save: cfg
-                .get::<FinalNewline>()
-                .map(|v| match v {
-                    FinalNewline::Value(b) => b,
-                })
-                .ok(),
-            remove_trailing_whitespace_on_save: cfg
-                .get::<TrimTrailingWs>()
-                .map(|v| match v {
-                    TrimTrailingWs::Value(b) => b,
-                })
-                .ok(),
-            preferred_line_length: max_line_length,
-            soft_wrap: if max_line_length.is_some() {
-                Some(SoftWrap::PreferredLineLength)
-            } else {
-                None
-            },
-        };
-
-        self.resolved_editorconfig_chains
-            .write()
-            .insert(editorconfig_chain, editorconfig.clone());
-
-        Some(editorconfig)
     }
 }
 
@@ -1097,8 +985,6 @@ impl settings::Settings for AllLanguageSettings {
                     .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
                     .collect(),
             },
-            editorconfig_files: HashSet::default(),
-            resolved_editorconfig_chains: Arc::default(),
             defaults,
             languages,
             file_types,

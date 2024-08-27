@@ -17,7 +17,7 @@ use heed::{
     types::{SerdeBincode, SerdeJson, Str},
     Database, RoTxn,
 };
-use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
+use language::{Buffer, LanguageRegistry};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
@@ -26,7 +26,7 @@ use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SoftWrap};
 use std::{
     cmp::Reverse,
     future::Future,

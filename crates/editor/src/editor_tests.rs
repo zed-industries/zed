@@ -16,14 +16,14 @@ use gpui::{
 use indoc::indoc;
 use language::{
     language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent, PrettierSettings,
+        self, AllLanguageSettings, AllLanguageSettingsContent, Formatter, FormatterList,
+        IndentGuideSettings, LanguageSettingsContent, PrettierSettings,
     },
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
     LanguageName, Override, ParsedMarkdown, Point,
 };
-use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::MultiBufferIndentGuide;
 use parking_lot::Mutex;
 use project::FakeFs;

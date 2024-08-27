@@ -1162,7 +1162,7 @@ impl InlineAssistant {
 
                     enum DeletedLines {}
                     let mut editor = Editor::for_multibuffer(multi_buffer, None, true, cx);
-                    editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+                    editor.set_soft_wrap_mode(settings::SoftWrap::None, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
@@ -1616,7 +1616,7 @@ impl PromptEditor {
                 false,
                 cx,
             );
-            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            editor.set_soft_wrap_mode(settings::SoftWrap::EditorWidth, cx);
             // Since the prompt editors for all inline assistants are linked,
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
@@ -1677,7 +1677,7 @@ impl PromptEditor {
         let focus = self.editor.focus_handle(cx).contains_focused(cx);
         self.editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, cx);
-            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            editor.set_soft_wrap_mode(settings::SoftWrap::EditorWidth, cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, cx);
             if focus {

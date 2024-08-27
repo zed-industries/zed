@@ -777,7 +777,7 @@ fn editor_with_deleted_text(
         });
 
         let mut editor = Editor::for_multibuffer(multi_buffer, None, true, cx);
-        editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+        editor.set_soft_wrap_mode(settings::SoftWrap::None, cx);
         editor.set_show_wrap_guides(false, cx);
         editor.set_show_gutter(false, cx);
         editor.scroll_manager.set_forbid_vertical_scroll(true);

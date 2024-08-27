@@ -1,16 +1,21 @@
 use anyhow::{anyhow, Context, Result};
-use collections::{btree_map, hash_map, BTreeMap, HashMap};
+use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet};
+use ec4rs::property::{
+    FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs,
+};
 use fs::Fs;
 use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global, Task, UpdateGlobal};
+use parking_lot::RwLock;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
-use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     any::{type_name, Any, TypeId},
     fmt::Debug,
+    num::NonZeroU32,
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     str,
     sync::{Arc, LazyLock},
 };
@@ -156,6 +161,31 @@ pub struct SettingsLocation<'a> {
     pub path: &'a Path,
 }
 
+/// The settings available in `.editorconfig` files and compatible with Zed.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EditorConfigContent {
+    pub hard_tabs: Option<bool>,
+    pub tab_size: Option<NonZeroU32>,
+    pub ensure_final_newline_on_save: Option<bool>,
+    pub remove_trailing_whitespace_on_save: Option<bool>,
+    pub preferred_line_length: Option<u32>,
+    pub soft_wrap: Option<SoftWrap>,
+}
+
+/// Controls the soft-wrapping behavior in the editor.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SoftWrap {
+    /// Do not soft wrap.
+    None,
+    /// Prefer a single line generally, unless an overly long line is encountered.
+    PreferLine,
+    /// Soft wrap lines that overflow the editor
+    EditorWidth,
+    /// Soft wrap lines at the preferred line length
+    PreferredLineLength,
+}
+
 /// A set of strongly-typed setting values defined via multiple JSON files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
@@ -171,6 +201,15 @@ pub struct SettingsStore {
     setting_file_updates_tx: mpsc::UnboundedSender<
         Box<dyn FnOnce(AsyncAppContext) -> LocalBoxFuture<'static, Result<()>>>,
     >,
+    editorconfig_files: HashSet<PathBuf>,
+    resolved_editorconfig_chains: Arc<RwLock<HashMap<EditorConfigKey, EditorConfigContent>>>,
+}
+
+#[derive(Debug, Eq, PartialEq, Hash)]
+struct EditorConfigKey {
+    language_name: Option<String>,
+    worktree_id: usize,
+    editorconfig_chain: SmallVec<[PathBuf; 3]>,
 }
 
 impl Global for SettingsStore {}
@@ -219,6 +258,8 @@ impl SettingsStore {
                     (setting_file_update)(cx.clone()).await.log_err();
                 }
             }),
+            editorconfig_files: HashSet::default(),
+            resolved_editorconfig_chains: Arc::default(),
         }
     }
 
@@ -779,6 +820,98 @@ impl SettingsStore {
             }
         }
         Ok(())
+    }
+
+    pub fn unregister_editorconfig_path(&mut self, abs_path: &PathBuf) {
+        self.resolved_editorconfig_chains
+            .write()
+            .retain(|key, _| !key.editorconfig_chain.contains(abs_path));
+        self.editorconfig_files.remove(abs_path);
+    }
+
+    pub fn register_editorconfig_path(&mut self, abs_path: PathBuf) {
+        self.resolved_editorconfig_chains
+            .write()
+            .retain(|key, _| !key.editorconfig_chain.contains(&abs_path));
+        self.editorconfig_files.insert(abs_path);
+    }
+
+    pub fn editorconfig_settings(
+        &self,
+        worktree_id: usize,
+        language_name: Option<String>,
+        file_abs_path: &Path,
+    ) -> Option<EditorConfigContent> {
+        let mut editorconfig_chain = SmallVec::new();
+        for ancestor_path in file_abs_path.ancestors() {
+            if self.editorconfig_files.contains(ancestor_path) {
+                editorconfig_chain.push(ancestor_path.to_owned());
+            }
+        }
+        if editorconfig_chain.is_empty() {
+            return None;
+        }
+
+        let chain_key = EditorConfigKey {
+            language_name,
+            worktree_id,
+            editorconfig_chain,
+        };
+
+        {
+            let resolved_editorconfig_chains = self.resolved_editorconfig_chains.read();
+            if let Some(content) = resolved_editorconfig_chains.get(&chain_key) {
+                return Some(content.clone());
+            }
+        }
+
+        // FS operation that goes recursively up the directory tree, may be slow
+        let mut cfg = ec4rs::properties_of(file_abs_path).log_err()?;
+        if cfg.is_empty() {
+            return None;
+        }
+
+        cfg.use_fallbacks();
+        let max_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
+            MaxLineLen::Value(u) => Some(u as u32),
+            MaxLineLen::Off => None,
+        });
+        let editorconfig = EditorConfigContent {
+            tab_size: cfg.get::<IndentSize>().ok().and_then(|v| match v {
+                IndentSize::Value(u) => NonZeroU32::new(u as u32),
+                IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
+                    TabWidth::Value(u) => NonZeroU32::new(u as u32),
+                }),
+            }),
+            hard_tabs: cfg
+                .get::<IndentStyle>()
+                .map(|v| v.eq(&IndentStyle::Tabs))
+                .ok(),
+            ensure_final_newline_on_save: cfg
+                .get::<FinalNewline>()
+                .map(|v| match v {
+                    FinalNewline::Value(b) => b,
+                })
+                .ok(),
+            remove_trailing_whitespace_on_save: cfg
+                .get::<TrimTrailingWs>()
+                .map(|v| match v {
+                    TrimTrailingWs::Value(b) => b,
+                })
+                .ok(),
+            preferred_line_length: max_line_length,
+            soft_wrap: if max_line_length.is_some() {
+                Some(SoftWrap::PreferredLineLength)
+            } else {
+                None
+            },
+        };
+
+        self.resolved_editorconfig_chains
+            .write()
+            .insert(chain_key, editorconfig.clone());
+
+        Some(editorconfig)
     }
 }
 

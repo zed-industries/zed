@@ -91,7 +91,7 @@ pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
-    language_settings::{self, all_language_settings, InlayHintSettings},
+    language_settings::{all_language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
@@ -531,7 +531,7 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
-    soft_wrap_mode_override: Option<language_settings::SoftWrap>,
+    soft_wrap_mode_override: Option<settings::SoftWrap>,
     project: Option<Model<Project>>,
     completion_provider: Option<Box<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
@@ -1804,8 +1804,8 @@ impl Editor {
 
         let blink_manager = cx.new_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
-        let soft_wrap_mode_override = matches!(mode, EditorMode::SingleLine { .. })
-            .then(|| language_settings::SoftWrap::PreferLine);
+        let soft_wrap_mode_override =
+            matches!(mode, EditorMode::SingleLine { .. }).then(|| settings::SoftWrap::PreferLine);
 
         let mut project_subscriptions = Vec::new();
         if mode == EditorMode::Full {
@@ -10784,10 +10784,10 @@ impl Editor {
         let settings = self.buffer.read(cx).settings_at(0, cx);
         let mode = self.soft_wrap_mode_override.unwrap_or(settings.soft_wrap);
         match mode {
-            language_settings::SoftWrap::None => SoftWrap::None,
-            language_settings::SoftWrap::PreferLine => SoftWrap::PreferLine,
-            language_settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
-            language_settings::SoftWrap::PreferredLineLength => {
+            settings::SoftWrap::None => SoftWrap::None,
+            settings::SoftWrap::PreferLine => SoftWrap::PreferLine,
+            settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
+            settings::SoftWrap::PreferredLineLength => {
                 SoftWrap::Column(settings.preferred_line_length)
             }
             language_settings::SoftWrap::Bounded => {
@@ -10796,11 +10796,7 @@ impl Editor {
         }
     }
 
-    pub fn set_soft_wrap_mode(
-        &mut self,
-        mode: language_settings::SoftWrap,
-        cx: &mut ViewContext<Self>,
-    ) {
+    pub fn set_soft_wrap_mode(&mut self, mode: settings::SoftWrap, cx: &mut ViewContext<Self>) {
         self.soft_wrap_mode_override = Some(mode);
         cx.notify();
     }
@@ -10833,10 +10829,8 @@ impl Editor {
             self.soft_wrap_mode_override.take();
         } else {
             let soft_wrap = match self.soft_wrap_mode(cx) {
-                SoftWrap::None | SoftWrap::PreferLine => language_settings::SoftWrap::EditorWidth,
-                SoftWrap::EditorWidth | SoftWrap::Column(_) | SoftWrap::Bounded(_) => {
-                    language_settings::SoftWrap::PreferLine
-                }
+                SoftWrap::None | SoftWrap::PreferLine => settings::SoftWrap::EditorWidth,
+                SoftWrap::EditorWidth | SoftWrap::Column(_) | SoftWrap::Bounded(_) => settings::SoftWrap::PreferLine,
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
         }

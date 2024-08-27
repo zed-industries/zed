@@ -4,7 +4,7 @@ use futures::{future, StreamExt};
 use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
-    language_settings::{AllLanguageSettings, LanguageSettingsContent, SoftWrap},
+    language_settings::{AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, FakeLspAdapter,
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
@@ -12,6 +12,7 @@ use lsp::{DiagnosticSeverity, NumberOrString};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use settings::SoftWrap;
 #[cfg(not(windows))]
 use std::os;
 

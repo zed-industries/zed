@@ -663,7 +663,7 @@ impl PromptEditor {
                 false,
                 cx,
             );
-            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            editor.set_soft_wrap_mode(settings::SoftWrap::EditorWidth, cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor
         });
