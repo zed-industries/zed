@@ -1,3 +1,59 @@
+//! # Table Output for REPL
+//!
+//! This module provides functionality to render tabular data in Zed's REPL output.
+//!
+//! It supports the [Frictionless Data Table Schema](https://specs.frictionlessdata.io/table-schema/)
+//! for data interchange, implemented by Pandas in Python and Polars for Deno.
+//!
+//! # Python Example
+//!
+//! Tables can be created and displayed in two main ways:
+//!
+//! 1. Using raw JSON data conforming to the Tabular Data Resource specification.
+//! 2. Using Pandas DataFrames (in Python kernels).
+//!
+//! ## Raw JSON Method
+//!
+//! To create a table using raw JSON, you need to provide a JSON object that conforms
+//! to the Tabular Data Resource specification. Here's an example:
+//!
+//! ```json
+//! {
+//!     "schema": {
+//!         "fields": [
+//!             {"name": "id", "type": "integer"},
+//!             {"name": "name", "type": "string"},
+//!             {"name": "age", "type": "integer"}
+//!         ]
+//!     },
+//!     "data": [
+//!         {"id": 1, "name": "Alice", "age": 30},
+//!         {"id": 2, "name": "Bob", "age": 28},
+//!         {"id": 3, "name": "Charlie", "age": 35}
+//!     ]
+//! }
+//! ```
+//!
+//! ## Pandas Method
+//!
+//! To create a table using Pandas in a Python kernel, you can use the following steps:
+//!
+//! ```python
+//! import pandas as pd
+//!
+//! # Enable table schema output
+//! pd.set_option('display.html.table_schema', True)
+//!
+//! # Create a DataFrame
+//! df = pd.DataFrame({
+//!     'id': [1, 2, 3],
+//!     'name': ['Alice', 'Bob', 'Charlie'],
+//!     'age': [30, 28, 35]
+//! })
+//!
+//! # Display the DataFrame
+//! display(df)
+//! ```
 use gpui::{AnyElement, ClipboardItem, TextRun};
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
