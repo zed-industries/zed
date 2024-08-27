@@ -279,7 +279,7 @@ impl WorktreeStore {
         open_entries: HashSet<ProjectEntryId>,
         fs: Arc<dyn Fs>,
         cx: &ModelContext<Self>,
-    ) -> (Receiver<ProjectPath>, Task<()>) {
+    ) -> Receiver<ProjectPath> {
         let snapshots = self
             .visible_worktrees(cx)
             .filter_map(|tree| {
@@ -316,12 +316,13 @@ impl WorktreeStore {
                 .log_err();
             }
         });
+        const MAX_CONCURRENT_FILE_SCANS: usize = 64;
         let filters = cx.background_executor().spawn(async move {
             let fs = &fs;
             let query = &query;
             executor
                 .scoped(move |scope| {
-                    for _ in 0..64 {
+                    for _ in 0..MAX_CONCURRENT_FILE_SCANS {
                         let filter_rx = filter_rx.clone();
                         scope.spawn(async move {
                             Self::filter_paths(fs, filter_rx, query).await.log_err();
@@ -330,24 +331,26 @@ impl WorktreeStore {
                 })
                 .await;
         });
-        let task = cx.background_executor().spawn(async move {
-            let mut matched = 0;
-            while let Some(mut receiver) = output_rx.next().await {
-                let Some(path) = receiver.next().await else {
-                    continue;
-                };
-                let Ok(_) = matching_paths_tx.send(path).await else {
-                    break;
-                };
-                matched += 1;
-                if matched == limit {
-                    break;
+        cx.background_executor()
+            .spawn(async move {
+                let mut matched = 0;
+                while let Some(mut receiver) = output_rx.next().await {
+                    let Some(path) = receiver.next().await else {
+                        continue;
+                    };
+                    let Ok(_) = matching_paths_tx.send(path).await else {
+                        break;
+                    };
+                    matched += 1;
+                    if matched == limit {
+                        break;
+                    }
                 }
-            }
-            drop(input);
-            drop(filters);
-        });
-        return (matching_paths_rx, task);
+                drop(input);
+                drop(filters);
+            })
+            .detach();
+        return matching_paths_rx;
     }
 
     async fn scan_ignored_dir(

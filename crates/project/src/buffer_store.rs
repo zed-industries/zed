@@ -803,12 +803,13 @@ impl BufferStore {
 
         let limit = limit.saturating_sub(open_buffers.len());
 
-        let (project_paths_rx, task) = self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.find_search_candidates(query.clone(), limit, open_buffers, fs, cx)
-        });
-
         const MAX_CONCURRENT_BUFFER_OPENS: usize = 64;
-        let mut project_paths_rx = project_paths_rx.chunks(MAX_CONCURRENT_BUFFER_OPENS);
+        let mut project_paths_rx = self
+            .worktree_store
+            .update(cx, |worktree_store, cx| {
+                worktree_store.find_search_candidates(query.clone(), limit, open_buffers, fs, cx)
+            })
+            .chunks(MAX_CONCURRENT_BUFFER_OPENS);
 
         cx.spawn(|this, mut cx| async move {
             for buffer in unnamed_buffers {
@@ -830,7 +831,6 @@ impl BufferStore {
                     }
                 }
             }
-            drop(task);
             anyhow::Ok(())
         })
         .detach();
