@@ -103,8 +103,8 @@
         else "";
 
       postFixup = ''
-        patchelf --add-rpath ${gpu-lib}/lib $out/bin/*
-        patchelf --add-rpath ${wayland}/lib $out/bin/*
+        patchelf --add-rpath ${gpu-lib}/lib $out/libexec/*
+        patchelf --add-rpath ${wayland}/lib $out/libexec/*
       '';
 
       postInstall = ''
