@@ -101,7 +101,7 @@ pub fn new_journal_entry(workspace: &Workspace, cx: &mut WindowContext) {
     let mut open_new_workspace = true;
     'outer: for worktree in worktrees.iter() {
         let worktree_root = worktree.read(cx).abs_path();
-        if worktree.read(cx).root_name() == "journal" {
+        if *worktree_root == journal_dir_clone {
             open_new_workspace = false;
             break;
         }
