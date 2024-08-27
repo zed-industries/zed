@@ -335,14 +335,14 @@ impl SummaryIndex {
                     let mut backlog = backlog.lock();
 
                     eprintln!(
-                        "* * * * * * * * * Inserting {:?}B entry into backlog: {:?}",
+                        "* * * * * * * * Inserting {:?}B entry into backlog: {:?}",
                         entry.size, &entry.path
                     );
 
                     backlog.insert(Arc::clone(&entry.path), entry.size, entry.mtime);
 
                     if backlog.needs_drain() {
-                        eprintln!("* * * * * * * * * DRAINING BACKLOG!");
+                        eprintln!("* * * * * * * * DRAINING BACKLOG!");
                         return backlog.drain().collect();
                     }
                 }
@@ -432,7 +432,7 @@ impl SummaryIndex {
                         cx.spawn(async {
                             while let Ok(pairs) = paths.recv().await {
                                 eprintln!(
-                                    "* * * * * * Reading files to look up their digests {:?}",
+                                    "* * * * * Reading files to look up their digests {:?}",
                                     pairs
                                 );
 
@@ -602,6 +602,8 @@ impl SummaryIndex {
                     Ok(answer)
                 })
                 .await
+
+            // TODO if summarization failed, put it back in the backlog!
         })
     }
 

@@ -183,6 +183,7 @@ async fn commands_for_summaries(
     }
 
     let inference_model_id: LanguageModelId = "qwen2-7b-instruct".to_string().into(); // TODO read this from the user's settings.
+    eprintln!("* * * running summaries...");
     let Ok(model) = cx.update(|cx| {
         match LanguageModelRegistry::read_global(cx)
             .available_models(cx)

@@ -262,7 +262,7 @@ impl LanguageModel for GoogleLanguageModel {
             .clone();
 
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API key"))?;
             let response = google_ai::count_tokens(
                 http_client.as_ref(),
                 &api_url,
@@ -293,7 +293,7 @@ impl LanguageModel for GoogleLanguageModel {
         };
 
         let future = self.rate_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
+            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API Key"))?;
             let response =
                 stream_generate_content(http_client.as_ref(), &api_url, &api_key, request);
             let events = response.await?;
