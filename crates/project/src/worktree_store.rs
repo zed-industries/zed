@@ -8,7 +8,9 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::SinkExt;
-use gpui::{AppContext, AsyncAppContext, EntityId, EventEmitter, Model, ModelContext, WeakModel};
+use gpui::{
+    AppContext, AsyncAppContext, EntityId, EventEmitter, Model, ModelContext, Task, WeakModel,
+};
 use postage::oneshot;
 use rpc::{
     proto::{self, AnyProtoClient},
@@ -277,7 +279,7 @@ impl WorktreeStore {
         open_entries: HashSet<ProjectEntryId>,
         fs: Arc<dyn Fs>,
         cx: &ModelContext<Self>,
-    ) -> Receiver<ProjectPath> {
+    ) -> (Receiver<ProjectPath>, Task<()>) {
         let snapshots = self
             .visible_worktrees(cx)
             .filter_map(|tree| {
@@ -297,7 +299,7 @@ impl WorktreeStore {
         // against the version of the file on disk.
         let (filter_tx, filter_rx) = smol::channel::bounded(64);
         let (output_tx, mut output_rx) = smol::channel::bounded(64);
-        let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
+        let (matching_paths_tx, matching_paths_rx) = smol::channel::unbounded();
 
         let input = cx.background_executor().spawn({
             let fs = fs.clone();
@@ -329,26 +331,24 @@ impl WorktreeStore {
                 })
                 .await;
         });
-        cx.background_executor()
-            .spawn(async move {
-                let mut matched = 0;
-                while let Some(mut receiver) = output_rx.next().await {
-                    let Some(path) = receiver.next().await else {
-                        continue;
-                    };
-                    let Ok(_) = matching_paths_tx.send(path).await else {
-                        break;
-                    };
-                    matched += 1;
-                    if matched == limit {
-                        break;
-                    }
+        let task = cx.background_executor().spawn(async move {
+            let mut matched = 0;
+            while let Some(mut receiver) = output_rx.next().await {
+                let Some(path) = receiver.next().await else {
+                    continue;
+                };
+                let Ok(_) = matching_paths_tx.send(path).await else {
+                    break;
+                };
+                matched += 1;
+                if matched == limit {
+                    break;
                 }
-                drop(input);
-                drop(filters);
-            })
-            .detach();
-        return matching_paths_rx;
+            }
+            drop(input);
+            drop(filters);
+        });
+        return (matching_paths_rx, task);
     }
 
     async fn scan_ignored_dir(

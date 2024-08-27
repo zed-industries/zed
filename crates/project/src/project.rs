@@ -7275,6 +7275,7 @@ impl Project {
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
     ) -> Receiver<SearchResult> {
+        let start = std::time::Instant::now();
         let (result_tx, result_rx) = smol::channel::bounded(1024);
 
         let matching_buffers_rx =
@@ -7342,6 +7343,7 @@ impl Project {
             }
             dbg!(start.elapsed());
 
+            println!("search took: {:?}", start.elapsed());
             anyhow::Ok(())
         })
         .detach();

@@ -4761,6 +4761,12 @@ impl BackgroundScanner {
             request.relative_paths.extend(next_request.relative_paths);
             request.done.extend(next_request.done);
         }
+        if request.relative_paths.len() > 1 {
+            println!(
+                "------------------- Batched {} files",
+                request.relative_paths.len()
+            );
+        }
         Ok(request)
     }
 }
