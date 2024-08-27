@@ -42,7 +42,7 @@ fn address() -> SocketAddr {
             .process(current_pid)
             .and_then(|process| process.user_id())
         {
-            let uid_u32 = *uid.clone();
+            let uid_u32 = get_uid_as_u32(uid);
             // Ensure that the user ID is not too large to avoid overflow when
             // calculating the port number. This seems unlikely but it doesn't
             // hurt to be safe.
@@ -54,6 +54,21 @@ fn address() -> SocketAddr {
     }
 
     SocketAddr::V4(SocketAddrV4::new(LOCALHOST, user_port))
+}
+
+#[cfg(unix)]
+fn get_uid_as_u32(uid: &sysinfo::Uid) -> u32 {
+    *uid.clone()
+}
+
+#[cfg(windows)]
+fn get_uid_as_u32(uid: &sysinfo::windows::sid::Sid) -> u32 {
+    // Extract the RID which is an integer
+    uid.to_string()
+        .rsplit('-')
+        .next()
+        .and_then(|rid| rid.parse::<u32>().ok())
+        .unwrap_or(0)
 }
 
 fn instance_handshake() -> &'static str {
