@@ -1566,7 +1566,7 @@ impl Project {
     pub fn copy_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        relative_path: Option<impl Into<Arc<Path>>>,
+        relative_path: Option<PathBuf>,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Entry>>> {

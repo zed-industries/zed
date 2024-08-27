@@ -1372,8 +1372,7 @@ impl ProjectPanel {
                     .into_iter()
                     .enumerate()
                     .filter(|(idx, _)| succeed_indices.contains(&idx))
-                    .map(|(_, entry)| entry)
-                    .collect::<Vec<_>>();
+                    .map(|(_, entry)| entry);
                 for entry_id in will_delete_entries {
                     project_panel
                         .update(&mut cx, |project_panel, cx| {
@@ -1385,7 +1384,7 @@ impl ProjectPanel {
                         .await?;
                 }
 
-                Result::<(), anyhow::Error>::Ok(())
+                anyhow::Ok(())
             })
             .detach_and_log_err(cx);
 
@@ -1860,7 +1859,7 @@ impl ProjectPanel {
                     )?;
                     self.project
                         .update(cx, |project, cx| {
-                            project.copy_entry(selection.entry_id, None::<Arc<Path>>, new_path, cx)
+                            project.copy_entry(selection.entry_id, None, new_path, cx)
                         })
                         .detach_and_log_err(cx)
                 }
