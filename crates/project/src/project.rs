@@ -93,7 +93,7 @@ use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
     cell::RefCell,
-    cmp::{self, Ordering},
+    cmp::Ordering,
     convert::TryInto,
     env,
     ffi::OsStr,
@@ -11357,21 +11357,5 @@ pub fn sort_worktree_entries(entries: &mut Vec<Entry>) {
             (&entry_a.path, entry_a.is_file()),
             (&entry_b.path, entry_b.is_file()),
         )
-    });
-}
-
-fn sort_search_matches(search_matches: &mut Vec<Model<Buffer>>, cx: &AppContext) {
-    search_matches.sort_by(|buffer_a, buffer_b| {
-        let path_a = buffer_a.read(cx).file().map(|file| file.path());
-        let path_b = buffer_b.read(cx).file().map(|file| file.path());
-
-        match (path_a, path_b) {
-            (None, None) => cmp::Ordering::Equal,
-            (None, Some(_)) => cmp::Ordering::Less,
-            (Some(_), None) => cmp::Ordering::Greater,
-            (Some(path_a), Some(path_b)) => {
-                compare_paths((path_a.as_ref(), true), (path_b.as_ref(), true))
-            }
-        }
     });
 }

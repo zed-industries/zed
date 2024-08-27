@@ -8,9 +8,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::SinkExt;
-use gpui::{
-    AppContext, AsyncAppContext, EntityId, EventEmitter, Model, ModelContext, Task, WeakModel,
-};
+use gpui::{AppContext, AsyncAppContext, EntityId, EventEmitter, Model, ModelContext, WeakModel};
 use postage::oneshot;
 use rpc::{
     proto::{self, AnyProtoClient},
