@@ -317,6 +317,7 @@ gpui::actions!(
         ToggleSelectionMenu,
         ToggleHunkDiff,
         ToggleInlayHints,
+        ToggleInlineCompletions,
         ToggleLineNumbers,
         ToggleRelativeLineNumbers,
         ToggleIndentGuides,

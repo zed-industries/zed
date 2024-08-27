@@ -556,7 +556,7 @@ pub struct Editor {
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
     active_inline_completion: Option<(Inlay, Option<Range<Anchor>>)>,
-    show_inline_completions: bool,
+    show_inline_completions_override: Option<bool>,
     inlay_hint_cache: InlayHintCache,
     expanded_hunks: ExpandedHunks,
     next_inlay_id: usize,
@@ -1912,7 +1912,7 @@ impl Editor {
             hovered_cursors: Default::default(),
             next_editor_action_id: EditorActionId::default(),
             editor_actions: Rc::default(),
-            show_inline_completions: mode == EditorMode::Full,
+            show_inline_completions_override: None,
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
@@ -2305,8 +2305,49 @@ impl Editor {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
 
-    pub fn set_show_inline_completions(&mut self, show_inline_completions: bool) {
-        self.show_inline_completions = show_inline_completions;
+    pub fn toggle_inline_completions(
+        &mut self,
+        _: &ToggleInlineCompletions,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self.show_inline_completions_override.is_some() {
+            self.set_show_inline_completions(None, cx);
+        } else {
+            let cursor = self.selections.newest_anchor().head();
+            if let Some((buffer, cursor_buffer_position)) =
+                self.buffer.read(cx).text_anchor_for_position(cursor, cx)
+            {
+                let show_inline_completions =
+                    !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx);
+                self.set_show_inline_completions(Some(show_inline_completions), cx);
+            }
+        }
+    }
+
+    pub fn set_show_inline_completions(
+        &mut self,
+        show_inline_completions: Option<bool>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.show_inline_completions_override = show_inline_completions;
+        self.refresh_inline_completion(false, true, cx);
+    }
+
+    fn should_show_inline_completions(
+        &self,
+        buffer: &Model<Buffer>,
+        buffer_position: language::Anchor,
+        cx: &AppContext,
+    ) -> bool {
+        if let Some(provider) = self.inline_completion_provider() {
+            if let Some(show_inline_completions) = self.show_inline_completions_override {
+                show_inline_completions
+            } else {
+                self.mode == EditorMode::Full && provider.is_enabled(&buffer, buffer_position, cx)
+            }
+        } else {
+            false
+        }
     }
 
     pub fn set_use_modal_editing(&mut self, to: bool) {
@@ -4934,8 +4975,7 @@ impl Editor {
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         if !user_requested
-            && (!self.show_inline_completions
-                || !provider.is_enabled(&buffer, cursor_buffer_position, cx))
+            && !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
         {
             self.discard_inline_completion(false, cx);
             return None;
@@ -4955,9 +4995,7 @@ impl Editor {
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-        if !self.show_inline_completions
-            || !provider.is_enabled(&buffer, cursor_buffer_position, cx)
-        {
+        if !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx) {
             return None;
         }
 
