@@ -53,7 +53,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = "0.0.6"
+zed_extension_api = "0.1.0"
 ```
 
 Make sure to use the latest version of the [`zed_extension_api`](https://crates.io/crates/zed_extension_api) available on crates.io.
