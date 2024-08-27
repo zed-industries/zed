@@ -204,7 +204,6 @@ impl PartialOrd for ProjectPanelOrdMatch {
 #[derive(Debug, Default)]
 struct Matches {
     separate_history: bool,
-    opened_path: Option<FoundPath>,
     matches: Vec<Match>,
 }
 
@@ -242,15 +241,19 @@ impl Matches {
         self.matches.get(index)
     }
 
-    fn position(&self, entry: &Match) -> Result<usize, usize> {
+    fn position(
+        &self,
+        entry: &Match,
+        currently_opened: Option<&FoundPath>,
+    ) -> Result<usize, usize> {
         if let Match::History {
             path,
             panel_match: None,
         } = entry
         {
-            //NOTE: Slow case: linear search by path. Should not happen actually,
+            // Slow case: linear search by path. Should not happen actually,
             // since we call `position` only if matches set changed, but the query has not changed.
-            // And History entries do not have panel_match iff query is empty, so there's no
+            // And History entries do not have panel_match if query is empty, so there's no
             // reason for the matches set to change.
             self.matches
                 .iter()
@@ -258,10 +261,9 @@ impl Matches {
                 .ok_or(0)
         } else {
             self.matches.binary_search_by(|m| {
-                //NOTE: `reverse()` since if cmp_matches(a, b) == Ordering::Greater, then a is better than b.
+                // `reverse()` since if cmp_matches(a, b) == Ordering::Greater, then a is better than b.
                 // And we want the better entries go first.
-                Self::cmp_matches(self.separate_history, self.opened_path.as_ref(), &m, &entry)
-                    .reverse()
+                Self::cmp_matches(self.separate_history, currently_opened, &m, &entry).reverse()
             })
         }
     }
@@ -274,20 +276,16 @@ impl Matches {
         new_search_matches: impl Iterator<Item = ProjectPanelOrdMatch>,
         extend_old_matches: bool,
     ) {
-        self.opened_path = currently_opened.cloned();
-
         let Some(query) = query else {
-            //NOTE: assuming that if there's no query, then there's no search matches.
+            // assuming that if there's no query, then there's no search matches.
             self.matches.clear();
             let path_to_entry = |found_path: &FoundPath| Match::History {
                 path: found_path.clone(),
                 panel_match: None,
             };
-            //NOTE: add currently_opened first, if anything is opened
             self.matches
                 .extend(currently_opened.into_iter().map(path_to_entry));
 
-            //NOTE: add history items in order, if differ from currently_opened
             self.matches.extend(
                 history_items
                     .into_iter()
@@ -304,7 +302,7 @@ impl Matches {
             .collect();
 
         if extend_old_matches {
-            //NOTE: since we take history matches instead of new search matches
+            // since we take history matches instead of new search matches
             // and history matches has not changed(since the query has not changed and we do not extend old matches otherwise),
             // old matches can't contain paths present in history_matches as well.
             self.matches.retain(|m| matches!(m, Match::Search(_)));
@@ -312,7 +310,7 @@ impl Matches {
             self.matches.clear();
         }
 
-        //NOTE: At this point we have an unsorted set of new history matches, an unsorted set of new search matches
+        // At this point we have an unsorted set of new history matches, an unsorted set of new search matches
         // and a sorted set of old search matches.
         // It is possible that the new search matches' paths contain some of the old search matches' paths.
         // History matches' paths are unique, since store in a HashMap by path.
@@ -323,7 +321,7 @@ impl Matches {
             .into_values()
             .chain(new_search_matches.into_iter())
         {
-            match self.position(&new_match) {
+            match self.position(&new_match, currently_opened) {
                 Ok(_duplicate) => continue,
                 Err(i) => {
                     self.matches.insert(i, new_match);
@@ -342,7 +340,7 @@ impl Matches {
         a: &Match,
         b: &Match,
     ) -> cmp::Ordering {
-        assert!(a.panel_match().is_some() && b.panel_match().is_some());
+        debug_assert!(a.panel_match().is_some() && b.panel_match().is_some());
 
         match (&a, &b) {
             // bubble currently opened files to the top
@@ -361,11 +359,6 @@ impl Matches {
     }
 }
 
-/// Produces a HashMap of history entries matching the query.
-/// `currently_opened` also treated as a history entry.
-/// HashMap is used because it's convenient for eliminating duplicate
-/// paths later on and we also don't need to care wherther `currently_opened`
-/// is present in the history_items or not.
 fn matching_history_items<'a>(
     history_items: impl IntoIterator<Item = &'a FoundPath>,
     currently_opened: Option<&'a FoundPath>,
@@ -615,7 +608,11 @@ impl FileFinderDelegate {
 
             self.selected_index = selected_match.map_or_else(
                 || self.calculate_selected_index(),
-                |m| self.matches.position(&m).unwrap_or(0),
+                |m| {
+                    self.matches
+                        .position(&m, self.currently_opened_path.as_ref())
+                        .unwrap_or(0)
+                },
             );
 
             self.latest_search_query = Some(query);
@@ -862,7 +859,7 @@ impl PickerDelegate for FileFinderDelegate {
         let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
         if raw_query.is_empty() {
-            //NOTE: if there was no query before, and we already have some (history) matches
+            // if there was no query before, and we already have some (history) matches
             // there's no need to update anything, since nothing has changed.
             // We also want to populate matches set from history entries on the first update.
             if self.latest_search_query.is_some() || self.first_update {
