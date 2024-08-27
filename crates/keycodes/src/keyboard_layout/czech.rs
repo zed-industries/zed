@@ -1,3 +1,4 @@
+// https://en.m.wikipedia.org/wiki/File:Keyboard_layout_Czech.svg
 pub(crate) fn map_keystroke(keystroke: &str) -> String {
     match keystroke {
         "`" => "\\",
@@ -21,8 +22,9 @@ pub(crate) fn map_keystroke(keystroke: &str) -> String {
         "8" => "á",
         "9" => "í",
         "0" => "é",
-        // mapping shift-;
-        ":" => "\"",
+        // mapping shift-Key
+        ":" => "\"", // shift-;
+        "{" => "\\", // shift-[
         _ => keystroke,
     }
     .to_string()
