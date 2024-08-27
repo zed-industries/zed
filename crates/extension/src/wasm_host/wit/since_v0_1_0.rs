@@ -356,7 +356,8 @@ impl ExtensionImports for WasmState {
                     "language" => {
                         let key = key.map(|k| LanguageName::new(&k));
                         let settings = AllLanguageSettings::get(location, cx).language(
-                            None,
+                            location
+                                .map(|location| (location.worktree_id, location.path.to_owned())),
                             key.as_ref(),
                             cx,
                         );

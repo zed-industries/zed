@@ -3093,6 +3093,10 @@ impl language::File for File {
         full_path
     }
 
+    fn abs_path_in_worktree(&self, cx: &AppContext) -> Result<PathBuf> {
+        self.worktree.read(cx).absolutize(&self.path)
+    }
+
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
     fn file_name<'a>(&'a self, cx: &'a AppContext) -> &'a OsStr {

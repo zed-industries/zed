@@ -20,7 +20,12 @@ use settings::{
     add_references_to_properties, EditorConfigContent, Settings, SettingsLocation, SettingsSources,
     SettingsStore, SoftWrap,
 };
-use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
+use std::{
+    borrow::Cow,
+    num::NonZeroU32,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::serde::default_true;
 
 /// Initializes the language settings.
@@ -35,7 +40,11 @@ pub fn language_settings<'a>(
     cx: &'a AppContext,
 ) -> Cow<'a, LanguageSettings> {
     let language_name = language.map(|l| l.name());
-    all_language_settings(file, cx).language(file, language_name.as_ref(), cx)
+    all_language_settings(file, cx).language(
+        file.and_then(|file| Some((file.worktree_id(), file.abs_path_in_worktree(cx).ok()?))),
+        language_name.as_ref(),
+        cx,
+    )
 }
 
 /// Returns the settings for all languages from the provided file.
@@ -788,7 +797,7 @@ impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
     pub fn language<'a>(
         &'a self,
-        file: Option<&Arc<dyn File>>,
+        abs_path_in_worktree: Option<(usize, PathBuf)>,
         language_name: Option<&LanguageName>,
         cx: &'a AppContext,
     ) -> Cow<'a, LanguageSettings> {
@@ -796,10 +805,8 @@ impl AllLanguageSettings {
             .and_then(|name| self.languages.get(name))
             .unwrap_or(&self.defaults);
 
-        let editorconfig_settings = file
-            .and_then(|file| file.as_local())
-            .map(|file| (file.worktree_id(), file.abs_path(cx)))
-            .and_then(|(worktree_id, file_abs_path)| {
+        let editorconfig_settings =
+            abs_path_in_worktree.and_then(|(worktree_id, file_abs_path)| {
                 cx.global::<SettingsStore>().editorconfig_settings(
                     worktree_id,
                     language_name.map(ToOwned::to_owned),
@@ -837,8 +844,12 @@ impl AllLanguageSettings {
             }
         }
 
-        self.language(file, language.map(|l| l.name()).as_ref(), cx)
-            .show_inline_completions
+        self.language(
+            file.and_then(|file| Some((file.worktree_id(), file.abs_path_in_worktree(cx).ok()?))),
+            language.map(|l| l.name()).as_ref(),
+            cx,
+        )
+        .show_inline_completions
     }
 }
 
