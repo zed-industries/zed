@@ -795,7 +795,7 @@ impl Context {
     }
 
     fn flush_ops(&mut self, cx: &mut ModelContext<Context>) {
-        let mut messages_changed = false;
+        let mut changed_messages = HashSet::default();
         let mut summary_changed = false;
 
         self.pending_ops.sort_unstable_by_key(|op| op.timestamp());
@@ -813,8 +813,8 @@ impl Context {
                     if self.messages_metadata.contains_key(&anchor.id) {
                         // We already applied this operation.
                     } else {
+                        changed_messages.insert(anchor.id);
                         self.insert_message(anchor, metadata, cx);
-                        messages_changed = true;
                     }
                 }
                 ContextOperation::UpdateMessage {
@@ -825,7 +825,7 @@ impl Context {
                     let metadata = self.messages_metadata.get_mut(&message_id).unwrap();
                     if new_metadata.timestamp > metadata.timestamp {
                         *metadata = new_metadata;
-                        messages_changed = true;
+                        changed_messages.insert(message_id);
                     }
                 }
                 ContextOperation::UpdateSummary {
@@ -869,7 +869,8 @@ impl Context {
             self.operations.push(op);
         }
 
-        if messages_changed {
+        if !changed_messages.is_empty() {
+            self.message_roles_updated(changed_messages, cx);
             cx.emit(ContextEvent::MessagesEdited);
             cx.notify();
         }
@@ -1277,16 +1278,14 @@ impl Context {
             ));
 
             self.reparse_slash_commands_in_range(
-                start,
-                end,
+                start..end,
                 &buffer,
                 &mut updated_slash_commands,
                 &mut removed_slash_command_ranges,
                 cx,
             );
-            self.reparse_workflow_steps_v2_in_range(
-                start,
-                end,
+            self.reparse_workflow_steps_in_range(
+                start..end,
                 &buffer,
                 &mut updated_steps,
                 &mut removed_steps,
@@ -1311,17 +1310,16 @@ impl Context {
 
     fn reparse_slash_commands_in_range(
         &mut self,
-        start: text::Anchor,
-        end: text::Anchor,
+        range: Range<text::Anchor>,
         buffer: &BufferSnapshot,
         updated: &mut Vec<PendingSlashCommand>,
         removed: &mut Vec<Range<text::Anchor>>,
         cx: &AppContext,
     ) {
-        let old_range = self.pending_command_indices_for_range(start..end, cx);
+        let old_range = self.pending_command_indices_for_range(range.clone(), cx);
 
         let mut new_commands = Vec::new();
-        let mut lines = buffer.text_for_range(start..end).lines();
+        let mut lines = buffer.text_for_range(range).lines();
         let mut offset = lines.offset();
         while let Some(line) = lines.next() {
             if let Some(command_line) = SlashCommandLine::parse(line) {
@@ -1367,10 +1365,9 @@ impl Context {
         removed.extend(removed_commands.map(|command| command.source_range));
     }
 
-    fn reparse_workflow_steps_v2_in_range(
+    fn reparse_workflow_steps_in_range(
         &mut self,
-        buffer_start: text::Anchor,
-        buffer_end: text::Anchor,
+        range: Range<text::Anchor>,
         buffer: &BufferSnapshot,
         updated: &mut Vec<Range<text::Anchor>>,
         removed: &mut Vec<Range<text::Anchor>>,
@@ -1378,17 +1375,14 @@ impl Context {
     ) {
         // Rebuild the XML tags in the edited range.
         let intersecting_tags_range =
-            self.indices_intersecting_buffer_range(&self.xml_tags, buffer_start..buffer_end, cx);
-        let new_tags = self.parse_xml_tags_in_range(buffer, buffer_start..buffer_end, cx);
+            self.indices_intersecting_buffer_range(&self.xml_tags, range.clone(), cx);
+        let new_tags = self.parse_xml_tags_in_range(buffer, range.clone(), cx);
         self.xml_tags
             .splice(intersecting_tags_range.clone(), new_tags);
 
         // Find which steps intersect the changed range.
-        let intersecting_steps_range = self.indices_intersecting_buffer_range(
-            &self.workflow_steps,
-            buffer_start..buffer_end,
-            cx,
-        );
+        let intersecting_steps_range =
+            self.indices_intersecting_buffer_range(&self.workflow_steps, range.clone(), cx);
 
         // Reparse all tags after the last unchanged step before the change.
         let mut tags_start_ix = 0;
@@ -1406,7 +1400,7 @@ impl Context {
         }
 
         // Rebuild the edit suggestions in the range.
-        let mut new_steps = self.parse_steps(tags_start_ix, buffer_end, buffer);
+        let mut new_steps = self.parse_steps(tags_start_ix, range.end, buffer);
 
         if let Some(project) = self.project() {
             for step in &mut new_steps {
@@ -2090,6 +2084,17 @@ impl Context {
     }
 
     pub fn cycle_message_roles(&mut self, ids: HashSet<MessageId>, cx: &mut ModelContext<Self>) {
+        for id in &ids {
+            if let Some(metadata) = self.messages_metadata.get(id) {
+                let role = metadata.role.cycle();
+                self.update_metadata(*id, cx, |metadata| metadata.role = role);
+            }
+        }
+
+        self.message_roles_updated(ids, cx);
+    }
+
+    fn message_roles_updated(&mut self, ids: HashSet<MessageId>, cx: &mut ModelContext<Self>) {
         let mut ranges = Vec::new();
         for message in self.messages(cx) {
             if ids.contains(&message.id) {
@@ -2097,26 +2102,13 @@ impl Context {
             }
         }
 
-        for id in ids {
-            if let Some(metadata) = self.messages_metadata.get(&id) {
-                let role = metadata.role.cycle();
-                self.update_metadata(id, cx, |metadata| metadata.role = role);
-            }
-        }
-
         let buffer = self.buffer.read(cx).text_snapshot();
         let mut updated = Vec::new();
         let mut removed = Vec::new();
         for range in ranges {
-            self.reparse_workflow_steps_v2_in_range(
-                range.start,
-                range.end,
-                &buffer,
-                &mut updated,
-                &mut removed,
-                cx,
-            );
+            self.reparse_workflow_steps_in_range(range, &buffer, &mut updated, &mut removed, cx);
         }
+
         if !updated.is_empty() || !removed.is_empty() {
             cx.emit(ContextEvent::WorkflowStepsUpdated { removed, updated })
         }
