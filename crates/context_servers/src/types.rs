@@ -14,6 +14,7 @@ pub enum RequestType {
     LoggingSetLevel,
     PromptsGet,
     PromptsList,
+    CompletionComplete,
 }
 
 impl RequestType {
@@ -28,6 +29,7 @@ impl RequestType {
             RequestType::LoggingSetLevel => "logging/setLevel",
             RequestType::PromptsGet => "prompts/get",
             RequestType::PromptsList => "prompts/list",
+            RequestType::CompletionComplete => "completion/complete",
         }
     }
 }
@@ -78,6 +80,41 @@ pub struct PromptsGetParams {
     pub arguments: Option<HashMap<String, String>>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionCompleteParams {
+    pub r#ref: CompletionReference,
+    pub argument: CompletionArgument,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum CompletionReference {
+    Prompt(PromptReference),
+    Resource(ResourceReference),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptReference {
+    pub r#type: String,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceReference {
+    pub r#type: String,
+    pub uri: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionArgument {
+    pub name: String,
+    pub value: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeResponse {
@@ -110,6 +147,20 @@ pub struct PromptsGetResponse {
 #[serde(rename_all = "camelCase")]
 pub struct PromptsListResponse {
     pub prompts: Vec<PromptInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionCompleteResponse {
+    pub completion: CompletionResult,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionResult {
+    pub values: Vec<String>,
+    pub total: Option<u32>,
+    pub has_more: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
