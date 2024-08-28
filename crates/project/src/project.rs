@@ -91,7 +91,7 @@ use smol::channel::{Receiver, Sender};
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
-    borrow::{Borrow, Cow},
+    borrow::Cow,
     cell::RefCell,
     cmp::Ordering,
     convert::TryInto,
