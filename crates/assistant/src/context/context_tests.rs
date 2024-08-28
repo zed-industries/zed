@@ -480,6 +480,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     cx.update(prompt_library::init);
     let settings_store = cx.update(SettingsStore::test);
     cx.set_global(settings_store);
+    cx.update(language::init);
     cx.update(Project::init_settings);
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [Path::new("/root")], cx).await;
@@ -500,10 +501,20 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         )
     });
 
+    // Insert an assistant message to simulate a response.
+    let assistant_message_id = context.update(cx, |context, cx| {
+        let user_message_id = context.messages(cx).next().unwrap().id;
+        context
+            .insert_message_after(user_message_id, Role::Assistant, MessageStatus::Done, cx)
+            .unwrap()
+            .id
+    });
+
     // No edit tags
     edit(
         &context,
         "
+
         «one
         two
         »",
@@ -512,6 +523,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     expect_steps(
         &context,
         "
+
         one
         two
         ",
@@ -523,6 +535,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     edit(
         &context,
         "
+
         one
         two
         «
@@ -532,6 +545,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     expect_steps(
         &context,
         "
+
         one
         two
 
@@ -545,6 +559,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     edit(
         &context,
         "
+
         one
         two
 
@@ -561,6 +576,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     expect_steps(
         &context,
         "
+
         one
         two
 
@@ -580,6 +596,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     edit(
         &context,
         "
+
         one
         two
 
@@ -604,6 +621,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     expect_steps(
         &context,
         "
+
         one
         two
 
@@ -637,6 +655,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     edit(
         &context,
         "
+
         one
         two
 
@@ -661,6 +680,122 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     expect_steps(
         &context,
         "
+
+        one
+        two
+
+        «<step>
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+
+        <edit>
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>fn zero</symbol>
+        <description>add a `two` function</description>
+        </edit>
+        </step>»
+
+        also,",
+        &[&[WorkflowStepEdit {
+            path: "src/lib.rs".into(),
+            kind: WorkflowStepEditKind::InsertSiblingAfter {
+                symbol: "fn zero".into(),
+                description: "add a `two` function".into(),
+            },
+        }]],
+        cx,
+    );
+
+    // When setting the message role to User, the steps are cleared.
+    context.update(cx, |context, cx| {
+        context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
+        context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
+    });
+    expect_steps(
+        &context,
+        "
+
+        one
+        two
+
+        <step>
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+
+        <edit>
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>fn zero</symbol>
+        <description>add a `two` function</description>
+        </edit>
+        </step>
+
+        also,",
+        &[],
+        cx,
+    );
+
+    // When setting the message role back to Assistant, the steps are reparsed.
+    context.update(cx, |context, cx| {
+        context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
+    });
+    expect_steps(
+        &context,
+        "
+
+        one
+        two
+
+        «<step>
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+
+        <edit>
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>fn zero</symbol>
+        <description>add a `two` function</description>
+        </edit>
+        </step>»
+
+        also,",
+        &[&[WorkflowStepEdit {
+            path: "src/lib.rs".into(),
+            kind: WorkflowStepEditKind::InsertSiblingAfter {
+                symbol: "fn zero".into(),
+                description: "add a `two` function".into(),
+            },
+        }]],
+        cx,
+    );
+
+    // Ensure steps are re-parsed when deserializing.
+    let serialized_context = context.read_with(cx, |context, cx| context.serialize(cx));
+    let deserialized_context = cx.new_model(|cx| {
+        Context::deserialize(
+            serialized_context,
+            Default::default(),
+            registry.clone(),
+            prompt_builder.clone(),
+            None,
+            None,
+            cx,
+        )
+    });
+    expect_steps(
+        &deserialized_context,
+        "
+
         one
         two
 
