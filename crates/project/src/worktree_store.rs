@@ -83,6 +83,19 @@ impl WorktreeStore {
             .find(|worktree| worktree.read(cx).contains_entry(entry_id))
     }
 
+    pub fn find_worktree(
+        &self,
+        abs_path: &Path,
+        cx: &AppContext,
+    ) -> Option<(Model<Worktree>, PathBuf)> {
+        for tree in self.worktrees() {
+            if let Ok(relative_path) = abs_path.strip_prefix(tree.read(cx).abs_path()) {
+                return Some((tree.clone(), relative_path.into()));
+            }
+        }
+        None
+    }
+
     pub fn entry_for_id<'a>(
         &'a self,
         entry_id: ProjectEntryId,
