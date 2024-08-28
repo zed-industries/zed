@@ -513,6 +513,14 @@ impl Editor {
         Ordering::Greater
     }
 
+    pub fn get_screen_top(&self, cx: &mut AppContext) -> DisplayPoint {
+        let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        self.scroll_manager
+            .anchor
+            .anchor
+            .to_display_point(&snapshot)
+    }
+
     pub fn read_scroll_position_from_db(
         &mut self,
         item_id: u64,

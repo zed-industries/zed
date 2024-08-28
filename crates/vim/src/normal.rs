@@ -286,13 +286,27 @@ impl Vim {
     ) {
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_cursors_with(|map, cursor, goal| {
-                    motion
-                        .move_point(map, cursor, goal, times, &text_layout_details)
-                        .unwrap_or((cursor, goal))
+            let should_move_cursor = editor.newest_selection_on_screen(cx).is_ne();
+
+            if should_move_cursor {
+                let mut top = editor.get_screen_top(cx);
+                *top.row_mut() = top
+                    .row()
+                    .0
+                    .saturating_add(editor.vertical_scroll_margin() as u32);
+
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_cursors_with(|_, _, goal| (top, goal))
                 })
-            })
+            } else {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_cursors_with(|map, cursor, goal| {
+                        motion
+                            .move_point(map, cursor, goal, times, &text_layout_details)
+                            .unwrap_or((cursor, goal))
+                    })
+                })
+            }
         });
     }
 
