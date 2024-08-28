@@ -47,7 +47,9 @@ impl fmt::Debug for FoldPlaceholder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FoldPlaceholder")
             .field("constrain_width", &self.constrain_width)
-            .finish()
+            .field("merge_adjacent", &self.merge_adjacent)
+            .field("text", &self.text)
+            .finish_non_exhaustive()
     }
 }
 
@@ -396,6 +398,7 @@ impl FoldMap {
                         item
                     }
                 })
+                .filter(|(_, fold_range)| !fold_range.is_empty())
                 .peekable();
 
                 while folds
@@ -425,33 +428,27 @@ impl FoldMap {
                         push_isomorphic(&mut new_transforms, text_summary);
                     }
 
-                    if fold_range.end > fold_range.start {
-                        let fold_id = fold.id;
-                        let folded_text = fold.placeholder.text.unwrap_or(ELLIPSIS);
-                        new_transforms.push(
-                            Transform {
-                                summary: TransformSummary {
-                                    output: TextSummary::from(folded_text),
-                                    input: inlay_snapshot
-                                        .text_summary_for_range(fold_range.start..fold_range.end),
-                                },
-                                placeholder: Some(TransformPlaceholder {
-                                    text: folded_text,
-                                    renderer: ChunkRenderer {
-                                        render: Arc::new(move |cx| {
-                                            (fold.placeholder.render)(
-                                                fold_id,
-                                                fold.range.0.clone(),
-                                                cx,
-                                            )
-                                        }),
-                                        constrain_width: fold.placeholder.constrain_width,
-                                    },
-                                }),
+                    let fold_id = fold.id;
+                    let folded_text = fold.placeholder.text.unwrap_or(ELLIPSIS);
+                    new_transforms.push(
+                        Transform {
+                            summary: TransformSummary {
+                                output: TextSummary::from(folded_text),
+                                input: inlay_snapshot
+                                    .text_summary_for_range(fold_range.start..fold_range.end),
                             },
-                            &(),
-                        );
-                    }
+                            placeholder: Some(TransformPlaceholder {
+                                text: folded_text,
+                                renderer: ChunkRenderer {
+                                    render: Arc::new(move |cx| {
+                                        (fold.placeholder.render)(fold_id, fold.range.0.clone(), cx)
+                                    }),
+                                    constrain_width: fold.placeholder.constrain_width,
+                                },
+                            }),
+                        },
+                        &(),
+                    );
                 }
 
                 let sum = new_transforms.summary();
@@ -1807,11 +1804,14 @@ mod tests {
             folds.sort_by(|a, b| a.range.cmp(&b.range, buffer));
             let mut folds = folds
                 .iter()
-                .map(|fold| {
-                    (
-                        fold.range.start.to_offset(buffer)..fold.range.end.to_offset(buffer),
-                        fold.placeholder.text,
-                    )
+                .filter_map(|fold| {
+                    let range =
+                        fold.range.start.to_offset(buffer)..fold.range.end.to_offset(buffer);
+                    if range.is_empty() {
+                        None
+                    } else {
+                        Some((range, fold.placeholder.text))
+                    }
                 })
                 .peekable();
 
