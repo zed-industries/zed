@@ -167,7 +167,6 @@ Depending on your hardware or use-case you may wish to limit or increase the con
 | wizard-math            | 16384                      | 32768                        |
 | wizardlm2              | 16384                      | 32768                        |
 
-```
 
 If you specify a context length that is too large for the model, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
 
