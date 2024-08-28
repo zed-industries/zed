@@ -17,7 +17,6 @@ use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Rol
 use parking_lot::Mutex;
 use project::Project;
 use rand::prelude::*;
-use rope::Point;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
@@ -643,7 +642,6 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         also,",
         &[&[WorkflowStepEdit {
-            range: Point::new(11, 0)..Point::new(16, 7),
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertSiblingAfter {
                 symbol: "fn one".into(),
@@ -703,7 +701,6 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         also,",
         &[&[WorkflowStepEdit {
-            range: Point::new(11, 0)..Point::new(16, 7),
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertSiblingAfter {
                 symbol: "fn zero".into(),
@@ -773,7 +770,6 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         also,",
         &[&[WorkflowStepEdit {
-            range: Point::new(11, 0)..Point::new(16, 7),
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertSiblingAfter {
                 symbol: "fn zero".into(),
@@ -820,7 +816,6 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         also,",
         &[&[WorkflowStepEdit {
-            range: Point::new(11, 0)..Point::new(16, 7),
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertSiblingAfter {
                 symbol: "fn zero".into(),
@@ -842,7 +837,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     fn expect_steps(
         context: &Model<Context>,
         expected_marked_text: &str,
-        expected_suggestions: &[&[WorkflowStepEdit<Point>]],
+        expected_suggestions: &[&[WorkflowStepEdit]],
         cx: &mut TestAppContext,
     ) {
         context.update(cx, |context, cx| {
@@ -867,10 +862,12 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
                     .map(|step| {
                         step.edits
                             .iter()
-                            .map(|edit| WorkflowStepEdit {
-                                range: edit.range.to_point(buffer),
-                                path: edit.path.clone(),
-                                kind: edit.kind.clone(),
+                            .map(|edit| {
+                                let edit = edit.as_ref().unwrap();
+                                WorkflowStepEdit {
+                                    path: edit.path.clone(),
+                                    kind: edit.kind.clone(),
+                                }
                             })
                             .collect::<Vec<_>>()
                     })

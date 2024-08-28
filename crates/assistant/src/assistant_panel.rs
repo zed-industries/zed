@@ -2079,10 +2079,12 @@ impl ContextEditor {
                 });
 
                 let mut edit_paths = Vec::<SharedString>::new();
-                for edit in &step.edits {
-                    let path = edit.path.clone().into();
-                    if !edit_paths.contains(&path) {
-                        edit_paths.push(path);
+                for edit in step.edits.iter() {
+                    if let Ok(edit) = &edit {
+                        let path = edit.path.clone().into();
+                        if !edit_paths.contains(&path) {
+                            edit_paths.push(path);
+                        }
                     }
                 }
 

@@ -1,6 +1,5 @@
 use crate::{AssistantPanel, InlineAssistId, InlineAssistant};
-use anyhow::Context as _;
-use anyhow::Result;
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use editor::Editor;
 use gpui::AsyncAppContext;
@@ -20,14 +19,13 @@ pub(crate) struct WorkflowStep {
     pub range: Range<language::Anchor>,
     pub leading_tags_end: text::Anchor,
     pub trailing_tag_start: Option<text::Anchor>,
-    pub edits: Vec<WorkflowStepEdit<text::Anchor>>,
+    pub edits: Arc<[Result<WorkflowStepEdit>]>,
     pub resolution_task: Option<Task<()>>,
     pub resolution: Option<Arc<Result<WorkflowStepResolution>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct WorkflowStepEdit<T> {
-    pub range: Range<T>,
+pub(crate) struct WorkflowStepEdit {
     pub path: String,
     pub kind: WorkflowStepEditKind,
 }
@@ -252,7 +250,49 @@ impl WorkflowSuggestion {
     }
 }
 
-impl<T> WorkflowStepEdit<T> {
+impl WorkflowStepEdit {
+    pub fn new(
+        path: Option<String>,
+        operation: Option<String>,
+        symbol: Option<String>,
+        description: Option<String>,
+    ) -> Result<Self> {
+        let path = path.ok_or_else(|| anyhow!("missing path"))?;
+        let operation = operation.ok_or_else(|| anyhow!("missing operation"))?;
+
+        let kind = match operation.as_str() {
+            "update" => WorkflowStepEditKind::Update {
+                symbol: symbol.ok_or_else(|| anyhow!("missing symbol"))?,
+                description: description.ok_or_else(|| anyhow!("missing description"))?,
+            },
+            "insert_sibling_before" => WorkflowStepEditKind::InsertSiblingBefore {
+                symbol: symbol.ok_or_else(|| anyhow!("missing symbol"))?,
+                description: description.ok_or_else(|| anyhow!("missing description"))?,
+            },
+            "insert_sibling_after" => WorkflowStepEditKind::InsertSiblingAfter {
+                symbol: symbol.ok_or_else(|| anyhow!("missing symbol"))?,
+                description: description.ok_or_else(|| anyhow!("missing description"))?,
+            },
+            "prepend_child" => WorkflowStepEditKind::PrependChild {
+                symbol,
+                description: description.ok_or_else(|| anyhow!("missing description"))?,
+            },
+            "append_child" => WorkflowStepEditKind::AppendChild {
+                symbol,
+                description: description.ok_or_else(|| anyhow!("missing description"))?,
+            },
+            "delete" => WorkflowStepEditKind::Delete {
+                symbol: symbol.ok_or_else(|| anyhow!("missing symbol"))?,
+            },
+            "create" => WorkflowStepEditKind::Create {
+                description: description.ok_or_else(|| anyhow!("missing description"))?,
+            },
+            _ => Err(anyhow!("unknown operation {operation:?}"))?,
+        };
+
+        Ok(Self { path, kind })
+    }
+
     pub async fn resolve(
         &self,
         project: Model<Project>,

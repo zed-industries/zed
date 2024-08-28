@@ -3,8 +3,7 @@ mod context_tests;
 
 use crate::{
     prompts::PromptBuilder, slash_command::SlashCommandLine, MessageId, MessageStatus,
-    WorkflowStep, WorkflowStepEdit, WorkflowStepEditKind, WorkflowStepResolution,
-    WorkflowSuggestionGroup,
+    WorkflowStep, WorkflowStepEdit, WorkflowStepResolution, WorkflowSuggestionGroup,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -1484,7 +1483,7 @@ impl Context {
         let mut new_steps = Vec::new();
         let mut pending_step = None;
         let mut edit_step_depth = 0;
-        let mut tags = self.xml_tags[tags_start_ix..].iter();
+        let mut tags = self.xml_tags[tags_start_ix..].iter().peekable();
         'tags: while let Some(tag) = tags.next() {
             if tag.range.start.cmp(&buffer_end, buffer).is_gt() && edit_step_depth == 0 {
                 break;
@@ -1493,11 +1492,12 @@ impl Context {
             if tag.kind == XmlTagKind::Step && tag.is_open_tag {
                 edit_step_depth += 1;
                 let edit_start = tag.range.start;
+                let mut edits = Vec::new();
                 let mut step = WorkflowStep {
                     range: edit_start..edit_start,
                     leading_tags_end: tag.range.end,
                     trailing_tag_start: None,
-                    edits: Vec::new(),
+                    edits: Default::default(),
                     resolution: None,
                     resolution_task: None,
                 };
@@ -1510,13 +1510,13 @@ impl Context {
                         edit_step_depth -= 1;
                         if edit_step_depth == 0 {
                             step.range.end = tag.range.end;
+                            step.edits = edits.into();
                             new_steps.push(step);
                             continue 'tags;
                         }
                     }
 
                     if tag.kind == XmlTagKind::Edit && tag.is_open_tag {
-                        let edit_start = tag.range.start;
                         let mut path = None;
                         let mut symbol = None;
                         let mut operation = None;
@@ -1524,59 +1524,12 @@ impl Context {
 
                         while let Some(tag) = tags.next() {
                             if tag.kind == XmlTagKind::Edit && !tag.is_open_tag {
-                                let edit_end = tag.range.end;
-                                if let Some(path) = path {
-                                    let kind = match (operation.as_deref(), symbol, description) {
-                                        (Some("update"), Some(symbol), Some(description)) => {
-                                            Some(WorkflowStepEditKind::Update {
-                                                symbol,
-                                                description,
-                                            })
-                                        }
-                                        (
-                                            Some("insert_sibling_before"),
-                                            Some(symbol),
-                                            Some(description),
-                                        ) => Some(WorkflowStepEditKind::InsertSiblingBefore {
-                                            symbol,
-                                            description,
-                                        }),
-                                        (
-                                            Some("insert_sibling_after"),
-                                            Some(symbol),
-                                            Some(description),
-                                        ) => Some(WorkflowStepEditKind::InsertSiblingAfter {
-                                            symbol,
-                                            description,
-                                        }),
-                                        (Some("prepend_child"), symbol, Some(description)) => {
-                                            Some(WorkflowStepEditKind::PrependChild {
-                                                symbol,
-                                                description,
-                                            })
-                                        }
-                                        (Some("append_child"), symbol, Some(description)) => {
-                                            Some(WorkflowStepEditKind::AppendChild {
-                                                symbol,
-                                                description,
-                                            })
-                                        }
-                                        (Some("delete"), Some(symbol), _) => {
-                                            Some(WorkflowStepEditKind::Delete { symbol })
-                                        }
-                                        (Some("create"), _, Some(description)) => {
-                                            Some(WorkflowStepEditKind::Create { description })
-                                        }
-                                        _ => None,
-                                    };
-                                    if let Some(kind) = kind {
-                                        step.edits.push(WorkflowStepEdit {
-                                            path,
-                                            kind,
-                                            range: edit_start..edit_end,
-                                        });
-                                    }
-                                }
+                                edits.push(WorkflowStepEdit::new(
+                                    path,
+                                    operation,
+                                    symbol,
+                                    description,
+                                ));
                                 break;
                             }
 
@@ -1591,20 +1544,26 @@ impl Context {
                             {
                                 let kind = tag.kind;
                                 let content_start = tag.range.end;
-                                while let Some(tag) = tags.next() {
+                                if let Some(tag) = tags.peek() {
                                     if tag.kind == kind && !tag.is_open_tag {
+                                        let tag = tags.next().unwrap();
                                         let content_end = tag.range.start;
-                                        let content = buffer
+                                        let mut content = buffer
                                             .text_for_range(content_start..content_end)
                                             .collect::<String>();
+                                        content.truncate(content.trim_end().len());
                                         match kind {
                                             XmlTagKind::Path => path = Some(content),
-                                            XmlTagKind::Symbol => symbol = Some(content),
                                             XmlTagKind::Operation => operation = Some(content),
-                                            XmlTagKind::Description => description = Some(content),
+                                            XmlTagKind::Symbol => {
+                                                symbol = Some(content).filter(|s| !s.is_empty())
+                                            }
+                                            XmlTagKind::Description => {
+                                                description =
+                                                    Some(content).filter(|s| !s.is_empty())
+                                            }
                                             _ => {}
                                         }
-                                        break;
                                     }
                                 }
                             }
@@ -1694,13 +1653,14 @@ impl Context {
 
     async fn compute_step_resolution(
         project: Model<Project>,
-        edits: Vec<WorkflowStepEdit<text::Anchor>>,
+        edits: Arc<[Result<WorkflowStepEdit>]>,
         cx: &mut AsyncAppContext,
     ) -> Result<HashMap<Model<Buffer>, Vec<WorkflowSuggestionGroup>>> {
-        let suggestion_tasks: Vec<_> = edits
-            .iter()
-            .map(|edit| edit.resolve(project.clone(), cx.clone()))
-            .collect();
+        let mut suggestion_tasks = Vec::new();
+        for edit in edits.iter() {
+            let edit = edit.as_ref().map_err(|e| anyhow!("{e}"))?;
+            suggestion_tasks.push(edit.resolve(project.clone(), cx.clone()));
+        }
 
         // Expand the context ranges of each suggestion and group suggestions with overlapping context ranges.
         let suggestions = future::try_join_all(suggestion_tasks).await?;
