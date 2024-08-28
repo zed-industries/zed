@@ -97,8 +97,17 @@ pub enum CompletionReference {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptReference {
-    pub r#type: String,
+    pub r#type: PromptReferenceType,
     pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptReferenceType {
+    #[serde(rename = "ref/prompt")]
+    Prompt,
+    #[serde(rename = "ref/resource")]
+    Resource,
 }
 
 #[derive(Debug, Serialize)]
@@ -283,4 +292,27 @@ pub struct ProgressParams {
     pub progress_token: String,
     pub progress: f64,
     pub total: Option<f64>,
+}
+
+// Helper Types that don't map directly to the protocol
+
+pub enum CompletionTotal {
+    Exact(u32),
+    HasMore,
+    Unknown,
+}
+
+impl CompletionTotal {
+    pub fn from_options(has_more: Option<bool>, total: Option<u32>) -> Self {
+        match (has_more, total) {
+            (_, Some(count)) => CompletionTotal::Exact(count),
+            (Some(true), _) => CompletionTotal::HasMore,
+            _ => CompletionTotal::Unknown,
+        }
+    }
+}
+
+pub struct Completion {
+    pub values: Vec<String>,
+    pub total: CompletionTotal,
 }
