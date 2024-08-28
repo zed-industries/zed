@@ -13802,6 +13802,7 @@ dependencies = [
  "env_logger",
  "fs",
  "futures 0.3.30",
+ "git",
  "gpui",
  "http_client",
  "itertools 0.11.0",

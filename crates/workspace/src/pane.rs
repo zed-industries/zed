@@ -12,6 +12,7 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
+use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
     AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId,
@@ -1688,6 +1689,31 @@ impl Pane {
         }
     }
 
+    pub fn icon_color(selected: bool) -> Color {
+        if selected {
+            Color::Default
+        } else {
+            Color::Muted
+        }
+    }
+
+    pub fn git_aware_icon_color(
+        git_status: Option<GitFileStatus>,
+        ignored: bool,
+        selected: bool,
+    ) -> Color {
+        if ignored {
+            Color::Ignored
+        } else {
+            match git_status {
+                Some(GitFileStatus::Added) => Color::Created,
+                Some(GitFileStatus::Modified) => Color::Modified,
+                Some(GitFileStatus::Conflict) => Color::Conflict,
+                None => Self::icon_color(selected),
+            }
+        }
+    }
+
     fn render_tab(
         &self,
         ix: usize,
@@ -1695,6 +1721,8 @@ impl Pane {
         detail: usize,
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
+        let project_path = item.project_path(cx);
+
         let is_active = ix == self.active_item_index;
         let is_preview = self
             .preview_item_id
@@ -1709,6 +1737,19 @@ impl Pane {
             },
             cx,
         );
+
+        let icon_color = if ItemSettings::get_global(cx).git_status {
+            project_path
+                .as_ref()
+                .and_then(|path| self.project.read(cx).entry_for_path(&path, cx))
+                .map(|entry| {
+                    Self::git_aware_icon_color(entry.git_status, entry.is_ignored, is_active)
+                })
+                .unwrap_or_else(|| Self::icon_color(is_active))
+        } else {
+            Self::icon_color(is_active)
+        };
+
         let icon = item.tab_icon(cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
@@ -1800,13 +1841,7 @@ impl Pane {
             .child(
                 h_flex()
                     .gap_1()
-                    .children(icon.map(|icon| {
-                        icon.size(IconSize::Small).color(if is_active {
-                            Color::Default
-                        } else {
-                            Color::Muted
-                        })
-                    }))
+                    .children(icon.map(|icon| icon.size(IconSize::Small).color(icon_color)))
                     .child(label),
             );
 
