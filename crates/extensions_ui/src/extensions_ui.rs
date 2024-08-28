@@ -548,17 +548,20 @@ impl ExtensionsPage {
             .child(
                 h_flex()
                     .justify_between()
+                    .gap_2()
                     .child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.manifest.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.manifest.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small),
+                        div().overflow_x_hidden().text_ellipsis().child(
+                            Label::new(format!(
+                                "{}: {}",
+                                if extension.manifest.authors.len() > 1 {
+                                    "Authors"
+                                } else {
+                                    "Author"
+                                },
+                                extension.manifest.authors.join(", ")
+                            ))
+                            .size(LabelSize::Small),
+                        ),
                     )
                     .child(
                         Label::new(format!(
@@ -573,7 +576,7 @@ impl ExtensionsPage {
                     .gap_2()
                     .justify_between()
                     .children(extension.manifest.description.as_ref().map(|description| {
-                        h_flex().overflow_x_hidden().child(
+                        div().overflow_x_hidden().text_ellipsis().child(
                             Label::new(description.clone())
                                 .size(LabelSize::Small)
                                 .color(Color::Default),
