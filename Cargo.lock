@@ -8144,6 +8144,7 @@ dependencies = [
  "futures 0.3.30",
  "git",
  "gpui",
+ "indexmap 1.9.3",
  "language",
  "menu",
  "pretty_assertions",

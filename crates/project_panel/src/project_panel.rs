@@ -23,6 +23,7 @@ use gpui::{
     PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
     ViewContext, VisualContext as _, WeakView, WindowContext,
 };
+use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
@@ -1292,19 +1293,22 @@ impl ProjectPanel {
                 .as_ref()
                 .filter(|clipboard| !clipboard.items().is_empty())?;
 
-            let mut rename_tasks = Vec::new();
-            let mut tasks = Vec::new();
-            let mut will_delete = Vec::new();
+            enum PasteTask {
+                Rename(Task<Result<CreatedEntry>>),
+                Copy(Task<Result<Option<Entry>>>),
+            }
+            let mut paste_entry_tasks: IndexMap<(ProjectEntryId, bool), PasteTask> =
+                IndexMap::default();
+            let clip_is_cut = clipboard_entries.is_cut();
             for clipboard_entry in clipboard_entries.items() {
                 let new_path =
                     self.create_paste_path(clipboard_entry, self.selected_entry_handle(cx)?, cx)?;
+                let clip_entry_id = clipboard_entry.entry_id;
                 let is_same_worktree = clipboard_entry.worktree_id == worktree_id;
                 let relative_path = if !is_same_worktree {
                     let target_base_path = worktree.read(cx).abs_path();
-                    let clipboard_project_path = self
-                        .project
-                        .read(cx)
-                        .path_for_entry(clipboard_entry.entry_id, cx)?;
+                    let clipboard_project_path =
+                        self.project.read(cx).path_for_entry(clip_entry_id, cx)?;
                     let clipboard_abs_path = self
                         .project
                         .read(cx)
@@ -1316,44 +1320,46 @@ impl ProjectPanel {
                 } else {
                     None
                 };
-                if clipboard_entries.is_cut() && is_same_worktree {
+                let task = if clip_is_cut && is_same_worktree {
                     let task = self.project.update(cx, |project, cx| {
-                        project.rename_entry(clipboard_entry.entry_id, new_path, cx)
+                        project.rename_entry(clip_entry_id, new_path, cx)
                     });
-                    rename_tasks.push(task);
+                    PasteTask::Rename(task)
                 } else {
                     let entry_id = if is_same_worktree {
-                        clipboard_entry.entry_id
+                        clip_entry_id
                     } else {
                         entry.id
                     };
                     let task = self.project.update(cx, |project, cx| {
                         project.copy_entry(entry_id, relative_path, new_path, cx)
                     });
-                    tasks.push(task);
-                    if !is_same_worktree && clipboard_entries.is_cut() {
-                        will_delete.push(clipboard_entry.entry_id);
-                    }
-                }
+                    PasteTask::Copy(task)
+                };
+                let need_delete = !is_same_worktree && clip_is_cut;
+                paste_entry_tasks.insert((clip_entry_id, need_delete), task);
             }
 
             cx.spawn(|project_panel, mut cx| async move {
-                let entry_ids = futures::future::join_all(tasks).await;
-                let rename_ids = futures::future::join_all(rename_tasks).await;
-                let mut last_succeed = if let Some(CreatedEntry::Included(entry)) = rename_ids
-                    .into_iter()
-                    .rev()
-                    .find_map(|entry_id| entry_id.ok())
-                {
-                    Some(entry.id)
-                } else {
-                    None
-                };
-                let mut succeed_indices = Vec::new();
-                for (index, entry) in entry_ids.into_iter().enumerate() {
-                    if let Some(Some(entry)) = entry.ok() {
-                        succeed_indices.push(index);
-                        last_succeed = Some(entry.id);
+                let mut last_succeed = None;
+                let mut need_delete_ids = Vec::new();
+                for ((entry_id, need_delete), task) in paste_entry_tasks.into_iter() {
+                    match task {
+                        PasteTask::Rename(task) => {
+                            let result = task.await;
+                            if let Some(CreatedEntry::Included(entry)) = result.ok() {
+                                last_succeed = Some(entry.id);
+                            }
+                        }
+                        PasteTask::Copy(task) => {
+                            let result = task.await;
+                            if let Some(Some(entry)) = result.ok() {
+                                last_succeed = Some(entry.id);
+                                if need_delete {
+                                    need_delete_ids.push(entry_id);
+                                }
+                            }
+                        }
                     }
                 }
                 // update selection
@@ -1368,12 +1374,7 @@ impl ProjectPanel {
                         .ok();
                 }
                 // remove entry for cut in difference worktree
-                let will_delete_entries = will_delete
-                    .into_iter()
-                    .enumerate()
-                    .filter(|(idx, _)| succeed_indices.contains(&idx))
-                    .map(|(_, entry)| entry);
-                for entry_id in will_delete_entries {
+                for entry_id in need_delete_ids {
                     project_panel
                         .update(&mut cx, |project_panel, cx| {
                             project_panel
