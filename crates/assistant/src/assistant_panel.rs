@@ -360,12 +360,7 @@ impl AssistantPanel {
                         }
                     }))
                     .tooltip(move |cx| {
-                        cx.new_view(|cx| {
-                            let keybind =
-                                KeyBinding::for_action_in(&DeployHistory, &focus_handle, cx);
-                            Tooltip::new("Open History").key_binding(keybind)
-                        })
-                        .into()
+                        Tooltip::for_action_in("Open History", &DeployHistory, &focus_handle, cx)
                     })
                     .selected(
                         pane.active_item()
