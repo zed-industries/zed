@@ -1442,44 +1442,43 @@ impl Context {
 
         while let Some(line) = lines.next() {
             while let Some(message) = messages.peek() {
-                if message.offset_range.end <= offset {
-                    messages.next();
-                } else {
+                if offset < message.offset_range.end {
                     break;
+                } else {
+                    messages.next();
                 }
             }
 
             let is_assistant_message = messages
                 .peek()
                 .map_or(false, |message| message.role == Role::Assistant);
-            if !is_assistant_message {
-                continue;
-            }
-
-            for (start_ix, _) in line.match_indices('<') {
-                let mut name_start_ix = start_ix + 1;
-                let closing_bracket_ix = line[start_ix..].find('>').map(|i| start_ix + i);
-                if let Some(closing_bracket_ix) = closing_bracket_ix {
-                    let end_ix = closing_bracket_ix + 1;
-                    let mut is_open_tag = true;
-                    if line[name_start_ix..closing_bracket_ix].starts_with('/') {
-                        name_start_ix += 1;
-                        is_open_tag = false;
+            if is_assistant_message {
+                for (start_ix, _) in line.match_indices('<') {
+                    let mut name_start_ix = start_ix + 1;
+                    let closing_bracket_ix = line[start_ix..].find('>').map(|i| start_ix + i);
+                    if let Some(closing_bracket_ix) = closing_bracket_ix {
+                        let end_ix = closing_bracket_ix + 1;
+                        let mut is_open_tag = true;
+                        if line[name_start_ix..closing_bracket_ix].starts_with('/') {
+                            name_start_ix += 1;
+                            is_open_tag = false;
+                        }
+                        let tag_inner = &line[name_start_ix..closing_bracket_ix];
+                        let tag_name_len = tag_inner
+                            .find(|c: char| c.is_whitespace())
+                            .unwrap_or(tag_inner.len());
+                        if let Ok(kind) = XmlTagKind::from_str(&tag_inner[..tag_name_len]) {
+                            tags.push(XmlTag {
+                                range: buffer.anchor_after(offset + start_ix)
+                                    ..buffer.anchor_before(offset + end_ix),
+                                is_open_tag,
+                                kind,
+                            });
+                        };
                     }
-                    let tag_inner = &line[name_start_ix..closing_bracket_ix];
-                    let tag_name_len = tag_inner
-                        .find(|c: char| c.is_whitespace())
-                        .unwrap_or(tag_inner.len());
-                    if let Ok(kind) = XmlTagKind::from_str(&tag_inner[..tag_name_len]) {
-                        tags.push(XmlTag {
-                            range: buffer.anchor_after(offset + start_ix)
-                                ..buffer.anchor_before(offset + end_ix),
-                            is_open_tag,
-                            kind,
-                        });
-                    };
                 }
             }
+
             offset = lines.offset();
         }
         tags
