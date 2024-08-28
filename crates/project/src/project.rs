@@ -91,7 +91,7 @@ use smol::channel::{Receiver, Sender};
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     cell::RefCell,
     cmp::Ordering,
     convert::TryInto,
@@ -662,6 +662,14 @@ impl DirectoryLister {
         match self {
             DirectoryLister::Local(_) => true,
             DirectoryLister::Project(project) => project.read(cx).is_local_or_ssh(),
+        }
+    }
+
+    pub fn resolve_tilde<'a>(&self, path: &'a String, cx: &AppContext) -> Cow<'a, str> {
+        if self.is_local(cx) {
+            shellexpand::tilde(path)
+        } else {
+            Cow::from(path)
         }
     }
 
