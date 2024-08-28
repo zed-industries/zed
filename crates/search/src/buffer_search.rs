@@ -708,7 +708,7 @@ impl BufferSearchBar {
         action: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> impl IntoElement {
         let is_active = self.search_options.contains(option);
-        option.as_button(is_active, false, action)
+        option.as_button(is_active, action)
     }
 
     pub fn focus_editor(&mut self, _: &FocusEditor, cx: &mut ViewContext<Self>) {

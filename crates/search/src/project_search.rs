@@ -1476,21 +1476,18 @@ impl Render for ProjectSearchBar {
                 h_flex()
                     .child(SearchOptions::CASE_SENSITIVE.as_button(
                         self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx),
-                        false,
                         cx.listener(|this, _, cx| {
                             this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                         }),
                     ))
                     .child(SearchOptions::WHOLE_WORD.as_button(
                         self.is_option_enabled(SearchOptions::WHOLE_WORD, cx),
-                        false,
                         cx.listener(|this, _, cx| {
                             this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
                         }),
                     ))
                     .child(SearchOptions::REGEX.as_button(
                         self.is_option_enabled(SearchOptions::REGEX, cx),
-                        false,
                         cx.listener(|this, _, cx| {
                             this.toggle_search_option(SearchOptions::REGEX, cx);
                         }),
@@ -1675,13 +1672,8 @@ impl Render for ProjectSearchBar {
                 )
                 .child(
                     IconButton::new("project-search-opened-only", IconName::FileDoc)
-                        .disabled(
-                            search
-                                .search_options
-                                .contains(SearchOptions::INCLUDE_IGNORED),
-                        )
                         .selected(self.is_opened_only_enabled(cx))
-                        .tooltip(|cx| Tooltip::text("Search only in Opened Editors", cx))
+                        .tooltip(|cx| Tooltip::text("Only search open files", cx))
                         .on_click(cx.listener(|this, _, cx| {
                             this.toggle_opened_only(cx);
                         })),
@@ -1691,7 +1683,6 @@ impl Render for ProjectSearchBar {
                         search
                             .search_options
                             .contains(SearchOptions::INCLUDE_IGNORED),
-                        self.is_opened_only_enabled(cx),
                         cx.listener(|this, _, cx| {
                             this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
                         }),

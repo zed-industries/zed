@@ -432,8 +432,8 @@ impl SearchQuery {
         self.as_inner().files_to_exclude()
     }
 
-    pub fn take_buffers(&mut self) -> Vec<Model<Buffer>> {
-        self.as_inner_mut().buffers.take().unwrap()
+    pub fn buffers(&self) -> Option<&Vec<Model<Buffer>>> {
+        self.as_inner().buffers.as_ref()
     }
 
     pub fn is_opened_only(&self) -> bool {
@@ -460,11 +460,6 @@ impl SearchQuery {
         }
     }
     pub fn as_inner(&self) -> &SearchInputs {
-        match self {
-            Self::Regex { inner, .. } | Self::Text { inner, .. } => inner,
-        }
-    }
-    pub fn as_inner_mut(&mut self) -> &mut SearchInputs {
         match self {
             Self::Regex { inner, .. } | Self::Text { inner, .. } => inner,
         }

@@ -96,11 +96,9 @@ impl SearchOptions {
     pub fn as_button(
         &self,
         active: bool,
-        disabled: bool,
         action: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
     ) -> impl IntoElement {
         IconButton::new(self.label(), self.icon())
-            .disabled(disabled)
             .on_click(action)
             .style(ButtonStyle::Subtle)
             .selected(active)
