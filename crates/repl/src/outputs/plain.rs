@@ -30,7 +30,7 @@ use terminal_view::terminal_element::TerminalElement;
 use theme::ThemeSettings;
 use ui::{prelude::*, IntoElement};
 
-use crate::outputs::SupportsClipboard;
+use crate::outputs::OutputContent;
 
 /// The `TerminalOutput` struct handles the parsing and rendering of text input,
 /// simulating a basic terminal environment within REPL output.
@@ -138,50 +138,6 @@ impl TerminalOutput {
         }
     }
 
-    pub fn create_buffer(&mut self, cx: &mut WindowContext) -> Model<Buffer> {
-        let mut full_text = String::new();
-
-        // Get the total number of lines, including history
-        let total_lines = self.handler.grid().total_lines();
-        let visible_lines = self.handler.screen_lines();
-        let history_lines = total_lines - visible_lines;
-
-        // Capture history lines in correct order (oldest to newest)
-        for line in (0..history_lines).rev() {
-            let line_index = Line(-(line as i32) - 1);
-            let start = Point::new(line_index, Column(0));
-            let end = Point::new(line_index, Column(self.handler.columns() - 1));
-            let line_content = self.handler.bounds_to_string(start, end);
-
-            if !line_content.trim().is_empty() {
-                full_text.push_str(&line_content);
-                full_text.push('\n');
-            }
-        }
-
-        // Capture visible lines
-        for line in 0..visible_lines {
-            let line_index = Line(line as i32);
-            let start = Point::new(line_index, Column(0));
-            let end = Point::new(line_index, Column(self.handler.columns() - 1));
-            let line_content = self.handler.bounds_to_string(start, end);
-
-            if !line_content.trim().is_empty() {
-                full_text.push_str(&line_content);
-                full_text.push('\n');
-            }
-        }
-
-        // Trim any trailing newlines
-        full_text = full_text.trim_end().to_string();
-
-        let buffer = cx.new_model(|cx| {
-            Buffer::local(full_text, cx).with_language(language::PLAIN_TEXT.clone(), cx)
-        });
-        self.full_buffer = Some(buffer.clone());
-        buffer
-    }
-
     /// Creates a new `TerminalOutput` instance with initial content.
     ///
     /// Initializes a new terminal output and populates it with the provided text.
@@ -237,11 +193,50 @@ impl TerminalOutput {
             }
         }
 
+        // This will keep the buffer up to date, though with some terminal codes it won't be perfect
         if let Some(buffer) = self.full_buffer.as_ref() {
             buffer.update(cx, |buffer, cx| {
                 buffer.edit([(buffer.len()..buffer.len(), text)], None, cx);
             });
         }
+    }
+
+    fn full_text(&self) -> String {
+        let mut full_text = String::new();
+
+        // Get the total number of lines, including history
+        let total_lines = self.handler.grid().total_lines();
+        let visible_lines = self.handler.screen_lines();
+        let history_lines = total_lines - visible_lines;
+
+        // Capture history lines in correct order (oldest to newest)
+        for line in (0..history_lines).rev() {
+            let line_index = Line(-(line as i32) - 1);
+            let start = Point::new(line_index, Column(0));
+            let end = Point::new(line_index, Column(self.handler.columns() - 1));
+            let line_content = self.handler.bounds_to_string(start, end);
+
+            if !line_content.trim().is_empty() {
+                full_text.push_str(&line_content);
+                full_text.push('\n');
+            }
+        }
+
+        // Capture visible lines
+        for line in 0..visible_lines {
+            let line_index = Line(line as i32);
+            let start = Point::new(line_index, Column(0));
+            let end = Point::new(line_index, Column(self.handler.columns() - 1));
+            let line_content = self.handler.bounds_to_string(start, end);
+
+            if !line_content.trim().is_empty() {
+                full_text.push_str(&line_content);
+                full_text.push('\n');
+            }
+        }
+
+        // Trim any trailing newlines
+        full_text.trim_end().to_string()
     }
 }
 
@@ -314,21 +309,28 @@ impl Render for TerminalOutput {
     }
 }
 
-impl SupportsClipboard for TerminalOutput {
+impl OutputContent for TerminalOutput {
     fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
-        let start = alacritty_terminal::index::Point::new(
-            alacritty_terminal::index::Line(0),
-            alacritty_terminal::index::Column(0),
-        );
-        let end = alacritty_terminal::index::Point::new(
-            alacritty_terminal::index::Line(self.handler.screen_lines() as i32 - 1),
-            alacritty_terminal::index::Column(self.handler.columns() - 1),
-        );
-        let text = self.handler.bounds_to_string(start, end);
-        Some(ClipboardItem::new_string(text.trim().into()))
+        Some(ClipboardItem::new_string(self.full_text()))
     }
 
     fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
         true
+    }
+
+    fn has_buffer_content(&self, _cx: &WindowContext) -> bool {
+        true
+    }
+
+    fn buffer_content(&mut self, cx: &mut WindowContext) -> Option<Model<Buffer>> {
+        if let Some(_) = self.full_buffer.as_ref() {
+            return self.full_buffer.clone();
+        }
+
+        let buffer = cx.new_model(|cx| {
+            Buffer::local(self.full_text(), cx).with_language(language::PLAIN_TEXT.clone(), cx)
+        });
+        self.full_buffer = Some(buffer.clone());
+        Some(buffer)
     }
 }

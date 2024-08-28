@@ -4,7 +4,7 @@ use gpui::{img, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, WindowCo
 use std::sync::Arc;
 use ui::{div, prelude::*, IntoElement, Styled};
 
-use crate::outputs::SupportsClipboard;
+use crate::outputs::OutputContent;
 
 /// ImageView renders an image inline in an editor, adapting to the line height to fit the image.
 pub struct ImageView {
@@ -77,7 +77,7 @@ impl Render for ImageView {
     }
 }
 
-impl SupportsClipboard for ImageView {
+impl OutputContent for ImageView {
     fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
         Some(ClipboardItem::new_image(self.clipboard_image.as_ref()))
     }

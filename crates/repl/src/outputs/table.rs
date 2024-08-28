@@ -62,7 +62,7 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled};
 
-use crate::outputs::SupportsClipboard;
+use crate::outputs::OutputContent;
 
 /// TableView renders a static table inline in a buffer.
 /// It uses the https://specs.frictionlessdata.io/tabular-data-resource/ specification for data interchange.
@@ -284,7 +284,7 @@ impl Render for TableView {
     }
 }
 
-impl SupportsClipboard for TableView {
+impl OutputContent for TableView {
     fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
         Some(self.cached_clipboard_content.clone())
     }
