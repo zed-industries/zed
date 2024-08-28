@@ -7,7 +7,7 @@
     (#set! tag elixir-test)
 )
 
-; Modules containing at least one `describe`, `test` and `property.
+; Modules containing at least one `describe`, `test` and `property`.
 ; This matches the ExUnit test style.
 (
     (call
