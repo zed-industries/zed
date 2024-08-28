@@ -1165,7 +1165,7 @@ impl BufferSearchBar {
     fn smartcase(&mut self, cx: &mut ViewContext<Self>) {
         if self.should_use_smartcase_search(cx) {
             let query = self.query(cx);
-            if query.is_empty() == false {
+            if !query.is_empty() {
                 let is_case = self.is_contains_uppercase(&query);
                 if self.should_search_option(SearchOptions::CASE_SENSITIVE) != is_case {
                     self.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);

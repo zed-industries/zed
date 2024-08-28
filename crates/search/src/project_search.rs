@@ -630,7 +630,7 @@ impl ProjectSearchView {
                     EditorEvent::Edited { .. } => {
                         if EditorSettings::get_global(cx).use_smartcase_search {
                             let query = this.search_query_text(cx);
-                            if query.is_empty() == false {
+                            if !query.is_empty() {
                                 if this.search_options.contains(SearchOptions::CASE_SENSITIVE)
                                     != is_contains_uppercase(&query)
                                 {
@@ -1014,7 +1014,7 @@ impl ProjectSearchView {
         self.query_editor
             .update(cx, |query_editor, cx| query_editor.set_text(query, cx));
         if EditorSettings::get_global(cx).use_smartcase_search {
-            if query.is_empty() == false {
+            if !query.is_empty() {
                 if self.search_options.contains(SearchOptions::CASE_SENSITIVE)
                     != is_contains_uppercase(query)
                 {
