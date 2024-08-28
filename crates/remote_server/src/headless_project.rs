@@ -55,6 +55,7 @@ impl HeadlessProject {
         session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_blame_buffer);
         session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_update_buffer);
         session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_save_buffer);
+        session.add_message_handler(buffer_store.downgrade(), BufferStore::handle_close_buffer);
 
         session.add_request_handler(
             worktree_store.downgrade(),
@@ -143,19 +144,11 @@ impl HeadlessProject {
 
         let buffer = buffer.await?;
         let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
-
-        cx.spawn(|mut cx| async move {
-            BufferStore::create_buffer_for_peer(
-                buffer_store,
-                PEER_ID,
-                buffer_id,
-                PROJECT_ID,
-                session,
-                &mut cx,
-            )
-            .await
-        })
-        .detach();
+        buffer_store.update(&mut cx, |buffer_store, cx| {
+            buffer_store
+                .create_buffer_for_peer(&buffer, PEER_ID, PROJECT_ID, session, cx)
+                .detach_and_log_err(cx);
+        })?;
 
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
@@ -190,16 +183,17 @@ impl HeadlessProject {
         while let Some(buffer) = results.next().await {
             let buffer_id = buffer.update(&mut cx, |this, _| this.remote_id())?;
             response.buffer_ids.push(buffer_id.to_proto());
-
-            BufferStore::create_buffer_for_peer(
-                buffer_store.clone(),
-                PEER_ID,
-                buffer_id,
-                PROJECT_ID,
-                client.clone(),
-                &mut cx,
-            )
-            .await?;
+            buffer_store
+                .update(&mut cx, |buffer_store, cx| {
+                    buffer_store.create_buffer_for_peer(
+                        &buffer,
+                        PEER_ID,
+                        PROJECT_ID,
+                        client.clone(),
+                        cx,
+                    )
+                })?
+                .await?;
         }
 
         Ok(response)
