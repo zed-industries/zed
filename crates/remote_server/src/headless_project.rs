@@ -146,7 +146,7 @@ impl HeadlessProject {
         let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
         buffer_store.update(&mut cx, |buffer_store, cx| {
             buffer_store
-                .create_buffer_for_peer(&buffer, PEER_ID, PROJECT_ID, session.into(), cx)
+                .create_buffer_for_peer(&buffer, PEER_ID, PROJECT_ID, session, cx)
                 .detach_and_log_err(cx);
         })?;
 
@@ -189,7 +189,7 @@ impl HeadlessProject {
                         &buffer,
                         PEER_ID,
                         PROJECT_ID,
-                        client.clone().into(),
+                        client.clone(),
                         cx,
                     )
                 })?
