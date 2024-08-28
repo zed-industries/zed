@@ -664,6 +664,14 @@ impl DirectoryLister {
         }
     }
 
+    pub fn resolve_tilde<'a>(&self, path: &'a String, cx: &AppContext) -> Cow<'a, str> {
+        if self.is_local(cx) {
+            shellexpand::tilde(path)
+        } else {
+            Cow::from(path)
+        }
+    }
+
     pub fn default_query(&self, cx: &mut AppContext) -> String {
         if let DirectoryLister::Project(project) = self {
             if let Some(worktree) = project.read(cx).visible_worktrees(cx).next() {
