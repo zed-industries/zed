@@ -3819,19 +3819,13 @@ mod tests {
                 });
         });
 
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
-        outline_panel.update(cx, |outline_panel, _| {
-            assert_eq!(
-                display_entries(&outline_panel.cached_entries, outline_panel.selected_entry()),
-                r#"/
+        let all_matches = r#"/
   crates/
     ide/
       src/
         inlay_hints/
           fn_lifetime_fn.rs
-            search: match config.param_names_for_lifetime_elision_hints {  <==== selected
+            search: match config.param_names_for_lifetime_elision_hints {
             search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
             search: Some(it) if config.param_names_for_lifetime_elision_hints => {
             search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
@@ -3846,7 +3840,73 @@ mod tests {
           analysis_stats.rs
             search: param_names_for_lifetime_elision_hints: true,
         config.rs
-          search: param_names_for_lifetime_elision_hints: self"#,
+          search: param_names_for_lifetime_elision_hints: self"#;
+        let select = |base: &str, line_to_select: &str| {
+            assert!(base.contains(&line_to_select));
+            base.replacen(
+                &line_to_select,
+                &format!("{line_to_select}  <==== selected"),
+                1,
+            )
+        };
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, _| {
+            assert_eq!(
+                display_entries(
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                select(
+                    &all_matches,
+                    "search: match config.param_names_for_lifetime_elision_hints {"
+                )
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_parent(&SelectParent, cx);
+            assert_eq!(
+                display_entries(
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                select(&all_matches, "fn_lifetime_fn.rs")
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_parent(&SelectParent, cx);
+            assert_eq!(
+                display_entries(
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                select(&all_matches, "inlay_hints/")
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_parent(&SelectParent, cx);
+            assert_eq!(
+                display_entries(
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                select(&all_matches, "src/")
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_parent(&SelectParent, cx);
+            assert_eq!(
+                display_entries(
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                select(&all_matches, "ide/")
             );
         });
     }
