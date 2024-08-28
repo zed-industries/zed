@@ -617,19 +617,25 @@
       "shift-insert": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",
       // Overrides for conflicting keybindings
-      "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "alt-t": ["terminal::SendKeystroke", "alt-t"], // readline: swap last two words
+      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
+      "ctrl-o": ["terminal::SendKeystroke", "ctrl-o"], // readline: accept-line and down; nano save
+      // "ctrl-p": ["terminal::SendKeystroke", "ctrl-p"], // readline: history-search-backward
+      "ctrl-q": ["terminal::SendKeystroke", "ctrl-q"], // xon; nano search backwards
+      "ctrl-s": ["terminal::SendKeystroke", "ctrl-s"], // xoff;
+      "ctrl-t": ["terminal::SendKeystroke", "ctrl-t"], // readline: swap last two characters
+      "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"], // readline: delete word
       "ctrl-shift-a": "editor::SelectAll",
       "ctrl-shift-f": "buffer_search::Deploy",
       "ctrl-shift-l": "terminal::Clear",
       "ctrl-shift-w": "pane::CloseActiveItem",
-      "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "up": ["terminal::SendKeystroke", "up"],
       "pageup": ["terminal::SendKeystroke", "pageup"],
       "down": ["terminal::SendKeystroke", "down"],
       "pagedown": ["terminal::SendKeystroke", "pagedown"],
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
-      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
       "shift-pageup": "terminal::ScrollPageUp",
       "shift-pagedown": "terminal::ScrollPageDown",
       "shift-up": "terminal::ScrollLineUp",
