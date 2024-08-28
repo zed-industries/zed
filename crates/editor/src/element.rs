@@ -4364,6 +4364,7 @@ impl fmt::Debug for LineFragment {
 }
 
 impl LineWithInvisibles {
+    #[allow(clippy::too_many_arguments)]
     fn from_chunks<'a>(
         chunks: impl Iterator<Item = HighlightedChunk<'a>>,
         text_style: &TextStyle,

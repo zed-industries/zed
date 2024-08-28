@@ -1634,20 +1634,6 @@ impl ContextEditor {
                     })
                 });
             }
-            return;
-        }
-
-        if let Some(edit_step) = self.workflow_steps.get_mut(&range) {
-            if let Some(assist) = edit_step.assist.take() {
-                cx.window_context().defer(move |cx| {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        for assist_id in assist.assist_ids {
-                            assistant.finish_assist(assist_id, true, cx);
-                        }
-                    })
-                });
-            }
-            return;
         }
     }
 

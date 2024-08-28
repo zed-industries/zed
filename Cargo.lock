@@ -418,7 +418,6 @@ dependencies = [
  "smallvec",
  "smol",
  "strum",
- "sum_tree",
  "telemetry_events",
  "terminal",
  "terminal_view",
