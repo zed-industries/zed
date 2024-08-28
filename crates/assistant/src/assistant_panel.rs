@@ -492,7 +492,7 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
     ) {
         let update_model_summary = match event {
-            pane::Event::Remove => {
+            pane::Event::Remove { .. } => {
                 cx.emit(PanelEvent::Close);
                 false
             }

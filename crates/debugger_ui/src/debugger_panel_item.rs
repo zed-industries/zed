@@ -131,7 +131,7 @@ impl DebugPanelItem {
             let mut editor = Editor::multi_line(cx);
             editor.set_placeholder_text("Debug adapter and script output", cx);
             editor.set_read_only(true);
-            editor.set_show_inline_completions(false);
+            editor.set_show_inline_completions(Some(false), cx);
             editor.set_searchable(false);
             editor.set_auto_replace_emoji_shortcode(false);
             editor.set_show_indent_guides(false, cx);

@@ -1,5 +1,5 @@
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{Render, Subscription, TextStyle, View, ViewContext};
+use gpui::{Render, TextStyle, View, ViewContext};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -7,7 +7,6 @@ use ui::prelude::*;
 pub struct Console {
     console: View<Editor>,
     query_bar: View<Editor>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl Console {
@@ -17,19 +16,13 @@ impl Console {
             editor.move_to_end(&editor::actions::MoveToEnd, cx);
             editor.set_read_only(true);
             editor.set_show_gutter(false, cx);
-            editor.set_show_inline_completions(false);
+            editor.set_show_inline_completions(Some(false), cx);
             editor
         });
 
         let query_bar = cx.new_view(|cx| Editor::single_line(cx));
 
-        let _subscriptions = vec![];
-
-        Self {
-            console,
-            query_bar,
-            _subscriptions,
-        }
+        Self { console, query_bar }
     }
 
     pub fn add_message(&mut self, message: &str, cx: &mut ViewContext<Self>) {
@@ -102,7 +95,6 @@ impl Render for Console {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .id("Debugger Console")
             .child(self.render_console(cx))
             .child(
                 div()

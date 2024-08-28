@@ -18,7 +18,7 @@ use gpui::{
 };
 use serde_json::json;
 use settings::Settings;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use task::DebugRequestType;
@@ -185,7 +185,7 @@ impl DebugPanel {
                     }
                 });
             }
-            pane::Event::Remove => cx.emit(PanelEvent::Close),
+            pane::Event::Remove { .. } => cx.emit(PanelEvent::Close),
             pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
             pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
             pane::Event::AddItem { item } => {
@@ -330,7 +330,7 @@ impl DebugPanel {
         cx: AsyncWindowContext,
     ) -> Result<()> {
         let mut tasks = Vec::new();
-        let mut paths: Vec<String> = Vec::new();
+        let mut paths: HashSet<String> = HashSet::new();
         let thread_state = client.thread_state_by_id(thread_id);
 
         for stack_frame in thread_state.stack_frames.into_iter() {
@@ -342,7 +342,7 @@ impl DebugPanel {
                 continue;
             }
 
-            paths.push(path.clone());
+            paths.insert(path.clone());
             tasks.push(Self::remove_editor_highlight(
                 workspace.clone(),
                 path,

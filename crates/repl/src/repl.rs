@@ -6,7 +6,6 @@ mod repl_editor;
 mod repl_sessions_ui;
 mod repl_store;
 mod session;
-mod stdio;
 
 use std::{sync::Arc, time::Duration};
 

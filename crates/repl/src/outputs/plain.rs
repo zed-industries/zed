@@ -1,4 +1,20 @@
-use crate::outputs::{ExecutionView, SupportsClipboard};
+//! # Plain Text Output
+//!
+//! This module provides functionality for rendering plain text output in a terminal-like format.
+//! It uses the Alacritty terminal emulator backend to process and display text, supporting
+//! ANSI escape sequences for formatting, colors, and other terminal features.
+//!
+//! The main component of this module is the `TerminalOutput` struct, which handles the parsing
+//! and rendering of text input, simulating a basic terminal environment within REPL output.
+//!
+//! This module is used for displaying:
+//!
+//! - Standard output (stdout)
+//! - Standard error (stderr)
+//! - Plain text content
+//! - Error tracebacks
+//!
+
 use alacritty_terminal::{grid::Dimensions as _, term::Config, vte::ansi::Processor};
 use gpui::{canvas, size, AnyElement, ClipboardItem, FontStyle, TextStyle, WhiteSpace};
 use settings::Settings as _;
@@ -6,24 +22,34 @@ use std::mem;
 use terminal::ZedListener;
 use terminal_view::terminal_element::TerminalElement;
 use theme::ThemeSettings;
-use ui::{prelude::*, IntoElement, ViewContext};
+use ui::{prelude::*, IntoElement};
 
-/// Implements the most basic of terminal output for use by Jupyter outputs
-/// whether:
+use crate::outputs::SupportsClipboard;
+
+/// The `TerminalOutput` struct handles the parsing and rendering of text input,
+/// simulating a basic terminal environment within REPL output.
 ///
-/// * stdout
-/// * stderr
-/// * text/plain
-/// * traceback from an error output
+/// `TerminalOutput` is designed to handle various types of text-based output, including:
+///
+/// * stdout (standard output)
+/// * stderr (standard error)
+/// * text/plain content
+/// * error tracebacks
+///
+/// It uses the Alacritty terminal emulator backend to process and render text,
+/// supporting ANSI escape sequences for text formatting and colors.
 ///
 pub struct TerminalOutput {
+    /// ANSI escape sequence processor for parsing input text.
     parser: Processor,
+    /// Alacritty terminal instance that manages the terminal state and content.
     handler: alacritty_terminal::Term<ZedListener>,
 }
 
 const DEFAULT_NUM_LINES: usize = 32;
 const DEFAULT_NUM_COLUMNS: usize = 128;
 
+/// Returns the default text style for the terminal output.
 pub fn text_style(cx: &mut WindowContext) -> TextStyle {
     let settings = ThemeSettings::get_global(cx).clone();
 
@@ -55,6 +81,7 @@ pub fn text_style(cx: &mut WindowContext) -> TextStyle {
     text_style
 }
 
+/// Returns the default terminal size for the terminal output.
 pub fn terminal_size(cx: &mut WindowContext) -> terminal::TerminalSize {
     let text_style = text_style(cx);
     let text_system = cx.text_system();
@@ -84,6 +111,11 @@ pub fn terminal_size(cx: &mut WindowContext) -> terminal::TerminalSize {
 }
 
 impl TerminalOutput {
+    /// Creates a new `TerminalOutput` instance.
+    ///
+    /// This method initializes a new terminal emulator with default configuration
+    /// and sets up the necessary components for handling terminal events and rendering.
+    ///
     pub fn new(cx: &mut WindowContext) -> Self {
         let (events_tx, events_rx) = futures::channel::mpsc::unbounded();
         let term = alacritty_terminal::Term::new(
@@ -99,12 +131,50 @@ impl TerminalOutput {
         }
     }
 
+    /// Creates a new `TerminalOutput` instance with initial content.
+    ///
+    /// Initializes a new terminal output and populates it with the provided text.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - A string slice containing the initial text for the terminal output.
+    /// * `cx` - A mutable reference to the `WindowContext` for initialization.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of `TerminalOutput` containing the provided text.
     pub fn from(text: &str, cx: &mut WindowContext) -> Self {
         let mut output = Self::new(cx);
         output.append_text(text);
         output
     }
 
+    /// Appends text to the terminal output.
+    ///
+    /// Processes each byte of the input text, handling newline characters specially
+    /// to ensure proper cursor movement. Uses the ANSI parser to process the input
+    /// and update the terminal state.
+    ///
+    /// As an example, if the user runs the following Python code in this REPL:
+    ///
+    /// ```python
+    /// import time
+    /// print("Hello,", end="")
+    /// time.sleep(1)
+    /// print(" world!")
+    /// ```
+    ///
+    /// Then append_text will be called twice, with the following arguments:
+    ///
+    /// ```rust
+    /// terminal_output.append_text("Hello,")
+    /// terminal_output.append_text(" world!")
+    /// ```
+    /// Resulting in a single output of "Hello, world!".
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - A string slice containing the text to be appended.
     pub fn append_text(&mut self, text: &str) {
         for byte in text.as_bytes() {
             if *byte == b'\n' {
@@ -119,7 +189,12 @@ impl TerminalOutput {
         }
     }
 
-    pub fn render(&self, cx: &mut ViewContext<ExecutionView>) -> AnyElement {
+    /// Renders the terminal output as a GPUI element.
+    ///
+    /// Converts the current terminal state into a renderable GPUI element. It handles
+    /// the layout of the terminal grid, calculates the dimensions of the output, and
+    /// creates a canvas element that paints the terminal cells and background rectangles.
+    pub fn render(&self, cx: &mut WindowContext) -> AnyElement {
         let text_style = text_style(cx);
         let text_system = cx.text_system();
 
