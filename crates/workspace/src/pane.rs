@@ -1979,6 +1979,7 @@ impl Pane {
     }
 
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
+        let focus_handle = self.focus_handle.clone();
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
@@ -1987,7 +1988,10 @@ impl Pane {
                 move |_, cx| view.update(cx, Self::navigate_backward)
             })
             .disabled(!self.can_navigate_backward())
-            .tooltip(|cx| Tooltip::for_action("Go Back", &GoBack, cx));
+            .tooltip({
+                let focus_handle = focus_handle.clone();
+                move |cx| Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, cx)
+            });
 
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
             .shape(IconButtonShape::Square)
@@ -1997,7 +2001,10 @@ impl Pane {
                 move |_, cx| view.update(cx, Self::navigate_forward)
             })
             .disabled(!self.can_navigate_forward())
-            .tooltip(|cx| Tooltip::for_action("Go Forward", &GoForward, cx));
+            .tooltip({
+                let focus_handle = focus_handle.clone();
+                move |cx| Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, cx)
+            });
 
         TabBar::new("tab_bar")
             .track_scroll(self.tab_bar_scroll_handle.clone())
