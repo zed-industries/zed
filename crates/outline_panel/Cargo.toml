@@ -35,5 +35,9 @@ util.workspace = true
 worktree.workspace = true
 workspace.workspace = true
 
+[dev-dependencies]
+search = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+
 [package.metadata.cargo-machete]
 ignored = ["log"]

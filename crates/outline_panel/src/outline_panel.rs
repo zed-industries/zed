@@ -3765,3 +3765,386 @@ fn empty_icon() -> AnyElement {
 fn horizontal_separator(cx: &mut WindowContext) -> Div {
     div().mx_2().border_primary(cx).border_t_1()
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui::{TestAppContext, VisualTestContext, WindowHandle};
+    use pretty_assertions::assert_eq;
+    use project::FakeFs;
+    use search::project_search::{self, perform_project_search};
+    use serde_json::json;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_project_search_results_display(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        populate_with_test_project(&fs, "/rust-analyzer").await;
+        let project = Project::test(fs.clone(), ["/rust-analyzer".as_ref()], cx).await;
+        let workspace = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update(cx, |outline_panel, cx| outline_panel.set_active(true, cx));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch::default(), cx)
+            })
+            .unwrap();
+        let search_view = workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<ProjectSearchView>())
+                    .expect("Project search view expected to appear after new search event trigger")
+            })
+            .unwrap();
+
+        perform_project_search(&search_view, "param_names_for_lifetime_elision_hints", cx);
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .results_editor()
+                .update(cx, |results_editor, cx| {
+                    assert_eq!(
+                        results_editor
+                            .display_text(cx)
+                            .match_indices("param_names_for_lifetime_elision_hints")
+                            .count(),
+                        9
+                    );
+                });
+        });
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, _| {
+            assert_eq!(
+                display_entries(&outline_panel.cached_entries, outline_panel.selected_entry()),
+                r#"/
+  crates/
+    ide/
+      src/
+        inlay_hints/
+          fn_lifetime_fn.rs
+            search: match config.param_names_for_lifetime_elision_hints {  <==== selected
+            search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
+            search: Some(it) if config.param_names_for_lifetime_elision_hints => {
+            search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
+        inlay_hints.rs
+          search: pub param_names_for_lifetime_elision_hints: bool,
+          search: param_names_for_lifetime_elision_hints: self
+        static_index.rs
+          search: param_names_for_lifetime_elision_hints: false,
+    rust-analyzer/
+      src/
+        cli/
+          analysis_stats.rs
+            search: param_names_for_lifetime_elision_hints: true,
+        config.rs
+          search: param_names_for_lifetime_elision_hints: self"#,
+            );
+        });
+    }
+
+    async fn add_outline_panel(
+        project: &Model<Project>,
+        cx: &mut TestAppContext,
+    ) -> WindowHandle<Workspace> {
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+
+        let outline_panel = window
+            .update(cx, |_, cx| {
+                cx.spawn(|workspace_handle, cx| OutlinePanel::load(workspace_handle, cx))
+            })
+            .unwrap()
+            .await
+            .expect("Failed to load outline panel");
+
+        window
+            .update(cx, |workspace, cx| {
+                workspace.add_panel(outline_panel, cx);
+            })
+            .unwrap();
+        window
+    }
+
+    fn outline_panel(
+        workspace: &WindowHandle<Workspace>,
+        cx: &mut TestAppContext,
+    ) -> View<OutlinePanel> {
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .panel::<OutlinePanel>(cx)
+                    .expect("no outline panel")
+            })
+            .unwrap()
+    }
+
+    fn display_entries(
+        cached_entries: &[CachedEntry],
+        selected_entry: Option<&PanelEntry>,
+    ) -> String {
+        let mut display_string = String::new();
+        for entry in cached_entries {
+            if !display_string.is_empty() {
+                display_string += "\n";
+            }
+            for _ in 0..entry.depth {
+                display_string += "  ";
+            }
+            display_string += &format!(
+                "{}",
+                match &entry.entry {
+                    PanelEntry::Fs(entry) => match entry {
+                        FsEntry::ExternalFile(_, _) =>
+                            panic!("Did not cover external files with tests"),
+                        FsEntry::Directory(_, dir_entry) => format!(
+                            "{}/",
+                            dir_entry
+                                .path
+                                .file_name()
+                                .map(|name| name.to_string_lossy().to_string())
+                                .unwrap_or_default()
+                        ),
+                        FsEntry::File(_, file_entry, ..) => file_entry
+                            .path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or_default(),
+                    },
+                    PanelEntry::FoldedDirs(_, dirs) => dirs
+                        .iter()
+                        .filter_map(|dir| dir.path.file_name())
+                        .map(|name| name.to_string_lossy().to_string() + "/")
+                        .collect(),
+                    PanelEntry::Outline(outline_entry) => match outline_entry {
+                        OutlineEntry::Excerpt(_, _, _) => continue,
+                        OutlineEntry::Outline(_, _, outline) =>
+                            format!("outline: {}", outline.text),
+                    },
+                    PanelEntry::Search(SearchEntry { render_data, .. }) => {
+                        format!(
+                            "search: {}",
+                            &render_data.as_ref().unwrap().get().unwrap().context_text
+                        )
+                    }
+                }
+            );
+
+            if Some(&entry.entry) == selected_entry {
+                display_string += "  <==== selected";
+            }
+        }
+        display_string
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+
+            theme::init(theme::LoadThemes::JustBase, cx);
+
+            language::init(cx);
+            editor::init(cx);
+            workspace::init_settings(cx);
+            Project::init_settings(cx);
+            project_search::init(cx);
+            super::init((), cx);
+        });
+    }
+
+    // Based on https://github.com/rust-lang/rust-analyzer/
+    async fn populate_with_test_project(fs: &FakeFs, root: &str) {
+        fs.insert_tree(
+            root,
+            json!({
+                    "crates": {
+                        "ide": {
+                            "src": {
+                                "inlay_hints": {
+                                    "fn_lifetime_fn.rs": r##"
+        pub(super) fn hints(
+            acc: &mut Vec<InlayHint>,
+            config: &InlayHintsConfig,
+            func: ast::Fn,
+        ) -> Option<()> {
+            // ... snip
+
+            let mut used_names: FxHashMap<SmolStr, usize> =
+                match config.param_names_for_lifetime_elision_hints {
+                    true => generic_param_list
+                        .iter()
+                        .flat_map(|gpl| gpl.lifetime_params())
+                        .filter_map(|param| param.lifetime())
+                        .filter_map(|lt| Some((SmolStr::from(lt.text().as_str().get(1..)?), 0)))
+                        .collect(),
+                    false => Default::default(),
+                };
+            {
+                let mut potential_lt_refs = potential_lt_refs.iter().filter(|&&(.., is_elided)| is_elided);
+                if self_param.is_some() && potential_lt_refs.next().is_some() {
+                    allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
+                        // self can't be used as a lifetime, so no need to check for collisions
+                        "'self".into()
+                    } else {
+                        gen_idx_name()
+                    });
+                }
+                potential_lt_refs.for_each(|(name, ..)| {
+                    let name = match name {
+                        Some(it) if config.param_names_for_lifetime_elision_hints => {
+                            if let Some(c) = used_names.get_mut(it.text().as_str()) {
+                                *c += 1;
+                                SmolStr::from(format!("'{text}{c}", text = it.text().as_str()))
+                            } else {
+                                used_names.insert(it.text().as_str().into(), 0);
+                                SmolStr::from_iter(["\'", it.text().as_str()])
+                            }
+                        }
+                        _ => gen_idx_name(),
+                    };
+                    allocated_lifetimes.push(name);
+                });
+            }
+
+            // ... snip
+        }
+
+        // ... snip
+
+            #[test]
+            fn hints_lifetimes_named() {
+                check_with_config(
+                    InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
+                    r#"
+        fn nested_in<'named>(named: &        &X<      &()>) {}
+        //          ^'named1, 'named2, 'named3, $
+                                  //^'named1 ^'named2 ^'named3
+        "#,
+                );
+            }
+
+        // ... snip
+        "##,
+                                },
+                        "inlay_hints.rs": r#"
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct InlayHintsConfig {
+        // ... snip
+        pub param_names_for_lifetime_elision_hints: bool,
+        pub max_length: Option<usize>,
+        // ... snip
+    }
+
+    impl Config {
+        pub fn inlay_hints(&self) -> InlayHintsConfig {
+            InlayHintsConfig {
+                // ... snip
+                param_names_for_lifetime_elision_hints: self
+                    .inlayHints_lifetimeElisionHints_useParameterNames()
+                    .to_owned(),
+                max_length: self.inlayHints_maxLength().to_owned(),
+                // ... snip
+            }
+        }
+    }
+    "#,
+                        "static_index.rs": r#"
+// ... snip
+        fn add_file(&mut self, file_id: FileId) {
+            let current_crate = crates_for(self.db, file_id).pop().map(Into::into);
+            let folds = self.analysis.folding_ranges(file_id).unwrap();
+            let inlay_hints = self
+                .analysis
+                .inlay_hints(
+                    &InlayHintsConfig {
+                        // ... snip
+                        closure_style: hir::ClosureStyle::ImplFn,
+                        param_names_for_lifetime_elision_hints: false,
+                        binding_mode_hints: false,
+                        max_length: Some(25),
+                        closure_capture_hints: false,
+                        // ... snip
+                    },
+                    file_id,
+                    None,
+                )
+                .unwrap();
+            // ... snip
+    }
+// ... snip
+    "#
+                            }
+                        },
+                        "rust-analyzer": {
+                            "src": {
+                                "cli": {
+                                    "analysis_stats.rs": r#"
+        // ... snip
+                for &file_id in &file_ids {
+                    _ = analysis.inlay_hints(
+                        &InlayHintsConfig {
+                            // ... snip
+                            implicit_drop_hints: true,
+                            lifetime_elision_hints: ide::LifetimeElisionHints::Always,
+                            param_names_for_lifetime_elision_hints: true,
+                            hide_named_constructor_hints: false,
+                            hide_closure_initialization_hints: false,
+                            closure_style: hir::ClosureStyle::ImplFn,
+                            max_length: Some(25),
+                            closing_brace_hints_min_lines: Some(20),
+                            fields_to_resolve: InlayFieldsToResolve::empty(),
+                            range_exclusive_hints: true,
+                        },
+                        file_id.into(),
+                        None,
+                    );
+                }
+        // ... snip
+                                    "#,
+                                },
+                                "config.rs": r#"
+                config_data! {
+                    /// Configs that only make sense when they are set by a client. As such they can only be defined
+                    /// by setting them using client's settings (e.g `settings.json` on VS Code).
+                    client: struct ClientDefaultConfigData <- ClientConfigInput -> {
+                        // ... snip
+                        /// Maximum length for inlay hints. Set to null to have an unlimited length.
+                        inlayHints_maxLength: Option<usize>                        = Some(25),
+                        // ... snip
+                        /// Whether to prefer using parameter names as the name for elided lifetime hints if possible.
+                        inlayHints_lifetimeElisionHints_useParameterNames: bool    = false,
+                        // ... snip
+                    }
+                }
+
+                impl Config {
+                    // ... snip
+                    pub fn inlay_hints(&self) -> InlayHintsConfig {
+                        InlayHintsConfig {
+                            // ... snip
+                            param_names_for_lifetime_elision_hints: self
+                                .inlayHints_lifetimeElisionHints_useParameterNames()
+                                .to_owned(),
+                            max_length: self.inlayHints_maxLength().to_owned(),
+                            // ... snip
+                        }
+                    }
+                    // ... snip
+                }
+                "#
+                                }
+                        }
+                    }
+            }),
+        )
+        .await;
+    }
+}
