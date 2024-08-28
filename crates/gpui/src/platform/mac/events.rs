@@ -7,6 +7,12 @@ use crate::{
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},
     base::{id, YES},
+    foundation::NSString,
+};
+use core_foundation::{
+    array::{CFArray, CFArrayRef},
+    base::TCFType,
+    string::CFString,
 };
 use core_graphics::{
     event::{CGEvent, CGEventFlags, CGKeyCode},
@@ -275,37 +281,37 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch)
         });
 
-    #[allow(non_upper_case_globals)]
-    let key = match first_char {
-        Some(SPACE_KEY) => "space".to_string(),
-        Some(BACKSPACE_KEY) => "backspace".to_string(),
-        Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter".to_string(),
-        Some(ESCAPE_KEY) => "escape".to_string(),
-        Some(TAB_KEY) => "tab".to_string(),
-        Some(SHIFT_TAB_KEY) => "tab".to_string(),
-        Some(NSUpArrowFunctionKey) => "up".to_string(),
-        Some(NSDownArrowFunctionKey) => "down".to_string(),
-        Some(NSLeftArrowFunctionKey) => "left".to_string(),
-        Some(NSRightArrowFunctionKey) => "right".to_string(),
-        Some(NSPageUpFunctionKey) => "pageup".to_string(),
-        Some(NSPageDownFunctionKey) => "pagedown".to_string(),
-        Some(NSHomeFunctionKey) => "home".to_string(),
-        Some(NSEndFunctionKey) => "end".to_string(),
-        Some(NSDeleteFunctionKey) => "delete".to_string(),
+    // #[allow(non_upper_case_globals)]
+    // let key = match first_char {
+    //     Some(SPACE_KEY) => "space".to_string(),
+    //     Some(BACKSPACE_KEY) => "backspace".to_string(),
+    //     Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter".to_string(),
+    //     Some(ESCAPE_KEY) => "escape".to_string(),
+    //     Some(TAB_KEY) => "tab".to_string(),
+    //     Some(SHIFT_TAB_KEY) => "tab".to_string(),
+    //     Some(NSUpArrowFunctionKey) => "up".to_string(),
+    //     Some(NSDownArrowFunctionKey) => "down".to_string(),
+    //     Some(NSLeftArrowFunctionKey) => "left".to_string(),
+    //     Some(NSRightArrowFunctionKey) => "right".to_string(),
+    //     Some(NSPageUpFunctionKey) => "pageup".to_string(),
+    //     Some(NSPageDownFunctionKey) => "pagedown".to_string(),
+    //     Some(NSHomeFunctionKey) => "home".to_string(),
+    //     Some(NSEndFunctionKey) => "end".to_string(),
+    //     Some(NSDeleteFunctionKey) => "delete".to_string(),
         // Observed Insert==NSHelpFunctionKey not NSInsertFunctionKey.
         Some(NSHelpFunctionKey) => "insert".to_string(),
-        Some(NSF1FunctionKey) => "f1".to_string(),
-        Some(NSF2FunctionKey) => "f2".to_string(),
-        Some(NSF3FunctionKey) => "f3".to_string(),
-        Some(NSF4FunctionKey) => "f4".to_string(),
-        Some(NSF5FunctionKey) => "f5".to_string(),
-        Some(NSF6FunctionKey) => "f6".to_string(),
-        Some(NSF7FunctionKey) => "f7".to_string(),
-        Some(NSF8FunctionKey) => "f8".to_string(),
-        Some(NSF9FunctionKey) => "f9".to_string(),
-        Some(NSF10FunctionKey) => "f10".to_string(),
-        Some(NSF11FunctionKey) => "f11".to_string(),
-        Some(NSF12FunctionKey) => "f12".to_string(),
+    //     Some(NSF1FunctionKey) => "f1".to_string(),
+    //     Some(NSF2FunctionKey) => "f2".to_string(),
+    //     Some(NSF3FunctionKey) => "f3".to_string(),
+    //     Some(NSF4FunctionKey) => "f4".to_string(),
+    //     Some(NSF5FunctionKey) => "f5".to_string(),
+    //     Some(NSF6FunctionKey) => "f6".to_string(),
+    //     Some(NSF7FunctionKey) => "f7".to_string(),
+    //     Some(NSF8FunctionKey) => "f8".to_string(),
+    //     Some(NSF9FunctionKey) => "f9".to_string(),
+    //     Some(NSF10FunctionKey) => "f10".to_string(),
+    //     Some(NSF11FunctionKey) => "f11".to_string(),
+    //     Some(NSF12FunctionKey) => "f12".to_string(),
         Some(NSF13FunctionKey) => "f13".to_string(),
         Some(NSF14FunctionKey) => "f14".to_string(),
         Some(NSF15FunctionKey) => "f15".to_string(),
@@ -313,34 +319,42 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         Some(NSF17FunctionKey) => "f17".to_string(),
         Some(NSF18FunctionKey) => "f18".to_string(),
         Some(NSF19FunctionKey) => "f19".to_string(),
-        _ => {
-            let mut chars_ignoring_modifiers_and_shift =
-                chars_for_modified_key(native_event.keyCode(), false, false);
+    //     _ => {
+    //         let mut chars_ignoring_modifiers_and_shift =
+    //             chars_for_modified_key(native_event.keyCode(), false, false);
 
-            // Honor ⌘ when Dvorak-QWERTY is used.
-            let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), true, false);
-            if command && chars_ignoring_modifiers_and_shift != chars_with_cmd {
-                chars_ignoring_modifiers =
-                    chars_for_modified_key(native_event.keyCode(), true, shift);
-                chars_ignoring_modifiers_and_shift = chars_with_cmd;
-            }
+    //         // Honor ⌘ when Dvorak-QWERTY is used.
+    //         let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), true, false);
+    //         if command && chars_ignoring_modifiers_and_shift != chars_with_cmd {
+    //             chars_ignoring_modifiers =
+    //                 chars_for_modified_key(native_event.keyCode(), true, shift);
+    //             chars_ignoring_modifiers_and_shift = chars_with_cmd;
+    //         }
 
-            if shift {
-                if chars_ignoring_modifiers_and_shift
-                    == chars_ignoring_modifiers.to_ascii_lowercase()
-                {
-                    chars_ignoring_modifiers_and_shift
-                } else if chars_ignoring_modifiers_and_shift != chars_ignoring_modifiers {
-                    shift = false;
-                    chars_ignoring_modifiers
-                } else {
-                    chars_ignoring_modifiers
-                }
-            } else {
-                chars_ignoring_modifiers
-            }
-        }
-    };
+    //         if shift {
+    //             if chars_ignoring_modifiers_and_shift
+    //                 == chars_ignoring_modifiers.to_ascii_lowercase()
+    //             {
+    //                 chars_ignoring_modifiers_and_shift
+    //             } else if chars_ignoring_modifiers_and_shift != chars_ignoring_modifiers {
+    //                 shift = false;
+    //                 chars_ignoring_modifiers
+    //             } else {
+    //                 chars_ignoring_modifiers
+    //             }
+    //         } else {
+    //             chars_ignoring_modifiers
+    //         }
+    //     }
+    // };
+    let key = keyboard_event_to_key(native_event).unwrap_or("default".to_string());
+    let chars = native_event.characters().to_str().to_string();
+    println!(
+        "first char: {}, virtual key: {}, chars: {:?}",
+        key,
+        native_event.keyCode(),
+        chars
+    );
 
     Keystroke {
         modifiers: Modifiers {
@@ -376,3 +390,270 @@ fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
         event.characters().to_str().to_string()
     }
 }
+
+/// TODO:
+fn keyboard_event_to_key(native_event: id) -> Option<String> {
+    // numeric keys 0-9 should always return VKCode 0-9
+    if !is_keyboard_event_numeric_or_keypad(native_event) {
+        // Handle Dvorak-QWERTY cmd case
+        let chars = unsafe { native_event.characters().to_str().to_string() };
+        if chars.len() > 0 {
+            if let Some(key) = key_from_char(chars) {
+                return Some(key);
+            }
+        }
+        let chars = unsafe {
+            native_event
+                .charactersIgnoringModifiers()
+                .to_str()
+                .to_string()
+        };
+        if chars.len() > 0 {
+            if let Some(key) = key_from_char(chars) {
+                return Some(key);
+            }
+        }
+    }
+    key_from_keycode(unsafe { native_event.keyCode() })
+}
+
+fn is_keyboard_event_numeric_or_keypad(native_event: id) -> bool {
+    match unsafe { native_event.keyCode() } {
+        DIGITAL_0 | DIGITAL_1 | DIGITAL_2 | DIGITAL_3 | DIGITAL_4 | DIGITAL_5 | DIGITAL_6
+        | DIGITAL_7 | DIGITAL_8 | DIGITAL_9 | KEYPAD_0 | KEYPAD_1 | KEYPAD_2 | KEYPAD_3
+        | KEYPAD_4 | KEYPAD_5 | KEYPAD_6 | KEYPAD_7 | KEYPAD_8 | KEYPAD_9 | KEYPAD_DECIMAL
+        | KEYPAD_MULTIPLY | KEYPAD_PLUS | KEYPAD_CLEAR | KEYPAD_DIVIDE | KEYPAD_ENTER
+        | KEYPAD_MINUS | KEYPAD_EQUALS => true,
+        _ => false,
+    }
+}
+
+fn key_from_char(chars: String) -> Option<String> {
+    match chars.as_str() {
+        "a" | "A" => Some("a".to_string()),
+        "b" | "B" => Some("b".to_string()),
+        "c" | "C" => Some("c".to_string()),
+        "d" | "D" => Some("c".to_string()),
+        "e" | "E" => Some("e".to_string()),
+        "f" | "F" => Some("f".to_string()),
+        "g" | "G" => Some("g".to_string()),
+        "h" | "H" => Some("h".to_string()),
+        "i" | "I" => Some("i".to_string()),
+        "j" | "J" => Some("j".to_string()),
+        "k" | "K" => Some("k".to_string()),
+        "l" | "L" => Some("l".to_string()),
+        "m" | "M" => Some("m".to_string()),
+        "n" | "N" => Some("n".to_string()),
+        "o" | "O" => Some("o".to_string()),
+        "p" | "P" => Some("p".to_string()),
+        "q" | "Q" => Some("q".to_string()),
+        "r" | "R" => Some("r".to_string()),
+        "s" | "S" => Some("s".to_string()),
+        "t" | "T" => Some("t".to_string()),
+        "u" | "U" => Some("u".to_string()),
+        "v" | "V" => Some("v".to_string()),
+        "w" | "W" => Some("w".to_string()),
+        "x" | "X" => Some("x".to_string()),
+        "y" | "Y" => Some("y".to_string()),
+        "z" | "Z" => Some("z".to_string()),
+        "0" => Some("0".to_string()),
+        "1" => Some("1".to_string()),
+        "2" => Some("2".to_string()),
+        "3" => Some("3".to_string()),
+        "4" => Some("4".to_string()),
+        "5" => Some("5".to_string()),
+        "6" => Some("6".to_string()),
+        "7" => Some("7".to_string()),
+        "8" => Some("8".to_string()),
+        "9" => Some("9".to_string()),
+        ";" => Some(";".to_string()),
+        ":" => Some(":".to_string()),
+        "=" => Some("=".to_string()),
+        "+" => Some("+".to_string()),
+        "," => Some(",".to_string()),
+        "<" => Some("<".to_string()),
+        "-" => Some("-".to_string()),
+        "_" => Some("_".to_string()),
+        "." => Some(".".to_string()),
+        ">" => Some(">".to_string()),
+        "/" => Some("/".to_string()),
+        "?" => Some("?".to_string()),
+        "`" => Some("`".to_string()),
+        "~" => Some("~".to_string()),
+        "[" => Some("[".to_string()),
+        "{" => Some("{".to_string()),
+        "\\" => Some("\\".to_string()),
+        "|" => Some("|".to_string()),
+        "[" => Some("[".to_string()),
+        "}" => Some("}".to_string()),
+        "'" => Some("'".to_string()),
+        "\"" => Some("\"".to_string()),
+        _ => None,
+    }
+}
+
+fn key_from_keycode(keycode: u16) -> Option<String> {
+    if keycode >= 0x80 {
+        return None;
+    }
+    Some(KEYBOARD_CODES[keycode as usize].to_string())
+}
+
+static KEYBOARD_CODES: [&str; 128] = [
+    "a",
+    "s",
+    "d",
+    "f",
+    "h",
+    "g",
+    "z",
+    "x",
+    "c",
+    "v",
+    "`",
+    "b",
+    "q",
+    "w",
+    "e",
+    "r",
+    "y",
+    "t",
+    "1",
+    "2",
+    "3",
+    "4",
+    "6",
+    "5",
+    "=",
+    "9",
+    "7",
+    "-",
+    "8",
+    "0",
+    "]",
+    "o",
+    "u",
+    "[",
+    "i",
+    "p",
+    "enter",
+    "l",
+    "j",
+    "'",
+    "k",
+    ";",
+    "\\",
+    ",",
+    "/",
+    "n",
+    "m",
+    ".",
+    "tab",
+    "space",
+    "`",
+    "backspace",
+    "unknown",
+    "escape",
+    "command",
+    "command",
+    "shift",
+    "capslock",
+    "alt",
+    "control",
+    "shift",
+    "alt",
+    "control",
+    "function",
+    "f17",
+    ".",
+    "unknown",
+    "*",
+    "unknown",
+    "+",
+    "unknown",
+    "clear",
+    "unknown",
+    "unknown",
+    "unknown",
+    "/",
+    "enter",
+    "unknown",
+    "-",
+    "f18",
+    "f19",
+    "+",
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "f20",
+    "8",
+    "9",
+    "unknown",
+    "unknown",
+    "unknown",
+    "f5",
+    "f6",
+    "f7",
+    "f3",
+    "f8",
+    "f9",
+    "unknown",
+    "f11",
+    "unknown",
+    "f13",
+    "f16",
+    "f14",
+    "unknown",
+    "f10",
+    "unknown",
+    "f12",
+    "unknown",
+    "f15",
+    "unknown",
+    "unknown",
+    "pageup",
+    "delete",
+    "f4",
+    "end",
+    "f2",
+    "pagedown",
+    "f1",
+    "left",
+    "right",
+    "down",
+    "up",
+    "unknown",
+];
+const DIGITAL_1: u16 = 0x12;
+const DIGITAL_2: u16 = 0x13;
+const DIGITAL_3: u16 = 0x14;
+const DIGITAL_4: u16 = 0x15;
+const DIGITAL_5: u16 = 0x17;
+const DIGITAL_6: u16 = 0x16;
+const DIGITAL_7: u16 = 0x1a;
+const DIGITAL_8: u16 = 0x1c;
+const DIGITAL_9: u16 = 0x19;
+const DIGITAL_0: u16 = 0x1d;
+const KEYPAD_DECIMAL: u16 = 0x41;
+const KEYPAD_MULTIPLY: u16 = 0x43;
+const KEYPAD_PLUS: u16 = 0x45;
+const KEYPAD_CLEAR: u16 = 0x46;
+const KEYPAD_DIVIDE: u16 = 0x4b;
+const KEYPAD_ENTER: u16 = 0x4c;
+const KEYPAD_MINUS: u16 = 0x4e;
+const KEYPAD_EQUALS: u16 = 0x51;
+const KEYPAD_0: u16 = 0x52;
+const KEYPAD_1: u16 = 0x53;
+const KEYPAD_2: u16 = 0x54;
+const KEYPAD_3: u16 = 0x55;
+const KEYPAD_4: u16 = 0x56;
+const KEYPAD_5: u16 = 0x57;
+const KEYPAD_6: u16 = 0x58;
+const KEYPAD_7: u16 = 0x59;
+const KEYPAD_8: u16 = 0x5b;
+const KEYPAD_9: u16 = 0x5c;
