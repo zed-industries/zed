@@ -1348,13 +1348,13 @@ struct ScrollPosition {
     cursor: Anchor,
 }
 
-struct WorkflowStepV2State {
+struct WorkflowStepViewState {
     header_crease_id: CreaseId,
     footer_crease_id: Option<CreaseId>,
     assist: Option<WorkflowAssist>,
 }
 
-impl WorkflowStepV2State {
+impl WorkflowStepViewState {
     fn status(&self, cx: &AppContext) -> WorkflowStepStatus {
         if let Some(assist) = &self.assist {
             let assistant = InlineAssistant::global(cx);
@@ -1746,7 +1746,7 @@ pub struct ContextEditor {
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
     pending_slash_command_blocks: HashMap<Range<language::Anchor>, CustomBlockId>,
     _subscriptions: Vec<Subscription>,
-    workflow_steps_v2: HashMap<Range<language::Anchor>, WorkflowStepV2State>,
+    workflow_steps: HashMap<Range<language::Anchor>, WorkflowStepViewState>,
     active_workflow_step: Option<ActiveWorkflowStep>,
     assistant_panel: WeakView<AssistantPanel>,
     error_message: Option<SharedString>,
@@ -1795,10 +1795,7 @@ impl ContextEditor {
         ];
 
         let sections = context.read(cx).slash_command_output_sections().to_vec();
-        let edit_step_ranges = context
-            .read(cx)
-            .workflow_step_v2_ranges()
-            .collect::<Vec<_>>();
+        let edit_step_ranges = context.read(cx).workflow_step_ranges().collect::<Vec<_>>();
         let mut this = Self {
             context,
             editor,
@@ -1813,7 +1810,7 @@ impl ContextEditor {
             pending_slash_command_creases: HashMap::default(),
             pending_slash_command_blocks: HashMap::default(),
             _subscriptions,
-            workflow_steps_v2: HashMap::default(),
+            workflow_steps: HashMap::default(),
             active_workflow_step: None,
             assistant_panel,
             error_message: None,
@@ -1823,7 +1820,7 @@ impl ContextEditor {
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
         this.insert_slash_command_output_sections(sections, false, cx);
-        this.workflow_steps_v2_updated(&Vec::new(), &edit_step_ranges, cx);
+        this.workflow_steps_updated(&Vec::new(), &edit_step_ranges, cx);
         this
     }
 
@@ -1868,7 +1865,7 @@ impl ContextEditor {
     fn apply_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
         self.show_workflow_step(range.clone(), cx);
 
-        if let Some(workflow_step) = self.workflow_steps_v2.get(&range) {
+        if let Some(workflow_step) = self.workflow_steps.get(&range) {
             if let Some(assist) = workflow_step.assist.as_ref() {
                 let assist_ids = assist.assist_ids.clone();
                 cx.spawn(|this, mut cx| async move {
@@ -1927,7 +1924,7 @@ impl ContextEditor {
     }
 
     fn stop_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
-        if let Some(workflow_step) = self.workflow_steps_v2.get(&range) {
+        if let Some(workflow_step) = self.workflow_steps.get(&range) {
             if let Some(assist) = workflow_step.assist.as_ref() {
                 let assist_ids = assist.assist_ids.clone();
                 cx.window_context().defer(|cx| {
@@ -1942,7 +1939,7 @@ impl ContextEditor {
     }
 
     fn undo_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
-        if let Some(workflow_step) = self.workflow_steps_v2.get_mut(&range) {
+        if let Some(workflow_step) = self.workflow_steps.get_mut(&range) {
             if let Some(assist) = workflow_step.assist.take() {
                 cx.window_context().defer(|cx| {
                     InlineAssistant::update_global(cx, |assistant, cx| {
@@ -1960,7 +1957,7 @@ impl ContextEditor {
         range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(workflow_step) = self.workflow_steps_v2.get(&range) {
+        if let Some(workflow_step) = self.workflow_steps.get(&range) {
             if let Some(assist) = workflow_step.assist.as_ref() {
                 let assist_ids = assist.assist_ids.clone();
                 cx.window_context().defer(move |cx| {
@@ -1975,7 +1972,7 @@ impl ContextEditor {
     }
 
     fn reject_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
-        if let Some(workflow_step) = self.workflow_steps_v2.get_mut(&range) {
+        if let Some(workflow_step) = self.workflow_steps.get_mut(&range) {
             if let Some(assist) = workflow_step.assist.take() {
                 cx.window_context().defer(move |cx| {
                     InlineAssistant::update_global(cx, |assistant, cx| {
@@ -1988,7 +1985,7 @@ impl ContextEditor {
             return;
         }
 
-        if let Some(edit_step) = self.workflow_steps_v2.get_mut(&range) {
+        if let Some(edit_step) = self.workflow_steps.get_mut(&range) {
             if let Some(assist) = edit_step.assist.take() {
                 cx.window_context().defer(move |cx| {
                     InlineAssistant::update_global(cx, |assistant, cx| {
@@ -2203,8 +2200,8 @@ impl ContextEditor {
                     }
                 });
             }
-            ContextEvent::WorkflowStepsV2Updated { removed, updated } => {
-                self.workflow_steps_v2_updated(removed, updated, cx);
+            ContextEvent::WorkflowStepsUpdated { removed, updated } => {
+                self.workflow_steps_updated(removed, updated, cx);
             }
             ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
                 self.editor.update(cx, |editor, cx| {
@@ -2376,7 +2373,7 @@ impl ContextEditor {
         }
     }
 
-    fn workflow_steps_v2_updated(
+    fn workflow_steps_updated(
         &mut self,
         removed: &Vec<Range<text::Anchor>>,
         updated: &Vec<Range<text::Anchor>>,
@@ -2385,7 +2382,7 @@ impl ContextEditor {
         let this = cx.view().downgrade();
         let mut removed_crease_ids = Vec::new();
         for range in removed {
-            if let Some(state) = self.workflow_steps_v2.remove(range) {
+            if let Some(state) = self.workflow_steps.remove(range) {
                 self.reject_workflow_step(range.clone(), cx);
                 removed_crease_ids.push(state.header_crease_id);
                 removed_crease_ids.extend(state.footer_crease_id);
@@ -2398,8 +2395,7 @@ impl ContextEditor {
             let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
 
             for range in updated {
-                let Some(step) = self.context.read(cx).workflow_step_v2_for_range(&range, cx)
-                else {
+                let Some(step) = self.context.read(cx).workflow_step_for_range(&range, cx) else {
                     continue;
                 };
 
@@ -2423,12 +2419,7 @@ impl ContextEditor {
                         move |id, _crease_range, cx| {
                             let max_width = cx.max_width;
                             this.update(cx.deref_mut(), |this, cx| {
-                                this.render_workflow_v2_step_header(
-                                    range.clone(),
-                                    max_width,
-                                    id,
-                                    cx,
-                                )
+                                this.render_workflow_step_header(range.clone(), max_width, id, cx)
                             })
                             .ok()
                             .flatten()
@@ -2445,7 +2436,7 @@ impl ContextEditor {
                         move |_, _crease_range, cx| {
                             let max_width = cx.max_width;
                             this.update(cx.deref_mut(), |this, cx| {
-                                this.render_workflow_v2_step_footer(range.clone(), max_width, cx)
+                                this.render_workflow_step_footer(range.clone(), max_width, cx)
                             })
                             .ok()
                             .flatten()
@@ -2499,14 +2490,14 @@ impl ContextEditor {
                     cx,
                 );
 
-                let state = WorkflowStepV2State {
+                let state = WorkflowStepViewState {
                     header_crease_id: new_crease_ids[0],
                     footer_crease_id: new_crease_ids.get(1).copied(),
                     assist: None,
                 };
 
                 let was_unfolded;
-                match self.workflow_steps_v2.entry(range.clone()) {
+                match self.workflow_steps.entry(range.clone()) {
                     hash_map::Entry::Vacant(entry) => {
                         entry.insert(state);
                         was_unfolded = false;
@@ -2635,9 +2626,9 @@ impl ContextEditor {
         cx.emit(event.clone());
     }
 
-    fn active_workflow_step(&self) -> Option<(Range<text::Anchor>, &WorkflowStepV2State)> {
+    fn active_workflow_step(&self) -> Option<(Range<text::Anchor>, &WorkflowStepViewState)> {
         let step = self.active_workflow_step.as_ref()?;
-        Some((step.range.clone(), self.workflow_steps_v2.get(&step.range)?))
+        Some((step.range.clone(), self.workflow_steps.get(&step.range)?))
     }
 
     fn update_active_workflow_step(&mut self, cx: &mut ViewContext<Self>) {
@@ -2645,7 +2636,7 @@ impl ContextEditor {
         let context = self.context.read(cx);
 
         let new_step = context
-            .workflow_steps_v2_containing(newest_cursor, cx)
+            .workflow_step_containing(newest_cursor, cx)
             .map(|step| ActiveWorkflowStep {
                 resolved: step.resolution.is_some(),
                 range: step.range.clone(),
@@ -2679,7 +2670,7 @@ impl ContextEditor {
         step_range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
     ) -> Option<(View<Editor>, bool)> {
-        if let Some(step) = self.workflow_steps_v2.get_mut(&step_range) {
+        if let Some(step) = self.workflow_steps.get_mut(&step_range) {
             let assist = step.assist.as_ref()?;
             let editor = assist.editor.upgrade()?;
 
@@ -2694,7 +2685,7 @@ impl ContextEditor {
             }
         }
 
-        if let Some(step) = self.workflow_steps_v2.get_mut(&step_range) {
+        if let Some(step) = self.workflow_steps.get_mut(&step_range) {
             let assist = step.assist.as_ref()?;
             let editor = assist.editor.upgrade()?;
 
@@ -2738,11 +2729,11 @@ impl ContextEditor {
         step_range: Range<language::Anchor>,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Editor>> {
-        let step_state = self.workflow_steps_v2.get_mut(&step_range)?;
+        let step_state = self.workflow_steps.get_mut(&step_range)?;
         let step = self
             .context
             .read(cx)
-            .workflow_step_v2_for_range(&step_range, cx)?;
+            .workflow_step_for_range(&step_range, cx)?;
 
         let mut editor_to_return = None;
         let mut scroll_to_assist_id = None;
@@ -3479,14 +3470,14 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
-    fn render_workflow_v2_step_header(
+    fn render_workflow_step_header(
         &self,
         range: Range<text::Anchor>,
         max_width: Pixels,
         id: impl Into<u64>,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
-        let edit_state = self.workflow_steps_v2.get(&range)?;
+        let edit_state = self.workflow_steps.get(&range)?;
         let status = edit_state.status(cx);
         let this = cx.view().downgrade();
 
@@ -3515,7 +3506,7 @@ impl ContextEditor {
         let parent_message = parent_message.first()?;
 
         let step_index = self
-            .workflow_steps_v2
+            .workflow_steps
             .keys()
             .filter(|workflow_step_range| {
                 workflow_step_range
@@ -3567,13 +3558,13 @@ impl ContextEditor {
         )
     }
 
-    fn render_workflow_v2_step_footer(
+    fn render_workflow_step_footer(
         &self,
         step_range: Range<text::Anchor>,
         max_width: Pixels,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
-        let step = self.workflow_steps_v2.get(&step_range)?;
+        let step = self.workflow_steps.get(&step_range)?;
         let current_status = step.status(cx);
         let theme = cx.theme().status();
         let border_color = if current_status.is_confirmed() {

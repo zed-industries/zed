@@ -1,7 +1,8 @@
 use super::{MessageCacheMetadata, WorkflowStepEdit};
 use crate::{
-    assistant_panel, prompt_library, slash_command::file_command, workflow::tool, CacheStatus,
-    Context, ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
+    assistant_panel, prompt_library, slash_command::file_command, CacheStatus, Context,
+    ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
+    WorkflowStepEditKind,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -624,7 +625,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
-            kind: tool::WorkflowStepEditKind::InsertSiblingAfter {
+            kind: WorkflowStepEditKind::InsertSiblingAfter {
                 symbol: "fn one".into(),
                 description: "add a `two` function".into(),
             },
@@ -681,7 +682,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
-            kind: tool::WorkflowStepEditKind::InsertSiblingAfter {
+            kind: WorkflowStepEditKind::InsertSiblingAfter {
                 symbol: "fn zero".into(),
                 description: "add a `two` function".into(),
             },
@@ -710,7 +711,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             context.buffer.read_with(cx, |buffer, _| {
                 assert_eq!(buffer.text(), expected_text);
                 let ranges = context
-                    .workflow_steps_v2
+                    .workflow_steps
                     .iter()
                     .map(|entry| entry.range.to_offset(buffer))
                     .collect::<Vec<_>>();
@@ -720,7 +721,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
                     expected_marked_text,
                     "unexpected suggestion ranges. actual: {ranges:?}, expected: {expected_ranges:?}"
                 );
-                let suggestions = context.workflow_steps_v2.iter().map(|step| step.edits.clone()).collect::<Vec<_>>();
+                let suggestions = context.workflow_steps.iter().map(|step| step.edits.clone()).collect::<Vec<_>>();
                 assert_eq!(suggestions, expected_suggestions);
             });
         });

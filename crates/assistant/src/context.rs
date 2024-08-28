@@ -2,10 +2,9 @@
 mod context_tests;
 
 use crate::{
-    prompts::PromptBuilder,
-    slash_command::SlashCommandLine,
-    tool::{WorkflowStepEdit, WorkflowStepEditKind},
-    MessageId, MessageStatus, WorkflowStepResolution, WorkflowSuggestionGroup,
+    prompts::PromptBuilder, slash_command::SlashCommandLine, MessageId, MessageStatus,
+    WorkflowStep, WorkflowStepEdit, WorkflowStepEditKind, WorkflowStepResolution,
+    WorkflowSuggestionGroup,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -291,7 +290,7 @@ pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
     StreamedCompletion,
-    WorkflowStepsV2Updated {
+    WorkflowStepsUpdated {
         removed: Vec<Range<language::Anchor>>,
         updated: Vec<Range<language::Anchor>>,
     },
@@ -450,25 +449,6 @@ struct PendingCompletion {
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct SlashCommandId(clock::Lamport);
 
-#[derive(Debug)]
-pub struct WorkflowStepV2 {
-    pub range: Range<language::Anchor>,
-    pub leading_tags_end: text::Anchor,
-    pub trailing_tag_start: Option<text::Anchor>,
-    pub edits: Vec<WorkflowStepEdit>,
-    resolution_task: Option<Task<()>>,
-    pub resolution: Option<Arc<WorkflowStepResolution>>,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, strum::EnumString)]
-#[strum(serialize_all = "snake_case")]
-enum EditSuggestionOperation {
-    Replace,
-    Delete,
-    InsertAfter,
-    InsertBefore,
-}
-
 #[derive(Clone, Debug)]
 pub struct XmlTag {
     pub kind: XmlTagKind,
@@ -515,7 +495,7 @@ pub struct Context {
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    workflow_steps_v2: Vec<WorkflowStepV2>,
+    workflow_steps: Vec<WorkflowStep>,
     xml_tags: Vec<XmlTag>,
     project: Option<Model<Project>>,
     prompt_builder: Arc<PromptBuilder>,
@@ -531,7 +511,7 @@ impl ContextAnnotation for PendingSlashCommand {
     }
 }
 
-impl ContextAnnotation for WorkflowStepV2 {
+impl ContextAnnotation for WorkflowStep {
     fn range(&self) -> &Range<language::Anchor> {
         &self.range
     }
@@ -616,7 +596,7 @@ impl Context {
             telemetry,
             project,
             language_registry,
-            workflow_steps_v2: Vec::new(),
+            workflow_steps: Vec::new(),
             xml_tags: Vec::new(),
             prompt_builder,
         };
@@ -959,14 +939,14 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub fn workflow_steps_v2_containing(
+    pub(crate) fn workflow_step_containing(
         &self,
         offset: usize,
         cx: &AppContext,
-    ) -> Option<&WorkflowStepV2> {
+    ) -> Option<&WorkflowStep> {
         let buffer = self.buffer.read(cx);
         let index = self
-            .workflow_steps_v2
+            .workflow_steps
             .binary_search_by(|step| {
                 let step_range = step.range.to_offset(&buffer);
                 if offset < step_range.start {
@@ -978,29 +958,29 @@ impl Context {
                 }
             })
             .ok()?;
-        Some(&self.workflow_steps_v2[index])
+        Some(&self.workflow_steps[index])
     }
 
-    pub fn workflow_step_v2_ranges(&self) -> impl Iterator<Item = Range<language::Anchor>> + '_ {
-        self.workflow_steps_v2.iter().map(|step| step.range.clone())
+    pub fn workflow_step_ranges(&self) -> impl Iterator<Item = Range<language::Anchor>> + '_ {
+        self.workflow_steps.iter().map(|step| step.range.clone())
     }
 
-    pub fn workflow_step_v2_for_range(
+    pub(crate) fn workflow_step_for_range(
         &self,
         range: &Range<language::Anchor>,
         cx: &AppContext,
-    ) -> Option<&WorkflowStepV2> {
+    ) -> Option<&WorkflowStep> {
         let buffer = self.buffer.read(cx);
-        let index = self.workflow_step_v2_index_for_range(range, buffer).ok()?;
-        Some(&self.workflow_steps_v2[index])
+        let index = self.workflow_step_index_for_range(range, buffer).ok()?;
+        Some(&self.workflow_steps[index])
     }
 
-    pub fn workflow_step_v2_index_for_range(
+    fn workflow_step_index_for_range(
         &self,
         tagged_range: &Range<text::Anchor>,
         buffer: &text::BufferSnapshot,
     ) -> Result<usize, usize> {
-        self.workflow_steps_v2
+        self.workflow_steps
             .binary_search_by(|probe| probe.range.cmp(&tagged_range, buffer))
     }
 
@@ -1311,7 +1291,7 @@ impl Context {
         }
 
         if !updated_steps.is_empty() || !removed_steps.is_empty() {
-            cx.emit(ContextEvent::WorkflowStepsV2Updated {
+            cx.emit(ContextEvent::WorkflowStepsUpdated {
                 removed: removed_steps,
                 updated: updated_steps,
             });
@@ -1394,7 +1374,7 @@ impl Context {
 
         // Find which steps intersect the changed range.
         let intersecting_steps_range = self.indices_intersecting_buffer_range(
-            &self.workflow_steps_v2,
+            &self.workflow_steps,
             buffer_start..buffer_end,
             cx,
         );
@@ -1402,7 +1382,7 @@ impl Context {
         // Reparse all tags after the last unchanged step before the change.
         let mut tags_start_ix = 0;
         if let Some(preceding_unchanged_step) =
-            self.workflow_steps_v2[..intersecting_steps_range.start].last()
+            self.workflow_steps[..intersecting_steps_range.start].last()
         {
             tags_start_ix = match self.xml_tags.binary_search_by(|tag| {
                 tag.range
@@ -1424,7 +1404,7 @@ impl Context {
                     let edits = step.edits.clone();
                     let project = project.clone();
                     |this, cx| async move {
-                        Self::resolve_workflow_v2_step(this, range, project, edits, cx)
+                        Self::resolve_workflow_step_internal(this, range, project, edits, cx)
                             .await
                             .log_err();
                     }
@@ -1434,7 +1414,7 @@ impl Context {
 
         updated.extend(new_steps.iter().map(|step| step.range.clone()));
         let removed_steps = self
-            .workflow_steps_v2
+            .workflow_steps
             .splice(intersecting_steps_range, new_steps);
         removed.extend(
             removed_steps
@@ -1505,7 +1485,7 @@ impl Context {
         tags_start_ix: usize,
         buffer_end: text::Anchor,
         buffer: &BufferSnapshot,
-    ) -> Vec<WorkflowStepV2> {
+    ) -> Vec<WorkflowStep> {
         let mut new_steps = Vec::new();
         let mut pending_step = None;
         let mut edit_step_depth = 0;
@@ -1518,7 +1498,7 @@ impl Context {
             if tag.kind == XmlTagKind::Step && tag.is_open_tag {
                 edit_step_depth += 1;
                 let edit_start = tag.range.start;
-                let mut step = WorkflowStepV2 {
+                let mut step = WorkflowStep {
                     range: edit_start..edit_start,
                     leading_tags_end: tag.range.end,
                     trailing_tag_start: None,
@@ -1649,7 +1629,7 @@ impl Context {
     ) {
     }
 
-    pub async fn resolve_workflow_v2_step(
+    async fn resolve_workflow_step_internal(
         this: WeakModel<Self>,
         tagged_range: Range<language::Anchor>,
         project: Model<Project>,
@@ -1731,10 +1711,10 @@ impl Context {
         this.update(&mut cx, |this, cx| {
             let buffer = this.buffer.read(cx).text_snapshot();
             let ix = this
-                .workflow_step_v2_index_for_range(&tagged_range, &buffer)
+                .workflow_step_index_for_range(&tagged_range, &buffer)
                 .ok();
             if let Some(ix) = ix {
-                let step = &mut this.workflow_steps_v2[ix];
+                let step = &mut this.workflow_steps[ix];
                 let mut title = String::new();
                 for chunk in buffer.text_for_range(
                     step.leading_tags_end..step.trailing_tag_start.unwrap_or(step.range.end),
@@ -1750,7 +1730,7 @@ impl Context {
                     title,
                     suggestion_groups: suggestion_groups_by_buffer,
                 }));
-                cx.emit(ContextEvent::WorkflowStepsV2Updated {
+                cx.emit(ContextEvent::WorkflowStepsUpdated {
                     removed: vec![],
                     updated: vec![tagged_range],
                 })
@@ -2127,7 +2107,7 @@ impl Context {
             );
         }
         if !updated.is_empty() || !removed.is_empty() {
-            cx.emit(ContextEvent::WorkflowStepsV2Updated { removed, updated })
+            cx.emit(ContextEvent::WorkflowStepsUpdated { removed, updated })
         }
     }
 
