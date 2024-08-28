@@ -471,17 +471,6 @@ impl WorktreeStore {
                     continue;
                 }
 
-                if open_entries.contains(&entry.id) {
-                    let (mut tx, rx) = oneshot::channel();
-                    tx.send(ProjectPath {
-                        worktree_id: snapshot.id(),
-                        path: entry.path.clone(),
-                    })
-                    .await?;
-                    output_tx.send(rx).await?;
-                    continue;
-                }
-
                 if query.filters_path() {
                     let matched_path = if include_root {
                         let mut full_path = PathBuf::from(snapshot.root_name());
@@ -495,18 +484,28 @@ impl WorktreeStore {
                     }
                 }
 
-                let (tx, rx) = oneshot::channel();
-                output_tx.send(rx).await?;
-                filter_tx
-                    .send(MatchingEntry {
-                        respond: tx,
-                        worktree_path: snapshot.abs_path().clone(),
-                        path: ProjectPath {
-                            worktree_id: snapshot.id(),
-                            path: entry.path.clone(),
-                        },
+                let (mut tx, rx) = oneshot::channel();
+
+                if open_entries.contains(&entry.id) {
+                    tx.send(ProjectPath {
+                        worktree_id: snapshot.id(),
+                        path: entry.path.clone(),
                     })
                     .await?;
+                } else {
+                    filter_tx
+                        .send(MatchingEntry {
+                            respond: tx,
+                            worktree_path: snapshot.abs_path().clone(),
+                            path: ProjectPath {
+                                worktree_id: snapshot.id(),
+                                path: entry.path.clone(),
+                            },
+                        })
+                        .await?;
+                }
+
+                output_tx.send(rx).await?;
             }
         }
         Ok(())
