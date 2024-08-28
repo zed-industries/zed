@@ -441,7 +441,7 @@ impl Render for ConfigurationView {
                 .on_action(cx.listener(Self::save_api_key))
                 .child(Label::new(INSTRUCTIONS[0]))
                 .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("anthropic_console", GOOGLE_CONSOLE_URL)
+                    Button::new("google_console", GOOGLE_CONSOLE_URL)
                         .style(ButtonStyle::Subtle)
                         .icon(IconName::ExternalLink)
                         .icon_size(IconSize::XSmall)
