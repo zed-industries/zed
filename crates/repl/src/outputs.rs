@@ -22,8 +22,10 @@ use markdown_preview::{
 };
 
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
+// TODO: Make the ordering user-configurable via Settings
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
+        MimeType::Html(_) => 7,
         MimeType::DataTable(_) => 6,
         MimeType::Png(_) => 4,
         MimeType::Jpeg(_) => 3,
@@ -361,6 +363,7 @@ impl Output {
 }
 
 pub enum OutputContent {
+    Html(String),
     Plain(TerminalOutput),
     Stream(TerminalOutput),
     Image(ImageView),
@@ -376,6 +379,7 @@ impl OutputContent {
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
+            Self::Html(_document) => Some(div().child("child").into_any_element()),
             Self::Plain(stdio) => Some(stdio.render(cx)),
             Self::Markdown(markdown) => Some(markdown.clone().into_any_element()),
             Self::Stream(stdio) => Some(stdio.render(cx)),
@@ -391,6 +395,7 @@ impl OutputContent {
 
     pub fn new(data: &MimeBundle, cx: &mut WindowContext) -> Self {
         match data.richest(rank_mime_type) {
+            Some(MimeType::Html(_document)) => OutputContent::Message("THIS IS HTML!!".to_string()),
             Some(MimeType::Plain(text)) => OutputContent::Plain(TerminalOutput::from(text, cx)),
             Some(MimeType::Markdown(text)) => {
                 let view = cx.new_view(|cx| MarkdownView::from(text.clone(), cx));
