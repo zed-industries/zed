@@ -330,9 +330,20 @@ pub struct MessageCacheMetadata {
 pub struct MessageMetadata {
     pub role: Role,
     pub status: MessageStatus,
-    timestamp: clock::Lamport,
+    pub(crate) timestamp: clock::Lamport,
     #[serde(skip)]
     pub cache: Option<MessageCacheMetadata>,
+}
+
+impl From<&Message> for MessageMetadata {
+    fn from(message: &Message) -> Self {
+        Self {
+            role: message.role,
+            status: message.status.clone(),
+            timestamp: message.id.0,
+            cache: message.cache.clone(),
+        }
+    }
 }
 
 impl MessageMetadata {

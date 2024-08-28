@@ -127,7 +127,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
                 let user = db
                     .get_or_create_user_by_github_account(
                         &github_user.login,
-                        Some(github_user.id),
+                        github_user.id,
                         github_user.email.as_deref(),
                         None,
                         None,

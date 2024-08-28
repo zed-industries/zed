@@ -13,8 +13,8 @@
 
 (call_expression
   function: (identifier) @_name (#eq? @_name "html")
-  arguments: (template_string (string_fragment) @content
-                              (#set! "language" "html"))
+  arguments: (template_string) @content
+                              (#set! "language" "html")
 )
 
 (call_expression
@@ -47,3 +47,14 @@
                               (#set! "language" "yaml"))
 )
 
+(call_expression
+  function: (identifier) @_name (#match? @_name "^g(raph)?ql$")
+  arguments: (template_string (string_fragment) @content
+                              (#set! "language" "graphql"))
+)
+
+(call_expression
+  function: (identifier) @_name (#match? @_name "^g(raph)?ql$")
+  arguments: (arguments (template_string (string_fragment) @content
+                              (#set! "language" "graphql")))
+)

@@ -222,7 +222,7 @@ impl ProjectSearch {
             let mut limit_reached = false;
             while let Some(result) = matches.next().await {
                 match result {
-                    project::SearchResult::Buffer { buffer, ranges } => {
+                    project::search::SearchResult::Buffer { buffer, ranges } => {
                         let mut match_ranges = this
                             .update(&mut cx, |this, cx| {
                                 this.excerpts.update(cx, |excerpts, cx| {
@@ -245,7 +245,7 @@ impl ProjectSearch {
                         }
                         this.update(&mut cx, |_, cx| cx.notify()).ok()?;
                     }
-                    project::SearchResult::LimitReached => {
+                    project::search::SearchResult::LimitReached => {
                         limit_reached = true;
                     }
                 }
@@ -503,6 +503,10 @@ impl Item for ProjectSearchView {
 }
 
 impl ProjectSearchView {
+    pub fn get_matches(&self, cx: &AppContext) -> Vec<Range<Anchor>> {
+        self.model.read(cx).match_ranges.clone()
+    }
+
     fn toggle_filters(&mut self, cx: &mut ViewContext<Self>) {
         self.filters_enabled = !self.filters_enabled;
         ActiveSettings::update_global(cx, |settings, cx| {
@@ -834,6 +838,10 @@ impl ProjectSearchView {
         if let Some(query) = self.build_search_query(cx) {
             self.model.update(cx, |model, cx| model.search(query, cx));
         }
+    }
+
+    pub fn search_query_text(&self, cx: &WindowContext) -> String {
+        self.query_editor.read(cx).text(cx)
     }
 
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {

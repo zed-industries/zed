@@ -3,10 +3,9 @@ use editor::Editor;
 use extension::ExtensionStore;
 use futures::StreamExt;
 use gpui::{
-    actions, anchored, deferred, percentage, Animation, AnimationExt as _, AppContext, CursorStyle,
-    DismissEvent, EventEmitter, InteractiveElement as _, Model, ParentElement as _, Render,
-    SharedString, StatefulInteractiveElement, Styled, Transformation, View, ViewContext,
-    VisualContext as _,
+    actions, percentage, Animation, AnimationExt as _, AppContext, CursorStyle, EventEmitter,
+    InteractiveElement as _, Model, ParentElement as _, Render, SharedString,
+    StatefulInteractiveElement, Styled, Transformation, View, ViewContext, VisualContext as _,
 };
 use language::{
     LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId, LanguageServerName,
@@ -14,7 +13,7 @@ use language::{
 use project::{LanguageServerProgress, Project};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
-use ui::{prelude::*, ContextMenu};
+use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 actions!(activity_indicator, [ShowErrorMessage]);
@@ -27,7 +26,7 @@ pub struct ActivityIndicator {
     statuses: Vec<LspStatus>,
     project: Model<Project>,
     auto_updater: Option<Model<AutoUpdater>>,
-    context_menu: Option<View<ContextMenu>>,
+    context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 struct LspStatus {
@@ -41,7 +40,6 @@ struct PendingWork<'a> {
     progress: &'a LanguageServerProgress,
 }
 
-#[derive(Default)]
 struct Content {
     icon: Option<gpui::AnyElement>,
     message: String,
@@ -79,7 +77,7 @@ impl ActivityIndicator {
                 statuses: Default::default(),
                 project: project.clone(),
                 auto_updater,
-                context_menu: None,
+                context_menu_handle: Default::default(),
             }
         });
 
@@ -174,7 +172,7 @@ impl ActivityIndicator {
             .flatten()
     }
 
-    fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Content {
+    fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Option<Content> {
         // Show any language server has pending activity.
         let mut pending_work = self.pending_language_server_work(cx);
         if let Some(PendingWork {
@@ -203,7 +201,7 @@ impl ActivityIndicator {
                 write!(&mut message, " + {} more", additional_work_count).unwrap();
             }
 
-            return Content {
+            return Some(Content {
                 icon: Some(
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::Small)
@@ -216,7 +214,7 @@ impl ActivityIndicator {
                 ),
                 message,
                 on_click: Some(Arc::new(Self::toggle_language_server_work_context_menu)),
-            };
+            });
         }
 
         // Show any language server installation info.
@@ -235,7 +233,7 @@ impl ActivityIndicator {
         }
 
         if !downloading.is_empty() {
-            return Content {
+            return Some(Content {
                 icon: Some(
                     Icon::new(IconName::Download)
                         .size(IconSize::Small)
@@ -243,11 +241,11 @@ impl ActivityIndicator {
                 ),
                 message: format!("Downloading {}...", downloading.join(", "),),
                 on_click: None,
-            };
+            });
         }
 
         if !checking_for_update.is_empty() {
-            return Content {
+            return Some(Content {
                 icon: Some(
                     Icon::new(IconName::Download)
                         .size(IconSize::Small)
@@ -258,11 +256,11 @@ impl ActivityIndicator {
                     checking_for_update.join(", "),
                 ),
                 on_click: None,
-            };
+            });
         }
 
         if !failed.is_empty() {
-            return Content {
+            return Some(Content {
                 icon: Some(
                     Icon::new(IconName::ExclamationTriangle)
                         .size(IconSize::Small)
@@ -275,12 +273,12 @@ impl ActivityIndicator {
                 on_click: Some(Arc::new(|this, cx| {
                     this.show_error_message(&Default::default(), cx)
                 })),
-            };
+            });
         }
 
         // Show any formatting failure
         if let Some(failure) = self.project.read(cx).last_formatting_failure() {
-            return Content {
+            return Some(Content {
                 icon: Some(
                     Icon::new(IconName::ExclamationTriangle)
                         .size(IconSize::Small)
@@ -290,13 +288,13 @@ impl ActivityIndicator {
                 on_click: Some(Arc::new(|_, cx| {
                     cx.dispatch_action(Box::new(workspace::OpenLog));
                 })),
-            };
+            });
         }
 
         // Show any application auto-update info.
         if let Some(updater) = &self.auto_updater {
             return match &updater.read(cx).status() {
-                AutoUpdateStatus::Checking => Content {
+                AutoUpdateStatus::Checking => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
                             .size(IconSize::Small)
@@ -304,8 +302,8 @@ impl ActivityIndicator {
                     ),
                     message: "Checking for Zed updates…".to_string(),
                     on_click: None,
-                },
-                AutoUpdateStatus::Downloading => Content {
+                }),
+                AutoUpdateStatus::Downloading => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
                             .size(IconSize::Small)
@@ -313,8 +311,8 @@ impl ActivityIndicator {
                     ),
                     message: "Downloading Zed update…".to_string(),
                     on_click: None,
-                },
-                AutoUpdateStatus::Installing => Content {
+                }),
+                AutoUpdateStatus::Installing => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
                             .size(IconSize::Small)
@@ -322,8 +320,8 @@ impl ActivityIndicator {
                     ),
                     message: "Installing Zed update…".to_string(),
                     on_click: None,
-                },
-                AutoUpdateStatus::Updated { binary_path } => Content {
+                }),
+                AutoUpdateStatus::Updated { binary_path } => Some(Content {
                     icon: None,
                     message: "Click to restart and update Zed".to_string(),
                     on_click: Some(Arc::new({
@@ -332,8 +330,8 @@ impl ActivityIndicator {
                         };
                         move |_, cx| workspace::reload(&reload, cx)
                     })),
-                },
-                AutoUpdateStatus::Errored => Content {
+                }),
+                AutoUpdateStatus::Errored => Some(Content {
                     icon: Some(
                         Icon::new(IconName::ExclamationTriangle)
                             .size(IconSize::Small)
@@ -343,8 +341,8 @@ impl ActivityIndicator {
                     on_click: Some(Arc::new(|this, cx| {
                         this.dismiss_error_message(&Default::default(), cx)
                     })),
-                },
-                AutoUpdateStatus::Idle => Default::default(),
+                }),
+                AutoUpdateStatus::Idle => None,
             };
         }
 
@@ -352,7 +350,7 @@ impl ActivityIndicator {
             ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
         {
             if let Some(extension_id) = extension_store.outstanding_operations().keys().next() {
-                return Content {
+                return Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
                             .size(IconSize::Small)
@@ -360,80 +358,15 @@ impl ActivityIndicator {
                     ),
                     message: format!("Updating {extension_id} extension…"),
                     on_click: None,
-                };
+                });
             }
         }
 
-        Default::default()
+        None
     }
 
     fn toggle_language_server_work_context_menu(&mut self, cx: &mut ViewContext<Self>) {
-        if self.context_menu.take().is_some() {
-            return;
-        }
-
-        self.build_lsp_work_context_menu(cx);
-        cx.notify();
-    }
-
-    fn build_lsp_work_context_menu(&mut self, cx: &mut ViewContext<Self>) {
-        let mut has_work = false;
-        let this = cx.view().downgrade();
-        let context_menu = ContextMenu::build(cx, |mut menu, cx| {
-            for work in self.pending_language_server_work(cx) {
-                has_work = true;
-
-                let this = this.clone();
-                let title = SharedString::from(
-                    work.progress
-                        .title
-                        .as_deref()
-                        .unwrap_or(work.progress_token)
-                        .to_string(),
-                );
-                if work.progress.is_cancellable {
-                    let language_server_id = work.language_server_id;
-                    let token = work.progress_token.to_string();
-                    menu = menu.custom_entry(
-                        move |_| {
-                            h_flex()
-                                .w_full()
-                                .justify_between()
-                                .child(Label::new(title.clone()))
-                                .child(Icon::new(IconName::XCircle))
-                                .into_any_element()
-                        },
-                        move |cx| {
-                            this.update(cx, |this, cx| {
-                                this.project.update(cx, |project, cx| {
-                                    project.cancel_language_server_work(
-                                        language_server_id,
-                                        Some(token.clone()),
-                                        cx,
-                                    );
-                                });
-                                this.context_menu.take();
-                            })
-                            .ok();
-                        },
-                    );
-                } else {
-                    menu = menu.label(title.clone());
-                }
-            }
-            menu
-        });
-
-        if has_work {
-            cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
-                this.context_menu.take();
-                cx.notify();
-            })
-            .detach();
-            cx.focus_view(&context_menu);
-            self.context_menu = Some(context_menu);
-            cx.notify();
-        }
+        self.context_menu_handle.toggle(cx);
     }
 }
 
@@ -441,33 +374,88 @@ impl EventEmitter<Event> for ActivityIndicator {}
 
 impl Render for ActivityIndicator {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let content = self.content_to_render(cx);
-
-        let mut result = h_flex()
+        let result = h_flex()
             .id("activity-indicator")
             .on_action(cx.listener(Self::show_error_message))
             .on_action(cx.listener(Self::dismiss_error_message));
-
-        if let Some(on_click) = content.on_click {
-            result = result
-                .cursor(CursorStyle::PointingHand)
-                .on_click(cx.listener(move |this, _, cx| {
-                    on_click(this, cx);
-                }))
-        }
-
-        result
-            .gap_2()
-            .children(content.icon)
-            .child(Label::new(SharedString::from(content.message)).size(LabelSize::Small))
-            .children(self.context_menu.as_ref().map(|menu| {
-                deferred(
-                    anchored()
-                        .anchor(gpui::AnchorCorner::BottomLeft)
-                        .child(menu.clone()),
+        let Some(content) = self.content_to_render(cx) else {
+            return result;
+        };
+        let this = cx.view().downgrade();
+        result.gap_2().child(
+            PopoverMenu::new("activity-indicator-popover")
+                .trigger(
+                    ButtonLike::new("activity-indicator-trigger").child(
+                        h_flex()
+                            .id("activity-indicator-status")
+                            .gap_2()
+                            .children(content.icon)
+                            .child(Label::new(content.message).size(LabelSize::Small))
+                            .when_some(content.on_click, |this, handler| {
+                                this.on_click(cx.listener(move |this, _, cx| {
+                                    handler(this, cx);
+                                }))
+                                .cursor(CursorStyle::PointingHand)
+                            }),
+                    ),
                 )
-                .with_priority(1)
-            }))
+                .anchor(gpui::AnchorCorner::BottomLeft)
+                .menu(move |cx| {
+                    let strong_this = this.upgrade()?;
+                    let mut has_work = false;
+                    let menu = ContextMenu::build(cx, |mut menu, cx| {
+                        for work in strong_this.read(cx).pending_language_server_work(cx) {
+                            has_work = true;
+                            let this = this.clone();
+                            let mut title = work
+                                .progress
+                                .title
+                                .as_deref()
+                                .unwrap_or(work.progress_token)
+                                .to_owned();
+
+                            if work.progress.is_cancellable {
+                                let language_server_id = work.language_server_id;
+                                let token = work.progress_token.to_string();
+                                let title = SharedString::from(title);
+                                menu = menu.custom_entry(
+                                    move |_| {
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(Label::new(title.clone()))
+                                            .child(Icon::new(IconName::XCircle))
+                                            .into_any_element()
+                                    },
+                                    move |cx| {
+                                        this.update(cx, |this, cx| {
+                                            this.project.update(cx, |project, cx| {
+                                                project.cancel_language_server_work(
+                                                    language_server_id,
+                                                    Some(token.clone()),
+                                                    cx,
+                                                );
+                                            });
+                                            this.context_menu_handle.hide(cx);
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                    },
+                                );
+                            } else {
+                                if let Some(progress_message) = work.progress.message.as_ref() {
+                                    title.push_str(": ");
+                                    title.push_str(progress_message);
+                                }
+
+                                menu = menu.label(title);
+                            }
+                        }
+                        menu
+                    });
+                    has_work.then_some(menu)
+                }),
+        )
     }
 }
 

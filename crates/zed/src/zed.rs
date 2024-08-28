@@ -224,7 +224,7 @@ pub fn initialize_workspace(
 
         let project = workspace.project().clone();
         if project.update(cx, |project, cx| {
-            project.is_local() || project.ssh_connection_string(cx).is_some()
+            project.is_local_or_ssh() || project.ssh_connection_string(cx).is_some()
         }) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
@@ -916,35 +916,26 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
                 start_offset += newline_offset + 1;
             }
             let log_suffix = &log[start_offset..];
+            let header = concat!(
+                "// Zed collects anonymous usage data to help us understand how people are using the app.\n",
+                "// Telemetry can be disabled via the `settings.json` file.\n",
+                "// Here is the data that has been reported for the current session:\n",
+            );
+            let content = format!("{}\n{}", header, log_suffix);
             let json = app_state.languages.language_for_name("JSON").await.log_err();
 
             workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project().clone();
-                let buffer = project
-                    .update(cx, |project, cx| project.create_local_buffer("", None, cx));
-                buffer.update(cx, |buffer, cx| {
-                    buffer.set_language(json, cx);
-                    buffer.edit(
-                        [(
-                            0..0,
-                            concat!(
-                                "// Zed collects anonymous usage data to help us understand how people are using the app.\n",
-                                "// Telemetry can be disabled via the `settings.json` file.\n",
-                                "// Here is the data that has been reported for the current session:\n",
-                                "\n"
-                            ),
-                        )],
-                        None,
-                        cx,
-                    );
-                    buffer.edit([(buffer.len()..buffer.len(), log_suffix)], None, cx);
-                });
-
+                let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json, cx));
                 let buffer = cx.new_model(|cx| {
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
                 workspace.add_item_to_active_pane(
-                    Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), true, cx))),
+                    Box::new(cx.new_view(|cx| {
+                        let mut editor = Editor::for_multibuffer(buffer, Some(project), true, cx);
+                        editor.set_breadcrumb_header("Telemetry Log".into());
+                        editor
+                    })),
                     None,
                     true,
                     cx,
@@ -979,7 +970,11 @@ fn open_bundled_file(
                     });
                     workspace.add_item_to_active_pane(
                         Box::new(cx.new_view(|cx| {
-                            Editor::for_multibuffer(buffer, Some(project.clone()), true, cx)
+                            let mut editor =
+                                Editor::for_multibuffer(buffer, Some(project.clone()), true, cx);
+                            editor.set_read_only(true);
+                            editor.set_breadcrumb_header(title.into());
+                            editor
                         })),
                         None,
                         true,
@@ -1019,9 +1014,8 @@ fn open_settings_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::anyhow;
     use assets::Assets;
-    use collections::{HashMap, HashSet};
+    use collections::HashSet;
     use editor::{display_map::DisplayRow, scroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
         actions, Action, AnyWindowHandle, AppContext, AssetSource, BorrowAppContext, Entity,
@@ -1035,7 +1029,6 @@ mod tests {
         path::{Path, PathBuf},
         time::Duration,
     };
-    use task::{HideStrategy, RevealStrategy, Shell, SpawnInTerminal};
     use theme::{ThemeRegistry, ThemeSettings};
     use workspace::{
         item::{Item, ItemHandle},
@@ -3359,88 +3352,6 @@ mod tests {
                 .unwrap();
         }
         cx.run_until_parked();
-    }
-
-    #[gpui::test]
-    async fn test_spawn_terminal_task_real_fs(cx: &mut TestAppContext) {
-        let mut app_state = cx.update(|cx| AppState::test(cx));
-        let state = Arc::get_mut(&mut app_state).unwrap();
-        state.fs = Arc::new(fs::RealFs::default());
-        let app_state = init_test_with_state(cx, app_state);
-
-        cx.executor().allow_parking();
-        let project_root = util::test::temp_tree(json!({
-            "sample.txt": ""
-        }));
-
-        let spawn_in_terminal = SpawnInTerminal {
-            command: "echo SAMPLE-OUTPUT".to_string(),
-            cwd: None,
-            env: HashMap::default(),
-            id: task::TaskId(String::from("sample-id")),
-            full_label: String::from("sample-full_label"),
-            label: String::from("sample-label"),
-            args: vec![],
-            command_label: String::from("sample-command_label"),
-            use_new_terminal: false,
-            allow_concurrent_runs: false,
-            reveal: RevealStrategy::Always,
-            hide: HideStrategy::Never,
-            shell: Shell::System,
-        };
-        let project = Project::test(app_state.fs.clone(), [project_root.path()], cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
-        cx.run_until_parked();
-        cx.update(|cx| {
-            window
-                .update(cx, |_workspace, cx| {
-                    cx.emit(workspace::Event::SpawnTask(Box::new(spawn_in_terminal)));
-                })
-                .unwrap();
-        });
-        cx.run_until_parked();
-
-        run_until(|| {
-            cx.update(|cx| {
-                window
-                    .read_with(cx, |workspace, cx| {
-                        let terminal = workspace
-                            .project()
-                            .read(cx)
-                            .local_terminal_handles()
-                            .first()
-                            .unwrap()
-                            .upgrade()
-                            .unwrap()
-                            .read(cx);
-                        terminal
-                            .last_n_non_empty_lines(99)
-                            .join("")
-                            .contains("SAMPLE-OUTPUT")
-                    })
-                    .unwrap()
-            })
-        })
-        .await;
-    }
-
-    async fn run_until(predicate: impl Fn() -> bool) {
-        let timer = async { smol::Timer::after(std::time::Duration::from_secs(3)).await };
-
-        use futures::FutureExt as _;
-        use smol::future::FutureExt as _;
-
-        async {
-            loop {
-                if predicate() {
-                    return Ok(());
-                }
-                smol::Timer::after(std::time::Duration::from_millis(10)).await;
-            }
-        }
-        .race(timer.map(|_| Err(anyhow!("condition timed out"))))
-        .await
-        .unwrap();
     }
 
     pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {

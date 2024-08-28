@@ -14,9 +14,9 @@ use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
-    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, DismissEvent, Div, DragMoveEvent,
-    EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext,
-    Model, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
+    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId,
+    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
+    MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
     WindowContext,
 };
@@ -40,7 +40,7 @@ use theme::ThemeSettings;
 
 use ui::{
     prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconButtonShape, IconName,
-    IconSize, Indicator, Label, Tab, TabBar, TabPosition, Tooltip,
+    IconSize, Indicator, Label, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_flex, ContextMenu};
 use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
@@ -147,11 +147,14 @@ actions!(
         CloseItemsToTheRight,
         GoBack,
         GoForward,
+        JoinIntoNext,
         ReopenClosedItem,
         SplitLeft,
         SplitUp,
         SplitRight,
         SplitDown,
+        SplitHorizontal,
+        SplitVertical,
         TogglePreviewTab,
     ]
 );
@@ -173,7 +176,9 @@ pub enum Event {
     ActivateItem {
         local: bool,
     },
-    Remove,
+    Remove {
+        focus_on_pane: Option<View<Pane>>,
+    },
     RemoveItem {
         idx: usize,
     },
@@ -181,6 +186,7 @@ pub enum Event {
         item_id: EntityId,
     },
     Split(SplitDirection),
+    JoinIntoNext,
     ChangeItemTitle,
     Focus,
     ZoomIn,
@@ -202,7 +208,7 @@ impl fmt::Debug for Event {
                 .debug_struct("ActivateItem")
                 .field("local", local)
                 .finish(),
-            Event::Remove => f.write_str("Remove"),
+            Event::Remove { .. } => f.write_str("Remove"),
             Event::RemoveItem { idx } => f.debug_struct("RemoveItem").field("idx", idx).finish(),
             Event::RemovedItem { item_id } => f
                 .debug_struct("RemovedItem")
@@ -212,6 +218,7 @@ impl fmt::Debug for Event {
                 .debug_struct("Split")
                 .field("direction", direction)
                 .finish(),
+            Event::JoinIntoNext => f.write_str("JoinIntoNext"),
             Event::ChangeItemTitle => f.write_str("ChangeItemTitle"),
             Event::Focus => f.write_str("Focus"),
             Event::ZoomIn => f.write_str("ZoomIn"),
@@ -245,8 +252,6 @@ pub struct Pane {
     last_focus_handle_by_item: HashMap<EntityId, WeakFocusHandle>,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
-    pub new_item_menu: Option<View<ContextMenu>>,
-    split_item_menu: Option<View<ContextMenu>>,
     pub(crate) workspace: WeakView<Workspace>,
     project: Model<Project>,
     drag_split_direction: Option<SplitDirection>,
@@ -264,6 +269,8 @@ pub struct Pane {
     display_nav_history_buttons: Option<bool>,
     double_click_dispatch_action: Box<dyn Action>,
     save_modals_spawned: HashSet<EntityId>,
+    pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 pub struct ActivationHistoryEntry {
@@ -364,8 +371,6 @@ impl Pane {
                 next_timestamp,
             }))),
             toolbar: cx.new_view(|_| Toolbar::new()),
-            new_item_menu: None,
-            split_item_menu: None,
             tab_bar_scroll_handle: ScrollHandle::new(),
             drag_split_direction: None,
             workspace,
@@ -375,7 +380,7 @@ impl Pane {
             can_split: true,
             should_display_tab_bar: Rc::new(|cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
-                if !pane.has_focus(cx) {
+                if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
                     return (None, None);
                 }
                 // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
@@ -384,10 +389,16 @@ impl Pane {
                     // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
                     .gap(Spacing::Small.rems(cx))
                     .child(
-                        IconButton::new("plus", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                let menu = ContextMenu::build(cx, |menu, _| {
+                        PopoverMenu::new("pane-tab-bar-popover-menu")
+                            .trigger(
+                                IconButton::new("plus", IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|cx| Tooltip::text("New...", cx)),
+                            )
+                            .anchor(AnchorCorner::TopRight)
+                            .with_handle(pane.new_item_context_menu_handle.clone())
+                            .menu(move |cx| {
+                                Some(ContextMenu::build(cx, |menu, _| {
                                     menu.action("New File", NewFile.boxed_clone())
                                         .action(
                                             "Open File",
@@ -407,37 +418,27 @@ impl Pane {
                                         )
                                         .separator()
                                         .action("New Terminal", NewTerminal.boxed_clone())
-                                });
-                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
-                                    pane.focus(cx);
-                                    pane.new_item_menu = None;
-                                })
-                                .detach();
-                                pane.new_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("New...", cx)),
+                                }))
+                            }),
                     )
-                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
-                        el.child(Self::render_menu_overlay(new_item_menu))
-                    })
                     .child(
-                        IconButton::new("split", IconName::Split)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                let menu = ContextMenu::build(cx, |menu, _| {
+                        PopoverMenu::new("pane-tab-bar-split")
+                            .trigger(
+                                IconButton::new("split", IconName::Split)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|cx| Tooltip::text("Split Pane", cx)),
+                            )
+                            .anchor(AnchorCorner::TopRight)
+                            .with_handle(pane.split_item_context_menu_handle.clone())
+                            .menu(move |cx| {
+                                ContextMenu::build(cx, |menu, _| {
                                     menu.action("Split Right", SplitRight.boxed_clone())
                                         .action("Split Left", SplitLeft.boxed_clone())
                                         .action("Split Up", SplitUp.boxed_clone())
                                         .action("Split Down", SplitDown.boxed_clone())
-                                });
-                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, cx| {
-                                    pane.focus(cx);
-                                    pane.split_item_menu = None;
                                 })
-                                .detach();
-                                pane.split_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("Split Pane", cx)),
+                                .into()
+                            }),
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
@@ -456,9 +457,6 @@ impl Pane {
                                 )
                             })
                     })
-                    .when_some(pane.split_item_menu.as_ref(), |el, split_item_menu| {
-                        el.child(Self::render_menu_overlay(split_item_menu))
-                    })
                     .into_any_element()
                     .into();
                 (None, right_children)
@@ -469,6 +467,8 @@ impl Pane {
             _subscriptions: subscriptions,
             double_click_dispatch_action,
             save_modals_spawned: HashSet::default(),
+            split_item_context_menu_handle: Default::default(),
+            new_item_context_menu_handle: Default::default(),
         }
     }
 
@@ -552,11 +552,9 @@ impl Pane {
         }
     }
 
-    fn context_menu_focused(&self, cx: &mut ViewContext<Self>) -> bool {
-        self.new_item_menu
-            .as_ref()
-            .or(self.split_item_menu.as_ref())
-            .map_or(false, |menu| menu.focus_handle(cx).is_focused(cx))
+    pub fn context_menu_focused(&self, cx: &mut ViewContext<Self>) -> bool {
+        self.new_item_context_menu_handle.is_focused(cx)
+            || self.split_item_context_menu_handle.is_focused(cx)
     }
 
     fn focus_out(&mut self, _event: FocusOutEvent, cx: &mut ViewContext<Self>) {
@@ -673,6 +671,10 @@ impl Pane {
                 })
             })
         }
+    }
+
+    fn join_into_next(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::JoinIntoNext);
     }
 
     fn history_updated(&mut self, cx: &mut ViewContext<Self>) {
@@ -1326,6 +1328,33 @@ impl Pane {
         close_pane_if_empty: bool,
         cx: &mut ViewContext<Self>,
     ) {
+        self._remove_item(item_index, activate_pane, close_pane_if_empty, None, cx)
+    }
+
+    pub fn remove_item_and_focus_on_pane(
+        &mut self,
+        item_index: usize,
+        activate_pane: bool,
+        focus_on_pane_if_closed: View<Pane>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self._remove_item(
+            item_index,
+            activate_pane,
+            true,
+            Some(focus_on_pane_if_closed),
+            cx,
+        )
+    }
+
+    fn _remove_item(
+        &mut self,
+        item_index: usize,
+        activate_pane: bool,
+        close_pane_if_empty: bool,
+        focus_on_pane_if_closed: Option<View<Pane>>,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.activation_history
             .retain(|entry| entry.entity_id != self.items[item_index].item_id());
 
@@ -1361,7 +1390,9 @@ impl Pane {
             item.deactivated(cx);
             if close_pane_if_empty {
                 self.update_toolbar(cx);
-                cx.emit(Event::Remove);
+                cx.emit(Event::Remove {
+                    focus_on_pane: focus_on_pane_if_closed,
+                });
             }
         }
 
@@ -2157,7 +2188,7 @@ impl Pane {
         let is_remote = self
             .workspace
             .update(cx, |workspace, cx| {
-                if workspace.project().read(cx).is_remote() {
+                if workspace.project().read(cx).is_via_collab() {
                     workspace.show_error(
                         &anyhow::anyhow!("Cannot drop files on a remote project"),
                         cx,
@@ -2254,12 +2285,19 @@ impl Render for Pane {
             }))
             .on_action(cx.listener(|pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx)))
             .on_action(cx.listener(|pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx)))
+            .on_action(cx.listener(|pane, _: &SplitHorizontal, cx| {
+                pane.split(SplitDirection::horizontal(cx), cx)
+            }))
+            .on_action(cx.listener(|pane, _: &SplitVertical, cx| {
+                pane.split(SplitDirection::vertical(cx), cx)
+            }))
             .on_action(
                 cx.listener(|pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx)),
             )
             .on_action(cx.listener(|pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx)))
             .on_action(cx.listener(|pane, _: &GoBack, cx| pane.navigate_backward(cx)))
             .on_action(cx.listener(|pane, _: &GoForward, cx| pane.navigate_forward(cx)))
+            .on_action(cx.listener(|pane, _: &JoinIntoNext, cx| pane.join_into_next(cx)))
             .on_action(cx.listener(Pane::toggle_zoom))
             .on_action(cx.listener(|pane: &mut Pane, action: &ActivateItem, cx| {
                 pane.activate_item(action.0, true, true, cx);

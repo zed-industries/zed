@@ -25,6 +25,7 @@ use terminal::{
     TerminalSize,
 };
 use terminal_element::{is_blank, TerminalElement};
+use terminal_panel::TerminalPanel;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{paths::PathWithPosition, ResultExt};
 use workspace::{
@@ -40,6 +41,7 @@ use anyhow::Context;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use smol::Timer;
+use zed_actions::InlineAssist;
 
 use std::{
     cmp,
@@ -210,6 +212,13 @@ impl TerminalView {
         position: gpui::Point<Pixels>,
         cx: &mut ViewContext<Self>,
     ) {
+        let assistant_enabled = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).panel::<TerminalPanel>(cx))
+            .map_or(false, |terminal_panel| {
+                terminal_panel.read(cx).assistant_enabled()
+            });
         let context_menu = ContextMenu::build(cx, |menu, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal))
@@ -218,6 +227,10 @@ impl TerminalView {
                 .action("Paste", Box::new(Paste))
                 .action("Select All", Box::new(SelectAll))
                 .action("Clear", Box::new(Clear))
+                .when(assistant_enabled, |menu| {
+                    menu.separator()
+                        .action("Inline Assist", Box::new(InlineAssist::default()))
+                })
                 .separator()
                 .action("Close", Box::new(CloseActiveItem { save_intent: None }))
         });
@@ -787,23 +800,20 @@ fn possible_open_targets(
     let row = path_position.row;
     let column = path_position.column;
     let maybe_path = path_position.path;
-    let potential_abs_paths = if maybe_path.is_absolute() {
-        HashSet::from_iter([maybe_path])
+
+    let abs_path = if maybe_path.is_absolute() {
+        Some(maybe_path)
     } else if maybe_path.starts_with("~") {
-        if let Some(abs_path) = maybe_path
+        maybe_path
             .strip_prefix("~")
             .ok()
             .and_then(|maybe_path| Some(dirs::home_dir()?.join(maybe_path)))
-        {
-            HashSet::from_iter([abs_path])
-        } else {
-            HashSet::default()
-        }
     } else {
-        // First check cwd and then workspace
         let mut potential_cwd_and_workspace_paths = HashSet::default();
         if let Some(cwd) = cwd {
-            potential_cwd_and_workspace_paths.insert(Path::join(cwd, &maybe_path));
+            let abs_path = Path::join(cwd, &maybe_path);
+            let canonicalized_path = abs_path.canonicalize().unwrap_or(abs_path);
+            potential_cwd_and_workspace_paths.insert(canonicalized_path);
         }
         if let Some(workspace) = workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
@@ -815,10 +825,25 @@ fn possible_open_targets(
                 }
             });
         }
-        potential_cwd_and_workspace_paths
+
+        return possible_open_paths_metadata(
+            fs,
+            row,
+            column,
+            potential_cwd_and_workspace_paths,
+            cx,
+        );
     };
 
-    possible_open_paths_metadata(fs, row, column, potential_abs_paths, cx)
+    let canonicalized_paths = match abs_path {
+        Some(abs_path) => match abs_path.canonicalize() {
+            Ok(path) => HashSet::from_iter([path]),
+            Err(_) => HashSet::default(),
+        },
+        None => HashSet::default(),
+    };
+
+    possible_open_paths_metadata(fs, row, column, canonicalized_paths, cx)
 }
 
 fn regex_to_literal(regex: &str) -> String {

@@ -222,10 +222,10 @@ impl PickerDelegate for TasksModalDelegate {
                             let resolved_task =
                                 picker.delegate.project.update(cx, |project, cx| {
                                     let ssh_connection_string = project.ssh_connection_string(cx);
-                                    if project.is_remote() && ssh_connection_string.is_none() {
+                                    if project.is_via_collab() && ssh_connection_string.is_none() {
                                         Task::ready((Vec::new(), Vec::new()))
                                     } else {
-                                        let remote_templates = if project.is_local() {
+                                        let remote_templates = if project.is_local_or_ssh() {
                                             None
                                         } else {
                                             project
