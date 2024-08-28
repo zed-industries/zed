@@ -1333,7 +1333,10 @@ struct ScrollPosition {
 }
 
 struct WorkflowStepViewState {
+    header_block_id: CustomBlockId,
     header_crease_id: CreaseId,
+    edit_crease_ids: Vec<CreaseId>,
+    footer_block_id: CustomBlockId,
     footer_crease_id: Option<CreaseId>,
     assist: Option<WorkflowAssist>,
 }
@@ -2396,22 +2399,11 @@ impl ContextEditor {
                     [Crease::new(
                         header_range.clone(),
                         header_placeholder.clone(),
-                        {
-                            let footer_fold_callback = footer_fold_callback.clone();
-                            move |row, is_folded, fold, _cx| {
-                                Disclosure::new(("step-fold-indicator", row.0 as u64), !is_folded)
-                                    .selected(is_folded)
-                                    .on_click({
-                                        let footer_fold_callback = footer_fold_callback.clone();
-                                        move |_e, cx| {
-                                            fold(!is_folded, cx);
-                                            if let Some(callback) = &*footer_fold_callback.lock() {
-                                                callback(!is_folded, cx);
-                                            }
-                                        }
-                                    })
-                                    .into_any_element()
-                            }
+                        move |row, is_folded, fold, _cx| {
+                            Disclosure::new(("edit-header", row.0 as u64), !is_folded)
+                                .selected(is_folded)
+                                .on_click(move |_e, cx| fold(!is_folded, cx))
+                                .into_any_element()
                         },
                         |_, _, _| Empty.into_any_element(),
                     )]
@@ -2420,12 +2412,11 @@ impl ContextEditor {
                         Crease::new(
                             footer_range,
                             footer_placeholder.clone(),
-                            {
-                                let footer_fold_callback = footer_fold_callback.clone();
-                                move |_row, _is_folded, fold, _cx| {
-                                    *footer_fold_callback.lock() = Some(fold);
-                                    Empty.into_any_element()
-                                }
+                            move |row, is_folded, fold, _cx| {
+                                Disclosure::new(("edit-header", row.0 as u64), !is_folded)
+                                    .selected(is_folded)
+                                    .on_click(move |_e, cx| fold(!is_folded, cx))
+                                    .into_any_element()
                             },
                             |_, _, _| Empty.into_any_element(),
                         )
