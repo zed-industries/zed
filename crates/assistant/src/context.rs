@@ -21,7 +21,7 @@ use futures::{
 };
 use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Image, Model, ModelContext,
-    RenderImage, SharedString, Subscription, Task, WeakModel,
+    RenderImage, SharedString, Subscription, Task,
 };
 
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
@@ -1404,16 +1404,7 @@ impl Context {
 
         if let Some(project) = self.project() {
             for step in &mut new_steps {
-                step.resolution_task = Some(cx.spawn({
-                    let range = step.range.clone();
-                    let edits = step.edits.clone();
-                    let project = project.clone();
-                    |this, cx| async move {
-                        Self::resolve_workflow_step_internal(this, range, project, edits, cx)
-                            .await
-                            .log_err();
-                    }
-                }));
+                Self::resolve_workflow_step_internal(step, &project, cx);
             }
         }
 
@@ -1637,27 +1628,82 @@ impl Context {
         &mut self,
         tagged_range: Range<text::Anchor>,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Option<()> {
+        let index = self
+            .workflow_step_index_for_range(&tagged_range, self.buffer.read(cx))
+            .ok()?;
+        let step = &mut self.workflow_steps[index];
+        let project = self.project.as_ref()?;
+        step.resolution.take();
+        Self::resolve_workflow_step_internal(step, project, cx);
+        None
     }
 
-    async fn resolve_workflow_step_internal(
-        this: WeakModel<Self>,
-        tagged_range: Range<text::Anchor>,
+    fn resolve_workflow_step_internal(
+        step: &mut WorkflowStep,
+        project: &Model<Project>,
+        cx: &mut ModelContext<'_, Context>,
+    ) {
+        step.resolution_task = Some(cx.spawn({
+            let range = step.range.clone();
+            let edits = step.edits.clone();
+            let project = project.clone();
+            |this, mut cx| async move {
+                let suggestion_groups =
+                    Self::compute_step_resolution(project, edits, &mut cx).await;
+
+                this.update(&mut cx, |this, cx| {
+                    let buffer = this.buffer.read(cx).text_snapshot();
+                    let ix = this.workflow_step_index_for_range(&range, &buffer).ok();
+                    if let Some(ix) = ix {
+                        let step = &mut this.workflow_steps[ix];
+
+                        let resolution = suggestion_groups.map(|suggestion_groups| {
+                            let mut title = String::new();
+                            for chunk in buffer.text_for_range(
+                                step.leading_tags_end
+                                    ..step.trailing_tag_start.unwrap_or(step.range.end),
+                            ) {
+                                if let Some((prefix, _)) =
+                                    chunk.trim_start_matches('\n').split_once('\n')
+                                {
+                                    title.push_str(prefix);
+                                    break;
+                                } else {
+                                    title.push_str(chunk);
+                                }
+                            }
+
+                            WorkflowStepResolution {
+                                title,
+                                suggestion_groups,
+                            }
+                        });
+
+                        step.resolution = Some(Arc::new(resolution));
+                        cx.emit(ContextEvent::WorkflowStepsUpdated {
+                            removed: vec![],
+                            updated: vec![range],
+                        })
+                    }
+                })
+                .ok();
+            }
+        }));
+    }
+
+    async fn compute_step_resolution(
         project: Model<Project>,
         edits: Vec<WorkflowStepEdit<text::Anchor>>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
+        cx: &mut AsyncAppContext,
+    ) -> Result<HashMap<Model<Buffer>, Vec<WorkflowSuggestionGroup>>> {
         let suggestion_tasks: Vec<_> = edits
             .iter()
             .map(|edit| edit.resolve(project.clone(), cx.clone()))
             .collect();
 
         // Expand the context ranges of each suggestion and group suggestions with overlapping context ranges.
-        let suggestions = future::join_all(suggestion_tasks)
-            .await
-            .into_iter()
-            .filter_map(|task| task.log_err())
-            .collect::<Vec<_>>();
+        let suggestions = future::try_join_all(suggestion_tasks).await?;
 
         let mut suggestions_by_buffer = HashMap::default();
         for (buffer, suggestion) in suggestions {
@@ -1670,7 +1716,7 @@ impl Context {
         let mut suggestion_groups_by_buffer = HashMap::default();
         for (buffer, mut suggestions) in suggestions_by_buffer {
             let mut suggestion_groups = Vec::<WorkflowSuggestionGroup>::new();
-            let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+            let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
             // Sort suggestions by their range so that earlier, larger ranges come first
             suggestions.sort_by(|a, b| a.range().cmp(&b.range(), &snapshot));
 
@@ -1719,36 +1765,7 @@ impl Context {
             suggestion_groups_by_buffer.insert(buffer, suggestion_groups);
         }
 
-        this.update(&mut cx, |this, cx| {
-            let buffer = this.buffer.read(cx).text_snapshot();
-            let ix = this
-                .workflow_step_index_for_range(&tagged_range, &buffer)
-                .ok();
-            if let Some(ix) = ix {
-                let step = &mut this.workflow_steps[ix];
-                let mut title = String::new();
-                for chunk in buffer.text_for_range(
-                    step.leading_tags_end..step.trailing_tag_start.unwrap_or(step.range.end),
-                ) {
-                    if let Some((prefix, _)) = chunk.trim_start_matches('\n').split_once('\n') {
-                        title.push_str(prefix);
-                        break;
-                    } else {
-                        title.push_str(chunk);
-                    }
-                }
-                step.resolution = Some(Arc::new(WorkflowStepResolution {
-                    title,
-                    suggestion_groups: suggestion_groups_by_buffer,
-                }));
-                cx.emit(ContextEvent::WorkflowStepsUpdated {
-                    removed: vec![],
-                    updated: vec![tagged_range],
-                })
-            }
-        })?;
-
-        Ok(())
+        Ok(suggestion_groups_by_buffer)
     }
 
     pub fn pending_command_for_position(

@@ -22,7 +22,7 @@ pub(crate) struct WorkflowStep {
     pub trailing_tag_start: Option<text::Anchor>,
     pub edits: Vec<WorkflowStepEdit<text::Anchor>>,
     pub resolution_task: Option<Task<()>>,
-    pub resolution: Option<Arc<WorkflowStepResolution>>,
+    pub resolution: Option<Arc<Result<WorkflowStepResolution>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
