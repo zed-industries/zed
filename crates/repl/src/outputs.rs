@@ -86,7 +86,7 @@ impl SupportsClipboard for OutputContent {
             OutputContent::Image { content, .. } => content.read(cx).clipboard_content(cx),
             OutputContent::ErrorOutput(error) => error.traceback.read(cx).clipboard_content(cx),
             OutputContent::Message(_) => None,
-            OutputContent::Table { content, .. } => content.clipboard_content(cx),
+            OutputContent::Table { content, .. } => content.read(cx).clipboard_content(cx),
             OutputContent::Markdown { content, .. } => content.read(cx).clipboard_content(cx),
             OutputContent::ClearOutputWaitMarker => None,
         }
@@ -99,7 +99,7 @@ impl SupportsClipboard for OutputContent {
             OutputContent::Image { content, .. } => content.read(cx).has_clipboard_content(cx),
             OutputContent::ErrorOutput(_) => true,
             OutputContent::Message(_) => false,
-            OutputContent::Table { content, .. } => content.has_clipboard_content(cx),
+            OutputContent::Table { content, .. } => content.read(cx).has_clipboard_content(cx),
             OutputContent::Markdown { content, .. } => content.read(cx).has_clipboard_content(cx),
             OutputContent::ClearOutputWaitMarker => false,
         }
@@ -121,7 +121,7 @@ pub enum OutputContent {
     ErrorOutput(ErrorView),
     Message(String),
     Table {
-        content: TableView,
+        content: View<TableView>,
         display_id: Option<String>,
     },
     Markdown {
@@ -141,7 +141,7 @@ impl OutputContent {
             Self::Stream { content, .. } => Some(content.clone().into_any_element()),
             Self::Image { content, .. } => Some(content.clone().into_any_element()),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
-            Self::Table { content, .. } => Some(content.render(cx)),
+            Self::Table { content, .. } => Some(content.clone().into_any_element()),
             Self::ErrorOutput(error_view) => error_view.render(cx),
             Self::ClearOutputWaitMarker => None,
         };
@@ -183,7 +183,7 @@ impl OutputContent {
                 Err(error) => OutputContent::Message(format!("Failed to load image: {}", error)),
             },
             Some(MimeType::DataTable(data)) => OutputContent::Table {
-                content: TableView::new(data.clone(), cx),
+                content: cx.new_view(|cx| TableView::new(data, cx)),
                 display_id,
             },
             // Any other media types are not supported
