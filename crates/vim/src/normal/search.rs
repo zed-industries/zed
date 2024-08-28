@@ -81,11 +81,11 @@ impl Vim {
     }
 
     fn move_to_next_match(&mut self, _: &MoveToNextMatch, cx: &mut ViewContext<Self>) {
-        self.move_to_match_internal(Direction::Next, cx)
+        self.move_to_match_internal(self.search.direction, cx)
     }
 
     fn move_to_prev_match(&mut self, _: &MoveToPrevMatch, cx: &mut ViewContext<Self>) {
-        self.move_to_match_internal(Direction::Prev, cx)
+        self.move_to_match_internal(self.search.direction.opposite(), cx)
     }
 
     fn search(&mut self, action: &Search, cx: &mut ViewContext<Self>) {
@@ -236,6 +236,7 @@ impl Vim {
         let vim = cx.view().clone();
 
         let searched = pane.update(cx, |pane, cx| {
+            self.search.direction = direction;
             let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
                 return false;
             };
@@ -703,6 +704,20 @@ mod test {
         cx.simulate_shared_keystrokes("d / c d").await;
         cx.simulate_shared_keystrokes("enter").await;
         cx.shared_state().await.assert_eq("ˇcd a.c. abcd");
+    }
+
+    #[gpui::test]
+    async fn test_backwards_n(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇa b a b a b a").await;
+        cx.simulate_shared_keystrokes("*").await;
+        cx.simulate_shared_keystrokes("n").await;
+        cx.shared_state().await.assert_eq("a b a b ˇa b a");
+        cx.simulate_shared_keystrokes("#").await;
+        cx.shared_state().await.assert_eq("a b ˇa b a b a");
+        cx.simulate_shared_keystrokes("n").await;
+        cx.shared_state().await.assert_eq("ˇa b a b a b a");
     }
 
     #[gpui::test]
