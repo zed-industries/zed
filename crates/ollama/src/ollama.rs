@@ -66,6 +66,7 @@ impl Default for KeepAlive {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Model {
     pub name: String,
+    pub display_name: Option<String>,
     pub max_tokens: usize,
     pub keep_alive: Option<KeepAlive>,
 }
@@ -101,10 +102,11 @@ fn get_max_tokens(name: &str) -> usize {
 }
 
 impl Model {
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str, display_name: Option<&str>, max_tokens: Option<usize>) -> Self {
         Self {
             name: name.to_owned(),
-            max_tokens: get_max_tokens(name),
+            display_name: display_name.map(|s| s.to_owned()),
+            max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
         }
     }
@@ -114,7 +116,13 @@ impl Model {
     }
 
     pub fn display_name(&self) -> &str {
-        &self.name
+        if let Some(display_name) = &self.display_name {
+            display_name
+        } else if let Some(short) = self.name.strip_suffix(":latest") {
+            short
+        } else {
+            &self.name
+        }
     }
 
     pub fn max_token_count(&self) -> usize {

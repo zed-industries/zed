@@ -6,6 +6,8 @@ use ollama::{
     get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
     ChatResponseDelta, OllamaToolCall,
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, Indicator};
@@ -28,6 +30,17 @@ const PROVIDER_NAME: &str = "Ollama";
 pub struct OllamaSettings {
     pub api_url: String,
     pub low_speed_timeout: Option<Duration>,
+    pub available_models: Vec<ollama::Model>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AvailableModel {
+    /// The model name in the Ollama API (e.g. "llama3.1:latest")
+    pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    pub display_name: Option<String>,
+    /// The Context Length parameter to the model (aka num_ctx or n_ctx)
+    pub max_tokens: usize,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -61,7 +74,7 @@ impl State {
                 // indicating which models are embedding models,
                 // simply filter out models with "-embed" in their name
                 .filter(|model| !model.name.contains("-embed"))
-                .map(|model| ollama::Model::new(&model.name))
+                .map(|model| ollama::Model::new(&model.name, None, None))
                 .collect();
 
             models.sort_by(|a, b| a.name.cmp(&b.name));

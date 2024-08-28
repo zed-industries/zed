@@ -295,7 +295,7 @@ impl AssistantSettingsContent {
                             _ => (None, None),
                         };
                         settings.provider = Some(AssistantProviderContentV1::Ollama {
-                            default_model: Some(ollama::Model::new(&model)),
+                            default_model: Some(ollama::Model::new(&model, None, None)),
                             api_url,
                             low_speed_timeout_in_seconds,
                         });
