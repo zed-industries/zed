@@ -2825,7 +2825,7 @@ impl OutlinePanel {
                     match outline_panel.mode {
                         ItemsDisplayMode::Search => {
                             if is_singleton || query.is_some() || (should_add && is_expanded) {
-                                outline_panel.add_search_entries(
+                                let entries_added = outline_panel.add_search_entries(
                                     entry,
                                     depth,
                                     track_matches,
@@ -2834,6 +2834,17 @@ impl OutlinePanel {
                                     &mut match_candidates,
                                     cx,
                                 );
+
+                                if !is_singleton
+                                    && !entries_added
+                                    && matches!(
+                                        entry,
+                                        FsEntry::File(..) | FsEntry::ExternalFile(..)
+                                    )
+                                {
+                                    entries.pop();
+                                    // TODO kb need to clean up empty directories now
+                                }
                             }
                         }
                         ItemsDisplayMode::Outline => {
@@ -3200,9 +3211,9 @@ impl OutlinePanel {
         entries: &mut Vec<CachedEntry>,
         match_candidates: &mut Vec<StringMatchCandidate>,
         cx: &mut ViewContext<Self>,
-    ) {
+    ) -> bool {
         let related_excerpts = match entry {
-            FsEntry::Directory(_, _) => return,
+            FsEntry::Directory(_, _) => return false,
             FsEntry::ExternalFile(_, excerpts) => excerpts,
             FsEntry::File(_, _, _, excerpts) => excerpts,
         }
@@ -3210,12 +3221,13 @@ impl OutlinePanel {
         .copied()
         .collect::<HashSet<_>>();
         if related_excerpts.is_empty() || self.search_matches.is_empty() {
-            return;
+            return false;
         }
         let Some(kind) = self.search.as_ref().map(|&(kind, _)| kind) else {
-            return;
+            return false;
         };
 
+        let mut entries_added = false;
         for match_range in &self.search_matches {
             if related_excerpts.contains(&match_range.start.excerpt_id)
                 || related_excerpts.contains(&match_range.end.excerpt_id)
@@ -3243,9 +3255,12 @@ impl OutlinePanel {
                         depth,
                         cx,
                     );
+                    entries_added = true;
                 }
             }
         }
+
+        entries_added
     }
 
     fn active_editor(&self) -> Option<View<Editor>> {
