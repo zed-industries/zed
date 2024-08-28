@@ -126,7 +126,7 @@ Download and install Ollama from [ollama.com/download](https://ollama.com/downlo
 
 #### Ollama Context Length {#ollama-context}}
 
-Zed has pre-configured maximum context lengths to match the capabilities of common models, but limits this by default so Zed works out of the box for users ~16GB of ram. Models that support a context length greater than 16384 tokens are capped at 16384 tokens, unknown models default to 2048.  See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete list.
+Zed has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models.  Zed API requests to Ollama include this as `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of ram are able to use most models out of the box. See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete set of defaults.
 
 Depending on your hardware or use-case you may wish to limit or increase the context length for a specific model via settings.json:
 
@@ -137,36 +137,13 @@ Depending on your hardware or use-case you may wish to limit or increase the con
       "available_models": [
         {
           "name": "llama3.1",
-          "context_length": 131072
+          "max_tokens": 131072
         }
       ]
     }
   }
 }
 ```
-
-| Model                  | Zed Default Context Length | Model Maximum Context Length |
-| ---------------------- | -------------------------- | ---------------------------- |
-| mistral-nemo           | 16384                      | 1024000                      |
-| dolphin-llama3:8b-256k | 16384                      | 262144                       |
-| deepseek-coder-v2      | 16384                      | 163840                       |
-| llama3.1               | 16384                      | 131072                       |
-| phi3                   | 16384                      | 131072                       |
-| command-r              | 16384                      | 131072                       |
-| codeqwen               | 16384                      | 65536                        |
-| codestral              | 16384                      | 32768                        |
-| dolphin-mistral        | 16384                      | 32768                        |
-| dolphin-mixtral        | 16384                      | 32768                        |
-| llava                  | 16384                      | 32768                        |
-| mistral                | 16384                      | 32768                        |
-| mistral-large          | 16384                      | 32768                        |
-| mistral-openorca       | 16384                      | 32768                        |
-| mixstral               | 16384                      | 32768                        |
-| qwen                   | 16384                      | 32768                        |
-| qwen2                  | 16384                      | 32768                        |
-| wizard-math            | 16384                      | 32768                        |
-| wizardlm2              | 16384                      | 32768                        |
-
 
 If you specify a context length that is too large for the model, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
 
