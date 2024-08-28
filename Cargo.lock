@@ -4916,7 +4916,6 @@ dependencies = [
  "sum_tree",
  "taffy",
  "thiserror",
- "time",
  "unicode-segmentation",
  "usvg",
  "util",
