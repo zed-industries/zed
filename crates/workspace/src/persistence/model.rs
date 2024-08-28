@@ -360,7 +360,9 @@ impl SerializedPaneGroup {
                 } else {
                     let pane = pane.upgrade()?;
                     workspace
-                        .update(cx, |workspace, cx| workspace.force_remove_pane(&pane, cx))
+                        .update(cx, |workspace, cx| {
+                            workspace.force_remove_pane(&pane, &None, cx)
+                        })
                         .log_err()?;
                     None
                 }

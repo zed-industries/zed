@@ -1678,6 +1678,7 @@ impl ProjectPanel {
                         canonical_path: entry.canonical_path.clone(),
                         is_symlink: entry.is_symlink,
                         char_bag: entry.char_bag,
+                        is_fifo: entry.is_fifo,
                     });
                 }
                 if expanded_dir_ids.binary_search(&entry.id).is_err()

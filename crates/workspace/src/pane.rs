@@ -147,6 +147,7 @@ actions!(
         CloseItemsToTheRight,
         GoBack,
         GoForward,
+        JoinIntoNext,
         ReopenClosedItem,
         SplitLeft,
         SplitUp,
@@ -175,7 +176,9 @@ pub enum Event {
     ActivateItem {
         local: bool,
     },
-    Remove,
+    Remove {
+        focus_on_pane: Option<View<Pane>>,
+    },
     RemoveItem {
         idx: usize,
     },
@@ -183,6 +186,7 @@ pub enum Event {
         item_id: EntityId,
     },
     Split(SplitDirection),
+    JoinIntoNext,
     ChangeItemTitle,
     Focus,
     ZoomIn,
@@ -204,7 +208,7 @@ impl fmt::Debug for Event {
                 .debug_struct("ActivateItem")
                 .field("local", local)
                 .finish(),
-            Event::Remove => f.write_str("Remove"),
+            Event::Remove { .. } => f.write_str("Remove"),
             Event::RemoveItem { idx } => f.debug_struct("RemoveItem").field("idx", idx).finish(),
             Event::RemovedItem { item_id } => f
                 .debug_struct("RemovedItem")
@@ -214,6 +218,7 @@ impl fmt::Debug for Event {
                 .debug_struct("Split")
                 .field("direction", direction)
                 .finish(),
+            Event::JoinIntoNext => f.write_str("JoinIntoNext"),
             Event::ChangeItemTitle => f.write_str("ChangeItemTitle"),
             Event::Focus => f.write_str("Focus"),
             Event::ZoomIn => f.write_str("ZoomIn"),
@@ -666,6 +671,10 @@ impl Pane {
                 })
             })
         }
+    }
+
+    fn join_into_next(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::JoinIntoNext);
     }
 
     fn history_updated(&mut self, cx: &mut ViewContext<Self>) {
@@ -1319,6 +1328,33 @@ impl Pane {
         close_pane_if_empty: bool,
         cx: &mut ViewContext<Self>,
     ) {
+        self._remove_item(item_index, activate_pane, close_pane_if_empty, None, cx)
+    }
+
+    pub fn remove_item_and_focus_on_pane(
+        &mut self,
+        item_index: usize,
+        activate_pane: bool,
+        focus_on_pane_if_closed: View<Pane>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self._remove_item(
+            item_index,
+            activate_pane,
+            true,
+            Some(focus_on_pane_if_closed),
+            cx,
+        )
+    }
+
+    fn _remove_item(
+        &mut self,
+        item_index: usize,
+        activate_pane: bool,
+        close_pane_if_empty: bool,
+        focus_on_pane_if_closed: Option<View<Pane>>,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.activation_history
             .retain(|entry| entry.entity_id != self.items[item_index].item_id());
 
@@ -1354,7 +1390,9 @@ impl Pane {
             item.deactivated(cx);
             if close_pane_if_empty {
                 self.update_toolbar(cx);
-                cx.emit(Event::Remove);
+                cx.emit(Event::Remove {
+                    focus_on_pane: focus_on_pane_if_closed,
+                });
             }
         }
 
@@ -2259,6 +2297,7 @@ impl Render for Pane {
             .on_action(cx.listener(|pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx)))
             .on_action(cx.listener(|pane, _: &GoBack, cx| pane.navigate_backward(cx)))
             .on_action(cx.listener(|pane, _: &GoForward, cx| pane.navigate_forward(cx)))
+            .on_action(cx.listener(|pane, _: &JoinIntoNext, cx| pane.join_into_next(cx)))
             .on_action(cx.listener(Pane::toggle_zoom))
             .on_action(cx.listener(|pane: &mut Pane, action: &ActivateItem, cx| {
                 pane.activate_item(action.0, true, true, cx);

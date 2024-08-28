@@ -1,10 +1,12 @@
 use crate::{
+    search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    NoRepositoryError, ProjectPath,
+    Item, NoRepositoryError, ProjectPath,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::{hash_map, HashMap};
-use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt as _};
+use collections::{hash_map, HashMap, HashSet};
+use fs::Fs;
+use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt};
 use git::blame::Blame;
 use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Task, WeakModel,
@@ -18,6 +20,7 @@ use rpc::{
     proto::{self, AnyProtoClient, EnvelopedMessage, PeerId},
     ErrorExt as _, TypedEnvelope,
 };
+use smol::channel::Receiver;
 use std::{io, path::Path, str::FromStr as _, sync::Arc};
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt as _};
@@ -776,6 +779,60 @@ impl BufferStore {
     pub fn discard_incomplete(&mut self) {
         self.opened_buffers
             .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
+    }
+
+    pub fn find_search_candidates(
+        &mut self,
+        query: &SearchQuery,
+        mut limit: usize,
+        fs: Arc<dyn Fs>,
+        cx: &mut ModelContext<Self>,
+    ) -> Receiver<Model<Buffer>> {
+        let (tx, rx) = smol::channel::unbounded();
+        let mut open_buffers = HashSet::default();
+        let mut unnamed_buffers = Vec::new();
+        for handle in self.buffers() {
+            let buffer = handle.read(cx);
+            if let Some(entry_id) = buffer.entry_id(cx) {
+                open_buffers.insert(entry_id);
+            } else {
+                limit = limit.saturating_sub(1);
+                unnamed_buffers.push(handle)
+            };
+        }
+
+        const MAX_CONCURRENT_BUFFER_OPENS: usize = 64;
+        let mut project_paths_rx = self
+            .worktree_store
+            .update(cx, |worktree_store, cx| {
+                worktree_store.find_search_candidates(query.clone(), limit, open_buffers, fs, cx)
+            })
+            .chunks(MAX_CONCURRENT_BUFFER_OPENS);
+
+        cx.spawn(|this, mut cx| async move {
+            for buffer in unnamed_buffers {
+                tx.send(buffer).await.ok();
+            }
+
+            while let Some(project_paths) = project_paths_rx.next().await {
+                let buffers = this.update(&mut cx, |this, cx| {
+                    project_paths
+                        .into_iter()
+                        .map(|project_path| this.open_buffer(project_path, cx))
+                        .collect::<Vec<_>>()
+                })?;
+                for buffer_task in buffers {
+                    if let Some(buffer) = buffer_task.await.log_err() {
+                        if tx.send(buffer).await.is_err() {
+                            return anyhow::Ok(());
+                        }
+                    }
+                }
+            }
+            anyhow::Ok(())
+        })
+        .detach();
+        rx
     }
 
     fn on_buffer_event(

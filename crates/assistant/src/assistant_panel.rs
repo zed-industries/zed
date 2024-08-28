@@ -12,12 +12,12 @@ use crate::{
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, CacheStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
-    CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssist, InlineAssistId,
-    InlineAssistant, InsertIntoEditor, MessageStatus, ModelSelector, PendingSlashCommand,
-    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split,
-    ToggleFocus, ToggleModelSelector, WorkflowStepResolution,
+    ContextStoreEvent, CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssistId,
+    InlineAssistant, InsertIntoEditor, Message, MessageId, MessageMetadata, MessageStatus,
+    ModelPickerDelegate, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus,
+    QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus,
+    ToggleModelSelector, WorkflowStepResolution,
 };
-use crate::{ContextStoreEvent, ModelPickerDelegate};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use client::{proto, Client, Status};
@@ -25,7 +25,7 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockDisposition, BlockProperties, BlockStyle, Crease, CustomBlockId, RenderBlock,
+        BlockDisposition, BlockProperties, BlockStyle, Crease, CustomBlockId, FoldId, RenderBlock,
         ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
@@ -84,6 +84,7 @@ use workspace::{
     ToolbarItemView, Workspace,
 };
 use workspace::{searchable::SearchableItemHandle, NewFile};
+use zed_actions::InlineAssist;
 
 pub fn init(cx: &mut AppContext) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
@@ -109,27 +110,10 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |terminal_panel: &mut TerminalPanel, cx: &mut ViewContext<TerminalPanel>| {
             let settings = AssistantSettings::get_global(cx);
-            if !settings.enabled {
-                return;
-            }
-
-            terminal_panel.register_tab_bar_button(cx.new_view(|_| InlineAssistTabBarButton), cx);
+            terminal_panel.asssistant_enabled(settings.enabled, cx);
         },
     )
     .detach();
-}
-
-struct InlineAssistTabBarButton;
-
-impl Render for InlineAssistTabBarButton {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("terminal_inline_assistant", IconName::ZedAssistant)
-            .icon_size(IconSize::Small)
-            .on_click(cx.listener(|_, _, cx| {
-                cx.dispatch_action(InlineAssist::default().boxed_clone());
-            }))
-            .tooltip(move |cx| Tooltip::for_action("Inline Assist", &InlineAssist::default(), cx))
-    }
 }
 
 pub enum AssistantPanelEvent {
@@ -509,7 +493,7 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
     ) {
         let update_model_summary = match event {
-            pane::Event::Remove => {
+            pane::Event::Remove { .. } => {
                 cx.emit(PanelEvent::Close);
                 false
             }
@@ -1382,41 +1366,6 @@ impl WorkflowStepViewState {
         } else {
             WorkflowStepStatus::Idle
         }
-
-        // match self.resolved_step.as_ref() {
-        //     Some(Ok(step)) => {
-        //         if step.suggestion_groups.is_empty() {
-        //             WorkflowStepStatus::Empty
-        //         } else if let Some(assist) = self.assist.as_ref() {
-        //             let assistant = InlineAssistant::global(cx);
-        //             if assist
-        //                 .assist_ids
-        //                 .iter()
-        //                 .any(|assist_id| assistant.assist_status(*assist_id, cx).is_pending())
-        //             {
-        //                 WorkflowStepStatus::Pending
-        //             } else if assist
-        //                 .assist_ids
-        //                 .iter()
-        //                 .all(|assist_id| assistant.assist_status(*assist_id, cx).is_confirmed())
-        //             {
-        //                 WorkflowStepStatus::Confirmed
-        //             } else if assist
-        //                 .assist_ids
-        //                 .iter()
-        //                 .all(|assist_id| assistant.assist_status(*assist_id, cx).is_done())
-        //             {
-        //                 WorkflowStepStatus::Done
-        //             } else {
-        //                 WorkflowStepStatus::Idle
-        //             }
-        //         } else {
-        //             WorkflowStepStatus::Idle
-        //         }
-        //     }
-        //     Some(Err(error)) => WorkflowStepStatus::Error(error.clone()),
-        //     None => WorkflowStepStatus::Resolving,
-        // }
     }
 }
 
@@ -1437,12 +1386,11 @@ impl WorkflowStepStatus {
     }
 
     fn render_workflow_step_error(
-        id: impl Into<u64>,
+        id: u64,
         editor: WeakView<ContextEditor>,
         step_range: Range<language::Anchor>,
         error: String,
     ) -> AnyElement {
-        let id = id.into();
         h_flex()
             .gap_2()
             .child(
@@ -1481,9 +1429,9 @@ impl WorkflowStepStatus {
         step_range: Range<language::Anchor>,
         focus_handle: FocusHandle,
         editor: WeakView<ContextEditor>,
-        id: impl Into<u64>,
+        id: FoldId,
     ) -> AnyElement {
-        let id = id.into();
+        let id: u64 = id.into();
         fn display_keybind_in_tooltip(
             step_range: &Range<language::Anchor>,
             editor: &WeakView<ContextEditor>,
@@ -1732,6 +1680,8 @@ struct WorkflowAssist {
     assist_ids: Vec<InlineAssistId>,
 }
 
+type MessageHeader = MessageMetadata;
+
 pub struct ContextEditor {
     context: Model<Context>,
     fs: Arc<dyn Fs>,
@@ -1739,7 +1689,7 @@ pub struct ContextEditor {
     project: Model<Project>,
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
     editor: View<Editor>,
-    blocks: HashSet<CustomBlockId>,
+    blocks: HashMap<MessageId, (MessageHeader, CustomBlockId)>,
     image_blocks: HashSet<CustomBlockId>,
     scroll_position: Option<ScrollPosition>,
     remote_id: Option<workspace::ViewId>,
@@ -2952,176 +2902,209 @@ impl ContextEditor {
     fn update_message_headers(&mut self, cx: &mut ViewContext<Self>) {
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
+
             let excerpt_id = *buffer.as_singleton().unwrap().0;
-            let old_blocks = std::mem::take(&mut self.blocks);
-            let new_blocks = self
-                .context
-                .read(cx)
-                .messages(cx)
-                .map(|message| BlockProperties {
-                    position: buffer
-                        .anchor_in_excerpt(excerpt_id, message.anchor_range.start)
-                        .unwrap(),
-                    height: 2,
-                    style: BlockStyle::Sticky,
-                    render: Box::new({
-                        let context = self.context.clone();
-                        move |cx| {
-                            let message_id = message.id;
-                            let show_spinner = message.role == Role::Assistant
-                                && message.status == MessageStatus::Pending;
+            let mut old_blocks = std::mem::take(&mut self.blocks);
+            let mut blocks_to_remove: HashMap<_, _> = old_blocks
+                .iter()
+                .map(|(message_id, (_, block_id))| (*message_id, *block_id))
+                .collect();
+            let mut blocks_to_replace: HashMap<_, RenderBlock> = Default::default();
 
-                            let label = match message.role {
-                                Role::User => {
-                                    Label::new("You").color(Color::Default).into_any_element()
+            let render_block = |message: MessageMetadata| -> RenderBlock {
+                Box::new({
+                    let context = self.context.clone();
+                    move |cx| {
+                        let message_id = MessageId(message.timestamp);
+                        let show_spinner = message.role == Role::Assistant
+                            && message.status == MessageStatus::Pending;
+
+                        let label = match message.role {
+                            Role::User => {
+                                Label::new("You").color(Color::Default).into_any_element()
+                            }
+                            Role::Assistant => {
+                                let label = Label::new("Assistant").color(Color::Info);
+                                if show_spinner {
+                                    label
+                                        .with_animation(
+                                            "pulsating-label",
+                                            Animation::new(Duration::from_secs(2))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.4, 0.8)),
+                                            |label, delta| label.alpha(delta),
+                                        )
+                                        .into_any_element()
+                                } else {
+                                    label.into_any_element()
                                 }
-                                Role::Assistant => {
-                                    let label = Label::new("Assistant").color(Color::Info);
-                                    if show_spinner {
-                                        label
-                                            .with_animation(
-                                                "pulsating-label",
-                                                Animation::new(Duration::from_secs(2))
-                                                    .repeat()
-                                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                                |label, delta| label.alpha(delta),
+                            }
+
+                            Role::System => Label::new("System")
+                                .color(Color::Warning)
+                                .into_any_element(),
+                        };
+
+                        let sender = ButtonLike::new("role")
+                            .style(ButtonStyle::Filled)
+                            .child(label)
+                            .tooltip(|cx| {
+                                Tooltip::with_meta(
+                                    "Toggle message role",
+                                    None,
+                                    "Available roles: You (User), Assistant, System",
+                                    cx,
+                                )
+                            })
+                            .on_click({
+                                let context = context.clone();
+                                move |_, cx| {
+                                    context.update(cx, |context, cx| {
+                                        context.cycle_message_roles(
+                                            HashSet::from_iter(Some(message_id)),
+                                            cx,
+                                        )
+                                    })
+                                }
+                            });
+
+                        h_flex()
+                            .id(("message_header", message_id.as_u64()))
+                            .pl(cx.gutter_dimensions.full_width())
+                            .h_11()
+                            .w_full()
+                            .relative()
+                            .gap_1()
+                            .child(sender)
+                            .children(match &message.cache {
+                                Some(cache) if cache.is_final_anchor => match cache.status {
+                                    CacheStatus::Cached => Some(
+                                        div()
+                                            .id("cached")
+                                            .child(
+                                                Icon::new(IconName::DatabaseZap)
+                                                    .size(IconSize::XSmall)
+                                                    .color(Color::Hint),
                                             )
-                                            .into_any_element()
-                                    } else {
-                                        label.into_any_element()
-                                    }
-                                }
-
-                                Role::System => Label::new("System")
-                                    .color(Color::Warning)
-                                    .into_any_element(),
-                            };
-
-                            let sender = ButtonLike::new("role")
-                                .style(ButtonStyle::Filled)
-                                .child(label)
-                                .tooltip(|cx| {
-                                    Tooltip::with_meta(
-                                        "Toggle message role",
-                                        None,
-                                        "Available roles: You (User), Assistant, System",
-                                        cx,
-                                    )
-                                })
-                                .on_click({
-                                    let context = context.clone();
-                                    move |_, cx| {
-                                        context.update(cx, |context, cx| {
-                                            context.cycle_message_roles(
-                                                HashSet::from_iter(Some(message_id)),
+                                            .tooltip(|cx| {
+                                                Tooltip::with_meta(
+                                                    "Context cached",
+                                                    None,
+                                                    "Large messages cached to optimize performance",
+                                                    cx,
+                                                )
+                                            })
+                                            .into_any_element(),
+                                    ),
+                                    CacheStatus::Pending => Some(
+                                        div()
+                                            .child(
+                                                Icon::new(IconName::Ellipsis)
+                                                    .size(IconSize::XSmall)
+                                                    .color(Color::Hint),
+                                            )
+                                            .into_any_element(),
+                                    ),
+                                },
+                                _ => None,
+                            })
+                            .children(match &message.status {
+                                MessageStatus::Error(error) => Some(
+                                    Button::new("show-error", "Error")
+                                        .color(Color::Error)
+                                        .selected_label_color(Color::Error)
+                                        .selected_icon_color(Color::Error)
+                                        .icon(IconName::XCircle)
+                                        .icon_color(Color::Error)
+                                        .icon_size(IconSize::Small)
+                                        .icon_position(IconPosition::Start)
+                                        .tooltip(move |cx| {
+                                            Tooltip::with_meta(
+                                                "Error interacting with language model",
+                                                None,
+                                                "Click for more details",
                                                 cx,
                                             )
                                         })
-                                    }
-                                });
-
-                            h_flex()
-                                .id(("message_header", message_id.as_u64()))
-                                .pl(cx.gutter_dimensions.full_width())
-                                .h_11()
-                                .w_full()
-                                .relative()
-                                .gap_1()
-                                .child(sender)
-                                .children(match &message.cache {
-                                    Some(cache) if cache.is_final_anchor => match cache.status {
-                                        CacheStatus::Cached => Some(
-                                            div()
-                                                .id("cached")
-                                                .child(
-                                                    Icon::new(IconName::DatabaseZap)
-                                                        .size(IconSize::XSmall)
-                                                        .color(Color::Hint),
-                                                )
-                                                .tooltip(|cx| {
-                                                    Tooltip::with_meta(
-                                                        "Context cached",
-                                                        None,
-                                                        "Large messages cached to optimize performance",
-                                                        cx,
-                                                    )
-                                                }).into_any_element()
-                                        ),
-                                        CacheStatus::Pending => Some(
-                                            div()
-                                                .child(
-                                                    Icon::new(IconName::Ellipsis)
-                                                        .size(IconSize::XSmall)
-                                                        .color(Color::Hint),
-                                                ).into_any_element()
-                                        ),
-                                    },
-                                    _ => None,
-                                })
-                                .children(match &message.status {
-                                    MessageStatus::Error(error) => Some(
-                                        Button::new("show-error", "Error")
-                                            .color(Color::Error)
-                                            .selected_label_color(Color::Error)
-                                            .selected_icon_color(Color::Error)
-                                            .icon(IconName::XCircle)
-                                            .icon_color(Color::Error)
-                                            .icon_size(IconSize::Small)
-                                            .icon_position(IconPosition::Start)
-                                            .tooltip(move |cx| {
-                                                Tooltip::with_meta(
-                                                    "Error interacting with language model",
-                                                    None,
-                                                    "Click for more details",
-                                                    cx,
-                                                )
-                                            })
-                                            .on_click({
-                                                let context = context.clone();
-                                                let error = error.clone();
-                                                move |_, cx| {
-                                                    context.update(cx, |_, cx| {
-                                                        cx.emit(ContextEvent::ShowAssistError(
-                                                            error.clone(),
-                                                        ));
-                                                    });
-                                                }
-                                            })
-                                            .into_any_element(),
-                                    ),
-                                    MessageStatus::Canceled => Some(
-                                        ButtonLike::new("canceled")
-                                            .child(
-                                                Icon::new(IconName::XCircle).color(Color::Disabled),
+                                        .on_click({
+                                            let context = context.clone();
+                                            let error = error.clone();
+                                            move |_, cx| {
+                                                context.update(cx, |_, cx| {
+                                                    cx.emit(ContextEvent::ShowAssistError(
+                                                        error.clone(),
+                                                    ));
+                                                });
+                                            }
+                                        })
+                                        .into_any_element(),
+                                ),
+                                MessageStatus::Canceled => Some(
+                                    ButtonLike::new("canceled")
+                                        .child(Icon::new(IconName::XCircle).color(Color::Disabled))
+                                        .child(
+                                            Label::new("Canceled")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Disabled),
+                                        )
+                                        .tooltip(move |cx| {
+                                            Tooltip::with_meta(
+                                                "Canceled",
+                                                None,
+                                                "Interaction with the assistant was canceled",
+                                                cx,
                                             )
-                                            .child(
-                                                Label::new("Canceled")
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Disabled),
-                                            )
-                                            .tooltip(move |cx| {
-                                                Tooltip::with_meta(
-                                                    "Canceled",
-                                                    None,
-                                                    "Interaction with the assistant was canceled",
-                                                    cx,
-                                                )
-                                            })
-                                            .into_any_element(),
-                                    ),
-                                    _ => None,
-                                })
-                                .into_any_element()
-                        }
-                    }),
-                    disposition: BlockDisposition::Above,
-                    priority: usize::MAX,
+                                        })
+                                        .into_any_element(),
+                                ),
+                                _ => None,
+                            })
+                            .into_any_element()
+                    }
                 })
-                .collect::<Vec<_>>();
+            };
+            let create_block_properties = |message: &Message| BlockProperties {
+                position: buffer
+                    .anchor_in_excerpt(excerpt_id, message.anchor_range.start)
+                    .unwrap(),
+                height: 2,
+                style: BlockStyle::Sticky,
+                disposition: BlockDisposition::Above,
+                priority: usize::MAX,
+                render: render_block(MessageMetadata::from(message)),
+            };
+            let mut new_blocks = vec![];
+            let mut block_index_to_message = vec![];
+            for message in self.context.read(cx).messages(cx) {
+                if let Some(_) = blocks_to_remove.remove(&message.id) {
+                    // This is an old message that we might modify.
+                    let Some((meta, block_id)) = old_blocks.get_mut(&message.id) else {
+                        debug_assert!(
+                            false,
+                            "old_blocks should contain a message_id we've just removed."
+                        );
+                        continue;
+                    };
+                    // Should we modify it?
+                    let message_meta = MessageMetadata::from(&message);
+                    if meta != &message_meta {
+                        blocks_to_replace.insert(*block_id, render_block(message_meta.clone()));
+                        *meta = message_meta;
+                    }
+                } else {
+                    // This is a new message.
+                    new_blocks.push(create_block_properties(&message));
+                    block_index_to_message.push((message.id, MessageMetadata::from(&message)));
+                }
+            }
+            editor.replace_blocks(blocks_to_replace, None, cx);
+            editor.remove_blocks(blocks_to_remove.into_values().collect(), None, cx);
 
-            editor.remove_blocks(old_blocks, None, cx);
             let ids = editor.insert_blocks(new_blocks, None, cx);
-            self.blocks = HashSet::from_iter(ids);
+            old_blocks.extend(ids.into_iter().zip(block_index_to_message).map(
+                |(block_id, (message_id, message_meta))| (message_id, (message_meta, block_id)),
+            ));
+            self.blocks = old_blocks;
         });
     }
 
@@ -3474,7 +3457,7 @@ impl ContextEditor {
         &self,
         range: Range<text::Anchor>,
         max_width: Pixels,
-        id: impl Into<u64>,
+        id: FoldId,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
         let edit_state = self.workflow_steps.get(&range)?;

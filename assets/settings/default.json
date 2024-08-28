@@ -730,7 +730,13 @@
   //
   "file_types": {
     "JSON": ["flake.lock"],
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "tsconfig.json"]
+    "JSONC": [
+      "**/.zed/**/*.json",
+      "**/zed/**/*.json",
+      "**/Zed/**/*.json",
+      "tsconfig.json",
+      "pyrightconfig.json"
+    ]
   },
   // The extensions that Zed should automatically install on startup.
   //
@@ -895,7 +901,8 @@
       "api_url": "https://generativelanguage.googleapis.com"
     },
     "ollama": {
-      "api_url": "http://localhost:11434"
+      "api_url": "http://localhost:11434",
+      "low_speed_timeout_in_seconds": 60
     },
     "openai": {
       "version": "1",
@@ -945,6 +952,7 @@
   },
   // Vim settings
   "vim": {
+    "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_multiline_find": false,
     "use_smartcase_find": false,

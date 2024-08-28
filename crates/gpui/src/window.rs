@@ -3389,7 +3389,7 @@ impl<'a> WindowContext<'a> {
         self.window.pending_input.is_some()
     }
 
-    fn clear_pending_keystrokes(&mut self) {
+    pub(crate) fn clear_pending_keystrokes(&mut self) {
         self.window.pending_input.take();
     }
 

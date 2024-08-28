@@ -9,6 +9,9 @@ use std::{fs::File, os::fd::AsFd};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
+#[cfg(unix)]
+use std::os::unix::fs::FileTypeExt;
+
 use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
 use git::repository::{GitRepository, RealGitRepository};
@@ -149,6 +152,7 @@ pub struct Metadata {
     pub mtime: SystemTime,
     pub is_symlink: bool,
     pub is_dir: bool,
+    pub is_fifo: bool,
 }
 
 #[derive(Default)]
@@ -428,11 +432,18 @@ impl Fs for RealFs {
         #[cfg(windows)]
         let inode = file_id(path).await?;
 
+        #[cfg(windows)]
+        let is_fifo = false;
+
+        #[cfg(unix)]
+        let is_fifo = metadata.file_type().is_fifo();
+
         Ok(Some(Metadata {
             inode,
             mtime: metadata.modified().unwrap(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
+            is_fifo,
         }))
     }
 
@@ -833,6 +844,35 @@ impl FakeFs {
     pub fn set_next_mtime(&self, next_mtime: SystemTime) {
         let mut state = self.state.lock();
         state.next_mtime = next_mtime;
+    }
+
+    pub async fn touch_path(&self, path: impl AsRef<Path>) {
+        let mut state = self.state.lock();
+        let path = path.as_ref();
+        let new_mtime = state.next_mtime;
+        let new_inode = state.next_inode;
+        state.next_inode += 1;
+        state.next_mtime += Duration::from_nanos(1);
+        state
+            .write_path(path, move |entry| {
+                match entry {
+                    btree_map::Entry::Vacant(e) => {
+                        e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
+                            inode: new_inode,
+                            mtime: new_mtime,
+                            content: Vec::new(),
+                        })));
+                    }
+                    btree_map::Entry::Occupied(mut e) => match &mut *e.get_mut().lock() {
+                        FakeFsEntry::File { mtime, .. } => *mtime = new_mtime,
+                        FakeFsEntry::Dir { mtime, .. } => *mtime = new_mtime,
+                        FakeFsEntry::Symlink { .. } => {}
+                    },
+                }
+                Ok(())
+            })
+            .unwrap();
+        state.emit_event([path.to_path_buf()]);
     }
 
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
@@ -1537,12 +1577,14 @@ impl Fs for FakeFs {
                     mtime: *mtime,
                     is_dir: false,
                     is_symlink,
+                    is_fifo: false,
                 },
                 FakeFsEntry::Dir { inode, mtime, .. } => Metadata {
                     inode: *inode,
                     mtime: *mtime,
                     is_dir: true,
                     is_symlink,
+                    is_fifo: false,
                 },
                 FakeFsEntry::Symlink { .. } => unreachable!(),
             }))

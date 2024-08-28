@@ -512,10 +512,6 @@ mod custom_path_matcher {
             })
         }
 
-        pub fn sources(&self) -> &[String] {
-            &self.sources
-        }
-
         pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
             let other_path = other.as_ref();
             self.sources
