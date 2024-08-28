@@ -1305,7 +1305,7 @@ impl ProjectPanel {
                     self.create_paste_path(clipboard_entry, self.selected_entry_handle(cx)?, cx)?;
                 let clip_entry_id = clipboard_entry.entry_id;
                 let is_same_worktree = clipboard_entry.worktree_id == worktree_id;
-                let relative_path = if !is_same_worktree {
+                let relative_worktree_source_path = if !is_same_worktree {
                     let target_base_path = worktree.read(cx).abs_path();
                     let clipboard_project_path =
                         self.project.read(cx).path_for_entry(clip_entry_id, cx)?;
@@ -1332,7 +1332,7 @@ impl ProjectPanel {
                         entry.id
                     };
                     let task = self.project.update(cx, |project, cx| {
-                        project.copy_entry(entry_id, relative_path, new_path, cx)
+                        project.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
                     });
                     PasteTask::Copy(task)
                 };

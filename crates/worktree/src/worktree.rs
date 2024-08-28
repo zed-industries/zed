@@ -763,15 +763,17 @@ impl Worktree {
     pub fn copy_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        relative_path: Option<PathBuf>,
+        relative_worktree_source_path: Option<PathBuf>,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Entry>>> {
         let new_path = new_path.into();
         match self {
-            Worktree::Local(this) => this.copy_entry(entry_id, relative_path, new_path, cx),
+            Worktree::Local(this) => {
+                this.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
+            }
             Worktree::Remote(this) => {
-                let relative_path = if let Some(relative_path) = relative_path {
+                let relative_path = if let Some(relative_path) = relative_worktree_source_path {
                     Some(relative_path.to_string_lossy().into())
                 } else {
                     None
@@ -1519,7 +1521,7 @@ impl LocalWorktree {
     fn copy_entry(
         &self,
         entry_id: ProjectEntryId,
-        relative_path: Option<PathBuf>,
+        relative_worktree_source_path: Option<PathBuf>,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Option<Entry>>> {
@@ -1528,7 +1530,7 @@ impl LocalWorktree {
             None => return Task::ready(Ok(None)),
         };
         let new_path = new_path.into();
-        let abs_old_path = if let Some(relative_path) = relative_path {
+        let abs_old_path = if let Some(relative_path) = relative_worktree_source_path {
             Ok(self.abs_path().join(relative_path))
         } else {
             self.absolutize(&old_path)

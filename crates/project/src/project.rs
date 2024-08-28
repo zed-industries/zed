@@ -1566,7 +1566,7 @@ impl Project {
     pub fn copy_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        relative_path: Option<PathBuf>,
+        relative_worktree_source_path: Option<PathBuf>,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Entry>>> {
@@ -1574,7 +1574,7 @@ impl Project {
             return Task::ready(Ok(None));
         };
         worktree.update(cx, |worktree, cx| {
-            worktree.copy_entry(entry_id, relative_path, new_path, cx)
+            worktree.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
         })
     }
 
