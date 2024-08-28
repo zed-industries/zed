@@ -11,7 +11,7 @@ use crate::{
     command::CommandRange,
     motion::Motion,
     state::{Mode, SearchState},
-    Settings, Vim, VimSettings,
+    Vim,
 };
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -71,10 +71,6 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, Vim::replace_command);
 }
 
-fn is_contains_uppercase(str: &String) -> bool {
-    str.chars().any(|c| c.is_uppercase())
-}
-
 impl Vim {
     fn move_to_next(&mut self, action: &MoveToNext, cx: &mut ViewContext<Self>) {
         self.move_to_internal(Direction::Next, !action.partial_word, cx)
@@ -99,7 +95,6 @@ impl Vim {
         } else {
             Direction::Next
         };
-        let is_smartcase = VimSettings::get_global(cx).use_smartcase_search;
         let count = self.take_count(cx).unwrap_or(1);
         let prior_selections = self.editor_selections(cx);
         pane.update(cx, |pane, cx| {
@@ -116,13 +111,6 @@ impl Vim {
                     if query.is_empty() {
                         search_bar.set_replacement(None, cx);
                         search_bar.set_search_options(SearchOptions::REGEX, cx);
-                    }
-                    if is_smartcase {
-                        let is_case = is_contains_uppercase(&query);
-                        if search_bar.should_search_option(SearchOptions::CASE_SENSITIVE) != is_case
-                        {
-                            search_bar.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx)
-                        }
                     }
                     self.search = SearchState {
                         direction,
@@ -146,7 +134,6 @@ impl Vim {
     pub fn search_submit(&mut self, cx: &mut ViewContext<Self>) {
         self.store_visual_marks(cx);
         let Some(pane) = self.pane(cx) else { return };
-        let is_smartcase = VimSettings::get_global(cx).use_smartcase_search;
         let result = pane.update(cx, |pane, cx| {
             let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
                 return None;
@@ -162,12 +149,6 @@ impl Vim {
                     count = count.saturating_sub(1)
                 }
                 self.search.count = 1;
-                if is_smartcase {
-                    let is_case = is_contains_uppercase(&search_bar.query(cx));
-                    if search_bar.should_search_option(SearchOptions::CASE_SENSITIVE) != is_case {
-                        search_bar.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx)
-                    }
-                }
                 search_bar.select_match(direction, count, cx);
                 search_bar.focus_editor(&Default::default(), cx);
 
@@ -309,7 +290,6 @@ impl Vim {
 
     fn find_command(&mut self, action: &FindCommand, cx: &mut ViewContext<Self>) {
         let Some(pane) = self.pane(cx) else { return };
-        let is_smartcase = VimSettings::get_global(cx).use_smartcase_search;
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 let search = search_bar.update(cx, |search_bar, cx| {
@@ -322,8 +302,11 @@ impl Vim {
                     };
 
                     let mut options = SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE;
-                    if is_smartcase {
-                        options.set(SearchOptions::CASE_SENSITIVE, is_contains_uppercase(&query));
+                    if search_bar.should_use_smartcase_search(cx) {
+                        options.set(
+                            SearchOptions::CASE_SENSITIVE,
+                            search_bar.is_contains_uppercase(&query),
+                        );
                     }
 
                     Some(search_bar.search(&query, Some(options), cx))
@@ -370,7 +353,6 @@ impl Vim {
             }
         }
         let vim = cx.view().clone();
-        let is_smartcase = VimSettings::get_global(cx).use_smartcase_search;
         pane.update(cx, |pane, cx| {
             let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
                 return;
@@ -389,10 +371,10 @@ impl Vim {
                 } else {
                     replacement.search
                 };
-                if is_smartcase {
+                if search_bar.should_use_smartcase_search(cx) {
                     options.set(
                         SearchOptions::CASE_SENSITIVE,
-                        is_contains_uppercase(&search),
+                        search_bar.is_contains_uppercase(&search),
                     );
                 }
                 search_bar.set_replacement(Some(&replacement.replacement), cx);

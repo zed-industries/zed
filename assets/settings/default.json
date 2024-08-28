@@ -287,6 +287,7 @@
   // 3. Never populate the search query
   //    "never"
   "seed_search_query_from_cursor": "always",
+  "use_smartcase_search": false,
   // Inlay hint related settings
   "inlay_hints": {
     // Global switch to toggle hints on and off, switched off by default.
@@ -950,7 +951,6 @@
     "use_system_clipboard": "always",
     "use_multiline_find": false,
     "use_smartcase_find": false,
-    "use_smartcase_search": true,
     "custom_digraphs": {}
   },
   // The server to connect to. If the environment variable

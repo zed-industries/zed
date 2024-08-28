@@ -567,6 +567,7 @@ impl BufferSearchBar {
                 active_item.toggle_filtered_search_ranges(deploy.selection_search_enabled, cx);
             }
             self.search_suggested(cx);
+            self.smartcase(cx);
             self.replace_enabled = deploy.replace_enabled;
             self.selection_search_enabled = deploy.selection_search_enabled;
             if deploy.focus {
@@ -827,6 +828,7 @@ impl BufferSearchBar {
             editor::EditorEvent::Focused => self.query_editor_focused = true,
             editor::EditorEvent::Blurred => self.query_editor_focused = false,
             editor::EditorEvent::Edited { .. } => {
+                self.smartcase(cx);
                 self.clear_matches(cx);
                 let search = self.update_matches(cx);
 
@@ -1150,6 +1152,26 @@ impl BufferSearchBar {
     pub fn match_exists(&mut self, cx: &mut ViewContext<Self>) -> bool {
         self.update_match_index(cx);
         self.active_match_index.is_some()
+    }
+
+    pub fn should_use_smartcase_search(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        EditorSettings::get_global(cx).use_smartcase_search
+    }
+
+    pub fn is_contains_uppercase(&mut self, str: &String) -> bool {
+        str.chars().any(|c| c.is_uppercase())
+    }
+
+    fn smartcase(&mut self, cx: &mut ViewContext<Self>) {
+        if self.should_use_smartcase_search(cx) {
+            let query = self.query(cx);
+            if query.is_empty() == false {
+                let is_case = self.is_contains_uppercase(&query);
+                if self.should_search_option(SearchOptions::CASE_SENSITIVE) != is_case {
+                    self.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+                }
+            }
+        }
     }
 }
 
