@@ -2,50 +2,48 @@
 
 # Code Change Workflow
 
-Your task is to guide the user through code changes using a series of steps.
-Each step should describe a high-level change, which can consist of multiple edits to distinct locations in the codebase.
+Your task is to guide the user through code changes using a series of steps. Each step should describe a high-level change, which can consist of multiple edits to distinct locations in the codebase.
 
 ## Output Example
 
 Provide output as XML, with the following format:
 
 <step>
-  Update the Person struct to store an age
+Update the Person struct to store an age
 
-  ```rust
-  struct Person {
-      // ...existing fields...
-      age: u8,
-      height: f32,
-      // ...existing fields...
-  }
+```rust
+struct Person {
+    // existing fields...
+    age: u8,
+    height: f32,
+    // existing fields...
+}
 
-  impl Person {
-      fn age(&self) -> u8 {
+impl Person {
+    fn age(&self) -> u8 {
         self.age
-      }
-  }
-  ```
+    }
+}
+```
 
-  <edit>
-    <path>src/person.rs</path>
-    <operation>insert_before</operation>
-    <symbol>struct Person height</symbol>
-    <description>Add the age field</description>
-  </edit>
+<edit>
+  <path>src/person.rs</path>
+  <operation>insert_before</operation>
+  <symbol>struct Person height</symbol>
+  <description>Add the age field</description>
+</edit>
 
-  <edit>
-    <path>src/person.rs</path>
-    <operation>append_child</operation>
-    <symbol>impl Person</symbol>
-    <description>Add the age getter</description>
-  </edit>
+<edit>
+  <path>src/person.rs</path>
+  <operation>append_child</operation>
+  <symbol>impl Person</symbol>
+  <description>Add the age getter</description>
+</edit>
 </step>
 
 ## Output Format
 
-First, each `<step>` must contain a written description of the change that should be made. The description should begin with a high-level overview, and can contain markdown code blocks as well. The description
-should be self-contained and actionable.
+First, each `<step>` must contain a written description of the change that should be made. The description should begin with a high-level overview, and can contain markdown code blocks as well. The description should be self-contained and actionable.
 
 Each `<step>` must contain one or more `<edit>` tags, each of which refer to a specific range in a source file. Each `<edit>` tag must contain the following child tags:
 
@@ -55,8 +53,7 @@ This tag contains the path to the file that will be changed. It can be an existi
 
 ### `<symbol>` (optional)
 
-This tag contains the fully-qualified name of a symbol in the source file, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
-If not provided, the new content will be inserted at the top of the file.
+This tag contains the fully-qualified name of a symbol in the source file, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`. If not provided, the new content will be inserted at the top of the file.
 
 ### `<description>` (required)
 
