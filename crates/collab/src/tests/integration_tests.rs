@@ -3178,7 +3178,7 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project.copy_entry(entry.id, Path::new("f.txt"), cx)
+            project.copy_entry(entry.id, None, Path::new("f.txt"), cx)
         })
         .await
         .unwrap()

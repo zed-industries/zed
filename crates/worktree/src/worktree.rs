@@ -786,16 +786,26 @@ impl Worktree {
     pub fn copy_entry(
         &mut self,
         entry_id: ProjectEntryId,
+        relative_worktree_source_path: Option<PathBuf>,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Entry>>> {
         let new_path = new_path.into();
         match self {
-            Worktree::Local(this) => this.copy_entry(entry_id, new_path, cx),
+            Worktree::Local(this) => {
+                this.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
+            }
             Worktree::Remote(this) => {
+                let relative_worktree_source_path =
+                    if let Some(relative_worktree_source_path) = relative_worktree_source_path {
+                        Some(relative_worktree_source_path.to_string_lossy().into())
+                    } else {
+                        None
+                    };
                 let response = this.client.request(proto::CopyProjectEntry {
                     project_id: this.project_id,
                     entry_id: entry_id.to_proto(),
+                    relative_worktree_source_path,
                     new_path: new_path.to_string_lossy().into(),
                 });
                 cx.spawn(move |this, mut cx| async move {
@@ -948,10 +958,18 @@ impl Worktree {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
+            let relative_worktree_source_path = if let Some(relative_worktree_source_path) =
+                request.relative_worktree_source_path
+            {
+                Some(PathBuf::from(relative_worktree_source_path))
+            } else {
+                None
+            };
             (
                 this.scan_id(),
                 this.copy_entry(
                     ProjectEntryId::from_proto(request.entry_id),
+                    relative_worktree_source_path,
                     PathBuf::from(request.new_path),
                     cx,
                 ),
@@ -1529,6 +1547,7 @@ impl LocalWorktree {
     fn copy_entry(
         &self,
         entry_id: ProjectEntryId,
+        relative_worktree_source_path: Option<PathBuf>,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Option<Entry>>> {
@@ -1537,7 +1556,12 @@ impl LocalWorktree {
             None => return Task::ready(Ok(None)),
         };
         let new_path = new_path.into();
-        let abs_old_path = self.absolutize(&old_path);
+        let abs_old_path =
+            if let Some(relative_worktree_source_path) = relative_worktree_source_path {
+                Ok(self.abs_path().join(relative_worktree_source_path))
+            } else {
+                self.absolutize(&old_path)
+            };
         let abs_new_path = self.absolutize(&new_path);
         let fs = self.fs.clone();
         let copy = cx.background_executor().spawn(async move {

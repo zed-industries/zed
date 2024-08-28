@@ -1607,6 +1607,7 @@ impl Project {
     pub fn copy_entry(
         &mut self,
         entry_id: ProjectEntryId,
+        relative_worktree_source_path: Option<PathBuf>,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Entry>>> {
@@ -1614,7 +1615,7 @@ impl Project {
             return Task::ready(Ok(None));
         };
         worktree.update(cx, |worktree, cx| {
-            worktree.copy_entry(entry_id, new_path, cx)
+            worktree.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
         })
     }
 
@@ -10986,7 +10987,7 @@ fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
     }
 }
 
-fn relativize_path(base: &Path, path: &Path) -> PathBuf {
+pub fn relativize_path(base: &Path, path: &Path) -> PathBuf {
     let mut path_components = path.components();
     let mut base_components = base.components();
     let mut components: Vec<Component> = Vec::new();
