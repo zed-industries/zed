@@ -432,34 +432,39 @@ impl SearchQuery {
         self.as_inner().files_to_exclude()
     }
 
-    pub fn buffers(&self) -> &Option<Vec<Model<Buffer>>> {
-        self.as_inner().buffers()
+    pub fn take_buffers(&mut self) -> Vec<Model<Buffer>> {
+        self.as_inner_mut().buffers.take().unwrap()
     }
 
     pub fn is_opened_only(&self) -> bool {
         self.as_inner().buffers.is_some()
     }
 
-    pub fn file_matches(&self, file_path: Option<&Path>) -> bool {
-        match file_path {
-            Some(file_path) => {
-                let mut path = file_path.to_path_buf();
-                loop {
-                    if self.files_to_exclude().is_match(&path) {
-                        return false;
-                    } else if self.files_to_include().sources().is_empty()
-                        || self.files_to_include().is_match(&path)
-                    {
-                        return true;
-                    } else if !path.pop() {
-                        return false;
-                    }
-                }
+    pub fn filters_path(&self) -> bool {
+        !(self.files_to_exclude().sources().is_empty()
+            && self.files_to_include().sources().is_empty())
+    }
+
+    pub fn file_matches(&self, file_path: &Path) -> bool {
+        let mut path = file_path.to_path_buf();
+        loop {
+            if self.files_to_exclude().is_match(&path) {
+                return false;
+            } else if self.files_to_include().sources().is_empty()
+                || self.files_to_include().is_match(&path)
+            {
+                return true;
+            } else if !path.pop() {
+                return false;
             }
-            None => self.files_to_include().sources().is_empty(),
         }
     }
     pub fn as_inner(&self) -> &SearchInputs {
+        match self {
+            Self::Regex { inner, .. } | Self::Text { inner, .. } => inner,
+        }
+    }
+    pub fn as_inner_mut(&mut self) -> &mut SearchInputs {
         match self {
             Self::Regex { inner, .. } | Self::Text { inner, .. } => inner,
         }

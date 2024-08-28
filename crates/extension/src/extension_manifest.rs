@@ -64,6 +64,8 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub authors: Vec<String>,
     #[serde(default)]
+    pub capabilities: Vec<ExtensionCapability>,
+    #[serde(default)]
     pub lib: LibManifestEntry,
 
     #[serde(default)]
@@ -80,6 +82,28 @@ pub struct ExtensionManifest {
     pub indexed_docs_providers: BTreeMap<Arc<str>, IndexedDocsProviderEntry>,
     #[serde(default)]
     pub snippets: Option<PathBuf>,
+}
+
+/// A capability for an extension.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum ExtensionCapability {
+    /// The capability to download a file from a server.
+    #[serde(rename = "download-file")]
+    DownloadFile {
+        /// The host name of the server from which the file will be downloaded (e.g., `github.com`).
+        host: String,
+        /// The path prefix to the file that will be downloaded.
+        ///
+        /// Any path that starts with this prefix will be allowed.
+        path_prefix: String,
+    },
+    /// The capability to install a package from npm.
+    #[serde(rename = "npm:install")]
+    NpmInstall {
+        /// The name of the package.
+        package: String,
+    },
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -186,6 +210,7 @@ fn manifest_from_old_manifest(
         repository: manifest_json.repository,
         authors: manifest_json.authors,
         schema_version: SchemaVersion::ZERO,
+        capabilities: Vec::new(),
         lib: Default::default(),
         themes: {
             let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();

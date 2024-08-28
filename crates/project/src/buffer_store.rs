@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
 use fs::Fs;
-use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt as _};
+use futures::{channel::oneshot, stream::FuturesUnordered, StreamExt};
 use git::blame::Blame;
 use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Task, WeakModel,
@@ -784,93 +784,55 @@ impl BufferStore {
     pub fn find_search_candidates(
         &mut self,
         query: &SearchQuery,
-        limit: usize,
+        mut limit: usize,
         fs: Arc<dyn Fs>,
         cx: &mut ModelContext<Self>,
     ) -> Receiver<Model<Buffer>> {
         let (tx, rx) = smol::channel::unbounded();
-        let open_buffers = self.find_open_search_candidates(query, cx);
-        let skip_entries: HashSet<_> = open_buffers
-            .iter()
-            .filter_map(|buffer| buffer.read(cx).entry_id(cx))
-            .collect();
-
-        let limit = limit.saturating_sub(open_buffers.len());
-        for open_buffer in open_buffers {
-            tx.send_blocking(open_buffer).ok();
+        let mut open_buffers = HashSet::default();
+        let mut unnamed_buffers = Vec::new();
+        for handle in self.buffers() {
+            let buffer = handle.read(cx);
+            if let Some(entry_id) = buffer.entry_id(cx) {
+                open_buffers.insert(entry_id);
+            } else {
+                limit = limit.saturating_sub(1);
+                unnamed_buffers.push(handle)
+            };
         }
 
-        let match_rx = self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.find_search_candidates(query.clone(), limit, skip_entries, fs, cx)
-        });
+        const MAX_CONCURRENT_BUFFER_OPENS: usize = 64;
+        let mut project_paths_rx = self
+            .worktree_store
+            .update(cx, |worktree_store, cx| {
+                worktree_store.find_search_candidates(query.clone(), limit, open_buffers, fs, cx)
+            })
+            .chunks(MAX_CONCURRENT_BUFFER_OPENS);
 
-        const MAX_CONCURRENT_BUFFER_OPENS: usize = 8;
+        cx.spawn(|this, mut cx| async move {
+            for buffer in unnamed_buffers {
+                tx.send(buffer).await.ok();
+            }
 
-        for _ in 0..MAX_CONCURRENT_BUFFER_OPENS {
-            let mut match_rx = match_rx.clone();
-            let tx = tx.clone();
-            cx.spawn(|this, mut cx| async move {
-                while let Some(project_path) = match_rx.next().await {
-                    let buffer = this
-                        .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))?
-                        .await
-                        .log_err();
-                    if let Some(buffer) = buffer {
-                        tx.send_blocking(buffer).ok();
+            while let Some(project_paths) = project_paths_rx.next().await {
+                let buffers = this.update(&mut cx, |this, cx| {
+                    project_paths
+                        .into_iter()
+                        .map(|project_path| this.open_buffer(project_path, cx))
+                        .collect::<Vec<_>>()
+                })?;
+                for buffer_task in buffers {
+                    if let Some(buffer) = buffer_task.await.log_err() {
+                        if tx.send(buffer).await.is_err() {
+                            return anyhow::Ok(());
+                        }
                     }
                 }
-                anyhow::Ok(())
-            })
-            .detach();
-        }
+            }
+            anyhow::Ok(())
+        })
+        .detach();
         rx
-    }
-
-    /// Returns open buffers filtered by filename
-    /// Does *not* check the buffer content, the caller must do that
-    fn find_open_search_candidates(
-        &self,
-        query: &SearchQuery,
-        cx: &ModelContext<Self>,
-    ) -> Vec<Model<Buffer>> {
-        let include_root = self
-            .worktree_store
-            .read(cx)
-            .visible_worktrees(cx)
-            .collect::<Vec<_>>()
-            .len()
-            > 1;
-        self.buffers()
-            .filter_map(|buffer| {
-                let handle = buffer.clone();
-                buffer.read_with(cx, |buffer, cx| {
-                    let worktree_store = self.worktree_store.read(cx);
-                    let entry_id = buffer.entry_id(cx);
-                    let is_ignored = entry_id
-                        .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
-                        .map_or(false, |entry| entry.is_ignored);
-
-                    if is_ignored && !query.include_ignored() {
-                        return None;
-                    }
-                    if let Some(file) = buffer.file() {
-                        let matched_path = if include_root {
-                            query.file_matches(Some(&file.full_path(cx)))
-                        } else {
-                            query.file_matches(Some(file.path()))
-                        };
-
-                        if matched_path {
-                            Some(handle)
-                        } else {
-                            None
-                        }
-                    } else {
-                        Some(handle)
-                    }
-                })
-            })
-            .collect()
     }
 
     fn on_buffer_event(

@@ -241,8 +241,17 @@ Some vim settings are available to modify the default vim behavior:
     // "never": don't use system clipboard unless "+ or "* is specified
     // "on_yank": use system clipboard for yank operations when no register is specified
     "use_system_clipboard": "always",
-    // Lets `f` and `t` motions extend across multiple lines
-    "use_multiline_find": true
+    // Let `f` and `t` motions extend across multiple lines
+    "use_multiline_find": true,
+    // Let `f` and `t` motions match case insensitively if the target is lowercase
+    "use_smartcase_find": true,
+    // Use relative line numbers in normal mode, absolute in insert mode
+    // c.f. https://github.com/jeffkreeftmeijer/vim-numbertoggle
+    "toggle_relative_line_numbers": true,
+    // Add custom digraphs (e.g. ctrl-k f z will insert a zombie emoji)
+    "custom_digraphs": {
+      "fz": "🧟‍♀️"
+    }
   }
 }
 ```
