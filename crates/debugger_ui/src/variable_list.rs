@@ -100,7 +100,7 @@ impl VariableList {
                 continue;
             }
 
-            if open_first_scope && self.open_entries.is_empty() {
+            if open_first_scope && entries.is_empty() {
                 self.open_entries.push(scope_entry_id(scope));
             }
 
