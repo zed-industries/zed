@@ -4,7 +4,7 @@ Welcome to Zed! We are excited to have you. Here is a jumping-off point to getti
 
 ## Download Zed
 
-### MacOS
+### macOS
 
 You can obtain the stable builds via the [download page](https://zed.dev/download). If you want to download our preview build, you can find it on its [releases page](https://zed.dev/releases/preview) After the first manual installation, Zed will periodically check for and install updates automatically for you.
 

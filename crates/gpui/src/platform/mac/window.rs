@@ -233,7 +233,7 @@ unsafe fn build_classes() {
 pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -> Point<Pixels> {
     point(
         px(position.x as f32),
-        // MacOS screen coordinates are relative to bottom left
+        // macOS screen coordinates are relative to bottom left
         window_height - px(position.y as f32),
     )
 }
@@ -1307,7 +1307,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
             if !handled && is_held {
                 if let Some(text) = previous_keydown_inserted_text {
-                    // MacOS IME is a bit funky, and even when you've told it there's nothing to
+                    // macOS IME is a bit funky, and even when you've told it there's nothing to
                     // enter it will still swallow certain keys (e.g. 'f', 'j') and not others
                     // (e.g. 'n'). This is a problem for certain kinds of views, like the terminal.
                     with_input_handler(this, |input_handler| {
