@@ -40,7 +40,7 @@ use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use theme::SyntaxTheme;
-use util::{RangeExt, ResultExt, TryFutureExt};
+use util::{debug_panic, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
@@ -2628,8 +2628,15 @@ impl OutlinePanel {
                 let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
                 let mut folded_dirs_entry = None::<(usize, WorktreeId, Vec<Entry>)>;
                 let track_matches = query.is_some();
-                let mut parent_dirs = Vec::<(&Path, bool, bool, usize)>::new();
 
+                #[derive(Debug)]
+                struct ParentStats<'a> {
+                    path: &'a Path,
+                    folded: bool,
+                    expanded: bool,
+                    depth: usize,
+                }
+                let mut parent_dirs = Vec::<ParentStats>::new();
                 for entry in &outline_panel.fs_entries {
                     let is_expanded = outline_panel.is_expanded(entry);
                     let (depth, should_add) = match entry {
@@ -2653,16 +2660,16 @@ impl OutlinePanel {
                                 .get(&(*worktree_id, dir_entry.id))
                                 .copied()
                                 .unwrap_or(0);
-                            while let Some(&(previous_path, ..)) = parent_dirs.last() {
-                                if dir_entry.path.starts_with(previous_path) {
+                            while let Some(parent) = parent_dirs.last() {
+                                if dir_entry.path.starts_with(&parent.path) {
                                     break;
                                 }
                                 parent_dirs.pop();
                             }
                             let auto_fold = match parent_dirs.last() {
-                                Some((parent_path, parent_folded, _, _)) => {
-                                    *parent_folded
-                                        && Some(*parent_path) == dir_entry.path.parent()
+                                Some(parent) => {
+                                    parent.folded
+                                        && Some(parent.path) == dir_entry.path.parent()
                                         && outline_panel
                                             .fs_children_count
                                             .get(worktree_id)
@@ -2675,27 +2682,28 @@ impl OutlinePanel {
                             };
                             let folded = folded || auto_fold;
                             let (depth, parent_expanded) = match parent_dirs.last() {
-                                Some(&(_, previous_folded, previous_expanded, previous_depth)) => {
-                                    let new_depth = if folded && previous_folded {
-                                        previous_depth
+                                Some(parent) => {
+                                    let new_depth = if folded && parent.folded {
+                                        parent.depth
                                     } else {
-                                        previous_depth + 1
+                                        parent.depth + 1
                                     };
-                                    parent_dirs.push((
-                                        &dir_entry.path,
+                                    let parent_expanded = parent.expanded;
+                                    parent_dirs.push(ParentStats {
+                                        path: &dir_entry.path,
                                         folded,
-                                        previous_expanded && is_expanded,
-                                        new_depth,
-                                    ));
-                                    (new_depth, previous_expanded)
+                                        expanded: parent_expanded && is_expanded,
+                                        depth: new_depth,
+                                    });
+                                    (new_depth, parent_expanded)
                                 }
                                 None => {
-                                    parent_dirs.push((
-                                        &dir_entry.path,
+                                    parent_dirs.push(ParentStats {
+                                        path: &dir_entry.path,
                                         folded,
-                                        is_expanded,
-                                        fs_depth,
-                                    ));
+                                        expanded: is_expanded,
+                                        depth: fs_depth,
+                                    });
                                     (fs_depth, true)
                                 }
                             };
@@ -2712,18 +2720,33 @@ impl OutlinePanel {
                                     folded_dirs_entry =
                                         Some((folded_depth, folded_worktree_id, folded_dirs))
                                 } else {
-                                    if !is_singleton && (parent_expanded || query.is_some()) {
-                                        let new_folded_dirs =
-                                            PanelEntry::FoldedDirs(folded_worktree_id, folded_dirs);
-                                        outline_panel.push_entry(
-                                            &mut entries,
-                                            &mut match_candidates,
-                                            track_matches,
-                                            new_folded_dirs,
-                                            folded_depth,
-                                            cx,
-                                        );
+                                    if !is_singleton {
+                                        let start_of_collapsed_dir_sequence = !parent_expanded
+                                            && parent_dirs
+                                                .iter()
+                                                .rev()
+                                                .skip(folded_dirs.len() + 1)
+                                                .next()
+                                                .map_or(true, |parent| parent.expanded);
+                                        if start_of_collapsed_dir_sequence
+                                            || parent_expanded
+                                            || query.is_some()
+                                        {
+                                            let new_folded_dirs = PanelEntry::FoldedDirs(
+                                                folded_worktree_id,
+                                                folded_dirs,
+                                            );
+                                            outline_panel.push_entry(
+                                                &mut entries,
+                                                &mut match_candidates,
+                                                track_matches,
+                                                new_folded_dirs,
+                                                folded_depth,
+                                                cx,
+                                            );
+                                        }
                                     }
+
                                     folded_dirs_entry =
                                         Some((depth, *worktree_id, vec![dir_entry.clone()]))
                                 }
@@ -2742,12 +2765,12 @@ impl OutlinePanel {
                                 let parent_expanded = parent_dirs
                                     .iter()
                                     .rev()
-                                    .find(|(parent_path, ..)| {
+                                    .find(|parent| {
                                         folded_dirs
                                             .iter()
-                                            .all(|entry| entry.path.as_ref() != *parent_path)
+                                            .all(|entry| entry.path.as_ref() != parent.path)
                                     })
-                                    .map_or(true, |&(_, _, parent_expanded, _)| parent_expanded);
+                                    .map_or(true, |parent| parent.expanded);
                                 if !is_singleton && (parent_expanded || query.is_some()) {
                                     outline_panel.push_entry(
                                         &mut entries,
@@ -2769,12 +2792,12 @@ impl OutlinePanel {
                                 let parent_expanded = parent_dirs
                                     .iter()
                                     .rev()
-                                    .find(|(parent_path, ..)| {
+                                    .find(|parent| {
                                         folded_dirs
                                             .iter()
-                                            .all(|entry| entry.path.as_ref() != *parent_path)
+                                            .all(|entry| entry.path.as_ref() != parent.path)
                                     })
-                                    .map_or(true, |&(_, _, parent_expanded, _)| parent_expanded);
+                                    .map_or(true, |parent| parent.expanded);
                                 if !is_singleton && (parent_expanded || query.is_some()) {
                                     outline_panel.push_entry(
                                         &mut entries,
@@ -2792,16 +2815,16 @@ impl OutlinePanel {
                                 .get(&(*worktree_id, file_entry.id))
                                 .copied()
                                 .unwrap_or(0);
-                            while let Some(&(previous_path, ..)) = parent_dirs.last() {
-                                if file_entry.path.starts_with(previous_path) {
+                            while let Some(parent) = parent_dirs.last() {
+                                if file_entry.path.starts_with(&parent.path) {
                                     break;
                                 }
                                 parent_dirs.pop();
                             }
                             let (depth, should_add) = match parent_dirs.last() {
-                                Some(&(_, _, previous_expanded, previous_depth)) => {
-                                    let new_depth = previous_depth + 1;
-                                    (new_depth, previous_expanded)
+                                Some(parent) => {
+                                    let new_depth = parent.depth + 1;
+                                    (new_depth, parent.expanded)
                                 }
                                 None => (fs_depth, true),
                             };
@@ -2899,12 +2922,12 @@ impl OutlinePanel {
                     let parent_expanded = parent_dirs
                         .iter()
                         .rev()
-                        .find(|(parent_path, ..)| {
+                        .find(|parent| {
                             folded_dirs
                                 .iter()
-                                .all(|entry| entry.path.as_ref() != *parent_path)
+                                .all(|entry| entry.path.as_ref() != parent.path)
                         })
-                        .map_or(true, |&(_, _, parent_expanded, _)| parent_expanded);
+                        .map_or(true, |parent| parent.expanded);
                     if parent_expanded || query.is_some() {
                         outline_panel.push_entry(
                             &mut entries,
@@ -2962,6 +2985,19 @@ impl OutlinePanel {
         depth: usize,
         cx: &mut WindowContext,
     ) {
+        let entry = if let PanelEntry::FoldedDirs(worktree_id, entries) = &entry {
+            match entries.len() {
+                0 => {
+                    debug_panic!("Empty folded dirs receiver");
+                    return;
+                }
+                1 => PanelEntry::Fs(FsEntry::Directory(*worktree_id, entries[0].clone())),
+                _ => entry,
+            }
+        } else {
+            entry
+        };
+
         if track_matches {
             let id = entries.len();
             match &entry {
@@ -3776,8 +3812,10 @@ mod tests {
 
     use super::*;
 
+    const SELECTED_MARKER: &str = "  <==== selected";
+
     #[gpui::test]
-    async fn test_project_search_results_display(cx: &mut TestAppContext) {
+    async fn test_project_search_results_toggling(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -3841,11 +3879,11 @@ mod tests {
             search: param_names_for_lifetime_elision_hints: true,
         config.rs
           search: param_names_for_lifetime_elision_hints: self"#;
-        let select = |base: &str, line_to_select: &str| {
-            assert!(base.contains(&line_to_select));
-            base.replacen(
+        let select_first_in_all_matches = |line_to_select: &str| {
+            assert!(all_matches.contains(&line_to_select));
+            all_matches.replacen(
                 &line_to_select,
-                &format!("{line_to_select}  <==== selected"),
+                &format!("{line_to_select}{SELECTED_MARKER}"),
                 1,
             )
         };
@@ -3859,8 +3897,7 @@ mod tests {
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
-                select(
-                    &all_matches,
+                select_first_in_all_matches(
                     "search: match config.param_names_for_lifetime_elision_hints {"
                 )
             );
@@ -3873,7 +3910,54 @@ mod tests {
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
-                select(&all_matches, "fn_lifetime_fn.rs")
+                select_first_in_all_matches("fn_lifetime_fn.rs")
+            );
+        });
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.collapse_selected_entry(&CollapseSelectedEntry, cx);
+        });
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, _| {
+            assert_eq!(
+                display_entries(
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                format!(
+                    r#"/
+  crates/
+    ide/
+      src/
+        inlay_hints/
+          fn_lifetime_fn.rs{SELECTED_MARKER}
+        inlay_hints.rs
+          search: pub param_names_for_lifetime_elision_hints: bool,
+          search: param_names_for_lifetime_elision_hints: self
+        static_index.rs
+          search: param_names_for_lifetime_elision_hints: false,
+    rust-analyzer/
+      src/
+        cli/
+          analysis_stats.rs
+            search: param_names_for_lifetime_elision_hints: true,
+        config.rs
+          search: param_names_for_lifetime_elision_hints: self"#,
+                )
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.expand_all_entries(&ExpandAllEntries, cx);
+        });
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_parent(&SelectParent, cx);
+            assert_eq!(
+                display_entries(
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                select_first_in_all_matches("inlay_hints/")
             );
         });
 
@@ -3884,7 +3968,7 @@ mod tests {
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
-                select(&all_matches, "inlay_hints/")
+                select_first_in_all_matches("src/")
             );
         });
 
@@ -3895,18 +3979,45 @@ mod tests {
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
-                select(&all_matches, "src/")
+                select_first_in_all_matches("ide/")
             );
         });
 
         outline_panel.update(cx, |outline_panel, cx| {
-            outline_panel.select_parent(&SelectParent, cx);
+            outline_panel.collapse_selected_entry(&CollapseSelectedEntry, cx);
+        });
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, _| {
             assert_eq!(
                 display_entries(
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
-                select(&all_matches, "ide/")
+                format!(
+                    r#"/
+  crates/
+    ide/{SELECTED_MARKER}
+    rust-analyzer/
+      src/
+        cli/
+          analysis_stats.rs
+            search: param_names_for_lifetime_elision_hints: true,
+        config.rs
+          search: param_names_for_lifetime_elision_hints: self"#,
+                )
+            );
+        });
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.expand_selected_entry(&ExpandSelectedEntry, cx);
+        });
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, _| {
+            assert_eq!(
+                display_entries(
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                select_first_in_all_matches("ide/")
             );
         });
     }
@@ -3998,7 +4109,7 @@ mod tests {
             );
 
             if Some(&entry.entry) == selected_entry {
-                display_string += "  <==== selected";
+                display_string += SELECTED_MARKER;
             }
         }
         display_string
