@@ -73,6 +73,10 @@ pub struct Model {
 // This could be dynamically retrieved via the API (1 call per model)
 // curl -s http://localhost:11434/api/show -d '{"model": "llama3.1:latest"}' | jq '.model_info."llama.context_length"'
 fn get_max_tokens(name: &str) -> usize {
+    /// Default context length for unknown models.
+    const DEFAULT_TOKENS: usize = 2048;
+    /// Magic number. Lets many Ollama models work with ~16GB of ram.
+    const MAXIMUM_TOKENS: usize = 16384;
     match name {
         "dolphin-llama3:8b-256k" => 262144, // 256K
         _ => match name.split(':').next().unwrap() {
@@ -90,9 +94,10 @@ fn get_max_tokens(name: &str) -> usize {
             "llama2" | "yi" | "llama2-chinese" | "vicuna" | "nous-hermes2"  // 4K
             | "stablelm2" => 4096,
             "phi" | "orca-mini" | "tinyllama" | "granite-code" => 2048,     // 2K
-            _ => 2048,                                                      // 2K (default)
+            _ => DEFAULT_TOKENS,                                                      // 2K (default)
         },
     }
+    .clamp(1, MAXIMUM_TOKENS)
 }
 
 impl Model {

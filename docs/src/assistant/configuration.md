@@ -108,32 +108,68 @@ Custom models will be listed in the model dropdown in the assistant panel.
 
 Download and install Ollama from [ollama.com/download](https://ollama.com/download) (Linux or macOS) and ensure it's running with `ollama --version`.
 
-You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI endpoint.
-
-1. Download, for example, the `mistral` model with Ollama:
+1. Download one of the [available models](https://ollama.com/models), for example, for `mistral`:
 
    ```sh
    ollama pull mistral
    ```
 
-2. Make sure that the Ollama server is running. You can start it either via running the Ollama app, or launching:
+2. Make sure that the Ollama server is running. You can start it either via running Ollama.app (MacOS) or launching:
 
    ```sh
    ollama serve
    ```
 
 3. In the assistant panel, select one of the Ollama models using the model dropdown.
-4. (Optional) If you want to change the default URL that is used to access the Ollama server, you can do so by adding the following settings:
 
-```json
+4. (Optional) Specify a [custom api_url](#custom-endpoint) or [custom `low_speed_timeout_in_seconds`](#provider-timeout) if required.
+
+#### Ollama Context Length {#ollama-context}}
+
+Zed has pre-configured maximum context lengths to match the capabilities of common models, but limits this by default so Zed works out of the box for users ~16GB of ram. Models that support a context length greater than 16384 tokens are capped at 16384 tokens, unknown models default to 2048.  See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete list.
+
+Depending on your hardware or use-case you may wish to limit or increase the context length for a specific model via settings.json:
+
+```
 {
   "language_models": {
     "ollama": {
-      "api_url": "http://localhost:11434"
+      "available_models": [
+        {
+          "name": "llama3.1",
+          "context_length": 131072
+        }
+      ]
     }
   }
 }
 ```
+
+| Model                  | Zed Default Context Length | Model Maximum Context Length |
+| ---------------------- | -------------------------- | ---------------------------- |
+| mistral-nemo           | 16384                      | 1024000                      |
+| dolphin-llama3:8b-256k | 16384                      | 262144                       |
+| deepseek-coder-v2      | 16384                      | 163840                       |
+| llama3.1               | 16384                      | 131072                       |
+| phi3                   | 16384                      | 131072                       |
+| command-r              | 16384                      | 131072                       |
+| codeqwen               | 16384                      | 65536                        |
+| codestral              | 16384                      | 32768                        |
+| dolphin-mistral        | 16384                      | 32768                        |
+| dolphin-mixtral        | 16384                      | 32768                        |
+| llava                  | 16384                      | 32768                        |
+| mistral                | 16384                      | 32768                        |
+| mistral-large          | 16384                      | 32768                        |
+| mistral-openorca       | 16384                      | 32768                        |
+| mixstral               | 16384                      | 32768                        |
+| qwen                   | 16384                      | 32768                        |
+| qwen2                  | 16384                      | 32768                        |
+| wizard-math            | 16384                      | 32768                        |
+| wizardlm2              | 16384                      | 32768                        |
+
+```
+
+If you specify a context length that is too large for the model, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
 
 ### OpenAI {#openai}
 
