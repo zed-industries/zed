@@ -17,6 +17,7 @@ use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Rol
 use parking_lot::Mutex;
 use project::Project;
 use rand::prelude::*;
+use rope::Point;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
@@ -642,6 +643,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         also,",
         &[&[WorkflowStepEdit {
+            range: Point::new(11, 0)..Point::new(16, 7),
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertSiblingAfter {
                 symbol: "fn one".into(),
@@ -701,6 +703,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         also,",
         &[&[WorkflowStepEdit {
+            range: Point::new(11, 0)..Point::new(16, 7),
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertSiblingAfter {
                 symbol: "fn zero".into(),
@@ -770,6 +773,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         also,",
         &[&[WorkflowStepEdit {
+            range: Point::new(11, 0)..Point::new(16, 7),
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertSiblingAfter {
                 symbol: "fn zero".into(),
@@ -816,6 +820,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         also,",
         &[&[WorkflowStepEdit {
+            range: Point::new(11, 0)..Point::new(16, 7),
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertSiblingAfter {
                 symbol: "fn zero".into(),
@@ -837,7 +842,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     fn expect_steps(
         context: &Model<Context>,
         expected_marked_text: &str,
-        expected_suggestions: &[&[WorkflowStepEdit]],
+        expected_suggestions: &[&[WorkflowStepEdit<Point>]],
         cx: &mut TestAppContext,
     ) {
         context.update(cx, |context, cx| {
@@ -856,7 +861,21 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
                     expected_marked_text,
                     "unexpected suggestion ranges. actual: {ranges:?}, expected: {expected_ranges:?}"
                 );
-                let suggestions = context.workflow_steps.iter().map(|step| step.edits.clone()).collect::<Vec<_>>();
+                let suggestions = context
+                    .workflow_steps
+                    .iter()
+                    .map(|step| {
+                        step.edits
+                            .iter()
+                            .map(|edit| WorkflowStepEdit {
+                                range: edit.range.to_point(buffer),
+                                path: edit.path.clone(),
+                                kind: edit.kind.clone(),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+
                 assert_eq!(suggestions, expected_suggestions);
             });
         });

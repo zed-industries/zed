@@ -10389,6 +10389,10 @@ impl Editor {
         }
     }
 
+    pub fn default_fold_placeholder(&self, cx: &AppContext) -> FoldPlaceholder {
+        self.display_map.read(cx).fold_placeholder.clone()
+    }
+
     pub fn set_gutter_hovered(&mut self, hovered: bool, cx: &mut ViewContext<Self>) {
         if hovered != self.gutter_hovered {
             self.gutter_hovered = hovered;

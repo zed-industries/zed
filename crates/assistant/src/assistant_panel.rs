@@ -25,7 +25,7 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockDisposition, BlockProperties, BlockStyle, Crease, CustomBlockId, FoldId, RenderBlock,
+        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CustomBlockId, RenderBlock,
         ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
@@ -36,7 +36,7 @@ use fs::Fs;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
     AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    Context as _, Empty, Entity, EventEmitter, FocusHandle, FocusableView, FontWeight,
+    Context as _, Empty, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, FontWeight,
     InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render, RenderImage,
     SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
     UpdateGlobal, View, VisualContext, WeakView, WindowContext,
@@ -50,20 +50,13 @@ use language_model::{
     LanguageModelRegistry, Role,
 };
 use multi_buffer::MultiBufferRow;
-use parking_lot::Mutex;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::{update_settings_file, Settings};
 use smol::stream::StreamExt;
 use std::{
-    borrow::Cow,
-    cmp,
-    collections::hash_map,
-    fmt::Write,
-    ops::{DerefMut, Range},
-    path::PathBuf,
-    sync::Arc,
+    borrow::Cow, cmp, collections::hash_map, fmt::Write, ops::Range, path::PathBuf, sync::Arc,
     time::Duration,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
@@ -1335,8 +1328,7 @@ struct ScrollPosition {
 struct WorkflowStepViewState {
     header_block_id: CustomBlockId,
     header_crease_id: CreaseId,
-    edit_crease_ids: Vec<CreaseId>,
-    footer_block_id: CustomBlockId,
+    footer_block_id: Option<CustomBlockId>,
     footer_crease_id: Option<CreaseId>,
     assist: Option<WorkflowAssist>,
 }
@@ -1432,9 +1424,9 @@ impl WorkflowStepStatus {
         step_range: Range<language::Anchor>,
         focus_handle: FocusHandle,
         editor: WeakView<ContextEditor>,
-        id: FoldId,
+        id: BlockId,
     ) -> AnyElement {
-        let id: u64 = id.into();
+        let id = EntityId::from(id).as_u64();
         fn display_keybind_in_tooltip(
             step_range: &Range<language::Anchor>,
             editor: &WeakView<ContextEditor>,
@@ -2335,10 +2327,13 @@ impl ContextEditor {
     ) {
         let this = cx.view().downgrade();
         let mut removed_crease_ids = Vec::new();
+        let mut removed_block_ids = HashSet::default();
         for range in removed {
             if let Some(state) = self.workflow_steps.remove(range) {
                 self.reject_workflow_step(range.clone(), cx);
+                removed_block_ids.insert(state.header_block_id);
                 removed_crease_ids.push(state.header_crease_id);
+                removed_block_ids.extend(state.footer_block_id);
                 removed_crease_ids.extend(state.footer_crease_id);
             }
         }
@@ -2366,45 +2361,103 @@ impl ContextEditor {
                         .anchor_in_excerpt(excerpt_id, header_end)
                         .unwrap();
                 let footer_range = step.trailing_tag_start.map(|start| {
+                    let end = if buffer.contains_str_at(step.range.end, "\n") {
+                        buffer.anchor_after(step.range.end.to_offset(&buffer) + 1)
+                    } else {
+                        step.range.end
+                    };
                     multibuffer.anchor_in_excerpt(excerpt_id, start).unwrap()
-                        ..multibuffer
-                            .anchor_in_excerpt(excerpt_id, step.range.end)
-                            .unwrap()
+                        ..multibuffer.anchor_in_excerpt(excerpt_id, end).unwrap()
                 });
 
+                let mut edit_paths = Vec::<SharedString>::new();
+                for edit in &step.edits {
+                    let path = edit.path.clone().into();
+                    if !edit_paths.contains(&path) {
+                        edit_paths.push(path);
+                    }
+                }
+
+                let block_ids = editor.insert_blocks(
+                    [BlockProperties {
+                        position: header_range.start,
+                        height: 1 + edit_paths.len() as u32,
+                        style: BlockStyle::Flex,
+                        render: Box::new({
+                            let this = this.clone();
+                            let range = step.range.clone();
+                            move |cx| {
+                                let block_id = cx.block_id;
+                                let max_width = cx.max_width;
+                                let gutter_width = cx.gutter_dimensions.width;
+                                this.update(&mut **cx, |this, cx| {
+                                    this.render_workflow_step_header(
+                                        range.clone(),
+                                        &edit_paths,
+                                        max_width,
+                                        gutter_width,
+                                        block_id,
+                                        cx,
+                                    )
+                                })
+                                .ok()
+                                .flatten()
+                                .unwrap_or_else(|| Empty.into_any())
+                            }
+                        }),
+                        disposition: BlockDisposition::Above,
+                        priority: 0,
+                    }]
+                    .into_iter()
+                    .chain(footer_range.as_ref().map(|footer_range| {
+                        return BlockProperties {
+                            position: footer_range.end,
+                            height: 1,
+                            style: BlockStyle::Flex,
+                            render: Box::new({
+                                let this = this.clone();
+                                let range = step.range.clone();
+                                move |cx| {
+                                    let max_width = cx.max_width;
+                                    let gutter_width = cx.gutter_dimensions.width;
+                                    this.update(&mut **cx, |this, cx| {
+                                        this.render_workflow_step_footer(
+                                            range.clone(),
+                                            max_width,
+                                            gutter_width,
+                                            cx,
+                                        )
+                                    })
+                                    .ok()
+                                    .flatten()
+                                    .unwrap_or_else(|| Empty.into_any())
+                                }
+                            }),
+                            disposition: BlockDisposition::Below,
+                            priority: 0,
+                        };
+                    })),
+                    None,
+                    cx,
+                );
+
                 let header_placeholder = FoldPlaceholder {
-                    render: Arc::new({
-                        let this = this.clone();
-                        let range = range.clone();
-                        move |id, _crease_range, cx| Empty.into_any()
-                    }),
+                    render: Arc::new(move |_, _crease_range, _cx| Empty.into_any()),
                     constrain_width: false,
                     merge_adjacent: false,
-                    text: Some(""),
+                    text: None,
                 };
                 let footer_placeholder = FoldPlaceholder {
-                    render: Arc::new({
-                        let this = this.clone();
-                        let range = range.clone();
-                        move |_, _crease_range, cx| Empty.into_any()
-                    }),
                     constrain_width: false,
                     merge_adjacent: false,
-                    text: Some(""),
+                    ..editor.default_fold_placeholder(cx)
                 };
-
-                let footer_fold_callback = Arc::new(Mutex::<Option<ToggleFold>>::new(None));
 
                 let new_crease_ids = editor.insert_creases(
                     [Crease::new(
                         header_range.clone(),
                         header_placeholder.clone(),
-                        move |row, is_folded, fold, _cx| {
-                            Disclosure::new(("edit-header", row.0 as u64), !is_folded)
-                                .selected(is_folded)
-                                .on_click(move |_e, cx| fold(!is_folded, cx))
-                                .into_any_element()
-                        },
+                        fold_toggle("step-header"),
                         |_, _, _| Empty.into_any_element(),
                     )]
                     .into_iter()
@@ -2412,21 +2465,20 @@ impl ContextEditor {
                         Crease::new(
                             footer_range,
                             footer_placeholder.clone(),
-                            move |row, is_folded, fold, _cx| {
-                                Disclosure::new(("edit-header", row.0 as u64), !is_folded)
-                                    .selected(is_folded)
-                                    .on_click(move |_e, cx| fold(!is_folded, cx))
-                                    .into_any_element()
-                            },
+                            fold_toggle("step-footer"),
                             |_, _, _| Empty.into_any_element(),
                         )
                     })),
                     cx,
                 );
 
+                let footer_crease_id = new_crease_ids.get(1).copied();
+
                 let state = WorkflowStepViewState {
+                    header_block_id: block_ids[0],
                     header_crease_id: new_crease_ids[0],
-                    footer_crease_id: new_crease_ids.get(1).copied(),
+                    footer_block_id: block_ids.get(1).copied(),
+                    footer_crease_id,
                     assist: None,
                 };
 
@@ -2438,7 +2490,9 @@ impl ContextEditor {
                     }
                     hash_map::Entry::Occupied(mut entry) => {
                         let entry = entry.get_mut();
+                        removed_block_ids.insert(entry.header_block_id);
                         removed_crease_ids.push(entry.header_crease_id);
+                        removed_block_ids.extend(entry.footer_block_id);
                         removed_crease_ids.extend(entry.footer_crease_id);
                         was_unfolded = !snapshot.intersects_fold(header_range.start);
                         *entry = state;
@@ -2466,6 +2520,7 @@ impl ContextEditor {
             }
 
             editor.remove_creases(removed_crease_ids, cx);
+            editor.remove_blocks(removed_block_ids, None, cx);
         });
     }
 
@@ -3441,12 +3496,14 @@ impl ContextEditor {
     fn render_workflow_step_header(
         &self,
         range: Range<text::Anchor>,
+        edit_paths: &[SharedString],
         max_width: Pixels,
-        id: FoldId,
+        gutter_width: Pixels,
+        id: BlockId,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
-        let edit_state = self.workflow_steps.get(&range)?;
-        let status = edit_state.status(cx);
+        let step_state = self.workflow_steps.get(&range)?;
+        let status = step_state.status(cx);
         let this = cx.view().downgrade();
 
         let theme = cx.theme().status();
@@ -3502,8 +3559,9 @@ impl ContextEditor {
         };
 
         Some(
-            div()
+            v_flex()
                 .w(max_width)
+                .pl(gutter_width)
                 .occlude()
                 .child(
                     h_flex()
@@ -3522,6 +3580,12 @@ impl ContextEditor {
                             id,
                         ))),
                 )
+                .children(edit_paths.iter().map(|path| {
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::File))
+                        .child(Label::new(path.clone()))
+                }))
                 .into_any(),
         )
     }
@@ -3530,6 +3594,7 @@ impl ContextEditor {
         &self,
         step_range: Range<text::Anchor>,
         max_width: Pixels,
+        gutter_width: Pixels,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
         let step = self.workflow_steps.get(&step_range)?;
@@ -3541,8 +3606,9 @@ impl ContextEditor {
             theme.info_border
         };
         Some(
-            div()
+            v_flex()
                 .w(max_width)
+                .pl(gutter_width)
                 .child(h_flex().h(px(1.)).bg(border_color))
                 .into_any(),
         )
@@ -4618,6 +4684,22 @@ fn render_slash_command_output_toggle(
     .selected(is_folded)
     .on_click(move |_e, cx| fold(!is_folded, cx))
     .into_any_element()
+}
+
+fn fold_toggle(
+    name: &'static str,
+) -> impl Fn(
+    MultiBufferRow,
+    bool,
+    Arc<dyn Fn(bool, &mut WindowContext<'_>) + Send + Sync>,
+    &mut WindowContext<'_>,
+) -> AnyElement {
+    move |row, is_folded, fold, _cx| {
+        Disclosure::new((name, row.0 as u64), !is_folded)
+            .selected(is_folded)
+            .on_click(move |_e, cx| fold(!is_folded, cx))
+            .into_any_element()
+    }
 }
 
 fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> FoldPlaceholder {

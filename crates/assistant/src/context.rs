@@ -1515,6 +1515,7 @@ impl Context {
                     step.trailing_tag_start.get_or_insert(tag.range.start);
 
                     if tag.kind == XmlTagKind::Step && !tag.is_open_tag {
+                        // step.trailing_tag_start = Some(tag.range.start);
                         edit_step_depth -= 1;
                         if edit_step_depth == 0 {
                             step.range.end = tag.range.end;
@@ -1524,6 +1525,7 @@ impl Context {
                     }
 
                     if tag.kind == XmlTagKind::Edit && tag.is_open_tag {
+                        let edit_start = tag.range.start;
                         let mut path = None;
                         let mut symbol = None;
                         let mut operation = None;
@@ -1531,6 +1533,7 @@ impl Context {
 
                         while let Some(tag) = tags.next() {
                             if tag.kind == XmlTagKind::Edit && !tag.is_open_tag {
+                                let edit_end = tag.range.end;
                                 if let Some(path) = path {
                                     let kind = match (operation.as_deref(), symbol, description) {
                                         (Some("update"), Some(symbol), Some(description)) => {
@@ -1576,7 +1579,11 @@ impl Context {
                                         _ => None,
                                     };
                                     if let Some(kind) = kind {
-                                        step.edits.push(WorkflowStepEdit { path, kind });
+                                        step.edits.push(WorkflowStepEdit {
+                                            path,
+                                            kind,
+                                            range: edit_start..edit_end,
+                                        });
                                     }
                                 }
                                 break;
@@ -1628,16 +1635,16 @@ impl Context {
 
     pub fn resolve_workflow_step(
         &mut self,
-        tagged_range: Range<language::Anchor>,
+        tagged_range: Range<text::Anchor>,
         cx: &mut ModelContext<Self>,
     ) {
     }
 
     async fn resolve_workflow_step_internal(
         this: WeakModel<Self>,
-        tagged_range: Range<language::Anchor>,
+        tagged_range: Range<text::Anchor>,
         project: Model<Project>,
-        edits: Vec<WorkflowStepEdit>,
+        edits: Vec<WorkflowStepEdit<text::Anchor>>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let suggestion_tasks: Vec<_> = edits

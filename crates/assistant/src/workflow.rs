@@ -20,13 +20,14 @@ pub(crate) struct WorkflowStep {
     pub range: Range<language::Anchor>,
     pub leading_tags_end: text::Anchor,
     pub trailing_tag_start: Option<text::Anchor>,
-    pub edits: Vec<WorkflowStepEdit>,
+    pub edits: Vec<WorkflowStepEdit<text::Anchor>>,
     pub resolution_task: Option<Task<()>>,
     pub resolution: Option<Arc<WorkflowStepResolution>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct WorkflowStepEdit {
+pub(crate) struct WorkflowStepEdit<T> {
+    pub range: Range<T>,
     pub path: String,
     pub kind: WorkflowStepEditKind,
 }
@@ -251,7 +252,7 @@ impl WorkflowSuggestion {
     }
 }
 
-impl WorkflowStepEdit {
+impl<T> WorkflowStepEdit<T> {
     pub async fn resolve(
         &self,
         project: Model<Project>,
