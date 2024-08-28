@@ -1336,8 +1336,8 @@ impl ProjectPanel {
                     });
                     PasteTask::Copy(task)
                 };
-                let need_delete = !is_same_worktree && clip_is_cut;
-                paste_entry_tasks.insert((clip_entry_id, need_delete), task);
+                let needs_delete = !is_same_worktree && clip_is_cut;
+                paste_entry_tasks.insert((clip_entry_id, needs_delete), task);
             }
 
             cx.spawn(|project_panel, mut cx| async move {
@@ -1346,14 +1346,12 @@ impl ProjectPanel {
                 for ((entry_id, need_delete), task) in paste_entry_tasks.into_iter() {
                     match task {
                         PasteTask::Rename(task) => {
-                            let result = task.await;
-                            if let Some(CreatedEntry::Included(entry)) = result.ok() {
+                            if let Some(CreatedEntry::Included(entry)) = task.await.log_err() {
                                 last_succeed = Some(entry.id);
                             }
                         }
                         PasteTask::Copy(task) => {
-                            let result = task.await;
-                            if let Some(Some(entry)) = result.ok() {
+                            if let Some(Some(entry)) = task.await.log_err() {
                                 last_succeed = Some(entry.id);
                                 if need_delete {
                                     need_delete_ids.push(entry_id);
