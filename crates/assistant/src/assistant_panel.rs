@@ -3562,7 +3562,6 @@ impl ContextEditor {
             v_flex()
                 .w(max_width)
                 .pl(gutter_width)
-                .occlude()
                 .child(
                     h_flex()
                         .w_full()
