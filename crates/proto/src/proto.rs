@@ -411,7 +411,8 @@ messages!(
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
     (FindSearchCandidates, Background),
-    (FindSearchCandidatesResponse, Background)
+    (FindSearchCandidatesResponse, Background),
+    (CloseBuffer, Foreground)
 );
 
 request_messages!(

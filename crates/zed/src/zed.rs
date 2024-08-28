@@ -11,7 +11,9 @@ use assistant::PromptBuilder;
 use breadcrumbs::Breadcrumbs;
 use client::ZED_URL_SCHEME;
 use collections::VecDeque;
+use command_palette_hooks::CommandPaletteFilter;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
+use feature_flags::FeatureFlagAppExt;
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem, PromptLevel,
     ReadGlobal, TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
@@ -32,6 +34,7 @@ use settings::{
     initial_local_settings_content, initial_tasks_content, watch_config_file, KeymapFile, Settings,
     SettingsStore, DEFAULT_KEYMAP_PATH,
 };
+use std::any::TypeId;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
@@ -539,6 +542,29 @@ pub fn initialize_workspace(
             });
 
         workspace.focus_handle(cx).focus(cx);
+    })
+    .detach();
+
+    feature_gate_zed_pro_actions(cx);
+}
+
+fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
+    let zed_pro_actions = [TypeId::of::<OpenAccountSettings>()];
+
+    CommandPaletteFilter::update_global(cx, |filter, _cx| {
+        filter.hide_action_types(&zed_pro_actions);
+    });
+
+    cx.observe_flag::<feature_flags::ZedPro, _>({
+        move |is_enabled, cx| {
+            CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                if is_enabled {
+                    filter.show_action_types(zed_pro_actions.iter());
+                } else {
+                    filter.hide_action_types(&zed_pro_actions);
+                }
+            });
+        }
     })
     .detach();
 }
