@@ -2202,6 +2202,7 @@ impl ContextEditor {
                                 render: Arc::new(move |_, _, _| Empty.into_any()),
                                 constrain_width: false,
                                 merge_adjacent: false,
+                                text: None,
                             };
                             let render_toggle = {
                                 let confirm_command = confirm_command.clone();
@@ -2341,23 +2342,29 @@ impl ContextEditor {
 
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
-            let buffer = &snapshot.buffer_snapshot;
-            let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
+            let multibuffer = &snapshot.buffer_snapshot;
+            let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
 
             for range in updated {
                 let Some(step) = self.context.read(cx).workflow_step_for_range(&range, cx) else {
                     continue;
                 };
 
-                let header_range = buffer
-                    .anchor_in_excerpt(excerpt_id, step.range.start)
+                let header_start = step.range.start;
+                let header_end = if buffer.contains_str_at(step.leading_tags_end, "\n") {
+                    buffer.anchor_before(step.leading_tags_end.to_offset(&buffer) + 1)
+                } else {
+                    step.leading_tags_end
+                };
+                let header_range = multibuffer
+                    .anchor_in_excerpt(excerpt_id, header_start)
                     .unwrap()
-                    ..buffer
-                        .anchor_in_excerpt(excerpt_id, step.leading_tags_end)
+                    ..multibuffer
+                        .anchor_in_excerpt(excerpt_id, header_end)
                         .unwrap();
                 let footer_range = step.trailing_tag_start.map(|start| {
-                    buffer.anchor_in_excerpt(excerpt_id, start).unwrap()
-                        ..buffer
+                    multibuffer.anchor_in_excerpt(excerpt_id, start).unwrap()
+                        ..multibuffer
                             .anchor_in_excerpt(excerpt_id, step.range.end)
                             .unwrap()
                 });
@@ -2366,35 +2373,21 @@ impl ContextEditor {
                     render: Arc::new({
                         let this = this.clone();
                         let range = range.clone();
-                        move |id, _crease_range, cx| {
-                            let max_width = cx.max_width;
-                            this.update(cx.deref_mut(), |this, cx| {
-                                this.render_workflow_step_header(range.clone(), max_width, id, cx)
-                            })
-                            .ok()
-                            .flatten()
-                            .unwrap_or_else(|| Empty.into_any_element())
-                        }
+                        move |id, _crease_range, cx| Empty.into_any()
                     }),
                     constrain_width: false,
                     merge_adjacent: false,
+                    text: Some(""),
                 };
                 let footer_placeholder = FoldPlaceholder {
                     render: Arc::new({
                         let this = this.clone();
                         let range = range.clone();
-                        move |_, _crease_range, cx| {
-                            let max_width = cx.max_width;
-                            this.update(cx.deref_mut(), |this, cx| {
-                                this.render_workflow_step_footer(range.clone(), max_width, cx)
-                            })
-                            .ok()
-                            .flatten()
-                            .unwrap_or_else(|| Empty.into_any_element())
-                        }
+                        move |_, _crease_range, cx| Empty.into_any()
                     }),
                     constrain_width: false,
                     merge_adjacent: false,
+                    text: Some(""),
                 };
 
                 let footer_fold_callback = Arc::new(Mutex::<Option<ToggleFold>>::new(None));
@@ -2535,6 +2528,7 @@ impl ContextEditor {
                         }),
                         constrain_width: false,
                         merge_adjacent: false,
+                        text: None,
                     },
                     render_slash_command_output_toggle,
                     |_, _, _| Empty.into_any_element(),
@@ -4661,6 +4655,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> 
         }),
         constrain_width: false,
         merge_adjacent: false,
+        text: None,
     }
 }
 
