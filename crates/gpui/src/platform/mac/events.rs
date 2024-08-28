@@ -348,15 +348,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     //     }
     // };
     let key = keyboard_event_to_key(native_event).unwrap_or("default".to_string());
-    let chars = native_event.characters().to_str().to_string();
-    println!(
-        "first char: {}, virtual key: {}, chars: {:?}",
-        key,
-        native_event.keyCode(),
-        chars
-    );
-
-    Keystroke {
+    let result = Keystroke {
         modifiers: Modifiers {
             control,
             alt,
@@ -366,7 +358,9 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         },
         key,
         ime_key: None,
-    }
+    };
+    println!("Keyboard event: {:#?}", result);
+    result
 }
 
 fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
