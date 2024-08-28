@@ -29,13 +29,13 @@ Then add the following to your Zed `settings.json`:
 
 ```json
   "languages": {
-		"Luau": {
-			"formatter": {
-				"external": {
-					"command": "stylua",
-					"arguments": ["-"]
-				}
-			}
-		}
-	}
+    "Luau": {
+      "formatter": {
+        "external": {
+          "command": "stylua",
+          "arguments": ["-"]
+        }
+      }
+    }
+  }
 ```
