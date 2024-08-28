@@ -83,7 +83,7 @@ impl SupportsClipboard for OutputContent {
         match self {
             OutputContent::Plain { content, .. } => content.read(cx).clipboard_content(cx),
             OutputContent::Stream { content, .. } => content.read(cx).clipboard_content(cx),
-            OutputContent::Image { content, .. } => content.clipboard_content(cx),
+            OutputContent::Image { content, .. } => content.read(cx).clipboard_content(cx),
             OutputContent::ErrorOutput(error) => error.traceback.read(cx).clipboard_content(cx),
             OutputContent::Message(_) => None,
             OutputContent::Table { content, .. } => content.clipboard_content(cx),
@@ -96,7 +96,7 @@ impl SupportsClipboard for OutputContent {
         match self {
             OutputContent::Plain { content, .. } => content.read(cx).has_clipboard_content(cx),
             OutputContent::Stream { content, .. } => content.read(cx).has_clipboard_content(cx),
-            OutputContent::Image { content, .. } => content.has_clipboard_content(cx),
+            OutputContent::Image { content, .. } => content.read(cx).has_clipboard_content(cx),
             OutputContent::ErrorOutput(_) => true,
             OutputContent::Message(_) => false,
             OutputContent::Table { content, .. } => content.has_clipboard_content(cx),
@@ -115,7 +115,7 @@ pub enum OutputContent {
         content: View<TerminalOutput>,
     },
     Image {
-        content: ImageView,
+        content: View<ImageView>,
         display_id: Option<String>,
     },
     ErrorOutput(ErrorView),
@@ -139,7 +139,7 @@ impl OutputContent {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
             Self::Stream { content, .. } => Some(content.clone().into_any_element()),
-            Self::Image { content, .. } => Some(content.render(cx)),
+            Self::Image { content, .. } => Some(content.clone().into_any_element()),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
             Self::Table { content, .. } => Some(content.render(cx)),
             Self::ErrorOutput(error_view) => error_view.render(cx),
@@ -177,7 +177,7 @@ impl OutputContent {
             }
             Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
                 Ok(view) => OutputContent::Image {
-                    content: view,
+                    content: cx.new_view(|_| view),
                     display_id,
                 },
                 Err(error) => OutputContent::Message(format!("Failed to load image: {}", error)),
@@ -479,7 +479,7 @@ impl Render for ExecutionView {
                                             ElementId::Name(
                                                 format!("open-in-buffer--{}", index).into(),
                                             ),
-                                            IconName::Copy,
+                                            IconName::FileText,
                                         )
                                         .style(ButtonStyle::Transparent)
                                         .tooltip(move |cx| Tooltip::text("Open in Buffer", cx))
