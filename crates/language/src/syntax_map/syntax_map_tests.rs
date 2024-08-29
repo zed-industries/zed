@@ -782,8 +782,13 @@ fn test_empty_combined_injections_inside_injections(cx: &mut AppContext) {
         &buffer,
         Point::new(0, 0)..Point::new(5, 0),
         &[
+            // Markdown document
             "(document (section (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter)) (paragraph (inline))))",
+            // ERB template in the code block
             "(template...",
+            // Markdown inline content
+            "(inline)",
+            // HTML within the ERB
             "(document (text))",
             // The ruby syntax tree should be empty, since there are
             // no interpolations in the ERB template.
