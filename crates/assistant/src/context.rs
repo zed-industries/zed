@@ -1931,7 +1931,30 @@ impl Context {
         // Compute which messages to cache, including the last one.
         self.mark_cache_anchors(&model.cache_configuration(), false, cx);
 
-        let request = self.to_completion_request(cx);
+        let mut request = self.to_completion_request(cx);
+        // TODO: Hard-coded tool.
+        request
+            .tools
+            .push(language_model::LanguageModelRequestTool {
+                name: "get_weather".to_string(),
+                description: "Get the current weather in a given location".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city and state, e.g. San Francisco, CA"
+                        },
+                        "unit": {
+                            "type": "string",
+                            "enum": ["celsius", "fahrenheit"],
+                            "description": "The unit of temperature, either \"celsius\" or \"fahrenheit\""
+                        }
+                    },
+                    "required": ["location"]
+                }),
+            });
+
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
             .unwrap();

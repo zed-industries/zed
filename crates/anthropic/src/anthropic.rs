@@ -335,7 +335,7 @@ pub fn extract_text_from_events(
 ) -> impl Stream<Item = Result<String, AnthropicError>> {
     response.filter_map(|response| async move {
         match response {
-            Ok(response) => match response {
+            Ok(response) => match dbg!(response) {
                 Event::ContentBlockStart { content_block, .. } => match content_block {
                     Content::Text { text, .. } => Some(Ok(text)),
                     _ => None,
