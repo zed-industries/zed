@@ -96,9 +96,7 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(ContextEditor::quote_selection)
                 .register_action(ContextEditor::insert_selection)
                 .register_action(AssistantPanel::show_configuration)
-                .register_action(|workspace, _: &NewContext, cx| {
-                    AssistantPanel::create_new_context(workspace, cx);
-                });
+                .register_action(AssistantPanel::create_new_context);
         },
     )
     .detach();
@@ -856,7 +854,11 @@ impl AssistantPanel {
         }
     }
 
-    pub fn create_new_context(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    pub fn create_new_context(
+        workspace: &mut Workspace,
+        _: &InlineAssist,
+        cx: &mut ViewContext<Workspace>,
+    ) {
         if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
             panel.update(cx, |panel, cx| {
                 panel.new_context(cx);
