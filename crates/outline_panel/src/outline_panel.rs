@@ -779,7 +779,7 @@ impl OutlinePanel {
                                 PanelEntry::FoldedDirs(dirs_worktree_id, dirs) => {
                                     dirs_worktree_id == worktree_id
                                         && dirs
-                                            .first()
+                                            .last()
                                             .map_or(false, |dir| dir.path.as_ref() == parent_path)
                                 }
                                 _ => false,
@@ -2644,6 +2644,7 @@ impl OutlinePanel {
                     let is_expanded = outline_panel.is_expanded(entry);
                     let (depth, should_add) = match entry {
                         FsEntry::Directory(worktree_id, dir_entry) => {
+                            let mut should_add = true;
                             let is_root = project
                                 .read(cx)
                                 .worktree_for_id(*worktree_id, cx)
@@ -2684,21 +2685,22 @@ impl OutlinePanel {
                                 None => false,
                             };
                             let folded = folded || auto_fold;
-                            let (depth, parent_expanded) = match parent_dirs.last() {
+                            let (depth, parent_expanded, parent_folded) = match parent_dirs.last() {
                                 Some(parent) => {
-                                    let new_depth = if folded && parent.folded {
+                                    let parent_folded = parent.folded;
+                                    let parent_expanded = parent.expanded;
+                                    let new_depth = if parent_folded {
                                         parent.depth
                                     } else {
                                         parent.depth + 1
                                     };
-                                    let parent_expanded = parent.expanded;
                                     parent_dirs.push(ParentStats {
                                         path: &dir_entry.path,
                                         folded,
                                         expanded: parent_expanded && is_expanded,
                                         depth: new_depth,
                                     });
-                                    (new_depth, parent_expanded)
+                                    (new_depth, parent_expanded, parent_folded)
                                 }
                                 None => {
                                     parent_dirs.push(ParentStats {
@@ -2707,7 +2709,7 @@ impl OutlinePanel {
                                         expanded: is_expanded,
                                         depth: fs_depth,
                                     });
-                                    (fs_depth, true)
+                                    (fs_depth, true, false)
                                 }
                             };
 
@@ -2735,6 +2737,10 @@ impl OutlinePanel {
                                             || parent_expanded
                                             || query.is_some()
                                         {
+                                            if parent_folded {
+                                                folded_dirs.push(dir_entry.clone());
+                                                should_add = false;
+                                            }
                                             let new_folded_dirs = PanelEntry::FoldedDirs(
                                                 folded_worktree_id,
                                                 folded_dirs,
@@ -2750,15 +2756,19 @@ impl OutlinePanel {
                                         }
                                     }
 
-                                    folded_dirs_entry =
+                                    folded_dirs_entry = if parent_folded {
+                                        None
+                                    } else {
                                         Some((depth, *worktree_id, vec![dir_entry.clone()]))
+                                    };
                                 }
                             } else if folded {
                                 folded_dirs_entry =
                                     Some((depth, *worktree_id, vec![dir_entry.clone()]));
                             }
 
-                            let should_add = parent_expanded && folded_dirs_entry.is_none();
+                            let should_add =
+                                should_add && parent_expanded && folded_dirs_entry.is_none();
                             (depth, should_add)
                         }
                         FsEntry::ExternalFile(..) => {
@@ -3859,29 +3869,26 @@ mod tests {
                 });
         });
 
-        // TODO kb has to be ide/src
         let all_matches = r#"/
   crates/
-    ide/
-      src/
-        inlay_hints/
-          fn_lifetime_fn.rs
-            search: match config.param_names_for_lifetime_elision_hints {
-            search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
-            search: Some(it) if config.param_names_for_lifetime_elision_hints => {
-            search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
-        inlay_hints.rs
-          search: pub param_names_for_lifetime_elision_hints: bool,
-          search: param_names_for_lifetime_elision_hints: self
-        static_index.rs
-          search: param_names_for_lifetime_elision_hints: false,
-    rust-analyzer/
-      src/
-        cli/
-          analysis_stats.rs
-            search: param_names_for_lifetime_elision_hints: true,
-        config.rs
-          search: param_names_for_lifetime_elision_hints: self"#;
+    ide/src/
+      inlay_hints/
+        fn_lifetime_fn.rs
+          search: match config.param_names_for_lifetime_elision_hints {
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
+          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
+      inlay_hints.rs
+        search: pub param_names_for_lifetime_elision_hints: bool,
+        search: param_names_for_lifetime_elision_hints: self
+      static_index.rs
+        search: param_names_for_lifetime_elision_hints: false,
+    rust-analyzer/src/
+      cli/
+        analysis_stats.rs
+          search: param_names_for_lifetime_elision_hints: true,
+      config.rs
+        search: param_names_for_lifetime_elision_hints: self"#;
         let select_first_in_all_matches = |line_to_select: &str| {
             assert!(all_matches.contains(&line_to_select));
             all_matches.replacen(
@@ -3929,22 +3936,20 @@ mod tests {
                 format!(
                     r#"/
   crates/
-    ide/
-      src/
-        inlay_hints/
-          fn_lifetime_fn.rs{SELECTED_MARKER}
-        inlay_hints.rs
-          search: pub param_names_for_lifetime_elision_hints: bool,
-          search: param_names_for_lifetime_elision_hints: self
-        static_index.rs
-          search: param_names_for_lifetime_elision_hints: false,
-    rust-analyzer/
-      src/
-        cli/
-          analysis_stats.rs
-            search: param_names_for_lifetime_elision_hints: true,
-        config.rs
-          search: param_names_for_lifetime_elision_hints: self"#,
+    ide/src/
+      inlay_hints/
+        fn_lifetime_fn.rs{SELECTED_MARKER}
+      inlay_hints.rs
+        search: pub param_names_for_lifetime_elision_hints: bool,
+        search: param_names_for_lifetime_elision_hints: self
+      static_index.rs
+        search: param_names_for_lifetime_elision_hints: false,
+    rust-analyzer/src/
+      cli/
+        analysis_stats.rs
+          search: param_names_for_lifetime_elision_hints: true,
+      config.rs
+        search: param_names_for_lifetime_elision_hints: self"#,
                 )
             );
         });
@@ -3971,18 +3976,7 @@ mod tests {
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
-                select_first_in_all_matches("src/")
-            );
-        });
-
-        outline_panel.update(cx, |outline_panel, cx| {
-            outline_panel.select_parent(&SelectParent, cx);
-            assert_eq!(
-                display_entries(
-                    &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
-                ),
-                select_first_in_all_matches("ide/")
+                select_first_in_all_matches("ide/src/")
             );
         });
 
@@ -3999,14 +3993,13 @@ mod tests {
                 format!(
                     r#"/
   crates/
-    ide/{SELECTED_MARKER}
-    rust-analyzer/
-      src/
-        cli/
-          analysis_stats.rs
-            search: param_names_for_lifetime_elision_hints: true,
-        config.rs
-          search: param_names_for_lifetime_elision_hints: self"#,
+    ide/src/{SELECTED_MARKER}
+    rust-analyzer/src/
+      cli/
+        analysis_stats.rs
+          search: param_names_for_lifetime_elision_hints: true,
+      config.rs
+        search: param_names_for_lifetime_elision_hints: self"#,
                 )
             );
         });
@@ -4020,7 +4013,7 @@ mod tests {
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
-                select_first_in_all_matches("ide/")
+                select_first_in_all_matches("ide/src/")
             );
         });
     }
