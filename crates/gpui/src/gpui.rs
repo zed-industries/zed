@@ -81,6 +81,7 @@ mod global;
 mod input;
 mod interactive;
 mod key_dispatch;
+mod keycodes;
 mod keymap;
 mod platform;
 pub mod prelude;

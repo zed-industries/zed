@@ -2,14 +2,18 @@ use std::rc::Rc;
 
 use ::util::ResultExt;
 use anyhow::Context;
-use windows::Win32::{
-    Foundation::*,
-    Graphics::Gdi::*,
-    System::SystemServices::*,
-    UI::{
-        HiDpi::*,
-        Input::{Ime::*, KeyboardAndMouse::*},
-        WindowsAndMessaging::*,
+use keycodes::VirtualKeyCode;
+use windows::{
+    System::VirtualKey,
+    Win32::{
+        Foundation::*,
+        Graphics::Gdi::*,
+        System::SystemServices::*,
+        UI::{
+            HiDpi::*,
+            Input::{Ime::*, KeyboardAndMouse::*},
+            WindowsAndMessaging::*,
+        },
     },
 };
 
@@ -314,9 +318,12 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    println!("WM_KEYDOWN");
     let Some(keystroke_or_modifier) = parse_keydown_msg_keystroke(wparam) else {
+        println!("  -> Reach hear.");
         return Some(1);
     };
+    println!("char: {:?}, keycode: {}", keystroke_or_modifier, wparam.0);
     let mut lock = state_ptr.state.borrow_mut();
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
@@ -375,6 +382,7 @@ fn handle_char_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    println!("WM_CHAR");
     let Some(keystroke) = parse_char_msg_keystroke(wparam) else {
         return Some(1);
     };
@@ -1171,6 +1179,7 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     })
 }
 
+#[derive(Debug)]
 enum KeystrokeOrModifier {
     Keystroke(Keystroke),
     Modifier(Modifiers),
@@ -1178,7 +1187,7 @@ enum KeystrokeOrModifier {
 
 fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
     let vk_code = wparam.loword();
-
+    println!("  vk code: {}", vk_code);
     let modifiers = current_modifiers();
 
     let key = match VIRTUAL_KEY(vk_code) {
@@ -1216,6 +1225,10 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
                     ime_key: None,
                 }));
             };
+            // return None;
+            if let Some(basic_key) = basic_vkcode_to_string(vk_code, modifiers) {
+                return Some(KeystrokeOrModifier::Keystroke(basic_key));
+            }
             return None;
         }
     }
@@ -1442,4 +1455,14 @@ where
     let result = f(&mut input_handler, scale_factor);
     state_ptr.state.borrow_mut().input_handler = Some(input_handler);
     result
+}
+
+fn map_virtual_key(key: VirtualKey) -> VirtualKeyCode {
+    key.into()
+}
+
+impl From<VirtualKey> for VirtualKeyCode {
+    fn from(value: VirtualKey) -> Self {
+        todo!()
+    }
 }
