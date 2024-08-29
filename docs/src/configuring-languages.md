@@ -57,7 +57,14 @@ You can customize a wide range of settings for each language, including:
 - `preferred_line_length`: The recommended maximum line length
 - `soft_wrap`: How to wrap long lines of code
 
-These settings allow you to maintain specific coding styles across different languages and projects.
+These settings allow you to maintain specific coding styles across different languages and projects. Specifically, the field `soft_wrap` can be:
+
+- `none`: Do not soft wrap.
+- `prefer_line`: Prefer a single line generally, unless an overly long line is encountered.
+- `editor_width`: Soft wrap lines that overflow the editor.
+- `preferred_line_length`: Soft wrap lines at the preferred line length.
+
+`formatter`
 
 ## File Associations
 
@@ -217,6 +224,8 @@ Zed supports both built-in and external formatters. Configure formatters globall
   }
 }
 ```
+
+The field `formatter` can also be `prettier` to use Zed's prettier integration, or `auto` (by default) to use Zed's prettier integration or falling back to formatting via the language server.
 
 This example uses Prettier for JavaScript and the language server's formatter for Rust, both set to format on save.
 
