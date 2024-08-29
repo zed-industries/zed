@@ -77,12 +77,12 @@ This tag indicates what type of change should be made, relative to the given loc
 - Don't create and then update a file. Always create new files in shot.
 - Prefer updating symbols lower in the syntax tree if possible.
 - Never include edits on a parent symbol and one of its children in the same edit block.
-- Never nest an edit with another edit. Never include CDATA. All suggestions are leaf nodes.
+- Never nest an edit with another edit. Never include CDATA. All edits are leaf nodes.
 - Descriptions are required for all edits except delete.
-- When generating multiple suggestions, ensure the descriptions are specific to each individual operation.
+- When generating multiple edits, ensure the descriptions are specific to each individual operation.
 - Avoid referring to the location in the description. Focus on the change to be made, not the location where it's made. That's implicit with the symbol you provide.
 - Don't generate multiple edits at the same location. Instead, combine them together in a single edit with a succinct combined description.
-- To add imports respond with a suggestion where the `"symbol"` key is set to `"#imports"`
+- Always ensure imports are added if you're referencing symbols that are not in scope. To manipulate imports, produce an edit where the `"symbol"` key is set to `"#imports"`
 </guidelines>
 
 Here are some concrete examples.
@@ -650,5 +650,7 @@ impl Database {
 </message>
 
 </example>
+
+You should think step by step. When possible, produce smaller, coherent logical steps as opposed to one big step that combines lots of heterogeneous edits.
 
 </task_description>
