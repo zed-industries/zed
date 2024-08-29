@@ -108,7 +108,7 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
         }
         // TODO: correct?
         // ("back", AlacModifiers::None) => Some("\x7f".to_string()),
-        (VirtualKeyCode::Backspace, AlacModifiers::None) => Some("\x7f".to_string()),
+        // (VirtualKeyCode::Backspace, AlacModifiers::None) => Some("\x7f".to_string()),
         (VirtualKeyCode::Insert, AlacModifiers::None) => Some("\x1b[2~".to_string()),
         (VirtualKeyCode::Delete, AlacModifiers::None) => Some("\x1b[3~".to_string()),
         (VirtualKeyCode::PageUp, AlacModifiers::None) => Some("\x1b[5~".to_string()),
