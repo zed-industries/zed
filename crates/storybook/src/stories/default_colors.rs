@@ -37,7 +37,7 @@ impl Render for DefaultColorsStory {
                     .p_4()
                     .child(Story::label(format!("{:?} Appearance", appearance)))
                     .children(color_types.iter().map(|(name, color)| {
-                        let color: Hsla = color.clone();
+                        let color: Hsla = *color;
 
                         div()
                             .flex()
