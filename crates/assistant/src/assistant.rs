@@ -63,6 +63,7 @@ actions!(
         DeployHistory,
         DeployPromptLibrary,
         ConfirmCommand,
+        NewContext,
         ToggleModelSelector,
     ]
 );

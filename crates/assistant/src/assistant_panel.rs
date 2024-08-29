@@ -14,7 +14,7 @@ use crate::{
     Assist, CacheStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
     ContextStoreEvent, CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssistId,
     InlineAssistant, InsertIntoEditor, Message, MessageId, MessageMetadata, MessageStatus,
-    ModelPickerDelegate, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus,
+    ModelPickerDelegate, ModelSelector, NewContext, PendingSlashCommand, PendingSlashCommandStatus,
     QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus,
     ToggleModelSelector, WorkflowStepResolution,
 };
@@ -78,8 +78,6 @@ use workspace::{
 };
 use workspace::{searchable::SearchableItemHandle, NewFile};
 use zed_actions::InlineAssist;
-
-gpui::actions!(assistant_panel, [NewContext]);
 
 pub fn init(cx: &mut AppContext) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
