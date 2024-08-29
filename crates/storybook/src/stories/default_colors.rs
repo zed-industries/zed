@@ -37,7 +37,7 @@ impl Render for DefaultColorsStory {
                     .p_4()
                     .child(Story::label(format!("{:?} Appearance", appearance)))
                     .children(color_types.iter().map(|(name, color)| {
-                        let color: Hsla = color.clone().into();
+                        let color: Hsla = color.clone();
 
                         div()
                             .flex()
@@ -51,7 +51,7 @@ impl Render for DefaultColorsStory {
                                     .border_1()
                                     .border_color(cx.theme().colors().border),
                             )
-                            .child(Story::label(format!("{}: {:?}", name, color)))
+                            .child(Story::label(format!("{}: {:?}", name, color.clone())))
                     }))
                     .child(
                         h_flex()
