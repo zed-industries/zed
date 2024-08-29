@@ -726,6 +726,7 @@ impl LanguageRegistry {
         adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
+        cli_environment: Option<HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Option<PendingLanguageServer> {
         let server_id = self.state.write().next_language_server_id();
@@ -764,7 +765,15 @@ impl LanguageRegistry {
 
                 delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
 
-                let binary = binary_result?;
+                let mut binary = binary_result?;
+
+                // If this Zed project was opened from the CLI and the language server command itself
+                // doesn't have an environment (which it would have, if it was found in $PATH), then
+                // we pass along the CLI environment that we inherited.
+                if binary.env.is_none() && cli_environment.is_some() {
+                    binary.env = cli_environment.clone();
+                }
+
                 let options = adapter
                     .adapter
                     .clone()

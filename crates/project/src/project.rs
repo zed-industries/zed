@@ -3046,12 +3046,14 @@ impl Project {
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let lsp_adapter_delegate = ProjectLspAdapterDelegate::new(self, worktree_handle, cx);
+        let cli_environment = self.environment.read(cx).get_cli_environment();
         let pending_server = match self.languages.create_pending_language_server(
             stderr_capture.clone(),
             language.clone(),
             adapter.clone(),
             Arc::clone(&worktree_path),
             lsp_adapter_delegate.clone(),
+            cli_environment,
             cx,
         ) {
             Some(pending_server) => pending_server,
