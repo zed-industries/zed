@@ -1845,9 +1845,11 @@ pub fn perform_project_search(
 
 #[cfg(test)]
 pub mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use editor::{display_map::DisplayRow, DisplayPoint};
-    use gpui::{Action, TestAppContext};
+    use gpui::{Action, TestAppContext, WindowHandle};
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;

@@ -16,7 +16,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
-    scroll::{Autoscroll, ScrollAnchor},
+    scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
     AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, ExcerptId, ExcerptRange,
     MultiBufferSnapshot, RangeToAnchorExt,
 };
@@ -50,7 +50,7 @@ use workspace::{
         HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
         LabelCommon, ListItem, Selectable, Spacing, StyledExt, StyledTypography, Tooltip,
     },
-    OpenInTerminal, Workspace,
+    OpenInTerminal, WeakItemHandle, Workspace,
 };
 use worktree::{Entry, ProjectEntryId, WorktreeId};
 
@@ -377,6 +377,7 @@ impl PartialEq for FsEntry {
 }
 
 struct ActiveItem {
+    item_handle: Box<dyn WeakItemHandle>,
     active_editor: WeakView<Editor>,
     _buffer_search_subscription: Subscription,
     _editor_subscrpiption: Subscription,
@@ -464,11 +465,15 @@ impl OutlinePanel {
                     .expect("have a &mut Workspace"),
                 move |outline_panel, workspace, event, cx| {
                     if let workspace::Event::ActiveItemChanged = event {
-                        if let Some(new_active_editor) =
+                        if let Some((new_active_item, new_active_editor)) =
                             workspace_active_editor(workspace.read(cx), cx)
                         {
-                            if outline_panel.should_replace_active_editor(&new_active_editor) {
-                                outline_panel.replace_active_editor(new_active_editor, cx);
+                            if outline_panel.should_replace_active_item(new_active_item.as_ref()) {
+                                outline_panel.replace_active_editor(
+                                    new_active_item,
+                                    new_active_editor,
+                                    cx,
+                                );
                             }
                         } else {
                             outline_panel.clear_previous(cx);
@@ -528,8 +533,8 @@ impl OutlinePanel {
                     filter_update_subscription,
                 ],
             };
-            if let Some(editor) = workspace_active_editor(workspace, cx) {
-                outline_panel.replace_active_editor(editor, cx);
+            if let Some((item, editor)) = workspace_active_editor(workspace, cx) {
+                outline_panel.replace_active_editor(item, editor, cx);
             }
             outline_panel
         });
@@ -694,9 +699,11 @@ impl OutlinePanel {
             self.select_entry(entry.clone(), true, cx);
             if change_selection {
                 active_editor.update(cx, |editor, cx| {
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                        s.select_ranges(Some(anchor..anchor))
-                    });
+                    editor.change_selections(
+                        Some(Autoscroll::Strategy(AutoscrollStrategy::Top)),
+                        cx,
+                        |s| s.select_ranges(Some(anchor..anchor)),
+                    );
                 });
                 active_editor.focus_handle(cx).focus(cx);
             } else {
@@ -707,18 +714,26 @@ impl OutlinePanel {
             }
 
             if let PanelEntry::Search(_) = entry {
-                if let Some(active_project_search) =
-                    self.active_project_search(Some(&active_editor), cx)
+                if let Some(active_project_search) = self
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
                 {
                     self.workspace.update(cx, |workspace, cx| {
                         workspace.activate_item(&active_project_search, true, change_selection, cx)
                     });
                 }
             } else {
-                self.workspace.update(cx, |workspace, cx| {
-                    workspace.activate_item(&active_editor, true, change_selection, cx)
-                });
-            };
+                self.workspace
+                    .update(cx, |workspace, cx| match self.active_item() {
+                        Some(active_item) => workspace.activate_item(
+                            active_item.as_ref(),
+                            true,
+                            change_selection,
+                            cx,
+                        ),
+                        None => workspace.activate_item(&active_editor, true, change_selection, cx),
+                    });
+            }
         }
     }
 
@@ -2156,6 +2171,7 @@ impl OutlinePanel {
 
     fn replace_active_editor(
         &mut self,
+        new_active_item: Box<dyn ItemHandle>,
         new_active_editor: View<Editor>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -2170,6 +2186,7 @@ impl OutlinePanel {
         self.active_item = Some(ActiveItem {
             _buffer_search_subscription: buffer_search_subscription,
             _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, cx),
+            item_handle: new_active_item.downgrade_item(),
             active_editor: new_active_editor.downgrade(),
         });
         let new_entries =
@@ -3102,23 +3119,26 @@ impl OutlinePanel {
             return;
         }
 
-        let active_editor = self.active_editor();
-        let project_search = self.active_project_search(active_editor.as_ref(), cx);
+        let project_search = self
+            .active_item()
+            .and_then(|item| item.downcast::<ProjectSearchView>());
         let project_search_matches = project_search
             .as_ref()
             .map(|project_search| project_search.read(cx).get_matches(cx))
             .unwrap_or_default();
 
-        let buffer_search = active_editor
-            .as_ref()
-            .and_then(|active_editor| self.workspace.read(cx).pane_for(active_editor))
+        let buffer_search = self
+            .active_item()
+            .as_deref()
+            .and_then(|active_item| self.workspace.read(cx).pane_for(active_item))
             .and_then(|pane| {
                 pane.read(cx)
                     .toolbar()
                     .read(cx)
                     .item_of_type::<BufferSearchBar>()
             });
-        let buffer_search_matches = active_editor
+        let buffer_search_matches = self
+            .active_editor()
             .map(|active_editor| active_editor.update(cx, |editor, cx| editor.get_matches(cx)))
             .unwrap_or_default();
 
@@ -3154,24 +3174,6 @@ impl OutlinePanel {
             self.selected_entry.invalidate();
             self.update_cached_entries(Some(UPDATE_DEBOUNCE), cx);
         }
-    }
-
-    fn active_project_search(
-        &mut self,
-        for_editor: Option<&View<Editor>>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<View<ProjectSearchView>> {
-        let for_editor = for_editor?;
-        self.workspace
-            .read(cx)
-            .active_pane()
-            .read(cx)
-            .items()
-            .filter_map(|item| item.downcast::<ProjectSearchView>())
-            .find(|project_search| {
-                let project_search_editor = project_search.boxed_clone().act_as::<Editor>(cx);
-                Some(for_editor) == project_search_editor.as_ref()
-            })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3303,9 +3305,13 @@ impl OutlinePanel {
         self.active_item.as_ref()?.active_editor.upgrade()
     }
 
-    fn should_replace_active_editor(&self, new_active_editor: &View<Editor>) -> bool {
-        self.active_editor().map_or(true, |active_editor| {
-            !self.pinned && active_editor.item_id() != new_active_editor.item_id()
+    fn active_item(&self) -> Option<Box<dyn ItemHandle>> {
+        self.active_item.as_ref()?.item_handle.upgrade()
+    }
+
+    fn should_replace_active_item(&self, new_active_item: &dyn ItemHandle) -> bool {
+        self.active_item().map_or(true, |active_item| {
+            !self.pinned && active_item.item_id() != new_active_item.item_id()
         })
     }
 
@@ -3316,9 +3322,11 @@ impl OutlinePanel {
     ) {
         self.pinned = !self.pinned;
         if !self.pinned {
-            if let Some(active_editor) = workspace_active_editor(self.workspace.read(cx), cx) {
-                if self.should_replace_active_editor(&active_editor) {
-                    self.replace_active_editor(active_editor, cx);
+            if let Some((active_item, active_editor)) =
+                workspace_active_editor(self.workspace.read(cx), cx)
+            {
+                if self.should_replace_active_item(active_item.as_ref()) {
+                    self.replace_active_editor(active_item, active_editor, cx);
                 }
             }
         }
@@ -3397,11 +3405,15 @@ impl OutlinePanel {
     }
 }
 
-fn workspace_active_editor(workspace: &Workspace, cx: &AppContext) -> Option<View<Editor>> {
-    workspace
-        .active_item(cx)?
+fn workspace_active_editor(
+    workspace: &Workspace,
+    cx: &AppContext,
+) -> Option<(Box<dyn ItemHandle>, View<Editor>)> {
+    let active_item = workspace.active_item(cx)?;
+    let active_editor = active_item
         .act_as::<Editor>(cx)
-        .filter(|editor| editor.read(cx).mode() == EditorMode::Full)
+        .filter(|editor| editor.read(cx).mode() == EditorMode::Full)?;
+    Some((active_item, active_editor))
 }
 
 fn back_to_common_visited_parent(
@@ -3504,11 +3516,11 @@ impl Panel for OutlinePanel {
                     let old_active = outline_panel.active;
                     outline_panel.active = active;
                     if active && old_active != active {
-                        if let Some(active_editor) =
+                        if let Some((active_item, active_editor)) =
                             workspace_active_editor(outline_panel.workspace.read(cx), cx)
                         {
-                            if outline_panel.should_replace_active_editor(&active_editor) {
-                                outline_panel.replace_active_editor(active_editor, cx);
+                            if outline_panel.should_replace_active_item(active_item.as_ref()) {
+                                outline_panel.replace_active_editor(active_item, active_editor, cx);
                             } else {
                                 outline_panel.update_fs_entries(
                                     &active_editor,
@@ -3805,6 +3817,7 @@ fn horizontal_separator(cx: &mut WindowContext) -> Div {
 #[cfg(test)]
 mod tests {
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
+    use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use search::project_search::{self, perform_project_search};
@@ -3821,6 +3834,9 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         populate_with_test_project(&fs, "/rust-analyzer").await;
         let project = Project::test(fs.clone(), ["/rust-analyzer".as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(Arc::new(rust_lang()))
+        });
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -4317,5 +4333,34 @@ mod tests {
             }),
         )
         .await;
+    }
+
+    fn rust_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )
+        .with_highlights_query(
+            r#"
+                (field_identifier) @field
+                (struct_expression) @struct
+            "#,
+        )
+        .unwrap()
+        .with_injection_query(
+            r#"
+                (macro_invocation
+                    (token_tree) @content
+                    (#set! "language" "rust"))
+            "#,
+        )
+        .unwrap()
     }
 }
