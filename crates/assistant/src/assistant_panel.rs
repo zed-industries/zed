@@ -2361,15 +2361,14 @@ impl ContextEditor {
             let assist = step.assist.as_ref()?;
             let editor = assist.editor.upgrade()?;
 
-            if let Some(assist) = step.assist.take() {
-                if matches!(assist.status(cx), WorkflowAssistStatus::Idle) {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        for assist_id in assist.assist_ids {
-                            assistant.finish_assist(assist_id, true, cx)
-                        }
-                    });
-                    return Some((editor, assist.editor_was_open));
-                }
+            if matches!(step.status(cx), WorkflowStepStatus::Idle) {
+                let assist = step.assist.take().unwrap();
+                InlineAssistant::update_global(cx, |assistant, cx| {
+                    for assist_id in assist.assist_ids {
+                        assistant.finish_assist(assist_id, true, cx)
+                    }
+                });
+                return Some((editor, assist.editor_was_open));
             }
         }
 
