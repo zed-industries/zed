@@ -53,7 +53,6 @@ use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
-use serde_json::Value;
 use settings::{update_settings_file, Settings};
 use smol::stream::StreamExt;
 use std::{
@@ -80,33 +79,7 @@ use workspace::{
 use workspace::{searchable::SearchableItemHandle, NewFile};
 use zed_actions::InlineAssist;
 
-pub struct NewContext;
-
-impl Action for NewContext {
-    fn boxed_clone(&self) -> Box<dyn Action> {
-        Box::new(NewContext)
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn partial_eq(&self, _other: &dyn Action) -> bool {
-        true // Since NewContext has no fields, all instances are equal
-    }
-
-    fn name(&self) -> &'static str {
-        "New Context"
-    }
-
-    fn debug_name() -> &'static str {
-        "NewContext"
-    }
-
-    fn build(_json: Value) -> Result<Box<dyn gpui::Action>, anyhow::Error> {
-        Ok(Box::new(NewContext))
-    }
-}
+gpui::actions!(assistant_panel, [NewContext]);
 
 pub fn init(cx: &mut AppContext) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
