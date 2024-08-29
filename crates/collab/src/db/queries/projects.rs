@@ -319,6 +319,7 @@ impl Database {
                         git_status: ActiveValue::set(entry.git_status.map(|status| status as i64)),
                         is_deleted: ActiveValue::set(false),
                         scan_id: ActiveValue::set(update.scan_id as i64),
+                        is_fifo: ActiveValue::set(entry.is_fifo),
                     }
                 }))
                 .on_conflict(
@@ -727,6 +728,7 @@ impl Database {
                         is_ignored: db_entry.is_ignored,
                         is_external: db_entry.is_external,
                         git_status: db_entry.git_status.map(|status| status as i32),
+                        is_fifo: db_entry.is_fifo,
                     });
                 }
             }

@@ -12,6 +12,7 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
+use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
     AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId,
@@ -147,6 +148,7 @@ actions!(
         CloseItemsToTheRight,
         GoBack,
         GoForward,
+        JoinIntoNext,
         ReopenClosedItem,
         SplitLeft,
         SplitUp,
@@ -175,7 +177,9 @@ pub enum Event {
     ActivateItem {
         local: bool,
     },
-    Remove,
+    Remove {
+        focus_on_pane: Option<View<Pane>>,
+    },
     RemoveItem {
         idx: usize,
     },
@@ -183,6 +187,7 @@ pub enum Event {
         item_id: EntityId,
     },
     Split(SplitDirection),
+    JoinIntoNext,
     ChangeItemTitle,
     Focus,
     ZoomIn,
@@ -204,7 +209,7 @@ impl fmt::Debug for Event {
                 .debug_struct("ActivateItem")
                 .field("local", local)
                 .finish(),
-            Event::Remove => f.write_str("Remove"),
+            Event::Remove { .. } => f.write_str("Remove"),
             Event::RemoveItem { idx } => f.debug_struct("RemoveItem").field("idx", idx).finish(),
             Event::RemovedItem { item_id } => f
                 .debug_struct("RemovedItem")
@@ -214,6 +219,7 @@ impl fmt::Debug for Event {
                 .debug_struct("Split")
                 .field("direction", direction)
                 .finish(),
+            Event::JoinIntoNext => f.write_str("JoinIntoNext"),
             Event::ChangeItemTitle => f.write_str("ChangeItemTitle"),
             Event::Focus => f.write_str("Focus"),
             Event::ZoomIn => f.write_str("ZoomIn"),
@@ -666,6 +672,10 @@ impl Pane {
                 })
             })
         }
+    }
+
+    fn join_into_next(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::JoinIntoNext);
     }
 
     fn history_updated(&mut self, cx: &mut ViewContext<Self>) {
@@ -1319,6 +1329,33 @@ impl Pane {
         close_pane_if_empty: bool,
         cx: &mut ViewContext<Self>,
     ) {
+        self._remove_item(item_index, activate_pane, close_pane_if_empty, None, cx)
+    }
+
+    pub fn remove_item_and_focus_on_pane(
+        &mut self,
+        item_index: usize,
+        activate_pane: bool,
+        focus_on_pane_if_closed: View<Pane>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self._remove_item(
+            item_index,
+            activate_pane,
+            true,
+            Some(focus_on_pane_if_closed),
+            cx,
+        )
+    }
+
+    fn _remove_item(
+        &mut self,
+        item_index: usize,
+        activate_pane: bool,
+        close_pane_if_empty: bool,
+        focus_on_pane_if_closed: Option<View<Pane>>,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.activation_history
             .retain(|entry| entry.entity_id != self.items[item_index].item_id());
 
@@ -1354,7 +1391,9 @@ impl Pane {
             item.deactivated(cx);
             if close_pane_if_empty {
                 self.update_toolbar(cx);
-                cx.emit(Event::Remove);
+                cx.emit(Event::Remove {
+                    focus_on_pane: focus_on_pane_if_closed,
+                });
             }
         }
 
@@ -1650,6 +1689,31 @@ impl Pane {
         }
     }
 
+    pub fn icon_color(selected: bool) -> Color {
+        if selected {
+            Color::Default
+        } else {
+            Color::Muted
+        }
+    }
+
+    pub fn git_aware_icon_color(
+        git_status: Option<GitFileStatus>,
+        ignored: bool,
+        selected: bool,
+    ) -> Color {
+        if ignored {
+            Color::Ignored
+        } else {
+            match git_status {
+                Some(GitFileStatus::Added) => Color::Created,
+                Some(GitFileStatus::Modified) => Color::Modified,
+                Some(GitFileStatus::Conflict) => Color::Conflict,
+                None => Self::icon_color(selected),
+            }
+        }
+    }
+
     fn render_tab(
         &self,
         ix: usize,
@@ -1657,6 +1721,8 @@ impl Pane {
         detail: usize,
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
+        let project_path = item.project_path(cx);
+
         let is_active = ix == self.active_item_index;
         let is_preview = self
             .preview_item_id
@@ -1671,6 +1737,19 @@ impl Pane {
             },
             cx,
         );
+
+        let icon_color = if ItemSettings::get_global(cx).git_status {
+            project_path
+                .as_ref()
+                .and_then(|path| self.project.read(cx).entry_for_path(&path, cx))
+                .map(|entry| {
+                    Self::git_aware_icon_color(entry.git_status, entry.is_ignored, is_active)
+                })
+                .unwrap_or_else(|| Self::icon_color(is_active))
+        } else {
+            Self::icon_color(is_active)
+        };
+
         let icon = item.tab_icon(cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
@@ -1762,13 +1841,7 @@ impl Pane {
             .child(
                 h_flex()
                     .gap_1()
-                    .children(icon.map(|icon| {
-                        icon.size(IconSize::Small).color(if is_active {
-                            Color::Default
-                        } else {
-                            Color::Muted
-                        })
-                    }))
+                    .children(icon.map(|icon| icon.size(IconSize::Small).color(icon_color)))
                     .child(label),
             );
 
@@ -1906,6 +1979,7 @@ impl Pane {
     }
 
     fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
+        let focus_handle = self.focus_handle.clone();
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
@@ -1914,7 +1988,10 @@ impl Pane {
                 move |_, cx| view.update(cx, Self::navigate_backward)
             })
             .disabled(!self.can_navigate_backward())
-            .tooltip(|cx| Tooltip::for_action("Go Back", &GoBack, cx));
+            .tooltip({
+                let focus_handle = focus_handle.clone();
+                move |cx| Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, cx)
+            });
 
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
             .shape(IconButtonShape::Square)
@@ -1924,7 +2001,10 @@ impl Pane {
                 move |_, cx| view.update(cx, Self::navigate_forward)
             })
             .disabled(!self.can_navigate_forward())
-            .tooltip(|cx| Tooltip::for_action("Go Forward", &GoForward, cx));
+            .tooltip({
+                let focus_handle = focus_handle.clone();
+                move |cx| Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, cx)
+            });
 
         TabBar::new("tab_bar")
             .track_scroll(self.tab_bar_scroll_handle.clone())
@@ -2259,6 +2339,7 @@ impl Render for Pane {
             .on_action(cx.listener(|pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx)))
             .on_action(cx.listener(|pane, _: &GoBack, cx| pane.navigate_backward(cx)))
             .on_action(cx.listener(|pane, _: &GoForward, cx| pane.navigate_forward(cx)))
+            .on_action(cx.listener(|pane, _: &JoinIntoNext, cx| pane.join_into_next(cx)))
             .on_action(cx.listener(Pane::toggle_zoom))
             .on_action(cx.listener(|pane: &mut Pane, action: &ActivateItem, cx| {
                 pane.activate_item(action.0, true, true, cx);

@@ -11,6 +11,7 @@ use editor::{
     Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer,
     MAX_TAB_TITLE_LEN,
 };
+use futures::StreamExt;
 use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, EntityId, EventEmitter,
     FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement, KeyContext, Model,
@@ -20,7 +21,6 @@ use gpui::{
 use menu::Confirm;
 use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
 use settings::Settings;
-use smol::stream::StreamExt;
 use std::{
     any::{Any, TypeId},
     mem,
@@ -209,7 +209,7 @@ impl ProjectSearch {
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
-            let mut matches = search;
+            let mut matches = search.ready_chunks(1024);
             let this = this.upgrade()?;
             this.update(&mut cx, |this, cx| {
                 this.match_ranges.clear();
@@ -220,35 +220,57 @@ impl ProjectSearch {
             .ok()?;
 
             let mut limit_reached = false;
-            while let Some(result) = matches.next().await {
-                match result {
-                    project::SearchResult::Buffer { buffer, ranges } => {
-                        let mut match_ranges = this
-                            .update(&mut cx, |this, cx| {
-                                this.excerpts.update(cx, |excerpts, cx| {
-                                    excerpts.stream_excerpts_with_context_lines(
-                                        buffer,
-                                        ranges,
-                                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                                        cx,
-                                    )
-                                })
-                            })
-                            .ok()?;
+            while let Some(results) = matches.next().await {
+                let tasks = results
+                    .into_iter()
+                    .map(|result| {
+                        let this = this.clone();
 
-                        while let Some(range) = match_ranges.next().await {
-                            this.update(&mut cx, |this, _| {
-                                this.no_results = Some(false);
-                                this.match_ranges.push(range)
-                            })
-                            .ok()?;
-                        }
-                        this.update(&mut cx, |_, cx| cx.notify()).ok()?;
-                    }
-                    project::SearchResult::LimitReached => {
-                        limit_reached = true;
+                        cx.spawn(|mut cx| async move {
+                            match result {
+                                project::search::SearchResult::Buffer { buffer, ranges } => {
+                                    let mut match_ranges_rx =
+                                        this.update(&mut cx, |this, cx| {
+                                            this.excerpts.update(cx, |excerpts, cx| {
+                                                excerpts.stream_excerpts_with_context_lines(
+                                                    buffer,
+                                                    ranges,
+                                                    editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                                                    cx,
+                                                )
+                                            })
+                                        })?;
+
+                                    let mut match_ranges = vec![];
+                                    while let Some(range) = match_ranges_rx.next().await {
+                                        match_ranges.push(range);
+                                    }
+                                    anyhow::Ok((match_ranges, false))
+                                }
+                                project::search::SearchResult::LimitReached => {
+                                    anyhow::Ok((vec![], true))
+                                }
+                            }
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                let result_ranges = futures::future::join_all(tasks).await;
+                let mut combined_ranges = vec![];
+                for (ranges, result_limit_reached) in result_ranges.into_iter().flatten() {
+                    combined_ranges.extend(ranges);
+                    if result_limit_reached {
+                        limit_reached = result_limit_reached;
                     }
                 }
+                this.update(&mut cx, |this, cx| {
+                    if !combined_ranges.is_empty() {
+                        this.no_results = Some(false);
+                        this.match_ranges.extend(combined_ranges);
+                        cx.notify();
+                    }
+                })
+                .ok()?;
             }
 
             this.update(&mut cx, |this, cx| {
@@ -503,6 +525,10 @@ impl Item for ProjectSearchView {
 }
 
 impl ProjectSearchView {
+    pub fn get_matches(&self, cx: &AppContext) -> Vec<Range<Anchor>> {
+        self.model.read(cx).match_ranges.clone()
+    }
+
     fn toggle_filters(&mut self, cx: &mut ViewContext<Self>) {
         self.filters_enabled = !self.filters_enabled;
         ActiveSettings::update_global(cx, |settings, cx| {
@@ -834,6 +860,10 @@ impl ProjectSearchView {
         if let Some(query) = self.build_search_query(cx) {
             self.model.update(cx, |model, cx| model.search(query, cx));
         }
+    }
+
+    pub fn search_query_text(&self, cx: &WindowContext) -> String {
+        self.query_editor.read(cx).text(cx)
     }
 
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {

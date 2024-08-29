@@ -24,6 +24,7 @@ members = [
     "crates/db",
     "crates/dev_server_projects",
     "crates/diagnostics",
+    "crates/docs_preprocessor",
     "crates/editor",
     "crates/extension",
     "crates/extension_api",
@@ -165,7 +166,7 @@ members = [
     # Tooling
     #
 
-    "tooling/xtask",
+    "tooling/xtask"
 ]
 default-members = ["crates/zed"]
 
@@ -321,14 +322,14 @@ async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "7f54ddfc001edc48225e6602d3c38ebb855421aa" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "7f54ddfc001edc48225e6602d3c38ebb855421aa" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "7f54ddfc001edc48225e6602d3c38ebb855421aa" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
 cargo_metadata = "0.18"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
-clickhouse = "0.11.6"
+clickhouse = "0.12.0"
 cocoa = "0.25"
 core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
@@ -339,7 +340,7 @@ dirs = "4.0"
 emojis = "0.6.1"
 env_logger = "0.11"
 exec = "0.3.1"
-fork = "0.1.23"
+fork = "0.2.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
@@ -545,6 +546,7 @@ zed = { codegen-units = 16 }
 
 [profile.release-fast]
 inherits = "release"
+debug = "full"
 lto = false
 codegen-units = 16
 

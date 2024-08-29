@@ -84,6 +84,7 @@ impl TextSystem {
                 .iter()
                 .map(|font| font.family.to_string()),
         );
+        names.push(".SystemUIFont".to_string());
         names.sort();
         names.dedup();
         names

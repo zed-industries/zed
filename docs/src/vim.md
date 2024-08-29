@@ -57,7 +57,6 @@ g <space>  Open the current search excerpt
 <ctrl-w> g D      Go to type definition in a split
 
 # Insert mode
-i a / a a      Select the function argument the cursor is in
 ctrl-x ctrl-o  Open the completion menu
 ctrl-x ctrl-c  Request GitHub Copilot suggestion (if configured)
 ctrl-x ctrl-a  Open the inline AI assistant (if configured)
@@ -242,8 +241,17 @@ Some vim settings are available to modify the default vim behavior:
     // "never": don't use system clipboard unless "+ or "* is specified
     // "on_yank": use system clipboard for yank operations when no register is specified
     "use_system_clipboard": "always",
-    // Lets `f` and `t` motions extend across multiple lines
-    "use_multiline_find": true
+    // Let `f` and `t` motions extend across multiple lines
+    "use_multiline_find": true,
+    // Let `f` and `t` motions match case insensitively if the target is lowercase
+    "use_smartcase_find": true,
+    // Use relative line numbers in normal mode, absolute in insert mode
+    // c.f. https://github.com/jeffkreeftmeijer/vim-numbertoggle
+    "toggle_relative_line_numbers": true,
+    // Add custom digraphs (e.g. ctrl-k f z will insert a zombie emoji)
+    "custom_digraphs": {
+      "fz": "🧟‍♀️"
+    }
   }
 }
 ```
@@ -258,6 +266,8 @@ There are also a few Zed settings that you may also enjoy if you use vim mode:
   "relative_line_numbers": true,
   // hide the scroll bar
   "scrollbar": { "show": "never" },
+  // prevent the buffer from scrolling beyond the last line
+  "scroll_beyond_last_line": "off",
   // allow cursor to reach edges of screen
   "vertical_scroll_margin": 0,
   "gutter": {
