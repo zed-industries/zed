@@ -324,7 +324,7 @@ impl SearchData {
             }
         }
 
-        if kind == SearchKind::Buffer || multi_buffer_snapshot.as_singleton().is_some() {
+        if kind == SearchKind::Buffer && multi_buffer_snapshot.as_singleton().is_some() {
             left_whitespaces_count = 0;
         }
         highlight_ranges.iter_mut().for_each(|(range, _)| {
