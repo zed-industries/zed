@@ -1,55 +1,24 @@
 use crate::headless_project::HeadlessProject;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
-use fs::{FakeFs, Fs as _};
+use fs::{FakeFs, Fs};
 use gpui::{Context, Model, TestAppContext};
 use http_client::FakeHttpClient;
-use language::LanguageRegistry;
+use language::{Buffer, LanguageRegistry};
 use node_runtime::FakeNodeRuntime;
-use project::Project;
+use project::{
+    search::{SearchQuery, SearchResult},
+    Project,
+};
 use remote::SshSession;
 use serde_json::json;
 use settings::SettingsStore;
+use smol::stream::StreamExt;
 use std::{path::Path, sync::Arc};
-
-fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::try_init().ok();
-    }
-}
 
 #[gpui::test]
 async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let (client_ssh, server_ssh) = SshSession::fake(cx, server_cx);
-    init_logger();
-
-    let fs = FakeFs::new(server_cx.executor());
-    fs.insert_tree(
-        "/code",
-        json!({
-            "project1": {
-                ".git": {},
-                "README.md": "# project 1",
-                "src": {
-                    "lib.rs": "fn one() -> usize { 1 }"
-                }
-            },
-            "project2": {
-                "README.md": "# project 2",
-            },
-        }),
-    )
-    .await;
-    fs.set_index_for_repo(
-        Path::new("/code/project1/.git"),
-        &[(Path::new("src/lib.rs"), "fn one() -> usize { 0 }".into())],
-    );
-
-    server_cx.update(HeadlessProject::init);
-    let _headless_project =
-        server_cx.new_model(|cx| HeadlessProject::new(server_ssh, fs.clone(), cx));
-
-    let project = build_project(client_ssh, cx);
+    let (project, _headless, fs) = init_test(cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
@@ -148,6 +117,119 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
             "fn one() -> usize { 100 }"
         );
     });
+}
+
+#[gpui::test]
+async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let (project, headless, _) = init_test(cx, server_cx).await;
+
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    async fn do_search(project: &Model<Project>, mut cx: TestAppContext) -> Model<Buffer> {
+        let mut receiver = project.update(&mut cx, |project, cx| {
+            project.search(
+                SearchQuery::text(
+                    "project",
+                    false,
+                    true,
+                    false,
+                    Default::default(),
+                    Default::default(),
+                    None,
+                )
+                .unwrap(),
+                cx,
+            )
+        });
+
+        let first_response = receiver.next().await.unwrap();
+        let SearchResult::Buffer { buffer, .. } = first_response else {
+            panic!("incorrect result");
+        };
+        buffer.update(&mut cx, |buffer, cx| {
+            assert_eq!(
+                buffer.file().unwrap().full_path(cx).to_string_lossy(),
+                "project1/README.md"
+            )
+        });
+
+        assert!(receiver.next().await.is_none());
+        buffer
+    }
+
+    let buffer = do_search(&project, cx.clone()).await;
+
+    // test that the headless server is tracking which buffers we have open correctly.
+    cx.run_until_parked();
+    headless.update(server_cx, |headless, cx| {
+        assert!(!headless.buffer_store.read(cx).shared_buffers().is_empty())
+    });
+    do_search(&project, cx.clone()).await;
+
+    cx.update(|_| {
+        drop(buffer);
+    });
+    cx.run_until_parked();
+    headless.update(server_cx, |headless, cx| {
+        assert!(headless.buffer_store.read(cx).shared_buffers().is_empty())
+    });
+
+    do_search(&project, cx.clone()).await;
+}
+
+fn init_logger() {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::try_init().ok();
+    }
+}
+
+async fn init_test(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) -> (Model<Project>, Model<HeadlessProject>, Arc<FakeFs>) {
+    let (client_ssh, server_ssh) = SshSession::fake(cx, server_cx);
+    init_logger();
+
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+            "project2": {
+                "README.md": "# project 2",
+            },
+        }),
+    )
+    .await;
+    fs.set_index_for_repo(
+        Path::new("/code/project1/.git"),
+        &[(Path::new("src/lib.rs"), "fn one() -> usize { 0 }".into())],
+    );
+
+    server_cx.update(HeadlessProject::init);
+    let headless = server_cx.new_model(|cx| HeadlessProject::new(server_ssh, fs.clone(), cx));
+    let project = build_project(client_ssh, cx);
+
+    project
+        .update(cx, {
+            let headless = headless.clone();
+            |_, cx| cx.on_release(|_, _| drop(headless))
+        })
+        .detach();
+    (project, headless, fs)
 }
 
 fn build_project(ssh: Arc<SshSession>, cx: &mut TestAppContext) -> Model<Project> {

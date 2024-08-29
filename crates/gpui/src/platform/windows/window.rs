@@ -92,7 +92,7 @@ impl WindowsWindowState {
         let input_handler = None;
         let system_key_handled = false;
         let click_state = ClickState::new();
-        let system_settings = WindowsSystemSettings::new();
+        let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
 
@@ -166,7 +166,7 @@ impl WindowsWindowState {
 
     /// get the logical size of the app's drawable area.
     ///
-    /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
+    /// Currently, GPUI uses the logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
         self.logical_size
@@ -187,13 +187,13 @@ impl WindowsWindowState {
     }
 
     fn title_bar_height(&self) -> Pixels {
-        // todo(windows) this is hard set to match the ui title bar
+        // todo(windows) this is hardcoded to match the ui title bar
         //               in the future the ui title bar component will report the size
         px(32.) + self.title_bar_top_offset()
     }
 
     pub(crate) fn caption_button_width(&self) -> Pixels {
-        // todo(windows) this is hard set to match the ui title bar
+        // todo(windows) this is hardcoded to match the ui title bar
         //               in the future the ui title bar component will report the size
         px(36.)
     }
@@ -343,8 +343,8 @@ impl WindowsWindow {
             };
             let mut lock = state_ptr.state.borrow_mut();
             let bounds = bounds.to_device_pixels(lock.scale_factor);
-            lock.border_offset.udpate(raw_hwnd)?;
-            placement.rcNormalPosition = calcualte_window_rect(bounds, lock.border_offset);
+            lock.border_offset.update(raw_hwnd)?;
+            placement.rcNormalPosition = calculate_window_rect(bounds, lock.border_offset);
             drop(lock);
             SetWindowPlacement(raw_hwnd, &placement)?;
         }
@@ -404,7 +404,7 @@ impl PlatformWindow for WindowsWindow {
 
     /// get the logical size of the app's drawable area.
     ///
-    /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
+    /// Currently, GPUI uses the logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
         self.0.state.borrow().content_size()
@@ -660,8 +660,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow_mut().callbacks.appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
-        self.0.state.borrow_mut().renderer.draw(scene)
+    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
+        self.0.state.borrow_mut().renderer.draw(scene, on_complete)
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -674,6 +674,14 @@ impl PlatformWindow for WindowsWindow {
 
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         Some(self.0.state.borrow().renderer.gpu_specs())
+    }
+
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+        // todo(windows)
+    }
+
+    fn fps(&self) -> Option<f32> {
+        None
     }
 }
 
@@ -893,7 +901,7 @@ pub(crate) struct WindowBorderOffset {
 }
 
 impl WindowBorderOffset {
-    pub(crate) fn udpate(&mut self, hwnd: HWND) -> anyhow::Result<()> {
+    pub(crate) fn update(&mut self, hwnd: HWND) -> anyhow::Result<()> {
         let window_rect = unsafe {
             let mut rect = std::mem::zeroed();
             GetWindowRect(hwnd, &mut rect)?;
@@ -1011,9 +1019,9 @@ fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) -> Result<()> {
     Ok(())
 }
 
-fn calcualte_window_rect(bounds: Bounds<DevicePixels>, border_offset: WindowBorderOffset) -> RECT {
+fn calculate_window_rect(bounds: Bounds<DevicePixels>, border_offset: WindowBorderOffset) -> RECT {
     // NOTE:
-    // The reason that not using `AdjustWindowRectEx()` here is
+    // The reason we're not using `AdjustWindowRectEx()` here is
     // that the size reported by this function is incorrect.
     // You can test it, and there are similar discussions online.
     // See: https://stackoverflow.com/questions/12423584/how-to-set-exact-client-size-for-overlapped-window-winapi
@@ -1028,11 +1036,11 @@ fn calcualte_window_rect(bounds: Bounds<DevicePixels>, border_offset: WindowBord
     let left_offset = border_offset.width_offset / 2;
     let top_offset = border_offset.height_offset / 2;
     let right_offset = border_offset.width_offset - left_offset;
-    let bottom_offet = border_offset.height_offset - top_offset;
+    let bottom_offset = border_offset.height_offset - top_offset;
     rect.left -= left_offset;
     rect.top -= top_offset;
     rect.right += right_offset;
-    rect.bottom += bottom_offet;
+    rect.bottom += bottom_offset;
     rect
 }
 
@@ -1044,11 +1052,11 @@ fn calculate_client_rect(
     let left_offset = border_offset.width_offset / 2;
     let top_offset = border_offset.height_offset / 2;
     let right_offset = border_offset.width_offset - left_offset;
-    let bottom_offet = border_offset.height_offset - top_offset;
+    let bottom_offset = border_offset.height_offset - top_offset;
     let left = rect.left + left_offset;
     let top = rect.top + top_offset;
     let right = rect.right - right_offset;
-    let bottom = rect.bottom - bottom_offet;
+    let bottom = rect.bottom - bottom_offset;
     let physical_size = size(DevicePixels(right - left), DevicePixels(bottom - top));
     Bounds {
         origin: logical_point(left as f32, top as f32, scale_factor),

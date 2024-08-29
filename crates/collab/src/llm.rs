@@ -18,6 +18,7 @@ use axum::{
     Extension, Json, Router, TypedHeader,
 };
 use chrono::{DateTime, Duration, Utc};
+use collections::HashMap;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
 use http_client::IsahcHttpClient;
@@ -29,6 +30,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use strum::IntoEnumIterator;
 use telemetry::{report_llm_rate_limit, report_llm_usage, LlmRateLimitEventRow, LlmUsageEventRow};
 use tokio::sync::RwLock;
 use util::ResultExt;
@@ -41,7 +43,8 @@ pub struct LlmState {
     pub db: Arc<LlmDatabase>,
     pub http_client: IsahcHttpClient,
     pub clickhouse_client: Option<clickhouse::Client>,
-    active_user_count: RwLock<Option<(DateTime<Utc>, ActiveUserCount)>>,
+    active_user_count_by_model:
+        RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
 }
 
 const ACTIVE_USER_COUNT_CACHE_DURATION: Duration = Duration::seconds(30);
@@ -69,9 +72,6 @@ impl LlmState {
             .build()
             .context("failed to construct http client")?;
 
-        let initial_active_user_count =
-            Some((Utc::now(), db.get_active_user_count(Utc::now()).await?));
-
         let this = Self {
             executor,
             db,
@@ -80,25 +80,34 @@ impl LlmState {
                 .clickhouse_url
                 .as_ref()
                 .and_then(|_| build_clickhouse_client(&config).log_err()),
-            active_user_count: RwLock::new(initial_active_user_count),
+            active_user_count_by_model: RwLock::new(HashMap::default()),
             config,
         };
 
         Ok(Arc::new(this))
     }
 
-    pub async fn get_active_user_count(&self) -> Result<ActiveUserCount> {
+    pub async fn get_active_user_count(
+        &self,
+        provider: LanguageModelProvider,
+        model: &str,
+    ) -> Result<ActiveUserCount> {
         let now = Utc::now();
 
-        if let Some((last_updated, count)) = self.active_user_count.read().await.as_ref() {
-            if now - *last_updated < ACTIVE_USER_COUNT_CACHE_DURATION {
-                return Ok(*count);
+        {
+            let active_user_count_by_model = self.active_user_count_by_model.read().await;
+            if let Some((last_updated, count)) =
+                active_user_count_by_model.get(&(provider, model.to_string()))
+            {
+                if now - *last_updated < ACTIVE_USER_COUNT_CACHE_DURATION {
+                    return Ok(*count);
+                }
             }
         }
 
-        let mut cache = self.active_user_count.write().await;
-        let new_count = self.db.get_active_user_count(now).await?;
-        *cache = Some((now, new_count));
+        let mut cache = self.active_user_count_by_model.write().await;
+        let new_count = self.db.get_active_user_count(provider, model, now).await?;
+        cache.insert((provider, model.to_string()), (now, new_count));
         Ok(new_count)
     }
 }
@@ -138,7 +147,11 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
                 ));
             }
 
-            tracing::Span::current().record("authn.jti", &claims.jti);
+            tracing::Span::current()
+                .record("user_id", claims.user_id)
+                .record("login", claims.github_user_login.clone())
+                .record("authn.jti", &claims.jti)
+                .record("is_staff", &claims.is_staff);
 
             req.extensions_mut().insert(claims);
             Ok::<_, Error>(next.run(req).await.into_response())
@@ -166,7 +179,10 @@ async fn perform_completion(
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     Json(params): Json<PerformCompletionParams>,
 ) -> Result<impl IntoResponse> {
-    let model = normalize_model_name(params.provider, params.model);
+    let model = normalize_model_name(
+        state.db.model_names_for_provider(params.provider),
+        params.model,
+    );
 
     authorize_access_to_language_model(
         &state.config,
@@ -197,17 +213,21 @@ async fn perform_completion(
             let mut request: anthropic::Request =
                 serde_json::from_str(&params.provider_request.get())?;
 
-            // Parse the model, throw away the version that was included, and then set a specific
-            // version that we control on the server.
+            // Override the model on the request with the latest version of the model that is
+            // known to the server.
+            //
             // Right now, we use the version that's defined in `model.id()`, but we will likely
             // want to change this code once a new version of an Anthropic model is released,
             // so that users can use the new version, without having to update Zed.
-            request.model = match anthropic::Model::from_id(&request.model) {
-                Ok(model) => model.id().to_string(),
-                Err(_) => request.model,
+            request.model = match model.as_str() {
+                "claude-3-5-sonnet" => anthropic::Model::Claude3_5Sonnet.id().to_string(),
+                "claude-3-opus" => anthropic::Model::Claude3Opus.id().to_string(),
+                "claude-3-haiku" => anthropic::Model::Claude3Haiku.id().to_string(),
+                "claude-3-sonnet" => anthropic::Model::Claude3Sonnet.id().to_string(),
+                _ => request.model,
             };
 
-            let chunks = anthropic::stream_completion(
+            let (chunks, rate_limit_info) = anthropic::stream_completion_with_rate_limit_info(
                 &state.http_client,
                 anthropic::ANTHROPIC_API_URL,
                 api_key,
@@ -217,10 +237,22 @@ async fn perform_completion(
             .await
             .map_err(|err| match err {
                 anthropic::AnthropicError::ApiError(ref api_error) => match api_error.code() {
-                    Some(anthropic::ApiErrorCode::RateLimitError) => Error::http(
-                        StatusCode::TOO_MANY_REQUESTS,
-                        "Upstream Anthropic rate limit exceeded.".to_string(),
-                    ),
+                    Some(anthropic::ApiErrorCode::RateLimitError) => {
+                        tracing::info!(
+                            target: "upstream rate limit exceeded",
+                            user_id = claims.user_id,
+                            login = claims.github_user_login,
+                            authn.jti = claims.jti,
+                            is_staff = claims.is_staff,
+                            provider = params.provider.to_string(),
+                            model = model
+                        );
+
+                        Error::http(
+                            StatusCode::TOO_MANY_REQUESTS,
+                            "Upstream Anthropic rate limit exceeded.".to_string(),
+                        )
+                    }
                     Some(anthropic::ApiErrorCode::InvalidRequestError) => {
                         Error::http(StatusCode::BAD_REQUEST, api_error.message.clone())
                     }
@@ -234,6 +266,19 @@ async fn perform_completion(
                 },
                 anthropic::AnthropicError::Other(err) => Error::Internal(err),
             })?;
+
+            if let Some(rate_limit_info) = rate_limit_info {
+                tracing::info!(
+                    target: "upstream rate limit",
+                    is_staff = claims.is_staff,
+                    provider = params.provider.to_string(),
+                    model = model,
+                    tokens_remaining = rate_limit_info.tokens_remaining,
+                    requests_remaining = rate_limit_info.requests_remaining,
+                    requests_reset = ?rate_limit_info.requests_reset,
+                    tokens_reset = ?rate_limit_info.tokens_reset,
+                );
+            }
 
             chunks
                 .map(move |event| {
@@ -366,35 +411,22 @@ async fn perform_completion(
     })))
 }
 
-fn normalize_model_name(provider: LanguageModelProvider, name: String) -> String {
-    let prefixes: &[_] = match provider {
-        LanguageModelProvider::Anthropic => &[
-            "claude-3-5-sonnet",
-            "claude-3-haiku",
-            "claude-3-opus",
-            "claude-3-sonnet",
-        ],
-        LanguageModelProvider::OpenAi => &[
-            "gpt-3.5-turbo",
-            "gpt-4-turbo-preview",
-            "gpt-4o-mini",
-            "gpt-4o",
-            "gpt-4",
-        ],
-        LanguageModelProvider::Google => &[],
-        LanguageModelProvider::Zed => &[],
-    };
-
-    if let Some(prefix) = prefixes
+fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
+    if let Some(known_model_name) = known_models
         .iter()
-        .filter(|&&prefix| name.starts_with(prefix))
-        .max_by_key(|&&prefix| prefix.len())
+        .filter(|known_model_name| name.starts_with(known_model_name.as_str()))
+        .max_by_key(|known_model_name| known_model_name.len())
     {
-        prefix.to_string()
+        known_model_name.to_string()
     } else {
         name
     }
 }
+
+/// The maximum lifetime spending an individual user can reach before being cut off.
+///
+/// Represented in cents.
+const LIFETIME_SPENDING_LIMIT_IN_CENTS: usize = 1_000 * 100;
 
 async fn check_usage_limit(
     state: &Arc<LlmState>,
@@ -413,7 +445,14 @@ async fn check_usage_limit(
         )
         .await?;
 
-    let active_users = state.get_active_user_count().await?;
+    if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT_IN_CENTS {
+        return Err(Error::http(
+            StatusCode::FORBIDDEN,
+            "Maximum spending limit reached.".to_string(),
+        ));
+    }
+
+    let active_users = state.get_active_user_count(provider, model_name).await?;
 
     let users_in_recent_minutes = active_users.users_in_recent_minutes.max(1);
     let users_in_recent_days = active_users.users_in_recent_days.max(1);
@@ -457,6 +496,24 @@ async fn check_usage_limit(
             };
 
             if let Some(client) = state.clickhouse_client.as_ref() {
+                tracing::info!(
+                    target: "user rate limit",
+                    user_id = claims.user_id,
+                    login = claims.github_user_login,
+                    authn.jti = claims.jti,
+                    is_staff = claims.is_staff,
+                    provider = provider.to_string(),
+                    model = model.name,
+                    requests_this_minute = usage.requests_this_minute,
+                    tokens_this_minute = usage.tokens_this_minute,
+                    tokens_this_day = usage.tokens_this_day,
+                    users_in_recent_minutes = users_in_recent_minutes,
+                    users_in_recent_days = users_in_recent_days,
+                    max_requests_per_minute = per_user_max_requests_per_minute,
+                    max_tokens_per_minute = per_user_max_tokens_per_minute,
+                    max_tokens_per_day = per_user_max_tokens_per_day,
+                );
+
                 report_llm_rate_limit(
                     client,
                     LlmRateLimitEventRow {
@@ -548,33 +605,91 @@ impl<S> Drop for TokenCountingStream<S> {
                 .await
                 .log_err();
 
-            if let Some((clickhouse_client, usage)) = state.clickhouse_client.as_ref().zip(usage) {
-                report_llm_usage(
-                    clickhouse_client,
-                    LlmUsageEventRow {
-                        time: Utc::now().timestamp_millis(),
-                        user_id: claims.user_id as i32,
-                        is_staff: claims.is_staff,
-                        plan: match claims.plan {
-                            Plan::Free => "free".to_string(),
-                            Plan::ZedPro => "zed_pro".to_string(),
+            if let Some(usage) = usage {
+                tracing::info!(
+                    target: "user usage",
+                    user_id = claims.user_id,
+                    login = claims.github_user_login,
+                    authn.jti = claims.jti,
+                    is_staff = claims.is_staff,
+                    requests_this_minute = usage.requests_this_minute,
+                    tokens_this_minute = usage.tokens_this_minute,
+                );
+
+                if let Some(clickhouse_client) = state.clickhouse_client.as_ref() {
+                    report_llm_usage(
+                        clickhouse_client,
+                        LlmUsageEventRow {
+                            time: Utc::now().timestamp_millis(),
+                            user_id: claims.user_id as i32,
+                            is_staff: claims.is_staff,
+                            plan: match claims.plan {
+                                Plan::Free => "free".to_string(),
+                                Plan::ZedPro => "zed_pro".to_string(),
+                            },
+                            model,
+                            provider: provider.to_string(),
+                            input_token_count: input_token_count as u64,
+                            output_token_count: output_token_count as u64,
+                            requests_this_minute: usage.requests_this_minute as u64,
+                            tokens_this_minute: usage.tokens_this_minute as u64,
+                            tokens_this_day: usage.tokens_this_day as u64,
+                            input_tokens_this_month: usage.input_tokens_this_month as u64,
+                            output_tokens_this_month: usage.output_tokens_this_month as u64,
+                            spending_this_month: usage.spending_this_month as u64,
+                            lifetime_spending: usage.lifetime_spending as u64,
                         },
-                        model,
-                        provider: provider.to_string(),
-                        input_token_count: input_token_count as u64,
-                        output_token_count: output_token_count as u64,
-                        requests_this_minute: usage.requests_this_minute as u64,
-                        tokens_this_minute: usage.tokens_this_minute as u64,
-                        tokens_this_day: usage.tokens_this_day as u64,
-                        input_tokens_this_month: usage.input_tokens_this_month as u64,
-                        output_tokens_this_month: usage.output_tokens_this_month as u64,
-                        spending_this_month: usage.spending_this_month as u64,
-                        lifetime_spending: usage.lifetime_spending as u64,
-                    },
-                )
-                .await
-                .log_err();
+                    )
+                    .await
+                    .log_err();
+                }
             }
         })
     }
+}
+
+pub fn log_usage_periodically(state: Arc<LlmState>) {
+    state.executor.clone().spawn_detached(async move {
+        loop {
+            state
+                .executor
+                .sleep(std::time::Duration::from_secs(30))
+                .await;
+
+            for provider in LanguageModelProvider::iter() {
+                for model in state.db.model_names_for_provider(provider) {
+                    if let Some(active_user_count) = state
+                        .get_active_user_count(provider, &model)
+                        .await
+                        .log_err()
+                    {
+                        tracing::info!(
+                            target: "active user counts",
+                            provider = provider.to_string(),
+                            model = model,
+                            users_in_recent_minutes = active_user_count.users_in_recent_minutes,
+                            users_in_recent_days = active_user_count.users_in_recent_days,
+                        );
+                    }
+                }
+            }
+
+            if let Some(usages) = state
+                .db
+                .get_application_wide_usages_by_model(Utc::now())
+                .await
+                .log_err()
+            {
+                for usage in usages {
+                    tracing::info!(
+                        target: "computed usage",
+                        provider = usage.provider.to_string(),
+                        model = usage.model,
+                        requests_this_minute = usage.requests_this_minute,
+                        tokens_this_minute = usage.tokens_this_minute,
+                    );
+                }
+            }
+        }
+    })
 }

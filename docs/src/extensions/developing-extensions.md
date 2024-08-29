@@ -6,6 +6,7 @@ Extensions can add the following capabilities to Zed:
 
 - [Languages](./languages.md)
 - [Themes](./themes.md)
+- [Slash Commands](./slash-commands.md)
 
 ## Directory Structure of a Zed Extension
 
@@ -22,10 +23,6 @@ description = "My cool extension"
 repository = "https://github.com/your-name/my-zed-extension"
 ```
 
-<!--
-TBD: Document `slash_commands`, `indexed_docs_providers` (see: extensions/gleam/extension.toml)
--->
-
 In addition to this, there are several other optional files and directories that can be used to add functionality to a Zed extension. An example directory structure of an extension that provides all capabilities is as follows:
 
 ```
@@ -35,8 +32,9 @@ my-extension/
   src/
     lib.rs
   languages/
-    config.toml
-    highlights.scm
+    my-language/
+      config.toml
+      highlights.scm
   themes/
     my-theme.json
 ```
@@ -55,7 +53,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = "0.0.6"
+zed_extension_api = "0.1.0"
 ```
 
 Make sure to use the latest version of the [`zed_extension_api`](https://crates.io/crates/zed_extension_api) available on crates.io.
@@ -86,7 +84,7 @@ If you already have a published extension with the same name installed, your dev
 
 ## Publishing your extension
 
-To publish an extension, open a PR to [this repo](https://github.com/zed-industries/extensions).
+To publish an extension, open a PR to [the `zed-industries/extensions` repo](https://github.com/zed-industries/extensions).
 
 In your PR, do the following:
 
@@ -102,3 +100,17 @@ version = "0.0.1"
 3. Run `pnpm sort-extensions` to ensure `extensions.toml` and `.gitmodules` are sorted
 
 Once your PR is merged, the extension will be packaged and published to the Zed extension registry.
+
+> Extension IDs and names should not contain `zed` or `Zed`, since they are all Zed extensions.
+
+## Updating an extension
+
+To update an extension, open a PR to [the `zed-industries/extensions` repo](https://github.com/zed-industries/extensions).
+
+In your PR do the following:
+
+1. Update the extension's submodule to the commit of the new version.
+2. Update the `version` field for the extension in `extensions.toml`
+   - Make sure the `version` matches the one set in `extension.toml` at the particular commit.
+
+If you'd like to automate this process, there is a [community GitHub Action](https://github.com/huacnlee/zed-extension-action) you can use.

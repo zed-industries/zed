@@ -38,13 +38,12 @@ use gpui::{
     ResizeEdge, Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds,
     WindowHandle, WindowId, WindowOptions,
 };
-use item::{
+pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
 };
 use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
-use lazy_static::lazy_static;
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
@@ -56,7 +55,9 @@ pub use persistence::{
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
-use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use project::{
+    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+};
 use serde::Deserialize;
 use session::AppSession;
 use settings::Settings;
@@ -77,7 +78,7 @@ use std::{
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::{atomic::AtomicUsize, Arc, Weak},
+    sync::{atomic::AtomicUsize, Arc, LazyLock, Weak},
     time::Duration,
 };
 use task::SpawnInTerminal;
@@ -101,19 +102,24 @@ use crate::persistence::{
     SerializedAxis,
 };
 
-lazy_static! {
-    static ref ZED_WINDOW_SIZE: Option<Size<Pixels>> = env::var("ZED_WINDOW_SIZE")
+static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
+    env::var("ZED_WINDOW_SIZE")
         .ok()
         .as_deref()
-        .and_then(parse_pixel_size_env_var);
-    static ref ZED_WINDOW_POSITION: Option<Point<Pixels>> = env::var("ZED_WINDOW_POSITION")
+        .and_then(parse_pixel_size_env_var)
+});
+
+static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
+    env::var("ZED_WINDOW_POSITION")
         .ok()
         .as_deref()
-        .and_then(parse_pixel_position_env_var);
-}
+        .and_then(parse_pixel_position_env_var)
+});
 
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
+
+actions!(assistant, [ShowConfiguration]);
 
 actions!(
     workspace,
@@ -130,6 +136,8 @@ actions!(
         FollowNextCollaborator,
         NewCenterTerminal,
         NewFile,
+        NewFileSplitVertical,
+        NewFileSplitHorizontal,
         NewSearch,
         NewTerminal,
         NewWindow,
@@ -161,9 +169,6 @@ pub struct ActivatePaneInDirection(pub SplitDirection);
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SwapPaneInDirection(pub SplitDirection);
-
-#[derive(Clone, Deserialize, PartialEq)]
-pub struct NewFileInDirection(pub SplitDirection);
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -214,7 +219,6 @@ impl_actions!(
         ActivatePaneInDirection,
         CloseAllItemsAndPanes,
         CloseInactiveTabsAndPanes,
-        NewFileInDirection,
         OpenTerminal,
         Reload,
         Save,
@@ -1490,7 +1494,7 @@ impl Workspace {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<Option<ProjectPath>> {
-        if self.project.read(cx).is_remote()
+        if self.project.read(cx).is_via_collab()
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
@@ -1572,7 +1576,7 @@ impl Workspace {
         T: 'static,
         F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
-        if self.project.read(cx).is_local() {
+        if self.project.read(cx).is_local_or_ssh() {
             Task::Ready(Some(Ok(callback(self, cx))))
         } else {
             let task = Self::new_local(Vec::new(), self.app_state.clone(), None, cx);
@@ -1885,7 +1889,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let window = cx.window_handle().downcast::<Self>();
-        let is_remote = self.project.read(cx).is_remote();
+        let is_remote = self.project.read(cx).is_via_collab();
         let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
 
@@ -2011,9 +2015,20 @@ impl Workspace {
         })
     }
 
+    pub fn open_resolved_path(
+        &mut self,
+        path: ResolvedPath,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        match path {
+            ResolvedPath::ProjectPath(project_path) => self.open_path(project_path, None, true, cx),
+            ResolvedPath::AbsPath(path) => self.open_abs_path(path, false, cx),
+        }
+    }
+
     fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
         let project = self.project.read(cx);
-        if project.is_remote() && project.dev_server_project_id().is_none() {
+        if project.is_via_collab() && project.dev_server_project_id().is_none() {
             self.show_error(
                 &anyhow!("You cannot add folders to someone else's project"),
                 cx,
@@ -2616,6 +2631,33 @@ impl Workspace {
         open_project_item
     }
 
+    pub fn find_project_item<T>(
+        &self,
+        pane: &View<Pane>,
+        project_item: &Model<T::Item>,
+        cx: &AppContext,
+    ) -> Option<View<T>>
+    where
+        T: ProjectItem,
+    {
+        use project::Item as _;
+        let project_item = project_item.read(cx);
+        let entry_id = project_item.entry_id(cx);
+        let project_path = project_item.project_path(cx);
+
+        let mut item = None;
+        if let Some(entry_id) = entry_id {
+            item = pane.read(cx).item_for_entry(entry_id, cx);
+        }
+        if item.is_none() {
+            if let Some(project_path) = project_path {
+                item = pane.read(cx).item_for_path(project_path, cx);
+            }
+        }
+
+        item.and_then(|item| item.downcast::<T>())
+    }
+
     pub fn is_project_item_open<T>(
         &self,
         pane: &View<Pane>,
@@ -2625,13 +2667,7 @@ impl Workspace {
     where
         T: ProjectItem,
     {
-        use project::Item as _;
-
-        project_item
-            .read(cx)
-            .entry_id(cx)
-            .and_then(|entry_id| pane.read(cx).item_for_entry(entry_id, cx))
-            .and_then(|item| item.downcast::<T>())
+        self.find_project_item::<T>(pane, project_item, cx)
             .is_some()
     }
 
@@ -2646,19 +2682,12 @@ impl Workspace {
     where
         T: ProjectItem,
     {
-        use project::Item as _;
-
-        let entry_id = project_item.read(cx).entry_id(cx);
-        if let Some(item) = entry_id
-            .and_then(|entry_id| pane.read(cx).item_for_entry(entry_id, cx))
-            .and_then(|item| item.downcast())
-        {
+        if let Some(item) = self.find_project_item(&pane, &project_item, cx) {
             self.activate_item(&item, activate_pane, focus_item, cx);
             return item;
         }
 
         let item = cx.new_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
-
         let item_id = item.item_id();
         let mut destination_index = None;
         pane.update(cx, |pane, cx| {
@@ -2926,8 +2955,15 @@ impl Workspace {
             pane::Event::Split(direction) => {
                 self.split_and_clone(pane, *direction, cx);
             }
-            pane::Event::Remove => self.remove_pane(pane, cx),
+            pane::Event::JoinIntoNext => self.join_pane_into_next(pane, cx),
+            pane::Event::Remove { focus_on_pane } => {
+                self.remove_pane(pane, focus_on_pane.clone(), cx)
+            }
             pane::Event::ActivateItem { local } => {
+                cx.on_next_frame(|_, cx| {
+                    cx.invalidate_character_coordinates();
+                });
+
                 pane.model.update(cx, |pane, _| {
                     pane.track_alternate_file_items();
                 });
@@ -2961,6 +2997,9 @@ impl Workspace {
                 }
             }
             pane::Event::Focus => {
+                cx.on_next_frame(|_, cx| {
+                    cx.invalidate_character_coordinates();
+                });
                 self.handle_pane_focused(pane.clone(), cx);
             }
             pane::Event::ZoomIn => {
@@ -3074,6 +3113,23 @@ impl Workspace {
         }))
     }
 
+    pub fn join_pane_into_next(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
+        let next_pane = self
+            .find_pane_in_direction(SplitDirection::Right, cx)
+            .or_else(|| self.find_pane_in_direction(SplitDirection::Down, cx))
+            .or_else(|| self.find_pane_in_direction(SplitDirection::Left, cx))
+            .or_else(|| self.find_pane_in_direction(SplitDirection::Up, cx));
+        let Some(next_pane) = next_pane else {
+            return;
+        };
+
+        let item_ids: Vec<EntityId> = pane.read(cx).items().map(|item| item.item_id()).collect();
+        for item_id in item_ids {
+            self.move_item(pane.clone(), next_pane.clone(), item_id, 0, cx);
+        }
+        cx.notify();
+    }
+
     pub fn move_item(
         &mut self,
         source: View<Pane>,
@@ -3097,7 +3153,7 @@ impl Workspace {
         if source != destination {
             // Close item from previous pane
             source.update(cx, |source, cx| {
-                source.remove_item(item_ix, false, true, cx);
+                source.remove_item_and_focus_on_pane(item_ix, false, destination.clone(), cx);
             });
         }
 
@@ -3108,9 +3164,14 @@ impl Workspace {
         });
     }
 
-    fn remove_pane(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
+    fn remove_pane(
+        &mut self,
+        pane: View<Pane>,
+        focus_on: Option<View<Pane>>,
+        cx: &mut ViewContext<Self>,
+    ) {
         if self.center.remove(&pane).unwrap() {
-            self.force_remove_pane(&pane, cx);
+            self.force_remove_pane(&pane, &focus_on, cx);
             self.unfollow_in_pane(&pane, cx);
             self.last_leaders_by_pane.remove(&pane.downgrade());
             for removed_item in pane.read(cx).items() {
@@ -3359,7 +3420,7 @@ impl Workspace {
             title = "empty project".to_string();
         }
 
-        if project.is_remote() {
+        if project.is_via_collab() {
             title.push_str(" ↙");
         } else if project.is_shared() {
             title.push_str(" ↗");
@@ -3883,7 +3944,7 @@ impl Workspace {
     fn local_paths(&self, cx: &AppContext) -> Option<Vec<Arc<Path>>> {
         let project = self.project().read(cx);
 
-        if project.is_local() {
+        if project.is_local_or_ssh() {
             Some(
                 project
                     .visible_worktrees(cx)
@@ -3903,7 +3964,7 @@ impl Workspace {
                 }
             }
             Member::Pane(pane) => {
-                self.force_remove_pane(&pane, cx);
+                self.force_remove_pane(&pane, &None, cx);
             }
         }
     }
@@ -3913,12 +3974,21 @@ impl Workspace {
         self.serialize_workspace_internal(cx)
     }
 
-    fn force_remove_pane(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
+    fn force_remove_pane(
+        &mut self,
+        pane: &View<Pane>,
+        focus_on: &Option<View<Pane>>,
+        cx: &mut ViewContext<Workspace>,
+    ) {
         self.panes.retain(|p| p != pane);
-        self.panes
-            .last()
-            .unwrap()
-            .update(cx, |pane, cx| pane.focus(cx));
+        if let Some(focus_on) = focus_on {
+            focus_on.update(cx, |pane, cx| pane.focus(cx));
+        } else {
+            self.panes
+                .last()
+                .unwrap()
+                .update(cx, |pane, cx| pane.focus(cx));
+        }
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
         }
@@ -5075,7 +5145,7 @@ async fn join_channel_internal(
                         return None;
                     }
 
-                    if (project.is_local() || is_dev_server)
+                    if (project.is_local_or_ssh() || is_dev_server)
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()
@@ -5229,7 +5299,7 @@ pub fn local_workspace_windows(cx: &AppContext) -> Vec<WindowHandle<Workspace>> 
         .filter(|workspace| {
             workspace
                 .read(cx)
-                .is_ok_and(|workspace| workspace.project.read(cx).is_local())
+                .is_ok_and(|workspace| workspace.project.read(cx).is_local_or_ssh())
         })
         .collect()
 }
@@ -5287,7 +5357,7 @@ pub fn open_paths(
                     for window in local_workspace_windows(cx) {
                         if let Ok(workspace) = window.read(cx) {
                             let project = workspace.project().read(cx);
-                            if project.is_remote() {
+                            if project.is_via_collab() {
                                 continue;
                             }
                             existing = Some(window);
@@ -6417,6 +6487,143 @@ mod tests {
             assert!(!pane.focus_handle(cx).is_focused(cx));
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(workspace.zoomed.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_join_pane_into_next(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+        // Let's arrange the panes like this:
+        //
+        // +-----------------------+
+        // |         top           |
+        // +------+--------+-------+
+        // | left | center | right |
+        // +------+--------+-------+
+        // |        bottom         |
+        // +-----------------------+
+
+        let top_item = cx.new_view(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "top.txt", cx)])
+        });
+        let bottom_item = cx.new_view(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "bottom.txt", cx)])
+        });
+        let left_item = cx.new_view(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(3, "left.txt", cx)])
+        });
+        let right_item = cx.new_view(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(4, "right.txt", cx)])
+        });
+        let center_item = cx.new_view(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(5, "center.txt", cx)])
+        });
+
+        let top_pane_id = workspace.update(cx, |workspace, cx| {
+            let top_pane_id = workspace.active_pane().entity_id();
+            workspace.add_item_to_active_pane(Box::new(top_item.clone()), None, false, cx);
+            workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Down, cx);
+            top_pane_id
+        });
+        let bottom_pane_id = workspace.update(cx, |workspace, cx| {
+            let bottom_pane_id = workspace.active_pane().entity_id();
+            workspace.add_item_to_active_pane(Box::new(bottom_item.clone()), None, false, cx);
+            workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Up, cx);
+            bottom_pane_id
+        });
+        let left_pane_id = workspace.update(cx, |workspace, cx| {
+            let left_pane_id = workspace.active_pane().entity_id();
+            workspace.add_item_to_active_pane(Box::new(left_item.clone()), None, false, cx);
+            workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+            left_pane_id
+        });
+        let right_pane_id = workspace.update(cx, |workspace, cx| {
+            let right_pane_id = workspace.active_pane().entity_id();
+            workspace.add_item_to_active_pane(Box::new(right_item.clone()), None, false, cx);
+            workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Left, cx);
+            right_pane_id
+        });
+        let center_pane_id = workspace.update(cx, |workspace, cx| {
+            let center_pane_id = workspace.active_pane().entity_id();
+            workspace.add_item_to_active_pane(Box::new(center_item.clone()), None, false, cx);
+            center_pane_id
+        });
+        cx.executor().run_until_parked();
+
+        workspace.update(cx, |workspace, cx| {
+            assert_eq!(center_pane_id, workspace.active_pane().entity_id());
+
+            // Join into next from center pane into right
+            workspace.join_pane_into_next(workspace.active_pane().clone(), cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            let active_pane = workspace.active_pane();
+            assert_eq!(right_pane_id, active_pane.entity_id());
+            assert_eq!(2, active_pane.read(cx).items_len());
+            let item_ids_in_pane =
+                HashSet::from_iter(active_pane.read(cx).items().map(|item| item.item_id()));
+            assert!(item_ids_in_pane.contains(&center_item.item_id()));
+            assert!(item_ids_in_pane.contains(&right_item.item_id()));
+
+            // Join into next from right pane into bottom
+            workspace.join_pane_into_next(workspace.active_pane().clone(), cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            let active_pane = workspace.active_pane();
+            assert_eq!(bottom_pane_id, active_pane.entity_id());
+            assert_eq!(3, active_pane.read(cx).items_len());
+            let item_ids_in_pane =
+                HashSet::from_iter(active_pane.read(cx).items().map(|item| item.item_id()));
+            assert!(item_ids_in_pane.contains(&center_item.item_id()));
+            assert!(item_ids_in_pane.contains(&right_item.item_id()));
+            assert!(item_ids_in_pane.contains(&bottom_item.item_id()));
+
+            // Join into next from bottom pane into left
+            workspace.join_pane_into_next(workspace.active_pane().clone(), cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            let active_pane = workspace.active_pane();
+            assert_eq!(left_pane_id, active_pane.entity_id());
+            assert_eq!(4, active_pane.read(cx).items_len());
+            let item_ids_in_pane =
+                HashSet::from_iter(active_pane.read(cx).items().map(|item| item.item_id()));
+            assert!(item_ids_in_pane.contains(&center_item.item_id()));
+            assert!(item_ids_in_pane.contains(&right_item.item_id()));
+            assert!(item_ids_in_pane.contains(&bottom_item.item_id()));
+            assert!(item_ids_in_pane.contains(&left_item.item_id()));
+
+            // Join into next from left pane into top
+            workspace.join_pane_into_next(workspace.active_pane().clone(), cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            let active_pane = workspace.active_pane();
+            assert_eq!(top_pane_id, active_pane.entity_id());
+            assert_eq!(5, active_pane.read(cx).items_len());
+            let item_ids_in_pane =
+                HashSet::from_iter(active_pane.read(cx).items().map(|item| item.item_id()));
+            assert!(item_ids_in_pane.contains(&center_item.item_id()));
+            assert!(item_ids_in_pane.contains(&right_item.item_id()));
+            assert!(item_ids_in_pane.contains(&bottom_item.item_id()));
+            assert!(item_ids_in_pane.contains(&left_item.item_id()));
+            assert!(item_ids_in_pane.contains(&top_item.item_id()));
+
+            // Single pane left: no-op
+            workspace.join_pane_into_next(workspace.active_pane().clone(), cx)
+        });
+
+        workspace.update(cx, |workspace, _cx| {
+            let active_pane = workspace.active_pane();
+            assert_eq!(top_pane_id, active_pane.entity_id());
         });
     }
 

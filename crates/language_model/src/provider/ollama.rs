@@ -6,7 +6,6 @@ use ollama::{
     get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
     ChatResponseDelta, OllamaToolCall,
 };
-use serde_json::Value;
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, Indicator};
@@ -182,14 +181,14 @@ impl OllamaLanguageModel {
                 .into_iter()
                 .map(|msg| match msg.role {
                     Role::User => ChatMessage::User {
-                        content: msg.content,
+                        content: msg.string_contents(),
                     },
                     Role::Assistant => ChatMessage::Assistant {
-                        content: msg.content,
+                        content: msg.string_contents(),
                         tool_calls: None,
                     },
                     Role::System => ChatMessage::System {
-                        content: msg.content,
+                        content: msg.string_contents(),
                     },
                 })
                 .collect(),
@@ -257,7 +256,7 @@ impl LanguageModel for OllamaLanguageModel {
         let token_count = request
             .messages
             .iter()
-            .map(|msg| msg.content.chars().count())
+            .map(|msg| msg.string_contents().chars().count())
             .sum::<usize>()
             / 4;
 
@@ -311,7 +310,7 @@ impl LanguageModel for OllamaLanguageModel {
         tool_description: String,
         schema: serde_json::Value,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         use ollama::{OllamaFunctionTool, OllamaTool};
         let function = OllamaFunctionTool {
             name: tool_name.clone(),
@@ -324,23 +323,19 @@ impl LanguageModel for OllamaLanguageModel {
         self.request_limiter
             .run(async move {
                 let response = response.await?;
-                let ChatMessage::Assistant {
-                    tool_calls,
-                    content,
-                } = response.message
-                else {
+                let ChatMessage::Assistant { tool_calls, .. } = response.message else {
                     bail!("message does not have an assistant role");
                 };
                 if let Some(tool_calls) = tool_calls.filter(|calls| !calls.is_empty()) {
                     for call in tool_calls {
                         let OllamaToolCall::Function(function) = call;
                         if function.name == tool_name {
-                            return Ok(function.arguments);
+                            return Ok(futures::stream::once(async move {
+                                Ok(function.arguments.to_string())
+                            })
+                            .boxed());
                         }
                     }
-                } else if let Ok(args) = serde_json::from_str::<Value>(&content) {
-                    // Parse content as arguments.
-                    return Ok(args);
                 } else {
                     bail!("assistant message does not have any tool calls");
                 };

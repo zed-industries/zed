@@ -552,7 +552,7 @@ impl BufferSearchBar {
             active_editor.search_bar_visibility_changed(false, cx);
             active_editor.toggle_filtered_search_ranges(false, cx);
             let handle = active_editor.focus_handle(cx);
-            cx.focus(&handle);
+            self.focus(&handle, cx);
         }
         cx.emit(Event::UpdateLocation);
         cx.emit(ToolbarItemEvent::ChangeLocation(
@@ -936,6 +936,7 @@ impl BufferSearchBar {
                         false,
                         Default::default(),
                         Default::default(),
+                        None,
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
@@ -953,6 +954,7 @@ impl BufferSearchBar {
                         false,
                         Default::default(),
                         Default::default(),
+                        None,
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
@@ -988,7 +990,11 @@ impl BufferSearchBar {
                                     .searchable_items_with_matches
                                     .get(&active_searchable_item.downgrade())
                                     .unwrap();
-                                active_searchable_item.update_matches(matches, cx);
+                                if matches.is_empty() {
+                                    active_searchable_item.clear_matches(cx);
+                                } else {
+                                    active_searchable_item.update_matches(matches, cx);
+                                }
                                 let _ = done_tx.send(());
                             }
                             cx.notify();
@@ -1026,7 +1032,7 @@ impl BufferSearchBar {
         } else {
             return;
         };
-        cx.focus(&focus_handle);
+        self.focus(&focus_handle, cx);
         cx.stop_propagation();
     }
 
@@ -1039,7 +1045,7 @@ impl BufferSearchBar {
         } else {
             return;
         };
-        cx.focus(&focus_handle);
+        self.focus(&focus_handle, cx);
         cx.stop_propagation();
     }
 
@@ -1077,6 +1083,12 @@ impl BufferSearchBar {
         }
     }
 
+    fn focus(&self, handle: &gpui::FocusHandle, cx: &mut ViewContext<Self>) {
+        cx.on_next_frame(|_, cx| {
+            cx.invalidate_character_coordinates();
+        });
+        cx.focus(handle);
+    }
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
         if let Some(_) = &self.active_searchable_item {
             self.replace_enabled = !self.replace_enabled;
@@ -1085,7 +1097,7 @@ impl BufferSearchBar {
             } else {
                 self.query_editor.focus_handle(cx)
             };
-            cx.focus(&handle);
+            self.focus(&handle, cx);
             cx.notify();
         }
     }

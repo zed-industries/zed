@@ -2,25 +2,23 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use gpui::AppContext;
-use lazy_static::lazy_static;
 use settings::Settings;
-use ui::WindowContext;
+use std::sync::LazyLock;
+use ui::ViewContext;
 
 use crate::{Vim, VimSettings};
 
 mod default;
 
-lazy_static! {
-    static ref DEFAULT_DIGRAPHS_MAP: HashMap<String, Arc<str>> = {
-        let mut map = HashMap::default();
-        for &(a, b, c) in default::DEFAULT_DIGRAPHS {
-            let key = format!("{a}{b}");
-            let value = char::from_u32(c).unwrap().to_string().into();
-            map.insert(key, value);
-        }
-        map
-    };
-}
+static DEFAULT_DIGRAPHS_MAP: LazyLock<HashMap<String, Arc<str>>> = LazyLock::new(|| {
+    let mut map = HashMap::default();
+    for &(a, b, c) in default::DEFAULT_DIGRAPHS {
+        let key = format!("{a}{b}");
+        let value = char::from_u32(c).unwrap().to_string().into();
+        map.insert(key, value);
+    }
+    map
+});
 
 fn lookup_digraph(a: char, b: char, cx: &AppContext) -> Arc<str> {
     let custom_digraphs = &VimSettings::get_global(cx).custom_digraphs;
@@ -36,16 +34,21 @@ fn lookup_digraph(a: char, b: char, cx: &AppContext) -> Arc<str> {
         .unwrap_or_else(|| b.to_string().into())
 }
 
-pub fn insert_digraph(first_char: char, second_char: char, cx: &mut WindowContext) {
-    let text = lookup_digraph(first_char, second_char, &cx);
+impl Vim {
+    pub fn insert_digraph(
+        &mut self,
+        first_char: char,
+        second_char: char,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let text = lookup_digraph(first_char, second_char, &cx);
 
-    Vim::update(cx, |vim, cx| vim.pop_operator(cx));
-    if Vim::read(cx).state().editor_input_enabled() {
-        Vim::update(cx, |vim, cx| {
-            vim.update_active_editor(cx, |_, editor, cx| editor.insert(&text, cx));
-        });
-    } else {
-        Vim::active_editor_input_ignored(text, cx);
+        self.pop_operator(cx);
+        if self.editor_input_enabled() {
+            self.update_editor(cx, |_, editor, cx| editor.insert(&text, cx));
+        } else {
+            self.input_ignored(text, cx);
+        }
     }
 }
 

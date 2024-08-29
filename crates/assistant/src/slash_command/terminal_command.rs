@@ -5,7 +5,7 @@ use anyhow::Result;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
-use gpui::{AppContext, Task, WeakView};
+use gpui::{AppContext, Task, View, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::prelude::*;
@@ -40,23 +40,23 @@ impl SlashCommand for TerminalSlashCommand {
         false
     }
 
+    fn accepts_arguments(&self) -> bool {
+        true
+    }
+
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
-        Task::ready(Ok(vec![ArgumentCompletion {
-            label: LINE_COUNT_ARG.to_string(),
-            new_text: LINE_COUNT_ARG.to_string(),
-            run_command: true,
-        }]))
+        Task::ready(Ok(Vec::new()))
     }
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
@@ -64,19 +64,14 @@ impl SlashCommand for TerminalSlashCommand {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
-        let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
-            return Task::ready(Err(anyhow::anyhow!("no terminal panel open")));
-        };
-        let Some(active_terminal) = terminal_panel.read(cx).pane().and_then(|pane| {
-            pane.read(cx)
-                .active_item()
-                .and_then(|t| t.downcast::<TerminalView>())
-        }) else {
+
+        let Some(active_terminal) = resolve_active_terminal(&workspace, cx) else {
             return Task::ready(Err(anyhow::anyhow!("no active terminal")));
         };
 
-        let line_count = argument
-            .and_then(|a| parse_argument(a))
+        let line_count = arguments
+            .get(0)
+            .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(DEFAULT_CONTEXT_LINES);
 
         let lines = active_terminal
@@ -102,12 +97,22 @@ impl SlashCommand for TerminalSlashCommand {
     }
 }
 
-fn parse_argument(argument: &str) -> Option<usize> {
-    let mut args = argument.split(' ');
-    if args.next() == Some(LINE_COUNT_ARG) {
-        if let Some(line_count) = args.next().and_then(|s| s.parse::<usize>().ok()) {
-            return Some(line_count);
-        }
+fn resolve_active_terminal(
+    workspace: &View<Workspace>,
+    cx: &WindowContext,
+) -> Option<View<TerminalView>> {
+    if let Some(terminal_view) = workspace
+        .read(cx)
+        .active_item(cx)
+        .and_then(|item| item.act_as::<TerminalView>(cx))
+    {
+        return Some(terminal_view);
     }
-    None
+
+    let terminal_panel = workspace.read(cx).panel::<TerminalPanel>(cx)?;
+    terminal_panel.read(cx).pane().and_then(|pane| {
+        pane.read(cx)
+            .active_item()
+            .and_then(|t| t.downcast::<TerminalView>())
+    })
 }

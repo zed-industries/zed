@@ -9,6 +9,7 @@ use crate::{
 };
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
+use futures::channel::oneshot;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
 #[cfg(target_os = "macos")]
@@ -480,7 +481,11 @@ impl BladeRenderer {
         let mut vertices_by_texture_id = HashMap::default();
 
         for path in paths {
-            let clipped_bounds = path.bounds.intersect(&path.content_mask.bounds);
+            let clipped_bounds = path
+                .bounds
+                .intersect(&path.content_mask.bounds)
+                .map_origin(|origin| origin.floor())
+                .map_size(|size| size.ceil());
             let tile = self.atlas.allocate_for_rendering(
                 clipped_bounds.size.map(Into::into),
                 AtlasTextureKind::Path,
@@ -537,7 +542,12 @@ impl BladeRenderer {
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    pub fn draw(
+        &mut self,
+        scene: &Scene,
+        // Required to compile on macOS, but not currently supported.
+        _on_complete: Option<oneshot::Sender<()>>,
+    ) {
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
         self.rasterize_paths(scene.paths());
@@ -765,5 +775,11 @@ impl BladeRenderer {
 
         self.wait_for_gpu();
         self.last_sync_point = Some(sync_point);
+    }
+
+    /// Required to compile on macOS, but not currently supported.
+    #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
+    pub fn fps(&self) -> f32 {
+        0.0
     }
 }

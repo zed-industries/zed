@@ -4,7 +4,7 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{value::RawValue, Value};
 use std::{convert::TryFrom, sync::Arc, time::Duration};
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
@@ -70,11 +70,36 @@ pub struct Model {
     pub keep_alive: Option<KeepAlive>,
 }
 
+// This could be dynamically retrieved via the API (1 call per model)
+// curl -s http://localhost:11434/api/show -d '{"model": "llama3.1:latest"}' | jq '.model_info."llama.context_length"'
+fn get_max_tokens(name: &str) -> usize {
+    match name {
+        "dolphin-llama3:8b-256k" => 262144, // 256K
+        _ => match name.split(':').next().unwrap() {
+            "mistral-nemo" => 1024000,                                      // 1M
+            "deepseek-coder-v2" => 163840,                                  // 160K
+            "llama3.1" | "phi3" | "command-r" | "command-r-plus" => 131072, // 128K
+            "codeqwen" => 65536,                                            // 64K
+            "mistral" | "mistral-large" | "dolphin-mistral" | "codestral"   // 32K
+            | "mistral-openorca" | "dolphin-mixtral" | "mixstral" | "llava"
+            | "qwen" | "qwen2" | "wizardlm2" | "wizard-math" => 32768,
+            "codellama" | "stable-code" | "deepseek-coder" | "starcoder2"   // 16K
+            | "wizardcoder" => 16384,
+            "llama3" | "gemma2" | "gemma" | "codegemma" | "dolphin-llama3"  // 8K
+            | "llava-llama3" | "starcoder" | "openchat" | "aya" => 8192,
+            "llama2" | "yi" | "llama2-chinese" | "vicuna" | "nous-hermes2"  // 4K
+            | "stablelm2" => 4096,
+            "phi" | "orca-mini" | "tinyllama" | "granite-code" => 2048,     // 2K
+            _ => 2048,                                                      // 2K (default)
+        },
+    }
+}
+
 impl Model {
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_owned(),
-            max_tokens: 2048,
+            max_tokens: get_max_tokens(name),
             keep_alive: Some(KeepAlive::indefinite()),
         }
     }
@@ -92,7 +117,7 @@ impl Model {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
     Assistant {
@@ -107,16 +132,16 @@ pub enum ChatMessage {
     },
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum OllamaToolCall {
     Function(OllamaFunctionCall),
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct OllamaFunctionCall {
     pub name: String,
-    pub arguments: Value,
+    pub arguments: Box<RawValue>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

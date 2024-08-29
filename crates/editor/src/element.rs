@@ -165,6 +165,7 @@ impl EditorElement {
         });
 
         crate::rust_analyzer_ext::apply_related_actions(view, cx);
+        crate::clangd_ext::apply_related_actions(view, cx);
         register_action(view, cx, Editor::move_left);
         register_action(view, cx, Editor::move_right);
         register_action(view, cx, Editor::move_down);
@@ -330,6 +331,7 @@ impl EditorElement {
                 .detach_and_log_err(cx);
         });
         register_action(view, cx, Editor::open_url);
+        register_action(view, cx, Editor::open_file);
         register_action(view, cx, Editor::fold);
         register_action(view, cx, Editor::fold_at);
         register_action(view, cx, Editor::unfold_lines);
@@ -342,8 +344,10 @@ impl EditorElement {
         register_action(view, cx, Editor::toggle_soft_wrap);
         register_action(view, cx, Editor::toggle_tab_bar);
         register_action(view, cx, Editor::toggle_line_numbers);
+        register_action(view, cx, Editor::toggle_relative_line_numbers);
         register_action(view, cx, Editor::toggle_indent_guides);
         register_action(view, cx, Editor::toggle_inlay_hints);
+        register_action(view, cx, Editor::toggle_inline_completions);
         register_action(view, cx, hover_popover::hover);
         register_action(view, cx, Editor::reveal_in_finder);
         register_action(view, cx, Editor::copy_path);
@@ -351,6 +355,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_highlight_json);
         register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, Editor::open_permalink_to_line);
+        register_action(view, cx, Editor::copy_file_location);
         register_action(view, cx, Editor::toggle_git_blame);
         register_action(view, cx, Editor::toggle_git_blame_inline);
         register_action(view, cx, Editor::toggle_hunk_diff);
@@ -367,6 +372,13 @@ impl EditorElement {
         register_action(view, cx, Editor::show_character_palette);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.confirm_completion(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.compose_completion(action, cx) {
                 task.detach_and_log_err(cx);
             } else {
                 cx.propagate();
@@ -413,6 +425,7 @@ impl EditorElement {
         register_action(view, cx, Editor::unique_lines_case_sensitive);
         register_action(view, cx, Editor::accept_partial_inline_completion);
         register_action(view, cx, Editor::accept_inline_completion);
+        register_action(view, cx, Editor::revert_file);
         register_action(view, cx, Editor::revert_selected_hunks);
         register_action(view, cx, Editor::open_active_item_in_terminal)
     }
@@ -641,7 +654,7 @@ impl EditorElement {
             }
 
             #[cfg(target_os = "linux")]
-            if let Some(item) = cx.read_from_primary() {
+            if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
                 let point_for_position =
                     position_map.point_for_position(text_hitbox.bounds, event.position);
                 let position = point_for_position.previous_valid;
@@ -654,7 +667,7 @@ impl EditorElement {
                     },
                     cx,
                 );
-                editor.insert(item.text(), cx);
+                editor.insert(&text, cx);
             }
             cx.stop_propagation()
         }
@@ -1759,7 +1772,7 @@ impl EditorElement {
         });
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
 
-        let is_relative = EditorSettings::get_global(cx).relative_line_numbers;
+        let is_relative = editor.should_use_relative_line_numbers(cx);
         let relative_to = if is_relative {
             Some(newest_selection_head.row())
         } else {
@@ -4289,7 +4302,7 @@ fn deploy_blame_entry_context_menu(
         let sha = format!("{}", blame_entry.sha);
         menu.on_blur_subscription(Subscription::new(|| {}))
             .entry("Copy commit SHA", None, move |cx| {
-                cx.write_to_clipboard(ClipboardItem::new(sha.clone()));
+                cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
             })
             .when_some(
                 details.and_then(|details| details.permalink.clone()),
@@ -4986,7 +4999,8 @@ impl Element for EditorElement {
                                     Some((MAX_LINE_LEN / 2) as f32 * em_advance)
                                 }
                                 SoftWrap::EditorWidth => Some(editor_width),
-                                SoftWrap::Column(column) => {
+                                SoftWrap::Column(column) => Some(column as f32 * em_advance),
+                                SoftWrap::Bounded(column) => {
                                     Some(editor_width.min(column as f32 * em_advance))
                                 }
                             };
@@ -5605,7 +5619,7 @@ impl Element for EditorElement {
         cx: &mut WindowContext,
     ) {
         let focus_handle = self.editor.focus_handle(cx);
-        let key_context = self.editor.read(cx).key_context(cx);
+        let key_context = self.editor.update(cx, |editor, cx| editor.key_context(cx));
         cx.set_key_context(key_context);
         cx.handle_input(
             &focus_handle,

@@ -89,6 +89,7 @@ pub struct Button {
     selected_icon: Option<IconName>,
     selected_icon_color: Option<Color>,
     key_binding: Option<KeyBinding>,
+    alpha: Option<f32>,
 }
 
 impl Button {
@@ -113,6 +114,7 @@ impl Button {
             selected_icon: None,
             selected_icon_color: None,
             key_binding: None,
+            alpha: None,
         }
     }
 
@@ -179,6 +181,12 @@ impl Button {
     /// Binds a key combination to the button for keyboard shortcuts.
     pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
         self.key_binding = key_binding.into();
+        self
+    }
+
+    /// Sets the alpha property of the color of label.
+    pub fn alpha(mut self, alpha: f32) -> Self {
+        self.alpha = Some(alpha);
         self
     }
 }
@@ -409,6 +417,7 @@ impl RenderOnce for Button {
                             Label::new(label)
                                 .color(label_color)
                                 .size(self.label_size.unwrap_or_default())
+                                .when_some(self.alpha, |this, alpha| this.alpha(alpha))
                                 .line_height_style(LineHeightStyle::UiLabel),
                         )
                         .children(self.key_binding),

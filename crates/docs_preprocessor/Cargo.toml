@@ -1,0 +1,26 @@
+[package]
+name = "docs_preprocessor"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+mdbook = "0.4.40"
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+regex.workspace = true
+util.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/docs_preprocessor.rs"
+
+[[bin]]
+name = "docs_preprocessor"
+path = "src/main.rs"

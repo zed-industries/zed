@@ -65,6 +65,12 @@ pub struct ConfirmCompletion {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ComposeCompletion {
+    #[serde(default)]
+    pub item_ix: Option<usize>,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
@@ -140,6 +146,7 @@ impl_actions!(
     [
         ConfirmCodeAction,
         ConfirmCompletion,
+        ComposeCompletion,
         ExpandExcerpts,
         ExpandExcerptsUp,
         ExpandExcerptsDown,
@@ -192,6 +199,7 @@ gpui::actions!(
         CopyHighlightJson,
         CopyPath,
         CopyPermalinkToLine,
+        CopyFileLocation,
         CopyRelativePath,
         Cut,
         CutToEndOfLine,
@@ -255,6 +263,7 @@ gpui::actions!(
         OpenExcerptsSplit,
         OpenPermalinkToLine,
         OpenUrl,
+        OpenFile,
         Outdent,
         PageDown,
         PageUp,
@@ -266,6 +275,7 @@ gpui::actions!(
         RestartLanguageServer,
         RevealInFileManager,
         ReverseLines,
+        RevertFile,
         RevertSelectedHunks,
         ScrollCursorBottom,
         ScrollCursorCenter,
@@ -298,6 +308,7 @@ gpui::actions!(
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
         SplitSelectionIntoLines,
+        SwitchSourceHeader,
         Tab,
         TabPrev,
         ToggleAutoSignatureHelp,
@@ -306,7 +317,9 @@ gpui::actions!(
         ToggleSelectionMenu,
         ToggleHunkDiff,
         ToggleInlayHints,
+        ToggleInlineCompletions,
         ToggleLineNumbers,
+        ToggleRelativeLineNumbers,
         ToggleIndentGuides,
         ToggleSoftWrap,
         ToggleTabBar,

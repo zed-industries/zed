@@ -168,6 +168,27 @@ pub fn shutdown(editor: WeakView<Editor>, cx: &mut WindowContext) {
     });
 }
 
+pub fn restart(editor: WeakView<Editor>, cx: &mut WindowContext) {
+    let Some(editor) = editor.upgrade() else {
+        return;
+    };
+
+    let entity_id = editor.entity_id();
+
+    let Some(session) = ReplStore::global(cx)
+        .read(cx)
+        .get_session(entity_id)
+        .cloned()
+    else {
+        return;
+    };
+
+    session.update(cx, |session, cx| {
+        session.restart(cx);
+        cx.notify();
+    });
+}
+
 fn cell_range(buffer: &BufferSnapshot, start_row: u32, end_row: u32) -> Range<Point> {
     let mut snippet_end_row = end_row;
     while buffer.is_line_blank(snippet_end_row) && snippet_end_row > start_row {

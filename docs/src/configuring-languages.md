@@ -49,13 +49,13 @@ Here's an example of language-specific settings:
 
 You can customize a wide range of settings for each language, including:
 
-- `tab_size`: The number of spaces for each indentation level
-- `formatter`: The tool used for code formatting
-- `format_on_save`: Whether to automatically format code when saving
-- `enable_language_server`: Toggle language server support
-- `hard_tabs`: Use tabs instead of spaces for indentation
-- `preferred_line_length`: The recommended maximum line length
-- `soft_wrap`: How to wrap long lines of code
+- [`tab_size`](./configuring-zed.md#tab-size): The number of spaces for each indentation level
+- [`formatter`](./configuring-zed.md#formatter): The tool used for code formatting
+- [`format_on_save`](./configuring-zed.md#format-on-save): Whether to automatically format code when saving
+- [`enable_language_server`](./configuring-zed.md#enable-language-server): Toggle language server support
+- [`hard_tabs`](./configuring-zed.md#hard-tabs): Use tabs instead of spaces for indentation
+- [`preferred_line_length`](./configuring-zed.md#preferred-line-length): The recommended maximum line length
+- [`soft_wrap`](./configuring-zed.md#soft-wrap): How to wrap long lines of code
 
 These settings allow you to maintain specific coding styles across different languages and projects.
 
@@ -63,7 +63,7 @@ These settings allow you to maintain specific coding styles across different lan
 
 Zed automatically detects file types based on their extensions, but you can customize these associations to fit your workflow.
 
-To set up custom file associations, use the `file_types` setting in your `settings.json`:
+To set up custom file associations, use the [`file_types`](./configuring-zed.md#file-types) setting in your `settings.json`:
 
 ```json
 "file_types": {
@@ -336,7 +336,7 @@ This configuration changes the color of function names in Python files.
 
 Change your theme:
 
-1. Use the theme selector (Cmd+K Cmd+T on macOS, Ctrl+K Ctrl+T on Linux)
+1. Use the theme selector (<kbd>cmd-k cmd-t|ctrl-k ctrl-t</kbd>)
 2. Or set it in your `settings.json`:
 
 ```json
@@ -351,7 +351,7 @@ Create custom themes by creating a JSON file in `~/.config/zed/themes/`. Zed wil
 
 ### Using Theme Extensions
 
-Zed supports theme extensions. Browse and install theme extensions from the Extensions panel (Cmd+Shift+E).
+Zed supports theme extensions. Browse and install theme extensions from the Extensions panel (<kbd>cmd-shift-e|ctrl-shift-e</kbd>).
 
 To create your own theme extension, refer to the [Developing Theme Extensions](./extensions/themes.md) guide.
 
@@ -380,16 +380,16 @@ Code actions provide quick fixes and refactoring options. Access code actions us
 
 Use these commands to navigate your codebase:
 
-- `editor: Go to Definition` (F12)
-- `editor: Go to Type Definition` (Cmd+F12 on macOS, Ctrl+F12 on Linux)
-- `editor: Find All References` (Shift+F12)
+- `editor: Go to Definition` (<kbd>f12|f12</kbd>)
+- `editor: Go to Type Definition` (<kbd>cmd-f12|ctrl-f12</kbd>)
+- `editor: Find All References` (<kbd>shift-f12|shift-f12</kbd>)
 
 ### Rename Symbol
 
 To rename a symbol across your project:
 
 1. Place your cursor on the symbol
-2. Use the `editor: Rename Symbol` command (F2)
+2. Use the `editor: Rename Symbol` command (<kbd>f2|f2</kbd>)
 3. Enter the new name and press Enter
 
 These features depend on the capabilities of the language server for each language.
@@ -406,7 +406,7 @@ The `workspace: Open Symbol` command allows you to search for symbols (functions
 
 ### Code Completion
 
-Zed provides intelligent code completion suggestions as you type. You can manually trigger completion with the `editor: Show Completions` command. Use Tab or Enter to accept suggestions.
+Zed provides intelligent code completion suggestions as you type. You can manually trigger completion with the `editor: Show Completions` command. Use <kbd>tab|tab</kbd> or <kbd>enter|enter</kbd> to accept suggestions.
 
 ### Diagnostics
 

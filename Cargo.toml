@@ -19,10 +19,12 @@ members = [
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
+    "crates/context_servers",
     "crates/copilot",
     "crates/db",
     "crates/dev_server_projects",
     "crates/diagnostics",
+    "crates/docs_preprocessor",
     "crates/editor",
     "crates/extension",
     "crates/extension_api",
@@ -69,6 +71,7 @@ members = [
     "crates/outline",
     "crates/outline_panel",
     "crates/paths",
+    "crates/performance",
     "crates/picker",
     "crates/prettier",
     "crates/project",
@@ -144,10 +147,12 @@ members = [
     "extensions/lua",
     "extensions/ocaml",
     "extensions/php",
+    "extensions/perplexity",
     "extensions/prisma",
     "extensions/purescript",
     "extensions/ruff",
     "extensions/ruby",
+    "extensions/slash-commands-example",
     "extensions/snippets",
     "extensions/svelte",
     "extensions/terraform",
@@ -161,7 +166,7 @@ members = [
     # Tooling
     #
 
-    "tooling/xtask",
+    "tooling/xtask"
 ]
 default-members = ["crates/zed"]
 
@@ -189,6 +194,7 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
+context_servers = { path = "crates/context_servers" }
 copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
 dev_server_projects = { path = "crates/dev_server_projects" }
@@ -238,6 +244,7 @@ open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 paths = { path = "crates/paths" }
+performance = { path = "crates/performance" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
@@ -299,7 +306,7 @@ zed_actions = { path = "crates/zed_actions" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "cacdb5bb3b72bad2c729227537979d95af75978f" }
+alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "91d034ff8b53867143c005acfaa14609147c9a2c" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 ashpd = "0.9.1"
@@ -315,15 +322,15 @@ async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "ac25c77ed8d86c386a541c935ffe0a0f6024e701" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "ac25c77ed8d86c386a541c935ffe0a0f6024e701" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "ac25c77ed8d86c386a541c935ffe0a0f6024e701" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
 cargo_metadata = "0.18"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = "0.11.6"
-cocoa = "0.25"
+cocoa = "0.26"
 core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
 ctor = "0.2.6"
@@ -333,7 +340,7 @@ dirs = "4.0"
 emojis = "0.6.1"
 env_logger = "0.11"
 exec = "0.3.1"
-fork = "0.1.23"
+fork = "0.2.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
@@ -351,9 +358,8 @@ indoc = "2"
 isahc = { version = "1.7.2", default-features = false, features = [
     "text-decoding",
 ] }
-itertools = "0.11.0"
+itertools = "0.13.0"
 jsonwebtoken = "9.3"
-lazy_static = "1.4.0"
 libc = "0.2"
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
@@ -377,13 +383,13 @@ rand = "0.8.5"
 regex = "1.5"
 repair_json = "0.1.0"
 rsa = "0.9.6"
-runtimelib = { version = "0.14", default-features = false, features = [
+runtimelib = { version = "0.15", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-schemars = {version = "0.8", features = ["impl_json_schema"]}
+schemars = { version = "0.8", features = ["impl_json_schema"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
@@ -461,7 +467,7 @@ which = "6.0.0"
 wit-component = "0.201"
 
 [workspace.dependencies.async-stripe]
-version = "0.37"
+version = "0.38"
 default-features = false
 features = [
     "runtime-tokio-hyper-rustls",
@@ -540,6 +546,7 @@ zed = { codegen-units = 16 }
 
 [profile.release-fast]
 inherits = "release"
+debug = "full"
 lto = false
 codegen-units = 16
 

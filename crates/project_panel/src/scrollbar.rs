@@ -77,7 +77,7 @@ impl gpui::Element for ProjectPanelScrollbar {
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             let colors = cx.theme().colors();
-            let scrollbar_background = colors.scrollbar_track_border;
+            let scrollbar_background = colors.scrollbar_track_background;
             let thumb_background = colors.scrollbar_thumb_background;
             cx.paint_quad(gpui::fill(bounds, scrollbar_background));
 

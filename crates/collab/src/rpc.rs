@@ -71,14 +71,12 @@ use std::{
     time::{Duration, Instant},
 };
 use time::OffsetDateTime;
-use tokio::sync::{watch, Semaphore};
+use tokio::sync::{watch, MutexGuard, Semaphore};
 use tower::ServiceBuilder;
 use tracing::{
     field::{self},
     info_span, instrument, Instrument,
 };
-
-use self::connection_pool::VersionedMessage;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -192,7 +190,7 @@ impl Session {
         }
     }
 
-    pub async fn current_plan(&self) -> anyhow::Result<proto::Plan> {
+    pub async fn current_plan(&self, db: MutexGuard<'_, DbHandle>) -> anyhow::Result<proto::Plan> {
         if self.is_staff() {
             return Ok(proto::Plan::ZedPro);
         }
@@ -201,7 +199,6 @@ impl Session {
             return Ok(proto::Plan::Free);
         };
 
-        let db = self.db().await;
         if db.has_active_billing_subscription(user_id).await? {
             Ok(proto::Plan::ZedPro)
         } else {
@@ -479,6 +476,7 @@ impl Server {
             .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::SearchProject>,
             ))
+            .add_request_handler(user_handler(forward_find_search_candidates_request))
             .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetDocumentHighlights>,
             ))
@@ -507,7 +505,7 @@ impl Server {
                 forward_mutating_project_request::<proto::ApplyCompletionAdditionalEdits>,
             ))
             .add_request_handler(user_handler(
-                forward_versioned_mutating_project_request::<proto::OpenNewBuffer>,
+                forward_mutating_project_request::<proto::OpenNewBuffer>,
             ))
             .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
@@ -549,7 +547,7 @@ impl Server {
                 forward_mutating_project_request::<proto::OnTypeFormatting>,
             ))
             .add_request_handler(user_handler(
-                forward_versioned_mutating_project_request::<proto::SaveBuffer>,
+                forward_mutating_project_request::<proto::SaveBuffer>,
             ))
             .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::BlameBuffer>,
@@ -2944,6 +2942,59 @@ where
     Ok(())
 }
 
+async fn forward_find_search_candidates_request(
+    request: proto::FindSearchCandidates,
+    response: Response<proto::FindSearchCandidates>,
+    session: UserSession,
+) -> Result<()> {
+    let project_id = ProjectId::from_proto(request.remote_entity_id());
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_read_only_project_request(project_id, session.connection_id, session.user_id())
+        .await?;
+
+    let host_version = session
+        .connection_pool()
+        .await
+        .connection(host_connection_id)
+        .map(|c| c.zed_version);
+
+    if host_version.is_some_and(|host_version| host_version < ZedVersion::with_search_candidates())
+    {
+        let query = request.query.ok_or_else(|| anyhow!("missing query"))?;
+        let search = proto::SearchProject {
+            project_id: project_id.to_proto(),
+            query: query.query,
+            regex: query.regex,
+            whole_word: query.whole_word,
+            case_sensitive: query.case_sensitive,
+            files_to_include: query.files_to_include,
+            files_to_exclude: query.files_to_exclude,
+            include_ignored: query.include_ignored,
+        };
+
+        let payload = session
+            .peer
+            .forward_request(session.connection_id, host_connection_id, search)
+            .await?;
+        return response.send(proto::FindSearchCandidatesResponse {
+            buffer_ids: payload
+                .locations
+                .into_iter()
+                .map(|loc| loc.buffer_id)
+                .collect(),
+        });
+    }
+
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, host_connection_id, request)
+        .await?;
+    response.send(payload)?;
+    Ok(())
+}
+
 /// forward a project request to the dev server. Only allowed
 /// if it's your dev server.
 async fn forward_project_request_for_owner<T>(
@@ -2986,45 +3037,6 @@ where
         .await
         .host_for_mutating_project_request(project_id, session.connection_id, session.user_id())
         .await?;
-    let payload = session
-        .peer
-        .forward_request(session.connection_id, host_connection_id, request)
-        .await?;
-    response.send(payload)?;
-    Ok(())
-}
-
-/// forward a project request to the host. These requests are disallowed
-/// for guests.
-async fn forward_versioned_mutating_project_request<T>(
-    request: T,
-    response: Response<T>,
-    session: UserSession,
-) -> Result<()>
-where
-    T: EntityMessage + RequestMessage + VersionedMessage,
-{
-    let project_id = ProjectId::from_proto(request.remote_entity_id());
-
-    let host_connection_id = session
-        .db()
-        .await
-        .host_for_mutating_project_request(project_id, session.connection_id, session.user_id())
-        .await?;
-    if let Some(host_version) = session
-        .connection_pool()
-        .await
-        .connection(host_connection_id)
-        .map(|c| c.zed_version)
-    {
-        if let Some(min_required_version) = request.required_host_version() {
-            if min_required_version > host_version {
-                return Err(anyhow!(ErrorCode::RemoteUpgradeRequired
-                    .with_tag("required", &min_required_version.to_string())))?;
-            }
-        }
-    }
-
     let payload = session
         .peer
         .forward_request(session.connection_id, host_connection_id, request)
@@ -3500,7 +3512,7 @@ fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
 }
 
 async fn update_user_plan(_user_id: UserId, session: &Session) -> Result<()> {
-    let plan = session.current_plan().await?;
+    let plan = session.current_plan(session.db().await).await?;
 
     session
         .peer
@@ -4503,7 +4515,7 @@ async fn count_language_model_tokens(
     };
     authorize_access_to_legacy_llm_endpoints(&session).await?;
 
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan().await? {
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan(session.db().await).await? {
         proto::Plan::ZedPro => Box::new(ZedProCountLanguageModelTokensRateLimit),
         proto::Plan::Free => Box::new(FreeCountLanguageModelTokensRateLimit),
     };
@@ -4623,7 +4635,7 @@ async fn compute_embeddings(
     let api_key = api_key.context("no OpenAI API key configured on the server")?;
     authorize_access_to_legacy_llm_endpoints(&session).await?;
 
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan().await? {
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan(session.db().await).await? {
         proto::Plan::ZedPro => Box::new(ZedProComputeEmbeddingsRateLimit),
         proto::Plan::Free => Box::new(FreeComputeEmbeddingsRateLimit),
     };
@@ -4919,7 +4931,10 @@ async fn get_llm_api_token(
     let db = session.db().await;
 
     let flags = db.get_user_flags(session.user_id()).await?;
-    if !session.is_staff() && !flags.iter().any(|flag| flag == "language-models") {
+    let has_language_models_feature_flag = flags.iter().any(|flag| flag == "language-models");
+    let has_llm_closed_beta_feature_flag = flags.iter().any(|flag| flag == "llm-closed-beta");
+
+    if !session.is_staff() && !has_language_models_feature_flag {
         Err(anyhow!("permission denied"))?
     }
 
@@ -4940,11 +4955,12 @@ async fn get_llm_api_token(
     if Utc::now().naive_utc() - account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
         Err(anyhow!("account too young"))?
     }
-
     let token = LlmTokenClaims::create(
         user.id,
+        user.github_login.clone(),
         session.is_staff(),
-        session.current_plan().await?,
+        has_llm_closed_beta_feature_flag,
+        session.current_plan(db).await?,
         &session.app_state.config,
     )?;
     response.send(proto::GetLlmTokenResponse { token })?;

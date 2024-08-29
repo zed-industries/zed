@@ -14,7 +14,7 @@ pub struct Outline<T> {
     path_candidate_prefixes: Vec<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct OutlineItem<T> {
     pub depth: usize,
     pub range: Range<T>,
@@ -24,6 +24,9 @@ pub struct OutlineItem<T> {
     pub body_range: Option<Range<T>>,
     pub annotation_range: Option<Range<T>>,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SymbolPath(pub String);
 
 impl<T: ToPoint> OutlineItem<T> {
     /// Converts to an equivalent outline item, but with parameterized over Points.
@@ -85,20 +88,24 @@ impl<T> Outline<T> {
     }
 
     /// Find the most similar symbol to the provided query using normalized Levenshtein distance.
-    pub fn find_most_similar(&self, query: &str) -> Option<&OutlineItem<T>> {
+    pub fn find_most_similar(&self, query: &str) -> Option<(SymbolPath, &OutlineItem<T>)> {
         const SIMILARITY_THRESHOLD: f64 = 0.6;
 
-        let (item, similarity) = self
-            .items
+        let (position, similarity) = self
+            .path_candidates
             .iter()
-            .map(|item| {
-                let similarity = strsim::normalized_levenshtein(&item.text, query);
-                (item, similarity)
+            .enumerate()
+            .map(|(index, candidate)| {
+                let similarity = strsim::normalized_levenshtein(&candidate.string, query);
+                (index, similarity)
             })
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())?;
 
         if similarity >= SIMILARITY_THRESHOLD {
-            Some(item)
+            self.path_candidates
+                .get(position)
+                .map(|candidate| SymbolPath(candidate.string.clone()))
+                .zip(self.items.get(position))
         } else {
             None
         }
@@ -248,15 +255,15 @@ mod tests {
         ]);
         assert_eq!(
             outline.find_most_similar("pub fn process"),
-            Some(&outline.items[0])
+            Some((SymbolPath("fn process".into()), &outline.items[0]))
         );
         assert_eq!(
             outline.find_most_similar("async fn process"),
-            Some(&outline.items[0])
+            Some((SymbolPath("fn process".into()), &outline.items[0])),
         );
         assert_eq!(
             outline.find_most_similar("struct Processor"),
-            Some(&outline.items[1])
+            Some((SymbolPath("struct DataProcessor".into()), &outline.items[1]))
         );
         assert_eq!(outline.find_most_similar("struct User"), None);
         assert_eq!(outline.find_most_similar("struct"), None);

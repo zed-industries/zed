@@ -1,26 +1,25 @@
 use crate::{
-    hash, point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
+    point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
     AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow,
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, Flatten, FontId, GPUSpecs, Global, GlobalElementId, GlyphId, Hsla, ImageData,
-    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, ScaledPixels, Scene, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine,
-    Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, View,
-    VisualContext, WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    SUBPIXEL_VARIANTS,
+    FileDropEvent, Flatten, FontId, GPUSpecs, Global, GlobalElementId, GlyphId, Hsla, InputHandler,
+    IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
+    LineLayoutIndex, Model, ModelContext, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
+    TimeToFirstWindowDraw, TransformationMatrix, Underline, UnderlineStyle, View, VisualContext,
+    WeakView, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
-use futures::{future::Shared, FutureExt};
+use futures::FutureExt;
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
@@ -545,6 +544,8 @@ pub struct Window {
     hovered: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    /// We assign this to be notified when the platform graphics backend fires the next completion callback for drawing the window.
+    present_completed: RefCell<Option<oneshot::Sender<()>>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
     pub(crate) draw_phase: DrawPhase,
@@ -821,6 +822,7 @@ impl Window {
             hovered,
             dirty,
             needs_present,
+            present_completed: RefCell::default(),
             last_input_timestamp,
             refreshing: false,
             draw_phase: DrawPhase::None,
@@ -1490,13 +1492,29 @@ impl<'a> WindowContext<'a> {
         self.window.refreshing = false;
         self.window.draw_phase = DrawPhase::None;
         self.window.needs_present.set(true);
+
+        if let Some(TimeToFirstWindowDraw::Pending(start)) = self.app.time_to_first_window_draw {
+            let (tx, rx) = oneshot::channel();
+            *self.window.present_completed.borrow_mut() = Some(tx);
+            self.spawn(|mut cx| async move {
+                rx.await.ok();
+                cx.update(|cx| {
+                    let duration = start.elapsed();
+                    cx.time_to_first_window_draw = Some(TimeToFirstWindowDraw::Done(duration));
+                    log::info!("time to first window draw: {:?}", duration);
+                    cx.push_effect(Effect::Refresh);
+                })
+            })
+            .detach();
+        }
     }
 
     #[profiling::function]
     fn present(&self) {
+        let on_complete = self.window.present_completed.take();
         self.window
             .platform_window
-            .draw(&self.window.rendered_frame.scene);
+            .draw(&self.window.rendered_frame.scene, on_complete);
         self.window.needs_present.set(false);
         profiling::finish_frame!();
     }
@@ -1956,36 +1974,6 @@ impl<'a> WindowContext<'a> {
         self.window.requested_autoscroll.take()
     }
 
-    /// Remove an asset from GPUI's cache
-    pub fn remove_cached_asset<A: Asset + 'static>(
-        &mut self,
-        source: &A::Source,
-    ) -> Option<A::Output> {
-        self.asset_cache.remove::<A>(source)
-    }
-
-    /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
-    /// Your view will be re-drawn once the asset has finished loading.
-    ///
-    /// Note that the multiple calls to this method will only result in one `Asset::load` call.
-    /// The results of that call will be cached, and returned on subsequent uses of this API.
-    ///
-    /// Use [Self::remove_cached_asset] to reload your asset.
-    pub fn use_cached_asset<A: Asset + 'static>(
-        &mut self,
-        source: &A::Source,
-    ) -> Option<A::Output> {
-        self.asset_cache.get::<A>(source).or_else(|| {
-            if let Some(asset) = self.use_asset::<A>(source) {
-                self.asset_cache
-                    .insert::<A>(source.to_owned(), asset.clone());
-                Some(asset)
-            } else {
-                None
-            }
-        })
-    }
-
     /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
     /// Your view will be re-drawn once the asset has finished loading.
     ///
@@ -1994,19 +1982,7 @@ impl<'a> WindowContext<'a> {
     ///
     /// This asset will not be cached by default, see [Self::use_cached_asset]
     pub fn use_asset<A: Asset + 'static>(&mut self, source: &A::Source) -> Option<A::Output> {
-        let asset_id = (TypeId::of::<A>(), hash(source));
-        let mut is_first = false;
-        let task = self
-            .loading_assets
-            .remove(&asset_id)
-            .map(|boxed_task| *boxed_task.downcast::<Shared<Task<A::Output>>>().unwrap())
-            .unwrap_or_else(|| {
-                is_first = true;
-                let future = A::load(source.clone(), self);
-                let task = self.background_executor().spawn(future).shared();
-                task
-            });
-
+        let (task, is_first) = self.fetch_asset::<A>(source);
         task.clone().now_or_never().or_else(|| {
             if is_first {
                 let parent_id = self.parent_view_id();
@@ -2027,12 +2003,9 @@ impl<'a> WindowContext<'a> {
                 .detach();
             }
 
-            self.loading_assets.insert(asset_id, Box::new(task));
-
             None
         })
     }
-
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
     pub fn element_offset(&self) -> Point<Pixels> {
@@ -2610,13 +2583,14 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Paint an image into the scene for the next frame at the current z-index.
+    /// This method will panic if the frame_index is not valid
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_image(
         &mut self,
         bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
-        data: Arc<ImageData>,
+        data: Arc<RenderImage>,
         frame_index: usize,
         grayscale: bool,
     ) -> Result<()> {
@@ -2639,7 +2613,10 @@ impl<'a> WindowContext<'a> {
             .get_or_insert_with(&params.clone().into(), &mut || {
                 Ok(Some((
                     data.size(frame_index),
-                    Cow::Borrowed(data.as_bytes(frame_index)),
+                    Cow::Borrowed(
+                        data.as_bytes(frame_index)
+                            .expect("It's the caller's job to pass a valid frame index"),
+                    ),
                 )))
             })?
             .expect("Callback above only returns Some");
@@ -2665,6 +2642,8 @@ impl<'a> WindowContext<'a> {
     /// This method should only be called as part of the paint phase of element drawing.
     #[cfg(target_os = "macos")]
     pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
+        use crate::PaintSurface;
+
         debug_assert_eq!(
             self.window.draw_phase,
             DrawPhase::Paint,
@@ -2674,15 +2653,12 @@ impl<'a> WindowContext<'a> {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
-        self.window
-            .next_frame
-            .scene
-            .insert_primitive(crate::Surface {
-                order: 0,
-                bounds,
-                content_mask,
-                image_buffer,
-            });
+        self.window.next_frame.scene.insert_primitive(PaintSurface {
+            order: 0,
+            bounds,
+            content_mask,
+            image_buffer,
+        });
     }
 
     #[must_use]
@@ -3413,7 +3389,7 @@ impl<'a> WindowContext<'a> {
         self.window.pending_input.is_some()
     }
 
-    fn clear_pending_keystrokes(&mut self) {
+    pub(crate) fn clear_pending_keystrokes(&mut self) {
         self.window.pending_input.take();
     }
 
@@ -3599,6 +3575,18 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.toggle_fullscreen();
     }
 
+    /// Updates the IME panel position suggestions for languages like japanese, chinese.
+    pub fn invalidate_character_coordinates(&mut self) {
+        self.on_next_frame(|cx| {
+            if let Some(mut input_handler) = cx.window.platform_window.take_input_handler() {
+                if let Some(bounds) = input_handler.selected_bounds(cx) {
+                    cx.window.platform_window.update_ime_position(bounds);
+                }
+                cx.window.platform_window.set_input_handler(input_handler);
+            }
+        });
+    }
+
     /// Present a platform dialog.
     /// The provided message will be presented, along with buttons for each answer.
     /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
@@ -3760,6 +3748,12 @@ impl<'a> WindowContext<'a> {
     /// Currently returns None on Mac and Windows.
     pub fn gpu_specs(&self) -> Option<GPUSpecs> {
         self.window.platform_window.gpu_specs()
+    }
+
+    /// Get the current FPS (frames per second) of the window.
+    /// This is only supported on macOS currently.
+    pub fn fps(&self) -> Option<f32> {
+        self.window.platform_window.fps()
     }
 }
 

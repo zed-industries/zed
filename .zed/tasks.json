@@ -2,6 +2,15 @@
   {
     "label": "clippy",
     "command": "./script/clippy",
-    "args": []
+    "args": [],
+    "allow_concurrent_runs": true,
+    "use_new_terminal": false
+  },
+  {
+    "label": "cargo run --profile release-fast",
+    "command": "cargo",
+    "args": ["run", "--profile", "release-fast"],
+    "allow_concurrent_runs": true,
+    "use_new_terminal": false
   }
 ]
