@@ -1,0 +1,766 @@
+use serde::Deserialize;
+use util::ResultExt;
+
+/// TODO:
+/// https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
+/// https://source.chromium.org/chromium/chromium/src/+/main:ui/events/keycodes/keyboard_codes_win.h;drc=341564182474622e33c964e73a69ea8c1e004eb8;l=12
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Deserialize, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum VirtualKeyCode {
+    #[default]
+    Unknown,
+    /// Fn on macOS
+    Function,
+    /// Control-break processing, `VK_CANCEL` on Windows.
+    Cancel,
+    /// BACKSPACE key, `VK_BACK` on Windows.
+    Backspace,
+    /// TAB key, `VK_TAB` on Windows.
+    Tab,
+    /// CLEAR key, `VK_CLEAR` on Windows.
+    Clear,
+    /// RETURN key, `VK_RETURN` on Windows.
+    Enter,
+    /// SHIFT key, `VK_SHIFT` on Windows. Note, both left-shift and right-shift can
+    /// trigger this.
+    Shift,
+    /// CTRL key, `VK_CONTROL` on Windows. Note, both left-ctrl and right-ctrl can
+    /// trigger this.
+    Control,
+    /// Alt key, `VK_MENU` on Windows. Note, both left-alt and right-alt can
+    /// trigger this.
+    Alt,
+    /// PAUSE key, `VK_PAUSE` on Windows.
+    Pause,
+    /// CAPS LOCK key, `VK_CAPITAL` on Windows.
+    Capital,
+    /// IME Kana mode, `VK_KANA` on Windows.
+    Kana,
+    /// IME Hangul mode, `VK_HANGUL` on Windows.
+    Hangul,
+    ///IME Junja mode, `VK_JUNJA` on Windows.
+    Junja,
+    /// IME final mode, `VK_FINAL` on Windows.
+    Final,
+    /// IME Hanja mode, `VK_HANJA` on Windows.
+    Hanja,
+    /// IME Kanji mode, `VK_KANJI` on Winodws.
+    Kanji,
+    /// ESC key, `VK_ESCAPE` on Windows.
+    Escape,
+    /// IME convert, `VK_CONVERT` on Windows.
+    Convert,
+    /// IME nonconvert, `VK_NONCONVERT` on Windows.
+    Nonconvert,
+    /// IME accept, `VK_ACCEPT` on Windows.
+    Accept,
+    /// IME mode change request, `VK_MODECHANGE` on Windows.
+    ModeChange,
+    /// SPACEBAR, `VK_SPACE` on Windows.
+    Space,
+    /// PAGE UP key, `VK_PRIOR` on Windows.
+    PageUp,
+    /// PAGE DOWN key, `VK_NEXT` on Windows.
+    PageDown,
+    /// END key, `VK_END` on Windows.
+    End,
+    /// HOME key, `VK_HOME` on Windows.
+    Home,
+    /// LEFT ARROW key, `VK_LEFT` on Windows.
+    Left,
+    /// UP ARROW key, `VK_UP` on Windows.
+    Up,
+    /// RIGHT ARROW key, `VK_RIGHT` on Winodws.
+    Right,
+    /// DOWN ARROW key, `VK_DOWN` on Windows.
+    Down,
+    /// SELECT key, `VK_SELECT` on Winodws.
+    Select,
+    /// PRINT key, `VK_PRINT` on Windows.
+    Print,
+    /// EXECUTE key, `VK_EXECUTE` on Windows.
+    Execute,
+    /// PRINT SCREEN key, `VK_SNAPSHOT` on Windows.
+    PrintScreen,
+    /// INS key, `VK_INSERT` on Windows.
+    Insert,
+    /// DEL key, `VK_DELETE` on Windows.
+    Delete,
+    /// HELP key, `VK_HELP` on Windows.
+    Help,
+    /// 0 key on the main keyboard, `VK_0` on Windows.
+    #[serde(rename = "0")]
+    Digital0,
+    /// 0 key on the main keyboard, `VK_0` on Windows.
+    #[serde(rename = "1")]
+    Digital1,
+    /// 0 key on the main keyboard, `VK_0` on Windows.
+    #[serde(rename = "2")]
+    Digital2,
+    /// 0 key on the main keyboard, `VK_0` on Windows.
+    #[serde(rename = "3")]
+    Digital3,
+    /// 0 key on the main keyboard, `VK_0` on Windows.
+    #[serde(rename = "4")]
+    Digital4,
+    /// 0 key on the main keyboard, `VK_0` on Windows.
+    #[serde(rename = "5")]
+    Digital5,
+    /// 0 key on the main keyboard, `VK_0` on Windows.
+    #[serde(rename = "6")]
+    Digital6,
+    /// 0 key on the main keyboard, `VK_0` on Windows.
+    #[serde(rename = "7")]
+    Digital7,
+    /// 0 key on the main keyboard, `VK_0` on Windows.
+    #[serde(rename = "8")]
+    Digital8,
+    /// 0 key on the main keyboard, `VK_0` on Windows.
+    #[serde(rename = "9")]
+    Digital9,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    A,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    B,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    C,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    D,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    E,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    F,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    G,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    H,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    I,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    J,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    K,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    L,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    M,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    N,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    O,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    P,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    Q,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    R,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    S,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    T,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    U,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    V,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    W,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    X,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    Y,
+    /// A key on the main keyboard, `VK_A` on Windows.
+    Z,
+    /// Left WIN key `VK_LWIN` on Windows,
+    /// TODO: macOS, Linux
+    LeftPlatform,
+    /// Right WIN key `VK_RWIN` on Windows,
+    /// TODO: macOS, Linux
+    RightPlatform,
+    /// Applications key, `VK_APPS` on Windows.
+    App,
+    /// Computer Sleep key, `VK_SLEEP` on Windows.
+    Sleep,
+    /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+    Numpad0,
+    /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+    Numpad1,
+    /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+    Numpad2,
+    /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+    Numpad3,
+    /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+    Numpad4,
+    /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+    Numpad5,
+    /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+    Numpad6,
+    /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+    Numpad7,
+    /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+    Numpad8,
+    /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+    Numpad9,
+    /// Multiply key, `VK_MULTIPLY` on Windows.
+    Multiply,
+    /// Add key, `VK_ADD` on Windows.
+    Add,
+    /// Separator key, `VK_SEPARATOR` on Windows.
+    Separator,
+    /// Subtract key, `VK_SUBTRACT` on Windows.
+    Subtract,
+    /// Decimal key, `VK_DECIMAL` on Windows.
+    Decimal,
+    /// Divide key, `VK_DIVIDE` on Windows.
+    Divide,
+    /// F1 key
+    F1,
+    /// F1 key
+    F2,
+    /// F1 key
+    F3,
+    /// F1 key
+    F4,
+    /// F1 key
+    F5,
+    /// F1 key
+    F6,
+    /// F1 key
+    F7,
+    /// F1 key
+    F8,
+    /// F1 key
+    F9,
+    /// F1 key
+    F10,
+    /// F1 key
+    F11,
+    /// F1 key
+    F12,
+    /// F1 key
+    F13,
+    /// F1 key
+    F14,
+    /// F1 key
+    F15,
+    /// F1 key
+    F16,
+    /// F1 key
+    F17,
+    /// F1 key
+    F18,
+    /// F1 key
+    F19,
+    /// F20 key
+    F20,
+    /// F20 key
+    F21,
+    /// F20 key
+    F22,
+    /// F20 key
+    F23,
+    /// F20 key
+    F24,
+    /// NUM LOCK key
+    NumLock,
+    /// SCROLL LOCK key
+    ScrollLock,
+    /// Left SHIFT key
+    LeftShift,
+    /// Right SHIFT key
+    RightShift,
+    /// Left CONTROL key
+    LeftControl,
+    /// Right CONTROL key
+    RightControl,
+    /// Left ALT key
+    LeftAlt,
+    /// Right ALT key
+    RightAlt,
+    /// Browser Back key, `VK_BROWSER_BACK` on Windows.
+    BrowserBack,
+    /// Browser Forward key
+    BrowserForward,
+    /// Browser Refresh key
+    BrowserRefresh,
+    /// Browser Stop key
+    BrowserStop,
+    /// Browser Search key
+    BrowserSearch,
+    /// Browser Favorites key
+    BrowserFavorites,
+    /// Browser Start and Home key
+    BrowserHome,
+    /// Volume Mute key
+    VolumeMute,
+    /// Volume Down key
+    VolumeDown,
+    /// Volume Up key
+    VolumeUp,
+    /// Next Track key
+    MediaNextTrack,
+    /// Previous Track key
+    MediaPrevTrack,
+    /// Stop Track key
+    MediaStop,
+    /// Play/Pause Media key
+    MediaPlayPause,
+    /// Start Mail key
+    LaunchMail,
+    /// Select Media key
+    LaunchMediaSelect,
+    /// Start Application 1 key
+    LaunchApp1,
+    /// Start Application 2 key
+    LaunchApp2,
+    /// Used for miscellaneous characters, it can vary by keyboard.
+    /// For the US standard keyboard, the `;:` key
+    #[serde(rename = ";")]
+    OEM1,
+    /// For any country/region, the `+` key
+    #[serde(rename = "+")]
+    OEMPlus,
+    /// For any country/region, the `,` key
+    #[serde(rename = ",")]
+    OEMComma,
+    /// For any country/region, the `-` key
+    #[serde(rename = "-")]
+    OEMMinus,
+    /// For any country/region, the . key
+    #[serde(rename = ".")]
+    OEMPeriod,
+    /// Used for miscellaneous characters, it can vary by keyboard.
+    /// For the US standard keyboard, the `/?` key
+    #[serde(rename = "/")]
+    OEM2,
+    /// Used for miscellaneous characters, it can vary by keyboard.
+    /// For the US standard keyboard, the `~ key
+    #[serde(rename = "`")]
+    OEM3,
+    /// Used for miscellaneous characters, it can vary by keyboard.
+    /// For the US standard keyboard, the `[{` key
+    #[serde(rename = "[")]
+    OEM4,
+    /// Used for miscellaneous characters, it can vary by keyboard.
+    /// For the US standard keyboard, the `\|` key
+    #[serde(rename = "\\")]
+    OEM5,
+    /// Used for miscellaneous characters, it can vary by keyboard.
+    /// For the US standard keyboard, the `]}` key
+    #[serde(rename = "]")]
+    OEM6,
+    /// Used for miscellaneous characters, it can vary by keyboard.
+    /// For the US standard keyboard, the `'"` key
+    #[serde(rename = "'")]
+    OEM7,
+    /// Used for miscellaneous characters; it can vary by keyboard.
+    OEM8,
+    /// The `<>` keys on the US standard keyboard, or the `\|` key on the
+    /// non-US 102-key keyboard
+    OEM102,
+    /// IME PROCESS key
+    ProcessKey,
+    /// Used to pass Unicode characters as if they were keystrokes.
+    /// The `VK_PACKET` on Windows, this key is the low word of a 32-bit Virtual Key
+    /// value used for non-keyboard input methods.
+    ///
+    /// For more information, see Remark in KEYBDINPUT, SendInput, WM_KEYDOWN, and WM_KEYUP
+    Packet,
+    // TODO: These keys not presented on Windows doc, but on Chrome.
+    // VKEY_OEM_ATTN = VK_OEM_ATTN,
+    // VKEY_OEM_FINISH = VK_OEM_FINISH,
+    // VKEY_OEM_COPY = VK_OEM_COPY,
+    // VKEY_DBE_SBCSCHAR = VK_DBE_SBCSCHAR,
+    // VKEY_DBE_DBCSCHAR = VK_DBE_DBCSCHAR,
+    // VKEY_OEM_BACKTAB = VK_OEM_BACKTAB,
+    /// Attn key
+    Attn,
+    /// CrSel key
+    CrSel,
+    /// ExSel key
+    ExSel,
+    /// Erase EOF key
+    EraseEOF,
+    /// Play key
+    Play,
+    /// Zoom key
+    Zoom,
+    // TODO: These keys are reserved by Windows but are used by Chrome, `VK_NONAME`
+    // NoName
+    // Paste
+    /// PA1 key
+    PA1,
+    /// Clear key
+    OEMClear,
+}
+
+impl VirtualKeyCode {
+    pub fn from(input: &str) -> Option<Self> {
+        serde_json::from_str(input).log_err()
+        // match input {
+        //     "a" => Self::A,
+        //     "b" => Self::B,
+        //     "c" => Self::C,
+        //     "d" => Self::D,
+        //     "e" => Self::E,
+        //     "e" => Self::E,
+        //     "e" => Self::E,
+        //     "e" => Self::E,
+        //     "e" => Self::E,
+        //     "e" => Self::E,
+        // }
+    }
+
+    pub fn is_printable(&self) -> bool {
+        // match key {
+        //     "up" | "down" | "left" | "right" | "pageup" | "pagedown" | "home" | "end" | "delete"
+        //     | "escape" | "backspace" | "f1" | "f2" | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9"
+        //     | "f10" | "f11" | "f12" => false,
+        //     _ => true,
+        // }
+        match self {
+            // VirtualKeyCode::Unknown => todo!(),
+            // VirtualKeyCode::Function => todo!(),
+            // VirtualKeyCode::Cancel => todo!(),
+            // VirtualKeyCode::Backspace => todo!(),
+            VirtualKeyCode::Tab
+            | VirtualKeyCode::Enter
+            | VirtualKeyCode::Space
+            | VirtualKeyCode::Left
+            | VirtualKeyCode::Up
+            | VirtualKeyCode::Right
+            | VirtualKeyCode::Down
+            | VirtualKeyCode::Digital0
+            | VirtualKeyCode::Digital1
+            | VirtualKeyCode::Digital2
+            | VirtualKeyCode::Digital3
+            | VirtualKeyCode::Digital4
+            | VirtualKeyCode::Digital5
+            | VirtualKeyCode::Digital6
+            | VirtualKeyCode::Digital7
+            | VirtualKeyCode::Digital8
+            | VirtualKeyCode::Digital9
+            | VirtualKeyCode::A
+            | VirtualKeyCode::B
+            | VirtualKeyCode::C
+            | VirtualKeyCode::D
+            | VirtualKeyCode::E
+            | VirtualKeyCode::F
+            | VirtualKeyCode::G
+            | VirtualKeyCode::H
+            | VirtualKeyCode::I
+            | VirtualKeyCode::J
+            | VirtualKeyCode::K
+            | VirtualKeyCode::L
+            | VirtualKeyCode::M
+            | VirtualKeyCode::N
+            | VirtualKeyCode::O
+            | VirtualKeyCode::P
+            | VirtualKeyCode::Q
+            | VirtualKeyCode::R
+            | VirtualKeyCode::S
+            | VirtualKeyCode::T
+            | VirtualKeyCode::U
+            | VirtualKeyCode::V
+            | VirtualKeyCode::W
+            | VirtualKeyCode::X
+            | VirtualKeyCode::Y
+            | VirtualKeyCode::Z
+            | VirtualKeyCode::OEM1
+            | VirtualKeyCode::OEMPlus
+            | VirtualKeyCode::OEMComma
+            | VirtualKeyCode::OEMMinus
+            | VirtualKeyCode::OEMPeriod
+            | VirtualKeyCode::OEM2
+            | VirtualKeyCode::OEM3
+            | VirtualKeyCode::OEM4
+            | VirtualKeyCode::OEM5
+            | VirtualKeyCode::OEM6
+            | VirtualKeyCode::OEM7 => true,
+            // VirtualKeyCode::Clear => todo!(),
+            // VirtualKeyCode::Shift => todo!(),
+            // VirtualKeyCode::Control => todo!(),
+            // VirtualKeyCode::Alt => todo!(),
+            // VirtualKeyCode::Pause => todo!(),
+            // VirtualKeyCode::Capital => todo!(),
+            // VirtualKeyCode::Kana => todo!(),
+            // VirtualKeyCode::Hangul => todo!(),
+            // VirtualKeyCode::Junja => todo!(),
+            // VirtualKeyCode::Final => todo!(),
+            // VirtualKeyCode::Hanja => todo!(),
+            // VirtualKeyCode::Kanji => todo!(),
+            // VirtualKeyCode::Escape => todo!(),
+            // VirtualKeyCode::Convert => todo!(),
+            // VirtualKeyCode::Nonconvert => todo!(),
+            // VirtualKeyCode::Accept => todo!(),
+            // VirtualKeyCode::ModeChange => todo!(),
+            // VirtualKeyCode::PageUp => todo!(),
+            // VirtualKeyCode::PageDown => todo!(),
+            // VirtualKeyCode::End => todo!(),
+            // VirtualKeyCode::Home => todo!(),
+            // VirtualKeyCode::Select => todo!(),
+            // VirtualKeyCode::Print => todo!(),
+            // VirtualKeyCode::Execute => todo!(),
+            // VirtualKeyCode::PrintScreen => todo!(),
+            // VirtualKeyCode::Insert => todo!(),
+            // VirtualKeyCode::Delete => todo!(),
+            // VirtualKeyCode::Help => todo!(),
+            // VirtualKeyCode::LeftPlatform => todo!(),
+            // VirtualKeyCode::RightPlatform => todo!(),
+            // VirtualKeyCode::App => todo!(),
+            // VirtualKeyCode::Sleep => todo!(),
+            // VirtualKeyCode::Numpad0 => todo!(),
+            // VirtualKeyCode::Numpad1 => todo!(),
+            // VirtualKeyCode::Numpad2 => todo!(),
+            // VirtualKeyCode::Numpad3 => todo!(),
+            // VirtualKeyCode::Numpad4 => todo!(),
+            // VirtualKeyCode::Numpad5 => todo!(),
+            // VirtualKeyCode::Numpad6 => todo!(),
+            // VirtualKeyCode::Numpad7 => todo!(),
+            // VirtualKeyCode::Numpad8 => todo!(),
+            // VirtualKeyCode::Numpad9 => todo!(),
+            // VirtualKeyCode::Multiply => todo!(),
+            // VirtualKeyCode::Add => todo!(),
+            // VirtualKeyCode::Separator => todo!(),
+            // VirtualKeyCode::Subtract => todo!(),
+            // VirtualKeyCode::Decimal => todo!(),
+            // VirtualKeyCode::Divide => todo!(),
+            // VirtualKeyCode::F1 => todo!(),
+            // VirtualKeyCode::F2 => todo!(),
+            // VirtualKeyCode::F3 => todo!(),
+            // VirtualKeyCode::F4 => todo!(),
+            // VirtualKeyCode::F5 => todo!(),
+            // VirtualKeyCode::F6 => todo!(),
+            // VirtualKeyCode::F7 => todo!(),
+            // VirtualKeyCode::F8 => todo!(),
+            // VirtualKeyCode::F9 => todo!(),
+            // VirtualKeyCode::F10 => todo!(),
+            // VirtualKeyCode::F11 => todo!(),
+            // VirtualKeyCode::F12 => todo!(),
+            // VirtualKeyCode::F13 => todo!(),
+            // VirtualKeyCode::F14 => todo!(),
+            // VirtualKeyCode::F15 => todo!(),
+            // VirtualKeyCode::F16 => todo!(),
+            // VirtualKeyCode::F17 => todo!(),
+            // VirtualKeyCode::F18 => todo!(),
+            // VirtualKeyCode::F19 => todo!(),
+            // VirtualKeyCode::F20 => todo!(),
+            // VirtualKeyCode::F21 => todo!(),
+            // VirtualKeyCode::F22 => todo!(),
+            // VirtualKeyCode::F23 => todo!(),
+            // VirtualKeyCode::F24 => todo!(),
+            // VirtualKeyCode::NumLock => todo!(),
+            // VirtualKeyCode::ScrollLock => todo!(),
+            // VirtualKeyCode::LeftShift => todo!(),
+            // VirtualKeyCode::RightShift => todo!(),
+            // VirtualKeyCode::LeftControl => todo!(),
+            // VirtualKeyCode::RightControl => todo!(),
+            // VirtualKeyCode::LeftAlt => todo!(),
+            // VirtualKeyCode::RightAlt => todo!(),
+            // VirtualKeyCode::BrowserBack => todo!(),
+            // VirtualKeyCode::BrowserForward => todo!(),
+            // VirtualKeyCode::BrowserRefresh => todo!(),
+            // VirtualKeyCode::BrowserStop => todo!(),
+            // VirtualKeyCode::BrowserSearch => todo!(),
+            // VirtualKeyCode::BrowserFavorites => todo!(),
+            // VirtualKeyCode::BrowserHome => todo!(),
+            // VirtualKeyCode::VolumeMute => todo!(),
+            // VirtualKeyCode::VolumeDown => todo!(),
+            // VirtualKeyCode::VolumeUp => todo!(),
+            // VirtualKeyCode::MediaNextTrack => todo!(),
+            // VirtualKeyCode::MediaPrevTrack => todo!(),
+            // VirtualKeyCode::MediaStop => todo!(),
+            // VirtualKeyCode::MediaPlayPause => todo!(),
+            // VirtualKeyCode::LaunchMail => todo!(),
+            // VirtualKeyCode::LaunchMediaSelect => todo!(),
+            // VirtualKeyCode::LaunchApp1 => todo!(),
+            // VirtualKeyCode::LaunchApp2 => todo!(),
+            // VirtualKeyCode::OEM8 => todo!(),
+            // VirtualKeyCode::OEM102 => todo!(),
+            // VirtualKeyCode::ProcessKey => todo!(),
+            // VirtualKeyCode::Packet => todo!(),
+            // VirtualKeyCode::Attn => todo!(),
+            // VirtualKeyCode::CrSel => todo!(),
+            // VirtualKeyCode::ExSel => todo!(),
+            // VirtualKeyCode::EraseEOF => todo!(),
+            // VirtualKeyCode::Play => todo!(),
+            // VirtualKeyCode::Zoom => todo!(),
+            // VirtualKeyCode::PA1 => todo!(),
+            // VirtualKeyCode::OEMClear => todo!(),
+            _ => false,
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        match self {
+            VirtualKeyCode::Unknown => "UnImplemented",
+            VirtualKeyCode::Function => "function",
+            VirtualKeyCode::Cancel => "cancel",
+            VirtualKeyCode::Backspace => "backspace",
+            VirtualKeyCode::Tab => "tab",
+            VirtualKeyCode::Clear => "UnImplemented",
+            VirtualKeyCode::Enter => "enter",
+            VirtualKeyCode::Shift => "shift",
+            VirtualKeyCode::Control => "control",
+            VirtualKeyCode::Alt => "alt",
+            VirtualKeyCode::Pause => "UnImplemented",
+            VirtualKeyCode::Capital => "UnImplemented",
+            VirtualKeyCode::Kana => "UnImplemented",
+            VirtualKeyCode::Hangul => "UnImplemented",
+            VirtualKeyCode::Junja => "UnImplemented",
+            VirtualKeyCode::Final => "UnImplemented",
+            VirtualKeyCode::Hanja => "UnImplemented",
+            VirtualKeyCode::Kanji => "UnImplemented",
+            VirtualKeyCode::Escape => "escape",
+            VirtualKeyCode::Convert => "UnImplemented",
+            VirtualKeyCode::Nonconvert => "UnImplemented",
+            VirtualKeyCode::Accept => "UnImplemented",
+            VirtualKeyCode::ModeChange => "UnImplemented",
+            VirtualKeyCode::Space => "space", // TODO:
+            VirtualKeyCode::PageUp => "pageup",
+            VirtualKeyCode::PageDown => "pagedown",
+            VirtualKeyCode::End => "end",
+            VirtualKeyCode::Home => "home",
+            VirtualKeyCode::Left => "left",
+            VirtualKeyCode::Up => "up",
+            VirtualKeyCode::Right => "right",
+            VirtualKeyCode::Down => "down",
+            VirtualKeyCode::Select => "UnImplemented",
+            VirtualKeyCode::Print => "UnImplemented",
+            VirtualKeyCode::Execute => "UnImplemented",
+            VirtualKeyCode::PrintScreen => "UnImplemented",
+            VirtualKeyCode::Insert => "insert",
+            VirtualKeyCode::Delete => "delete",
+            VirtualKeyCode::Help => "UnImplemented",
+            VirtualKeyCode::Digital0 => "0",
+            VirtualKeyCode::Digital1 => "1",
+            VirtualKeyCode::Digital2 => "2",
+            VirtualKeyCode::Digital3 => "3",
+            VirtualKeyCode::Digital4 => "4",
+            VirtualKeyCode::Digital5 => "5",
+            VirtualKeyCode::Digital6 => "6",
+            VirtualKeyCode::Digital7 => "7",
+            VirtualKeyCode::Digital8 => "8",
+            VirtualKeyCode::Digital9 => "9",
+            VirtualKeyCode::A => "a",
+            VirtualKeyCode::B => "b",
+            VirtualKeyCode::C => "c",
+            VirtualKeyCode::D => "d",
+            VirtualKeyCode::E => "e",
+            VirtualKeyCode::F => "f",
+            VirtualKeyCode::G => "g",
+            VirtualKeyCode::H => "h",
+            VirtualKeyCode::I => "i",
+            VirtualKeyCode::J => "j",
+            VirtualKeyCode::K => "k",
+            VirtualKeyCode::L => "l",
+            VirtualKeyCode::M => "m",
+            VirtualKeyCode::N => "n",
+            VirtualKeyCode::O => "o",
+            VirtualKeyCode::P => "p",
+            VirtualKeyCode::Q => "q",
+            VirtualKeyCode::R => "r",
+            VirtualKeyCode::S => "s",
+            VirtualKeyCode::T => "t",
+            VirtualKeyCode::U => "u",
+            VirtualKeyCode::V => "v",
+            VirtualKeyCode::W => "w",
+            VirtualKeyCode::X => "x",
+            VirtualKeyCode::Y => "y",
+            VirtualKeyCode::Z => "z",
+            VirtualKeyCode::LeftPlatform => "platform",
+            VirtualKeyCode::RightPlatform => "platform",
+            VirtualKeyCode::App => "UnImplemented",
+            VirtualKeyCode::Sleep => "UnImplemented",
+            VirtualKeyCode::Numpad0 => "UnImplemented",
+            VirtualKeyCode::Numpad1 => "UnImplemented",
+            VirtualKeyCode::Numpad2 => "UnImplemented",
+            VirtualKeyCode::Numpad3 => "UnImplemented",
+            VirtualKeyCode::Numpad4 => "UnImplemented",
+            VirtualKeyCode::Numpad5 => "UnImplemented",
+            VirtualKeyCode::Numpad6 => "UnImplemented",
+            VirtualKeyCode::Numpad7 => "UnImplemented",
+            VirtualKeyCode::Numpad8 => "UnImplemented",
+            VirtualKeyCode::Numpad9 => "UnImplemented",
+            VirtualKeyCode::Multiply => "UnImplemented",
+            VirtualKeyCode::Add => "UnImplemented",
+            VirtualKeyCode::Separator => "UnImplemented",
+            VirtualKeyCode::Subtract => "UnImplemented",
+            VirtualKeyCode::Decimal => "UnImplemented",
+            VirtualKeyCode::Divide => "UnImplemented",
+            VirtualKeyCode::F1 => "f1",
+            VirtualKeyCode::F2 => "f2",
+            VirtualKeyCode::F3 => "f3",
+            VirtualKeyCode::F4 => "f4",
+            VirtualKeyCode::F5 => "f5",
+            VirtualKeyCode::F6 => "f6",
+            VirtualKeyCode::F7 => "f7",
+            VirtualKeyCode::F8 => "f8",
+            VirtualKeyCode::F9 => "f9",
+            VirtualKeyCode::F10 => "f10",
+            VirtualKeyCode::F11 => "UnImplemented",
+            VirtualKeyCode::F12 => "UnImplemented",
+            VirtualKeyCode::F13 => "UnImplemented",
+            VirtualKeyCode::F14 => "UnImplemented",
+            VirtualKeyCode::F15 => "UnImplemented",
+            VirtualKeyCode::F16 => "UnImplemented",
+            VirtualKeyCode::F17 => "UnImplemented",
+            VirtualKeyCode::F18 => "UnImplemented",
+            VirtualKeyCode::F19 => "UnImplemented",
+            VirtualKeyCode::F20 => "UnImplemented",
+            VirtualKeyCode::F21 => "UnImplemented",
+            VirtualKeyCode::F22 => "UnImplemented",
+            VirtualKeyCode::F23 => "UnImplemented",
+            VirtualKeyCode::F24 => "UnImplemented",
+            VirtualKeyCode::NumLock => "UnImplemented",
+            VirtualKeyCode::ScrollLock => "UnImplemented",
+            VirtualKeyCode::LeftShift => "shift",
+            VirtualKeyCode::RightShift => "shift",
+            VirtualKeyCode::LeftControl => "control",
+            VirtualKeyCode::RightControl => "control",
+            VirtualKeyCode::LeftAlt => "alt",
+            VirtualKeyCode::RightAlt => "alt",
+            VirtualKeyCode::BrowserBack => "UnImplemented",
+            VirtualKeyCode::BrowserForward => "UnImplemented",
+            VirtualKeyCode::BrowserRefresh => "UnImplemented",
+            VirtualKeyCode::BrowserStop => "UnImplemented",
+            VirtualKeyCode::BrowserSearch => "UnImplemented",
+            VirtualKeyCode::BrowserFavorites => "UnImplemented",
+            VirtualKeyCode::BrowserHome => "UnImplemented",
+            VirtualKeyCode::VolumeMute => "UnImplemented",
+            VirtualKeyCode::VolumeDown => "UnImplemented",
+            VirtualKeyCode::VolumeUp => "UnImplemented",
+            VirtualKeyCode::MediaNextTrack => "UnImplemented",
+            VirtualKeyCode::MediaPrevTrack => "UnImplemented",
+            VirtualKeyCode::MediaStop => "UnImplemented",
+            VirtualKeyCode::MediaPlayPause => "UnImplemented",
+            VirtualKeyCode::LaunchMail => "UnImplemented",
+            VirtualKeyCode::LaunchMediaSelect => "UnImplemented",
+            VirtualKeyCode::LaunchApp1 => "UnImplemented",
+            VirtualKeyCode::LaunchApp2 => "UnImplemented",
+            VirtualKeyCode::OEM1 => ";",
+            VirtualKeyCode::OEMPlus => "+",
+            VirtualKeyCode::OEMComma => ",",
+            VirtualKeyCode::OEMMinus => "-",
+            VirtualKeyCode::OEMPeriod => ".",
+            VirtualKeyCode::OEM2 => "/",
+            VirtualKeyCode::OEM3 => "`",
+            VirtualKeyCode::OEM4 => "[",
+            VirtualKeyCode::OEM5 => "\\",
+            VirtualKeyCode::OEM6 => "]",
+            VirtualKeyCode::OEM7 => "'",
+            VirtualKeyCode::OEM8 => "UnImplemented",
+            VirtualKeyCode::OEM102 => "UnImplemented",
+            VirtualKeyCode::ProcessKey => "UnImplemented",
+            VirtualKeyCode::Packet => "UnImplemented",
+            VirtualKeyCode::Attn => "UnImplemented",
+            VirtualKeyCode::CrSel => "UnImplemented",
+            VirtualKeyCode::ExSel => "UnImplemented",
+            VirtualKeyCode::EraseEOF => "UnImplemented",
+            VirtualKeyCode::Play => "UnImplemented",
+            VirtualKeyCode::Zoom => "UnImplemented",
+            VirtualKeyCode::PA1 => "UnImplemented",
+            VirtualKeyCode::OEMClear => "UnImplemented",
+        }
+        .to_string()
+    }
+}
