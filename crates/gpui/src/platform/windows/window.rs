@@ -48,6 +48,7 @@ pub struct WindowsWindowState {
     pub system_settings: WindowsSystemSettings,
     pub current_cursor: HCURSOR,
     pub nc_button_pressed: Option<u32>,
+    pub last_keydown_handled: bool,
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
@@ -95,6 +96,7 @@ impl WindowsWindowState {
         let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
+        let last_keydown_handled = false;
 
         Ok(Self {
             origin,
@@ -110,6 +112,7 @@ impl WindowsWindowState {
             system_settings,
             current_cursor,
             nc_button_pressed,
+            last_keydown_handled,
             display,
             fullscreen,
             hwnd,

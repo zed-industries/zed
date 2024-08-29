@@ -318,7 +318,7 @@ pub enum VirtualKeyCode {
     #[serde(rename = ";")]
     OEM1,
     /// For any country/region, the `+` key
-    #[serde(rename = "+")]
+    #[serde(rename = "=")]
     OEMPlus,
     /// For any country/region, the `,` key
     #[serde(rename = ",")]
