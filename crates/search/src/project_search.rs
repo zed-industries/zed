@@ -16,8 +16,9 @@ use gpui::{
     actions, div, Action, AnyElement, AnyView, AppContext, Context as _, EntityId, EventEmitter,
     FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement, KeyContext, Model,
     ModelContext, ParentElement, Point, Render, SharedString, Styled, Subscription, Task,
-    TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WindowContext,
+    TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
 };
+use language::Buffer;
 use menu::Confirm;
 use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
 use settings::Settings;
@@ -134,6 +135,7 @@ enum InputPanel {
 }
 
 pub struct ProjectSearchView {
+    workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     model: Model<ProjectSearch>,
     query_editor: View<Editor>,
@@ -147,6 +149,7 @@ pub struct ProjectSearchView {
     excluded_files_editor: View<Editor>,
     filters_enabled: bool,
     replace_enabled: bool,
+    included_opened_only: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -478,7 +481,7 @@ impl Item for ProjectSearchView {
         Self: Sized,
     {
         let model = self.model.update(cx, |model, cx| model.clone(cx));
-        Some(cx.new_view(|cx| Self::new(model, cx, None)))
+        Some(cx.new_view(|cx| Self::new(self.workspace.clone(), model, cx, None)))
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
@@ -556,6 +559,10 @@ impl ProjectSearchView {
         });
     }
 
+    fn toggle_opened_only(&mut self, _cx: &mut ViewContext<Self>) {
+        self.included_opened_only = !self.included_opened_only;
+    }
+
     fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {
         if self.model.read(cx).match_ranges.is_empty() {
             return;
@@ -606,6 +613,7 @@ impl ProjectSearchView {
     }
 
     fn new(
+        workspace: WeakView<Workspace>,
         model: Model<ProjectSearch>,
         cx: &mut ViewContext<Self>,
         settings: Option<ProjectSearchSettings>,
@@ -711,6 +719,7 @@ impl ProjectSearchView {
 
         // Check if Worktrees have all been previously indexed
         let mut this = ProjectSearchView {
+            workspace,
             focus_handle,
             replacement_editor,
             search_id: model.read(cx).search_id,
@@ -724,6 +733,7 @@ impl ProjectSearchView {
             excluded_files_editor,
             filters_enabled,
             replace_enabled: false,
+            included_opened_only: false,
             _subscriptions: subscriptions,
         };
         this.model_changed(cx);
@@ -739,8 +749,10 @@ impl ProjectSearchView {
             return;
         };
 
+        let weak_workspace = cx.view().downgrade();
+
         let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-        let search = cx.new_view(|cx| ProjectSearchView::new(model, cx, None));
+        let search = cx.new_view(|cx| ProjectSearchView::new(weak_workspace, model, cx, None));
         workspace.add_item_to_active_pane(Box::new(search.clone()), None, true, cx);
         search.update(cx, |search, cx| {
             search
@@ -790,8 +802,11 @@ impl ProjectSearchView {
                     model.search(new_query, cx);
                     model
                 });
+                let weak_workspace = cx.view().downgrade();
                 workspace.add_item_to_active_pane(
-                    Box::new(cx.new_view(|cx| ProjectSearchView::new(model, cx, None))),
+                    Box::new(
+                        cx.new_view(|cx| ProjectSearchView::new(weak_workspace, model, cx, None)),
+                    ),
                     None,
                     true,
                     cx,
@@ -840,8 +855,11 @@ impl ProjectSearchView {
                 None
             };
 
+            let weak_workspace = cx.view().downgrade();
+
             let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-            let view = cx.new_view(|cx| ProjectSearchView::new(model, cx, settings));
+            let view =
+                cx.new_view(|cx| ProjectSearchView::new(weak_workspace, model, cx, settings));
 
             workspace.add_item_to_active_pane(Box::new(view.clone()), None, true, cx);
             view
@@ -869,6 +887,11 @@ impl ProjectSearchView {
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
         let text = self.query_editor.read(cx).text(cx);
+        let open_buffers = if self.included_opened_only {
+            Some(self.open_buffers(cx))
+        } else {
+            None
+        };
         let included_files =
             match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx)) {
                 Ok(included_files) => {
@@ -913,6 +936,7 @@ impl ProjectSearchView {
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                 included_files,
                 excluded_files,
+                open_buffers,
             ) {
                 Ok(query) => {
                     let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Query);
@@ -939,6 +963,7 @@ impl ProjectSearchView {
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                 included_files,
                 excluded_files,
+                open_buffers,
             ) {
                 Ok(query) => {
                     let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Query);
@@ -965,6 +990,20 @@ impl ProjectSearchView {
             return None;
         }
         query
+    }
+
+    fn open_buffers(&self, cx: &mut ViewContext<Self>) -> Vec<Model<Buffer>> {
+        let mut buffers = Vec::new();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                for editor in workspace.items_of_type::<Editor>(cx) {
+                    if let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
+                        buffers.push(buffer);
+                    }
+                }
+            })
+            .ok();
+        buffers
     }
 
     fn parse_path_matches(text: &str) -> anyhow::Result<PathMatcher> {
@@ -1267,6 +1306,30 @@ impl ProjectSearchBar {
             });
             cx.notify();
             true
+        } else {
+            false
+        }
+    }
+
+    fn toggle_opened_only(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                search_view.toggle_opened_only(cx);
+                if search_view.model.read(cx).active_query.is_some() {
+                    search_view.search(cx);
+                }
+            });
+
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn is_opened_only_enabled(&self, cx: &AppContext) -> bool {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.read(cx).included_opened_only
         } else {
             false
         }
@@ -1608,6 +1671,14 @@ impl Render for ProjectSearchBar {
                         .child(self.render_text_input(&search.excluded_files_editor, cx)),
                 )
                 .child(
+                    IconButton::new("project-search-opened-only", IconName::FileDoc)
+                        .selected(self.is_opened_only_enabled(cx))
+                        .tooltip(|cx| Tooltip::text("Only search open files", cx))
+                        .on_click(cx.listener(|this, _, cx| {
+                            this.toggle_opened_only(cx);
+                        })),
+                )
+                .child(
                     SearchOptions::INCLUDE_IGNORED.as_button(
                         search
                             .search_options
@@ -1779,8 +1850,12 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-        let search = cx.new_model(|cx| ProjectSearch::new(project, cx));
-        let search_view = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx, None));
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx).unwrap();
+        let search = cx.new_model(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), cx, None)
+        });
 
         perform_search(search_view, "TWO", cx);
         search_view.update(cx, |search_view, cx| {
@@ -3253,8 +3328,12 @@ pub mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx).unwrap();
         let search = cx.new_model(|cx| ProjectSearch::new(project, cx));
-        let search_view = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx, None));
+        let search_view = cx.add_window(|cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), cx, None)
+        });
 
         // First search
         perform_search(search_view, "A", cx);

@@ -1245,6 +1245,7 @@ impl SearchableItem for TerminalView {
                     query.include_ignored(),
                     query.files_to_include().clone(),
                     query.files_to_exclude().clone(),
+                    None,
                 )
                 .unwrap()),
             ),

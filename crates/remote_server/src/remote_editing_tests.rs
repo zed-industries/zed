@@ -142,6 +142,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
                     false,
                     Default::default(),
                     Default::default(),
+                    None,
                 )
                 .unwrap(),
                 cx,
