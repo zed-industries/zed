@@ -1752,7 +1752,7 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "gpui",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "outline",
  "theme",
  "ui",
@@ -3641,7 +3641,7 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "language",
  "linkify",
  "log",
@@ -4970,7 +4970,7 @@ dependencies = [
  "gpui_macros",
  "http_client",
  "image",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "linkme",
  "log",
  "media",
@@ -5971,18 +5971,18 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.11.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
+checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
 dependencies = [
  "either",
 ]
 
 [[package]]
 name = "itertools"
-version = "0.12.1"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
 dependencies = [
  "either",
 ]
@@ -6137,7 +6137,7 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "log",
  "lsp",
  "parking_lot",
@@ -6936,7 +6936,7 @@ dependencies = [
  "futures 0.3.30",
  "git",
  "gpui",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "language",
  "log",
  "parking_lot",
@@ -7657,7 +7657,7 @@ dependencies = [
  "file_icons",
  "fuzzy",
  "gpui",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "language",
  "log",
  "menu",
@@ -8368,7 +8368,7 @@ dependencies = [
  "globset",
  "gpui",
  "http_client",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "language",
  "log",
  "lsp",
@@ -10680,7 +10680,7 @@ name = "story"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "itertools 0.10.5",
+ "itertools 0.13.0",
  "smallvec",
 ]
 
@@ -11264,7 +11264,7 @@ dependencies = [
  "editor",
  "futures 0.3.30",
  "gpui",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "language",
  "project",
  "rand 0.8.5",
@@ -12235,7 +12235,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "gpui",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "menu",
  "serde",
  "settings",
@@ -12539,7 +12539,7 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "indoc",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "language",
  "log",
  "lsp",
@@ -13907,7 +13907,7 @@ dependencies = [
  "git",
  "gpui",
  "http_client",
- "itertools 0.11.0",
+ "itertools 0.13.0",
  "language",
  "log",
  "node_runtime",

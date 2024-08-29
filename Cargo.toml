@@ -358,7 +358,7 @@ indoc = "2"
 isahc = { version = "1.7.2", default-features = false, features = [
     "text-decoding",
 ] }
-itertools = "0.11.0"
+itertools = "0.13.0"
 jsonwebtoken = "9.3"
 libc = "0.2"
 linkify = "0.10.0"

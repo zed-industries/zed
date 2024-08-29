@@ -211,7 +211,7 @@ impl TerminalElement {
         let mut cur_rect: Option<LayoutRect> = None;
         let mut cur_alac_color = None;
 
-        let linegroups = grid.into_iter().group_by(|i| i.point.line);
+        let linegroups = grid.into_iter().chunk_by(|i| i.point.line);
         for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
             for cell in line {
                 let mut fg = cell.fg;
