@@ -2278,6 +2278,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "collections",
  "core-foundation 0.9.4",
  "core-services",
  "exec",

@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
+use collections::HashMap;
 use parking_lot::Mutex;
 use std::{
     env, fs, io,
@@ -122,6 +123,7 @@ fn main() -> Result<()> {
         None
     };
 
+    let env = Some(std::env::vars().collect::<HashMap<_, _>>());
     let exit_status = Arc::new(Mutex::new(None));
     let mut paths = vec![];
     let mut urls = vec![];
@@ -149,12 +151,14 @@ fn main() -> Result<()> {
         move || {
             let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
             let (tx, rx) = (handshake.requests, handshake.responses);
+
             tx.send(CliRequest::Open {
                 paths,
                 urls,
                 wait: args.wait,
                 open_new_workspace,
                 dev_server_token: args.dev_server_token,
+                env,
             })?;
 
             while let Ok(response) = rx.recv() {

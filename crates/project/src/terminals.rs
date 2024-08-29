@@ -112,7 +112,15 @@ impl Project {
 
         let (completion_tx, completion_rx) = bounded(1);
 
-        let mut env = settings.env.clone();
+        // Start with the environment that we might have inherited from the Zed CLI.
+        let mut env = self
+            .environment
+            .read(cx)
+            .get_cli_environment()
+            .unwrap_or_default();
+        // Then extend it with the explicit env variables from the settings, so they take
+        // precedence.
+        env.extend(settings.env.clone());
 
         let local_path = if ssh_command.is_none() {
             path.clone()

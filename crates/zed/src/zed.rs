@@ -525,7 +525,7 @@ pub fn initialize_workspace(
                 let app_state = Arc::downgrade(&app_state);
                 move |_, _: &NewWindow, cx| {
                     if let Some(app_state) = app_state.upgrade() {
-                        open_new(app_state, cx, |workspace, cx| {
+                        open_new(Default::default(), app_state, cx, |workspace, cx| {
                             Editor::new_file(workspace, &Default::default(), cx)
                         })
                         .detach();
@@ -536,7 +536,7 @@ pub fn initialize_workspace(
                 let app_state = Arc::downgrade(&app_state);
                 move |_, _: &NewFile, cx| {
                     if let Some(app_state) = app_state.upgrade() {
-                        open_new(app_state, cx, |workspace, cx| {
+                        open_new(Default::default(), app_state, cx, |workspace, cx| {
                             Editor::new_file(workspace, &Default::default(), cx)
                         })
                         .detach();
@@ -1592,9 +1592,12 @@ mod tests {
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         cx.update(|cx| {
-            open_new(app_state.clone(), cx, |workspace, cx| {
-                Editor::new_file(workspace, &Default::default(), cx)
-            })
+            open_new(
+                Default::default(),
+                app_state.clone(),
+                cx,
+                |workspace, cx| Editor::new_file(workspace, &Default::default(), cx),
+            )
         })
         .await
         .unwrap();
