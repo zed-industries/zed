@@ -2085,7 +2085,7 @@ impl ContextEditor {
                             move |cx| {
                                 let block_id = cx.block_id;
                                 let max_width = cx.max_width;
-                                let gutter_width = cx.gutter_dimensions.width;
+                                let gutter_width = cx.gutter_dimensions.full_width();
                                 this.update(&mut **cx, |this, cx| {
                                     this.render_workflow_step_header(
                                         range.clone(),
@@ -2115,7 +2115,7 @@ impl ContextEditor {
                                 let range = step.range.clone();
                                 move |cx| {
                                     let max_width = cx.max_width;
-                                    let gutter_width = cx.gutter_dimensions.width;
+                                    let gutter_width = cx.gutter_dimensions.full_width();
                                     this.update(&mut **cx, |this, cx| {
                                         this.render_workflow_step_footer(
                                             range.clone(),
