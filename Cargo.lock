@@ -417,6 +417,7 @@ dependencies = [
  "similar",
  "smallvec",
  "smol",
+ "strum",
  "telemetry_events",
  "terminal",
  "terminal_view",

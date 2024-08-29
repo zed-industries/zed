@@ -1200,9 +1200,11 @@ impl InlineAssistStatus {
     pub(crate) fn is_pending(&self) -> bool {
         matches!(self, Self::Pending)
     }
+
     pub(crate) fn is_confirmed(&self) -> bool {
         matches!(self, Self::Confirmed)
     }
+
     pub(crate) fn is_done(&self) -> bool {
         matches!(self, Self::Done)
     }
