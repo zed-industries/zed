@@ -1,7 +1,7 @@
 use futures::channel::oneshot;
 use fuzzy::StringMatchCandidate;
 use picker::{Picker, PickerDelegate};
-use project::{compare_paths, DirectoryLister};
+use project::DirectoryLister;
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -11,7 +11,7 @@ use std::{
 };
 use ui::{prelude::*, LabelLike, ListItemSpacing};
 use ui::{ListItem, ViewContext};
-use util::maybe;
+use util::{maybe, paths::compare_paths};
 use workspace::Workspace;
 
 pub(crate) struct OpenPathPrompt;
@@ -236,7 +236,12 @@ impl PickerDelegate for OpenPathDelegate {
         let Some(candidate) = directory_state.match_candidates.get(*m) else {
             return;
         };
-        let result = Path::new(&directory_state.path).join(&candidate.string);
+        let result = Path::new(
+            self.lister
+                .resolve_tilde(&directory_state.path, cx)
+                .as_ref(),
+        )
+        .join(&candidate.string);
         if let Some(tx) = self.tx.take() {
             tx.send(Some(vec![result])).ok();
         }

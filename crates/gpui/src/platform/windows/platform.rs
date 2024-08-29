@@ -4,6 +4,7 @@
 use std::{
     cell::{Cell, RefCell},
     ffi::{c_void, OsString},
+    mem::ManuallyDrop,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     rc::Rc,
@@ -21,7 +22,10 @@ use windows::{
     Win32::{
         Foundation::*,
         Globalization::u_memcpy,
-        Graphics::Gdi::*,
+        Graphics::{
+            Gdi::*,
+            Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
+        },
         Security::Credentials::*,
         System::{
             Com::*,
@@ -53,6 +57,8 @@ pub(crate) struct WindowsPlatform {
     clipboard_hash_format: u32,
     clipboard_metadata_format: u32,
     windows_version: WindowsVersion,
+    bitmap_factory: ManuallyDrop<IWICImagingFactory>,
+    validation_number: usize,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -91,8 +97,14 @@ impl WindowsPlatform {
         let dispatcher = Arc::new(WindowsDispatcher::new());
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let text_system =
-            Arc::new(DirectWriteTextSystem::new().expect("Error creating DirectWriteTextSystem"));
+        let bitmap_factory = ManuallyDrop::new(unsafe {
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                .expect("Error creating bitmap factory.")
+        });
+        let text_system = Arc::new(
+            DirectWriteTextSystem::new(&bitmap_factory)
+                .expect("Error creating DirectWriteTextSystem"),
+        );
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
@@ -100,6 +112,7 @@ impl WindowsPlatform {
         let clipboard_metadata_format =
             register_clipboard_format(CLIPBOARD_METADATA_FORMAT).unwrap();
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
+        let validation_number = rand::random::<usize>();
 
         Self {
             state,
@@ -111,6 +124,8 @@ impl WindowsPlatform {
             clipboard_hash_format,
             clipboard_metadata_format,
             windows_version,
+            bitmap_factory,
+            validation_number,
         }
     }
 
@@ -147,7 +162,16 @@ impl WindowsPlatform {
             });
     }
 
-    fn close_one_window(&self, target_window: HWND) -> bool {
+    fn close_one_window(
+        &self,
+        target_window: HWND,
+        validation_number: usize,
+        msg: *const MSG,
+    ) -> bool {
+        if validation_number != self.validation_number {
+            unsafe { DispatchMessageW(msg) };
+            return false;
+        }
         let mut lock = self.raw_window_handles.write();
         let index = lock
             .iter()
@@ -194,7 +218,11 @@ impl Platform for WindowsPlatform {
                             match msg.message {
                                 WM_QUIT => break 'a,
                                 CLOSE_ONE_WINDOW => {
-                                    if self.close_one_window(HWND(msg.lParam.0 as _)) {
+                                    if self.close_one_window(
+                                        HWND(msg.lParam.0 as _),
+                                        msg.wParam.0,
+                                        &msg,
+                                    ) {
                                         break 'a;
                                     }
                                 }
@@ -304,6 +332,7 @@ impl Platform for WindowsPlatform {
             self.foreground_executor.clone(),
             lock.current_cursor,
             self.windows_version,
+            self.validation_number,
         )?;
         drop(lock);
         let handle = window.get_raw_handle();
@@ -584,8 +613,10 @@ impl Platform for WindowsPlatform {
 
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
-        self.text_system.destroy();
-        unsafe { OleUninitialize() };
+        unsafe {
+            ManuallyDrop::drop(&mut self.bitmap_factory);
+            OleUninitialize();
+        }
     }
 }
 
@@ -704,12 +735,17 @@ fn write_to_clipboard_inner(
     unsafe {
         OpenClipboard(None)?;
         EmptyClipboard()?;
-        let encode_wide = item.text.encode_utf16().chain(Some(0)).collect_vec();
+        let encode_wide = item
+            .text()
+            .unwrap_or_default()
+            .encode_utf16()
+            .chain(Some(0))
+            .collect_vec();
         set_data_to_clipboard(&encode_wide, CF_UNICODETEXT.0 as u32)?;
 
-        if let Some(ref metadata) = item.metadata {
+        if let Some((metadata, text)) = item.metadata().zip(item.text()) {
             let hash_result = {
-                let hash = ClipboardItem::text_hash(&item.text);
+                let hash = ClipboardString::text_hash(&text);
                 hash.to_ne_bytes()
             };
             let encode_wide = std::slice::from_raw_parts(hash_result.as_ptr().cast::<u16>(), 4);
@@ -747,20 +783,17 @@ fn read_from_clipboard_inner(hash_format: u32, metadata_format: u32) -> Result<C
             let text = PCWSTR(handle.0 as *const u16);
             String::from_utf16_lossy(text.as_wide())
         };
-        let mut item = ClipboardItem {
-            text,
-            metadata: None,
-        };
         let Some(hash) = read_hash_from_clipboard(hash_format) else {
-            return Ok(item);
+            return Ok(ClipboardItem::new_string(text));
         };
         let Some(metadata) = read_metadata_from_clipboard(metadata_format) else {
-            return Ok(item);
+            return Ok(ClipboardItem::new_string(text));
         };
-        if hash == ClipboardItem::text_hash(&item.text) {
-            item.metadata = Some(metadata);
+        if hash == ClipboardString::text_hash(&text) {
+            Ok(ClipboardItem::new_string_with_metadata(text, metadata))
+        } else {
+            Ok(ClipboardItem::new_string(text))
         }
-        Ok(item)
     }
 }
 
@@ -795,15 +828,15 @@ mod tests {
     #[test]
     fn test_clipboard() {
         let platform = WindowsPlatform::new();
-        let item = ClipboardItem::new("你好".to_string());
+        let item = ClipboardItem::new_string("你好".to_string());
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
-        let item = ClipboardItem::new("12345".to_string());
+        let item = ClipboardItem::new_string("12345".to_string());
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
-        let item = ClipboardItem::new("abcdef".to_string()).with_metadata(vec![3, 4]);
+        let item = ClipboardItem::new_string_with_json_metadata("abcdef".to_string(), vec![3, 4]);
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
     }

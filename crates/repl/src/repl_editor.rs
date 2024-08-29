@@ -12,7 +12,7 @@ use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{KernelSpecification, Session};
 
-pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
+pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) -> Result<()> {
     let store = ReplStore::global(cx);
     if !store.read(cx).is_enabled() {
         return Ok(());
@@ -37,17 +37,20 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
 
         let kernel_specification = store.update(cx, |store, cx| {
             store
-                .kernelspec(&language, cx)
+                .kernelspec(language.code_fence_block_name().as_ref(), cx)
                 .with_context(|| format!("No kernel found for language: {}", language.name()))
         })?;
 
         let fs = store.read(cx).fs().clone();
+        let telemetry = store.read(cx).telemetry().clone();
+
         let session = if let Some(session) = store.read(cx).get_session(editor.entity_id()).cloned()
         {
             session
         } else {
             let weak_editor = editor.downgrade();
-            let session = cx.new_view(|cx| Session::new(weak_editor, fs, kernel_specification, cx));
+            let session = cx
+                .new_view(|cx| Session::new(weak_editor, fs, telemetry, kernel_specification, cx));
 
             editor.update(cx, |_editor, cx| {
                 cx.notify();
@@ -86,7 +89,7 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
         }
 
         session.update(cx, |session, cx| {
-            session.execute(selected_text, anchor_range, next_cursor, cx);
+            session.execute(selected_text, anchor_range, next_cursor, move_down, cx);
         });
     }
 
@@ -111,7 +114,9 @@ pub fn session(editor: WeakView<Editor>, cx: &mut AppContext) -> SessionSupport 
     let Some(language) = get_language(editor, cx) else {
         return SessionSupport::Unsupported;
     };
-    let kernelspec = store.update(cx, |store, cx| store.kernelspec(&language, cx));
+    let kernelspec = store.update(cx, |store, cx| {
+        store.kernelspec(language.code_fence_block_name().as_ref(), cx)
+    });
 
     match kernelspec {
         Some(kernelspec) => SessionSupport::Inactive(Box::new(kernelspec)),
@@ -159,6 +164,27 @@ pub fn shutdown(editor: WeakView<Editor>, cx: &mut WindowContext) {
 
     session.update(cx, |session, cx| {
         session.shutdown(cx);
+        cx.notify();
+    });
+}
+
+pub fn restart(editor: WeakView<Editor>, cx: &mut WindowContext) {
+    let Some(editor) = editor.upgrade() else {
+        return;
+    };
+
+    let entity_id = editor.entity_id();
+
+    let Some(session) = ReplStore::global(cx)
+        .read(cx)
+        .get_session(entity_id)
+        .cloned()
+    else {
+        return;
+    };
+
+    session.update(cx, |session, cx| {
+        session.restart(cx);
         cx.notify();
     });
 }

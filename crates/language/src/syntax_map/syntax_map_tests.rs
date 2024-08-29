@@ -214,9 +214,9 @@ fn test_dynamic_language_injection(cx: &mut AppContext) {
             ],
         );
 
-    // Replace Rust with Ruby in code block.
+    // Replace `rs` with a path to ending in `.rb` in code block.
     let macro_name_range = range_for_text(&buffer, "rs");
-    buffer.edit([(macro_name_range, "ruby")]);
+    buffer.edit([(macro_name_range, "foo/bar/baz.rb")]);
     syntax_map.interpolate(&buffer);
     syntax_map.reparse(markdown.clone(), &buffer);
     syntax_map.reparse(markdown_inline.clone(), &buffer);
@@ -232,7 +232,7 @@ fn test_dynamic_language_injection(cx: &mut AppContext) {
         );
 
     // Replace Ruby with a language that hasn't been loaded yet.
-    let macro_name_range = range_for_text(&buffer, "ruby");
+    let macro_name_range = range_for_text(&buffer, "foo/bar/baz.rb");
     buffer.edit([(macro_name_range, "html")]);
     syntax_map.interpolate(&buffer);
     syntax_map.reparse(markdown.clone(), &buffer);

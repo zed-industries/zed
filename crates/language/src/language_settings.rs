@@ -16,7 +16,7 @@ use serde::{
     Deserialize, Deserializer, Serialize,
 };
 use serde_json::Value;
-use settings::{Settings, SettingsLocation, SettingsSources};
+use settings::{add_references_to_properties, Settings, SettingsLocation, SettingsSources};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
@@ -379,10 +379,12 @@ pub enum SoftWrap {
     None,
     /// Prefer a single line generally, unless an overly long line is encountered.
     PreferLine,
-    /// Soft wrap lines that overflow the editor
+    /// Soft wrap lines that exceed the editor width
     EditorWidth,
     /// Soft wrap lines at the preferred line length
     PreferredLineLength,
+    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller)
+    Bounded,
 }
 
 /// Controls the behavior of formatting files when they are saved.
@@ -1009,16 +1011,10 @@ impl settings::Settings for AllLanguageSettings {
             .definitions
             .extend([("Languages".into(), languages_object_schema.into())]);
 
-        root_schema
-            .schema
-            .object
-            .as_mut()
-            .unwrap()
-            .properties
-            .extend([(
-                "languages".to_owned(),
-                Schema::new_ref("#/definitions/Languages".into()),
-            )]);
+        add_references_to_properties(
+            &mut root_schema,
+            &[("languages", "#/definitions/Languages")],
+        );
 
         root_schema
     }

@@ -1,11 +1,15 @@
+mod supported_countries;
+
 use anyhow::{anyhow, Context, Result};
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
+use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
-use std::{convert::TryFrom, future::Future, time::Duration};
+use serde_json::Value;
+use std::{convert::TryFrom, future::Future, pin::Pin, time::Duration};
 use strum::EnumIter;
+
+pub use supported_countries::*;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
@@ -62,7 +66,11 @@ pub enum Model {
     #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini-2024-07-18")]
     FourOmniMini,
     #[serde(rename = "custom")]
-    Custom { name: String, max_tokens: usize },
+    Custom {
+        name: String,
+        max_tokens: usize,
+        max_output_tokens: Option<u32>,
+    },
 }
 
 impl Model {
@@ -109,44 +117,57 @@ impl Model {
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
-}
 
-fn serialize_model<S>(model: &Model, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    match model {
-        Model::Custom { name, .. } => serializer.serialize_str(name),
-        _ => serializer.serialize_str(model.id()),
+    pub fn max_output_tokens(&self) -> Option<u32> {
+        match self {
+            Self::ThreePointFiveTurbo => Some(4096),
+            Self::Four => Some(8192),
+            Self::FourTurbo => Some(4096),
+            Self::FourOmni => Some(4096),
+            Self::FourOmniMini => Some(16384),
+            Self::Custom {
+                max_output_tokens, ..
+            } => *max_output_tokens,
+        }
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
-    #[serde(serialize_with = "serialize_model")]
-    pub model: Model,
+    pub model: String,
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
     pub stop: Vec<String>,
     pub temperature: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct FunctionDefinition {
-    pub name: String,
-    pub description: Option<String>,
-    pub parameters: Option<Map<String, Value>>,
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolChoice {
+    Auto,
+    Required,
+    None,
+    Other(ToolDefinition),
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolDefinition {
     #[allow(dead_code)]
     Function { function: FunctionDefinition },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub description: Option<String>,
+    pub parameters: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -213,21 +234,28 @@ pub struct FunctionChunk {
     pub arguments: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
     pub index: u32,
     pub delta: ResponseMessageDelta,
     pub finish_reason: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum ResponseStreamResult {
+    Ok(ResponseStreamEvent),
+    Err { error: String },
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
     pub created: u32,
     pub model: String,
@@ -267,7 +295,10 @@ pub async fn stream_completion(
                             None
                         } else {
                             match serde_json::from_str(line) {
-                                Ok(response) => Some(Ok(response)),
+                                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                                Ok(ResponseStreamResult::Err { error }) => {
+                                    Some(Err(anyhow!(error)))
+                                }
                                 Err(error) => Some(Err(anyhow!(error))),
                             }
                         }
@@ -368,4 +399,66 @@ pub fn embed<'a>(
             ))
         }
     }
+}
+
+pub async fn extract_tool_args_from_events(
+    tool_name: String,
+    mut events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+) -> Result<impl Send + Stream<Item = Result<String>>> {
+    let mut tool_use_index = None;
+    let mut first_chunk = None;
+    while let Some(event) = events.next().await {
+        let call = event?.choices.into_iter().find_map(|choice| {
+            choice.delta.tool_calls?.into_iter().find_map(|call| {
+                if call.function.as_ref()?.name.as_deref()? == tool_name {
+                    Some(call)
+                } else {
+                    None
+                }
+            })
+        });
+        if let Some(call) = call {
+            tool_use_index = Some(call.index);
+            first_chunk = call.function.and_then(|func| func.arguments);
+            break;
+        }
+    }
+
+    let Some(tool_use_index) = tool_use_index else {
+        return Err(anyhow!("tool not used"));
+    };
+
+    Ok(events.filter_map(move |event| {
+        let result = match event {
+            Err(error) => Some(Err(error)),
+            Ok(ResponseStreamEvent { choices, .. }) => choices.into_iter().find_map(|choice| {
+                choice.delta.tool_calls?.into_iter().find_map(|call| {
+                    if call.index == tool_use_index {
+                        let func = call.function?;
+                        let mut arguments = func.arguments?;
+                        if let Some(mut first_chunk) = first_chunk.take() {
+                            first_chunk.push_str(&arguments);
+                            arguments = first_chunk
+                        }
+                        Some(Ok(arguments))
+                    } else {
+                        None
+                    }
+                })
+            }),
+        };
+
+        async move { result }
+    }))
+}
+
+pub fn extract_text_from_events(
+    response: impl Stream<Item = Result<ResponseStreamEvent>>,
+) -> impl Stream<Item = Result<String>> {
+    response.filter_map(|response| async move {
+        match response {
+            Ok(mut response) => Some(Ok(response.choices.pop()?.delta.content?)),
+            Err(error) => Some(Err(error)),
+        }
+    })
 }

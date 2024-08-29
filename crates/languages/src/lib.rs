@@ -232,7 +232,7 @@ pub fn init(
     ];
 
     for language in tailwind_languages {
-        languages.register_secondary_lsp_adapter(
+        languages.register_lsp_adapter(
             language.into(),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         );
@@ -240,7 +240,7 @@ pub fn init(
 
     let eslint_languages = ["TSX", "TypeScript", "JavaScript", "Vue.js", "Svelte"];
     for language in eslint_languages {
-        languages.register_secondary_lsp_adapter(
+        languages.register_lsp_adapter(
             language.into(),
             Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
         );

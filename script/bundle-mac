@@ -338,7 +338,7 @@ function sign_app_binaries() {
 
         echo "Adding license agreement to DMG"
         npm install --global dmg-license minimist
-        dmg-license script/eula/eula.json "${dmg_file_path}"
+        dmg-license script/terms/terms.json "${dmg_file_path}"
 
         if [[ $can_code_sign = true ]]; then
             echo "Notarizing DMG with Apple"

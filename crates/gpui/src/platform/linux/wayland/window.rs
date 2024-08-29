@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use blade_graphics as gpu;
 use collections::HashMap;
-use futures::channel::oneshot::Receiver;
+use futures::channel::oneshot;
 
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
@@ -185,13 +185,7 @@ impl WaylandWindowState {
             active: false,
             hovered: false,
             in_progress_window_controls: None,
-            // Assume that we can do anything, unless told otherwise
-            window_controls: WindowControls {
-                fullscreen: true,
-                maximize: true,
-                minimize: true,
-                window_menu: true,
-            },
+            window_controls: WindowControls::default(),
             inset: None,
         })
     }
@@ -264,7 +258,10 @@ impl WaylandWindow {
             .wm_base
             .get_xdg_surface(&surface, &globals.qh, surface.id());
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
-        toplevel.set_min_size(50, 50);
+
+        if let Some(size) = params.window_min_size {
+            toplevel.set_min_size(size.width.0 as i32, size.height.0 as i32);
+        }
 
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
@@ -834,7 +831,7 @@ impl PlatformWindow for WaylandWindow {
         _msg: &str,
         _detail: Option<&str>,
         _answers: &[&str],
-    ) -> Option<Receiver<usize>> {
+    ) -> Option<oneshot::Receiver<usize>> {
         None
     }
 
@@ -941,9 +938,9 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
         let mut state = self.borrow_mut();
-        state.renderer.draw(scene);
+        state.renderer.draw(scene, on_complete);
     }
 
     fn completed_frame(&self) {
@@ -1022,6 +1019,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         self.borrow().renderer.gpu_specs().into()
+    }
+
+    fn fps(&self) -> Option<f32> {
+        None
     }
 }
 

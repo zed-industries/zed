@@ -55,7 +55,7 @@ impl CopilotCodeVerification {
     ) -> impl IntoElement {
         let copied = cx
             .read_from_clipboard()
-            .map(|item| item.text() == &data.user_code)
+            .map(|item| item.text().as_ref() == Some(&data.user_code))
             .unwrap_or(false);
         h_flex()
             .w_full()
@@ -68,7 +68,7 @@ impl CopilotCodeVerification {
             .on_mouse_down(gpui::MouseButton::Left, {
                 let user_code = data.user_code.clone();
                 move |_, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new(user_code.clone()));
+                    cx.write_to_clipboard(ClipboardItem::new_string(user_code.clone()));
                     cx.refresh();
                 }
             })

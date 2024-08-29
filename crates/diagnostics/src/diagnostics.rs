@@ -4,7 +4,6 @@ mod toolbar_controls;
 
 #[cfg(test)]
 mod diagnostics_tests;
-pub(crate) mod grouped_diagnostics;
 
 use anyhow::Result;
 use collections::{BTreeSet, HashSet};
@@ -15,7 +14,6 @@ use editor::{
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
-use feature_flags::FeatureFlagAppExt;
 use futures::{
     channel::mpsc::{self, UnboundedSender},
     StreamExt as _,
@@ -54,9 +52,6 @@ pub fn init(cx: &mut AppContext) {
     ProjectDiagnosticsSettings::register(cx);
     cx.observe_new_views(ProjectDiagnosticsEditor::register)
         .detach();
-    if !cx.has_flag::<feature_flags::GroupedDiagnostics>() {
-        grouped_diagnostics::init(cx);
-    }
 }
 
 struct ProjectDiagnosticsEditor {
@@ -454,6 +449,7 @@ impl ProjectDiagnosticsEditor {
                                     style: BlockStyle::Sticky,
                                     render: diagnostic_header_renderer(primary),
                                     disposition: BlockDisposition::Above,
+                                    priority: 0,
                                 });
                             }
 
@@ -469,12 +465,13 @@ impl ProjectDiagnosticsEditor {
                                     group_state.block_count += 1;
                                     blocks_to_add.push(BlockProperties {
                                         position: (excerpt_id, entry.range.start),
-                                        height: diagnostic.message.matches('\n').count() as u8 + 1,
+                                        height: diagnostic.message.matches('\n').count() as u32 + 1,
                                         style: BlockStyle::Fixed,
                                         render: diagnostic_block_renderer(
                                             diagnostic, None, true, true,
                                         ),
                                         disposition: BlockDisposition::Below,
+                                        priority: 0,
                                     });
                                 }
                             }
@@ -513,6 +510,7 @@ impl ProjectDiagnosticsEditor {
                         style: block.style,
                         render: block.render,
                         disposition: block.disposition,
+                        priority: 0,
                     })
                 }),
                 Some(Autoscroll::fit()),
@@ -787,7 +785,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
         let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
         h_flex()
             .id(DIAGNOSTIC_HEADER)
-            .py_2()
+            .h(2. * cx.line_height())
             .pl_10()
             .pr_5()
             .w_full()

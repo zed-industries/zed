@@ -21,7 +21,6 @@ use std::{
 use anyhow::anyhow;
 use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use ashpd::desktop::open_uri::{OpenDirectoryRequest, OpenFileRequest as OpenUriRequest};
-use ashpd::desktop::ResponseError;
 use ashpd::{url, ActivationToken};
 use async_task::Runnable;
 use calloop::channel::Channel;
@@ -77,6 +76,7 @@ pub trait LinuxClient {
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
 }
 
@@ -144,11 +144,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
         LinuxClient::run(self);
 
-        self.with_common(|common| {
-            if let Some(mut fun) = common.callbacks.quit.take() {
-                fun();
-            }
-        });
+        let quit = self.with_common(|common| common.callbacks.quit.take());
+        if let Some(mut fun) = quit {
+            fun();
+        }
     }
 
     fn quit(&self) {
@@ -185,7 +184,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         // cleaned up when `kill -0` returns.
         let script = format!(
             r#"
-            while kill -O {pid} 2>/dev/null; do
+            while kill -0 {pid} 2>/dev/null; do
                 sleep 0.1
             done
 
@@ -238,6 +237,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         self.active_window()
+    }
+
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        self.window_stack()
     }
 
     fn open_window(
@@ -296,7 +299,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                             .filter_map(|uri| uri.to_file_path().ok())
                             .collect::<Vec<_>>(),
                     )),
-                    Err(ashpd::Error::Response(ResponseError::Cancelled)) => Ok(None),
+                    Err(ashpd::Error::Response(_)) => Ok(None),
                     Err(e) => Err(e.into()),
                 };
                 done_tx.send(result);
@@ -334,7 +337,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                         .uris()
                         .first()
                         .and_then(|uri| uri.to_file_path().ok())),
-                    Err(ashpd::Error::Response(ResponseError::Cancelled)) => Ok(None),
+                    Err(ashpd::Error::Response(_)) => Ok(None),
                     Err(e) => Err(e.into()),
                 };
                 done_tx.send(result);

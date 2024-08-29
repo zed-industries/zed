@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", allow(unused, dead_code))]
+
 use fs::RealFs;
 use futures::channel::mpsc;
 use gpui::Context as _;
@@ -15,6 +17,12 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(windows)]
+fn main() {
+    unimplemented!()
+}
+
+#[cfg(not(windows))]
 fn main() {
     env::set_var("RUST_BACKTRACE", "1");
     env_logger::builder()

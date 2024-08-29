@@ -1,6 +1,6 @@
 # Zed on Linux
 
-For most people we recommend using the script on the [download](/download) page to install Zed:
+For most people we recommend using the script on the [download](https://zed.dev/download) page to install Zed:
 
 ```sh
 curl -f https://zed.dev/install.sh | sh
@@ -13,10 +13,11 @@ curl -f https://zed.dev/install.sh | ZED_CHANNEL=preview sh
 ```
 
 The Zed installed by the script does not work on systems that:
-* have no Vulkan compatible GPU available (for example Linux on an M-series macBook)
-* have no system-wide glibc (for example on NixOS or Alpine by default)
-* have a glibc older than version 2.29 (for example Amazon Linux 2 or Ubuntu 18 and earlier)
-* use an architecture other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
+
+- have no Vulkan compatible GPU available (for example Linux on an M-series macBook)
+- have no system-wide glibc (for example on NixOS or Alpine by default)
+- have a glibc older than version 2.29 (for example Amazon Linux 2 or Ubuntu 18 and earlier)
+- use an architecture other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
 
 Both Nix and Alpine have third-party Zed packages available (though they are currently a few weeks out of date). If you'd like to use our builds they do work if you install a glibc compatibility layer. On NixOS you can try [nix-ld](https://github.com/Mic92/nix-ld), and on Alpine [gcompat](https://wiki.alpinelinux.org/wiki/Running_glibc_programs).
 
@@ -28,19 +29,19 @@ Zed is open source, and [you can install from source](./development/linux.md).
 
 There are several third-party Zed packages for various Linux distributions and package managers, sometimes under `zed-editor`. You may be able to install Zed using these packages:
 
-* Homebrew: [`zed`](https://formulae.brew.sh/cask/zed), [`zed@preview`](https://formulae.brew.sh/cask/zed@preview)
-* Arch: [`zed`](https://archlinux.org/packages/extra/x86_64/zed/)
-* Arch (AUR): [`zed-git`](https://aur.archlinux.org/packages/zed-git), [`zed-preview`](https://aur.archlinux.org/packages/zed-preview),  [`zed-preview-bin`](https://aur.archlinux.org/packages/zed-preview-bin)
-* Alpine: `zed` ([aarch64](https://pkgs.alpinelinux.org/package/edge/testing/aarch64/zed)) ([x86_64](https://pkgs.alpinelinux.org/package/edge/testing/x86_64/zed))
-* Nix: `zed-editor` ([stable](https://search.nixos.org/packages?show=zed-editor)), ([unstable](https://search.nixos.org/packages?channel=unstable&show=zed-editor))
-* Fedora/Ultramarine (Terra): [`zed`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/stable), [`zed-preview`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/preview), [`zed-nightly`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/nightly)
-* Solus: [`zed`](https://github.com/getsolus/packages/tree/main/packages/z/zed)
-* Parabola: [`zed`](https://www.parabola.nu/packages/extra/x86_64/zed/)
-* Manjaro: [`zed`](https://packages.manjaro.org/?query=zed)
-* ALT Linux (Sisyphus): [`zed`](https://packages.altlinux.org/en/sisyphus/srpms/zed/)
-* AOSC OS: [`zed`](https://packages.aosc.io/packages/zed)
-* openSUSE Tumbleweed: [`zed`](https://en.opensuse.org/Zed)
-* Please add others to this list!
+- Flathub: [`dev.zed.Zed`](https://flathub.org/apps/dev.zed.Zed)
+- Arch: [`zed`](https://archlinux.org/packages/extra/x86_64/zed/)
+- Arch (AUR): [`zed-git`](https://aur.archlinux.org/packages/zed-git), [`zed-preview`](https://aur.archlinux.org/packages/zed-preview), [`zed-preview-bin`](https://aur.archlinux.org/packages/zed-preview-bin)
+- Alpine: `zed` ([aarch64](https://pkgs.alpinelinux.org/package/edge/testing/aarch64/zed)) ([x86_64](https://pkgs.alpinelinux.org/package/edge/testing/x86_64/zed))
+- Nix: `zed-editor` ([stable](https://search.nixos.org/packages?show=zed-editor)), ([unstable](https://search.nixos.org/packages?channel=unstable&show=zed-editor))
+- Fedora/Ultramarine (Terra): [`zed`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/stable), [`zed-preview`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/preview), [`zed-nightly`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/nightly)
+- Solus: [`zed`](https://github.com/getsolus/packages/tree/main/packages/z/zed)
+- Parabola: [`zed`](https://www.parabola.nu/packages/extra/x86_64/zed/)
+- Manjaro: [`zed`](https://packages.manjaro.org/?query=zed)
+- ALT Linux (Sisyphus): [`zed`](https://packages.altlinux.org/en/sisyphus/srpms/zed/)
+- AOSC OS: [`zed`](https://packages.aosc.io/packages/zed)
+- openSUSE Tumbleweed: [`zed`](https://en.opensuse.org/Zed)
+- Please add others to this list!
 
 When installing a third-party package please be aware that it may not be completely up to date and may be slightly different from the Zed we package (a common change is to rename the binary to `zedit` or `zeditor` to avoid conflicting with other packages).
 
@@ -52,9 +53,9 @@ If you'd prefer, you can install Zed by downloading our pre-built .tar.gz. This 
 
 Download the `.tar.gz` file:
 
-* [zed-linux-x86_64.tar.gz](https://zed.dev/api/releases/stable/latest/zed-linux-x86_64.tar.gz) ([preview](https://zed.dev/api/releases/preview/latest/zed-linux-x86_64.tar.gz))
-* [zed-linux-aarch64.tar.gz](https://zed.dev/api/releases/stable/latest/zed-linux-aarch64.tar.gz)
- ([preview](https://zed.dev/api/releases/preview/latest/zed-linux-aarch64.tar.gz))
+- [zed-linux-x86_64.tar.gz](https://zed.dev/api/releases/stable/latest/zed-linux-x86_64.tar.gz) ([preview](https://zed.dev/api/releases/preview/latest/zed-linux-x86_64.tar.gz))
+- [zed-linux-aarch64.tar.gz](https://zed.dev/api/releases/stable/latest/zed-linux-aarch64.tar.gz)
+  ([preview](https://zed.dev/api/releases/preview/latest/zed-linux-aarch64.tar.gz))
 
 Then ensure that the `zed` binary in the tarball is on your path. The easiest way is to unpack the tarball and create a symlink:
 
@@ -83,6 +84,7 @@ Linux works on a large variety of systems configured in many different ways. We 
 If you see an error like "/lib64/libc.so.6: version 'GLIBC_2.29' not found" it means that your distribution's version of glibc is too old. You can either upgrade your system, or [install Zed from source](./development/linux.md).
 
 ### Zed fails to open windows
+
 ### Zed is very slow
 
 Zed requires a GPU to run effectively. Under the hood, we use [Vulkan](https://www.vulkan.org/) to communicate with your GPU. If you are seeing problems with performance, or Zed fails to load, it is possible that Vulkan is the culprit.
@@ -112,23 +114,25 @@ For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/titl
 If Vulkan is configured correctly, and Zed is still slow for you, please [file an issue](https://github.com/zed-industries/zed) with as much information as possible.
 
 ### I can't open any files
+
 ### Zed isn't remembering my login
+
 ### Clicking links isn't working
 
 All of these features are provided by XDG desktop portals, specifically:
 
 - `org.freedesktop.portal.FileChooser`
 - `org.freedesktop.portal.OpenURI`
-- `org.freedesktop.portal.Secret`, or `org.freedesktop.Secrets`
 
-Some window managers, such as `Hyprland`, don't provide a file picker by default. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point for alternatives. `KDE` doesn't implement the secret portal, installing `gnome-keyring` may solve this.
+Some window managers, such as `Hyprland`, don't provide a file picker by default. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point for alternatives.
 
 ### Could not start inotify
 
 Zed relies on inotify to watch your filesystem for changes. If you cannot start inotify then Zed will not work reliably.
 
 If you are seeing "too many open files" then first try `sysctl fs.inotify`.
-*  You should see that max_user_instances is 128 or higher (you can change the limit with `sudo sysctl fs.inotify.max_user_instances=1024`). Zed needs only 1 inotify instance.
-* You should see that `max_user_watches` is 8000 or higher (you can change the limit with `sudo sysctl fs.inotify.max_user_watches=64000`). Zed needs one watch per directory in all your open projects + one per git repository + a handful more for settings, themes, keymaps, extensions.
+
+- You should see that max_user_instances is 128 or higher (you can change the limit with `sudo sysctl fs.inotify.max_user_instances=1024`). Zed needs only 1 inotify instance.
+- You should see that `max_user_watches` is 8000 or higher (you can change the limit with `sudo sysctl fs.inotify.max_user_watches=64000`). Zed needs one watch per directory in all your open projects + one per git repository + a handful more for settings, themes, keymaps, extensions.
 
 It is also possible that you are running out of file descriptors. You can check the limits with `ulimit` and update them by editing `/etc/security/limits.conf`.

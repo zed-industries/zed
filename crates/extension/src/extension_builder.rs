@@ -93,12 +93,21 @@ impl ExtensionBuilder {
             self.compile_rust_extension(extension_dir, extension_manifest, options)
                 .await
                 .context("failed to compile Rust extension")?;
+            log::info!("compiled Rust extension {}", extension_dir.display());
         }
 
         for (grammar_name, grammar_metadata) in &extension_manifest.grammars {
+            log::info!(
+                "compiling grammar {grammar_name} for extension {}",
+                extension_dir.display()
+            );
             self.compile_grammar(extension_dir, grammar_name.as_ref(), grammar_metadata)
                 .await
                 .with_context(|| format!("failed to compile grammar '{grammar_name}'"))?;
+            log::info!(
+                "compiled grammar {grammar_name} for extension {}",
+                extension_dir.display()
+            );
         }
 
         log::info!("finished compiling extension {}", extension_dir.display());
@@ -117,7 +126,10 @@ impl ExtensionBuilder {
         let cargo_toml_content = fs::read_to_string(&extension_dir.join("Cargo.toml"))?;
         let cargo_toml: CargoToml = toml::from_str(&cargo_toml_content)?;
 
-        log::info!("compiling rust extension {}", extension_dir.display());
+        log::info!(
+            "compiling Rust crate for extension {}",
+            extension_dir.display()
+        );
         let output = Command::new("cargo")
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))
@@ -132,6 +144,11 @@ impl ExtensionBuilder {
                 String::from_utf8_lossy(&output.stderr)
             );
         }
+
+        log::info!(
+            "compiled Rust crate for extension {}",
+            extension_dir.display()
+        );
 
         let mut wasm_path = PathBuf::from(extension_dir);
         wasm_path.extend([
@@ -155,6 +172,11 @@ impl ExtensionBuilder {
             .context("failed to load adapter module")?
             .validate(true);
 
+        log::info!(
+            "encoding wasm component for extension {}",
+            extension_dir.display()
+        );
+
         let component_bytes = encoder
             .encode()
             .context("failed to encode wasm component")?;
@@ -168,8 +190,15 @@ impl ExtensionBuilder {
                 .context("compiled wasm did not contain a valid zed extension api version")?;
         manifest.lib.version = Some(wasm_extension_api_version);
 
-        fs::write(extension_dir.join("extension.wasm"), &component_bytes)
+        let extension_file = extension_dir.join("extension.wasm");
+        fs::write(extension_file.clone(), &component_bytes)
             .context("failed to write extension.wasm")?;
+
+        log::info!(
+            "extension {} written to {}",
+            extension_dir.display(),
+            extension_file.display()
+        );
 
         Ok(())
     }

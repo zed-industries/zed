@@ -28,7 +28,6 @@ use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
-use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::Mutex;
 use regex::Regex;
@@ -53,7 +52,7 @@ use std::{
     str,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
-        Arc,
+        Arc, LazyLock,
     },
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
@@ -71,7 +70,7 @@ pub use language_registry::{
     PendingLanguageServer, QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::LanguageServerId;
-pub use outline::{render_item, Outline, OutlineItem};
+pub use outline::*;
 pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
 pub use text::{AnchorRangeExt, LineEnding};
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
@@ -111,23 +110,23 @@ where
     func(cursor.deref_mut())
 }
 
-lazy_static! {
-    static ref NEXT_LANGUAGE_ID: AtomicUsize = Default::default();
-    static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
-    static ref WASM_ENGINE: wasmtime::Engine = {
-        wasmtime::Engine::new(&wasmtime::Config::new()).unwrap()
-    };
+static NEXT_LANGUAGE_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
+static NEXT_GRAMMAR_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
+static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
+    wasmtime::Engine::new(&wasmtime::Config::new()).expect("Failed to create Wasmtime engine")
+});
 
-    /// A shared grammar for plain text, exposed for reuse by downstream crates.
-    pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
+/// A shared grammar for plain text, exposed for reuse by downstream crates.
+pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
+    Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
             soft_wrap: Some(SoftWrap::EditorWidth),
             ..Default::default()
         },
         None,
-    ));
-}
+    ))
+});
 
 /// Types that represent a position in a buffer, and can be converted into
 /// an LSP position, to send to a language server.
@@ -156,15 +155,29 @@ pub struct CachedLspAdapter {
     language_ids: HashMap<String, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
-    /// Indicates whether this language server is the primary language server
-    /// for a given language. Currently, most LSP-backed features only work
-    /// with one language server, so one server needs to be primary.
-    pub is_primary: bool,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
 }
 
+impl Debug for CachedLspAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedLspAdapter")
+            .field("name", &self.name)
+            .field(
+                "disk_based_diagnostic_sources",
+                &self.disk_based_diagnostic_sources,
+            )
+            .field(
+                "disk_based_diagnostics_progress_token",
+                &self.disk_based_diagnostics_progress_token,
+            )
+            .field("language_ids", &self.language_ids)
+            .field("reinstall_attempt_count", &self.reinstall_attempt_count)
+            .finish_non_exhaustive()
+    }
+}
+
 impl CachedLspAdapter {
-    pub fn new(adapter: Arc<dyn LspAdapter>, is_primary: bool) -> Arc<Self> {
+    pub fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
         let name = adapter.name();
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
         let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
@@ -176,7 +189,6 @@ impl CachedLspAdapter {
             disk_based_diagnostics_progress_token,
             language_ids,
             adapter,
-            is_primary,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
         })
@@ -869,6 +881,7 @@ pub struct OutlineConfig {
     pub extra_context_capture_ix: Option<u32>,
     pub open_capture_ix: Option<u32>,
     pub close_capture_ix: Option<u32>,
+    pub annotation_capture_ix: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -1054,6 +1067,7 @@ impl Language {
         let mut extra_context_capture_ix = None;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
+        let mut annotation_capture_ix = None;
         get_capture_indices(
             &query,
             &mut [
@@ -1063,6 +1077,7 @@ impl Language {
                 ("context.extra", &mut extra_context_capture_ix),
                 ("open", &mut open_capture_ix),
                 ("close", &mut close_capture_ix),
+                ("annotation", &mut annotation_capture_ix),
             ],
         );
         if let Some((item_capture_ix, name_capture_ix)) = item_capture_ix.zip(name_capture_ix) {
@@ -1074,6 +1089,7 @@ impl Language {
                 extra_context_capture_ix,
                 open_capture_ix,
                 close_capture_ix,
+                annotation_capture_ix,
             });
         }
         Ok(self)
@@ -1342,7 +1358,9 @@ impl Language {
                 });
             let highlight_maps = vec![grammar.highlight_map()];
             let mut offset = 0;
-            for chunk in BufferChunks::new(text, range, Some((captures, highlight_maps)), vec![]) {
+            for chunk in
+                BufferChunks::new(text, range, Some((captures, highlight_maps)), false, None)
+            {
                 let end_offset = offset + chunk.text.len();
                 if let Some(highlight_id) = chunk.syntax_highlight_id {
                     if !highlight_id.is_default() {
@@ -1560,6 +1578,22 @@ impl CodeLabel {
         if let Some(highlight) = highlight {
             self.runs.push((start_ix..end_ix, highlight));
         }
+    }
+
+    pub fn text(&self) -> &str {
+        self.text.as_str()
+    }
+}
+
+impl From<String> for CodeLabel {
+    fn from(value: String) -> Self {
+        Self::plain(value, None)
+    }
+}
+
+impl From<&str> for CodeLabel {
+    fn from(value: &str) -> Self {
+        Self::plain(value.to_string(), None)
     }
 }
 

@@ -9,23 +9,23 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 - Install [Rust](https://www.rust-lang.org/tools/install)
 - Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store, or from the [Apple Developer](https://developer.apple.com/download/all/) website. Note this requires a developer account.
 
-> Ensure you launch XCode after installing, and install the MacOS components, which is the default option.
+> Ensure you launch XCode after installing, and install the macOS components, which is the default option.
 
 - Install [Xcode command line tools](https://developer.apple.com/xcode/resources/)
 
-  ```bash
+  ```sh
   xcode-select --install
   ```
 
 - Ensure that the Xcode command line tools are using your newly installed copy of Xcode:
 
-  ```
+  ```sh
   sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
   ```
 
 * Install the Rust wasm toolchain:
 
-  ```bash
+  ```sh
   rustup target add wasm32-wasi
   ```
 
@@ -36,7 +36,7 @@ If you are developing collaborative features of Zed, you'll need to install the 
 - Install [Postgres](https://postgresapp.com)
 - Install [Livekit](https://formulae.brew.sh/formula/livekit) and [Foreman](https://formulae.brew.sh/formula/foreman)
 
-  ```bash
+  ```sh
   brew install livekit foreman
   ```
 
@@ -52,19 +52,19 @@ Once you have the dependencies installed, you can build Zed using [Cargo](https:
 
 For a debug build:
 
-```
+```sh
 cargo run
 ```
 
 For a release build:
 
-```
+```sh
 cargo run --release
 ```
 
 And to run the tests:
 
-```
+```sh
 cargo test --workspace
 ```
 
@@ -72,7 +72,7 @@ cargo test --workspace
 
 ### Error compiling metal shaders
 
-```
+```sh
 error: failed to run custom build command for gpui v0.1.0 (/Users/path/to/zed)`**
 
 xcrun: error: unable to find utility "metal", not a developer tool or in PATH
@@ -88,7 +88,7 @@ Try `cargo clean` and `cargo build`.
 
 If you encounter an error similar to:
 
-```bash
+```sh
 src/platform/mac/dispatch.h:1:10: fatal error: 'dispatch/dispatch.h' file not found
 
 Caused by:
@@ -105,20 +105,20 @@ Caused by:
 
 This file is part of Xcode. Ensure you have installed the Xcode command line tools and set the correct path:
 
-```bash
+```sh
 xcode-select --install
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 ```
 
 Additionally, set the `BINDGEN_EXTRA_CLANG_ARGS` environment variable:
 
-```bash
+```sh
 export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$(xcrun --show-sdk-path)"
 ```
 
 Then clean and rebuild the project:
 
-```bash
+```sh
 cargo clean
 cargo run
 ```
