@@ -1,5 +1,8 @@
 use super::*;
-use crate::{LanguageConfig, LanguageMatcher};
+use crate::{
+    buffer_tests::{markdown_inline_lang, markdown_lang},
+    LanguageConfig, LanguageMatcher,
+};
 use gpui::AppContext;
 use rand::rngs::StdRng;
 use std::{env, ops::Range, sync::Arc};
@@ -1229,39 +1232,6 @@ fn rust_lang() -> Language {
     .unwrap()
 }
 
-fn markdown_lang() -> Language {
-    Language::new(
-        LanguageConfig {
-            name: "Markdown".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["md".into()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_md::language()),
-    )
-    .with_injection_query(
-        r#"
-            (fenced_code_block
-                (info_string
-                    (language) @language)
-                (code_fence_content) @content)
-        "#,
-    )
-    .unwrap()
-}
-
-fn markdown_inline_lang() -> Language {
-    Language::new(
-        LanguageConfig {
-            name: "Markdown-Inline".into(),
-            ..LanguageConfig::default()
-        },
-        Some(tree_sitter_md::inline_language()),
-    )
-}
-
 fn elixir_lang() -> Language {
     Language::new(
         LanguageConfig {
@@ -1327,7 +1297,7 @@ fn assert_layers_for_range(
     expected_layers: &[&str],
 ) {
     let layers = syntax_map
-        .layers_for_range(range, &buffer)
+        .layers_for_range(range, &buffer, true)
         .collect::<Vec<_>>();
     assert_eq!(
         layers.len(),
