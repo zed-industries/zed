@@ -2,17 +2,16 @@ use crate::{
     platform::mac::NSStringExt, point, px, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, NavigationDirection, Pixels, PlatformInput, ScrollDelta, ScrollWheelEvent,
-    TouchPhase,
+    TouchPhase, VirtualKeyCode,
 };
 use cocoa::{
-    appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},
+    appkit::{
+        NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType, NSExecuteFunctionKey,
+        NSF21FunctionKey, NSF22FunctionKey, NSF23FunctionKey, NSF24FunctionKey,
+        NSInsertFunctionKey, NSPauseFunctionKey, NSPrintFunctionKey, NSPrintScreenFunctionKey,
+        NSScrollLockFunctionKey, NSSelectFunctionKey,
+    },
     base::{id, YES},
-    foundation::NSString,
-};
-use core_foundation::{
-    array::{CFArray, CFArrayRef},
-    base::TCFType,
-    string::CFString,
 };
 use core_graphics::{
     event::{CGEvent, CGEventFlags, CGKeyCode},
@@ -48,41 +47,42 @@ fn synthesize_keyboard_event(code: CGKeyCode) -> CGEvent {
     event
 }
 
-pub fn key_to_native(key: &str) -> Cow<str> {
+// TODO:
+pub fn key_to_native(key: &VirtualKeyCode) -> Cow<str> {
     use cocoa::appkit::*;
     let code = match key {
-        "space" => SPACE_KEY,
-        "backspace" => BACKSPACE_KEY,
-        "up" => NSUpArrowFunctionKey,
-        "down" => NSDownArrowFunctionKey,
-        "left" => NSLeftArrowFunctionKey,
-        "right" => NSRightArrowFunctionKey,
-        "pageup" => NSPageUpFunctionKey,
-        "pagedown" => NSPageDownFunctionKey,
-        "home" => NSHomeFunctionKey,
-        "end" => NSEndFunctionKey,
-        "delete" => NSDeleteFunctionKey,
-        "insert" => NSHelpFunctionKey,
-        "f1" => NSF1FunctionKey,
-        "f2" => NSF2FunctionKey,
-        "f3" => NSF3FunctionKey,
-        "f4" => NSF4FunctionKey,
-        "f5" => NSF5FunctionKey,
-        "f6" => NSF6FunctionKey,
-        "f7" => NSF7FunctionKey,
-        "f8" => NSF8FunctionKey,
-        "f9" => NSF9FunctionKey,
-        "f10" => NSF10FunctionKey,
-        "f11" => NSF11FunctionKey,
-        "f12" => NSF12FunctionKey,
-        "f13" => NSF13FunctionKey,
-        "f14" => NSF14FunctionKey,
-        "f15" => NSF15FunctionKey,
-        "f16" => NSF16FunctionKey,
-        "f17" => NSF17FunctionKey,
-        "f18" => NSF18FunctionKey,
-        "f19" => NSF19FunctionKey,
-        _ => return Cow::Borrowed(key),
+        VirtualKeyCode::Space => SPACE_KEY,
+        VirtualKeyCode::Backspace => BACKSPACE_KEY,
+        VirtualKeyCode::Up => NSUpArrowFunctionKey,
+        VirtualKeyCode::Down => NSDownArrowFunctionKey,
+        VirtualKeyCode::Left => NSLeftArrowFunctionKey,
+        VirtualKeyCode::Right => NSRightArrowFunctionKey,
+        VirtualKeyCode::PageUp => NSPageUpFunctionKey,
+        VirtualKeyCode::PageDown => NSPageDownFunctionKey,
+        VirtualKeyCode::Home => NSHomeFunctionKey,
+        VirtualKeyCode::End => NSEndFunctionKey,
+        VirtualKeyCode::Delete => NSDeleteFunctionKey,
+        VirtualKeyCode::Insert => NSHelpFunctionKey,
+        VirtualKeyCode::F1 => NSF1FunctionKey,
+        VirtualKeyCode::F2 => NSF2FunctionKey,
+        VirtualKeyCode::F3 => NSF3FunctionKey,
+        VirtualKeyCode::F4 => NSF4FunctionKey,
+        VirtualKeyCode::F5 => NSF5FunctionKey,
+        VirtualKeyCode::F6 => NSF6FunctionKey,
+        VirtualKeyCode::F7 => NSF7FunctionKey,
+        VirtualKeyCode::F8 => NSF8FunctionKey,
+        VirtualKeyCode::F9 => NSF9FunctionKey,
+        VirtualKeyCode::F10 => NSF10FunctionKey,
+        VirtualKeyCode::F11 => NSF11FunctionKey,
+        VirtualKeyCode::F12 => NSF12FunctionKey,
+        VirtualKeyCode::F13 => NSF13FunctionKey,
+        VirtualKeyCode::F14 => NSF14FunctionKey,
+        VirtualKeyCode::F15 => NSF15FunctionKey,
+        VirtualKeyCode::F16 => NSF16FunctionKey,
+        VirtualKeyCode::F17 => NSF17FunctionKey,
+        VirtualKeyCode::F18 => NSF18FunctionKey,
+        VirtualKeyCode::F19 => NSF19FunctionKey,
+        _ => return Cow::Owned(key.to_string()),
     };
     Cow::Owned(String::from_utf16(&[code]).unwrap())
 }
@@ -347,7 +347,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     //         }
     //     }
     // };
-    let key = keyboard_event_to_key(native_event).unwrap_or("default".to_string());
+    let key = keyboard_event_to_virtual_keycodes(native_event).unwrap_or_default();
     let result = Keystroke {
         modifiers: Modifiers {
             control,
@@ -386,13 +386,13 @@ fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
 }
 
 /// TODO:
-fn keyboard_event_to_key(native_event: id) -> Option<String> {
+fn keyboard_event_to_virtual_keycodes(native_event: id) -> Option<VirtualKeyCode> {
     // numeric keys 0-9 should always return VKCode 0-9
-    if !is_keyboard_event_numeric_or_keypad(native_event) {
+    if !is_keypad_or_numeric_key_event(native_event) {
         // Handle Dvorak-QWERTY cmd case
         let chars = unsafe { native_event.characters().to_str().to_string() };
-        if chars.len() > 0 {
-            if let Some(key) = key_from_char(chars) {
+        if let Some(ch) = chars.chars().next() {
+            if let Some(key) = virtual_keycode_from_char(ch) {
                 return Some(key);
             }
         }
@@ -402,16 +402,16 @@ fn keyboard_event_to_key(native_event: id) -> Option<String> {
                 .to_str()
                 .to_string()
         };
-        if chars.len() > 0 {
-            if let Some(key) = key_from_char(chars) {
+        if let Some(ch) = chars.chars().next() {
+            if let Some(key) = virtual_keycode_from_char(ch) {
                 return Some(key);
             }
         }
     }
-    key_from_keycode(unsafe { native_event.keyCode() })
+    virtual_keycode_from_keycode(unsafe { native_event.keyCode() })
 }
 
-fn is_keyboard_event_numeric_or_keypad(native_event: id) -> bool {
+fn is_keypad_or_numeric_key_event(native_event: id) -> bool {
     match unsafe { native_event.keyCode() } {
         DIGITAL_0 | DIGITAL_1 | DIGITAL_2 | DIGITAL_3 | DIGITAL_4 | DIGITAL_5 | DIGITAL_6
         | DIGITAL_7 | DIGITAL_8 | DIGITAL_9 | KEYPAD_0 | KEYPAD_1 | KEYPAD_2 | KEYPAD_3
@@ -422,206 +422,219 @@ fn is_keyboard_event_numeric_or_keypad(native_event: id) -> bool {
     }
 }
 
-fn key_from_char(chars: String) -> Option<String> {
-    match chars.as_str() {
-        "a" | "A" => Some("a".to_string()),
-        "b" | "B" => Some("b".to_string()),
-        "c" | "C" => Some("c".to_string()),
-        "d" | "D" => Some("c".to_string()),
-        "e" | "E" => Some("e".to_string()),
-        "f" | "F" => Some("f".to_string()),
-        "g" | "G" => Some("g".to_string()),
-        "h" | "H" => Some("h".to_string()),
-        "i" | "I" => Some("i".to_string()),
-        "j" | "J" => Some("j".to_string()),
-        "k" | "K" => Some("k".to_string()),
-        "l" | "L" => Some("l".to_string()),
-        "m" | "M" => Some("m".to_string()),
-        "n" | "N" => Some("n".to_string()),
-        "o" | "O" => Some("o".to_string()),
-        "p" | "P" => Some("p".to_string()),
-        "q" | "Q" => Some("q".to_string()),
-        "r" | "R" => Some("r".to_string()),
-        "s" | "S" => Some("s".to_string()),
-        "t" | "T" => Some("t".to_string()),
-        "u" | "U" => Some("u".to_string()),
-        "v" | "V" => Some("v".to_string()),
-        "w" | "W" => Some("w".to_string()),
-        "x" | "X" => Some("x".to_string()),
-        "y" | "Y" => Some("y".to_string()),
-        "z" | "Z" => Some("z".to_string()),
-        "0" => Some("0".to_string()),
-        "1" => Some("1".to_string()),
-        "2" => Some("2".to_string()),
-        "3" => Some("3".to_string()),
-        "4" => Some("4".to_string()),
-        "5" => Some("5".to_string()),
-        "6" => Some("6".to_string()),
-        "7" => Some("7".to_string()),
-        "8" => Some("8".to_string()),
-        "9" => Some("9".to_string()),
-        ";" => Some(";".to_string()),
-        ":" => Some(":".to_string()),
-        "=" => Some("=".to_string()),
-        "+" => Some("+".to_string()),
-        "," => Some(",".to_string()),
-        "<" => Some("<".to_string()),
-        "-" => Some("-".to_string()),
-        "_" => Some("_".to_string()),
-        "." => Some(".".to_string()),
-        ">" => Some(">".to_string()),
-        "/" => Some("/".to_string()),
-        "?" => Some("?".to_string()),
-        "`" => Some("`".to_string()),
-        "~" => Some("~".to_string()),
-        "[" => Some("[".to_string()),
-        "{" => Some("{".to_string()),
-        "\\" => Some("\\".to_string()),
-        "|" => Some("|".to_string()),
-        "[" => Some("[".to_string()),
-        "}" => Some("}".to_string()),
-        "'" => Some("'".to_string()),
-        "\"" => Some("\"".to_string()),
-        _ => None,
+fn virtual_keycode_from_char(ch: char) -> Option<VirtualKeyCode> {
+    match ch {
+        'a' | 'A' => Some(VirtualKeyCode::A),
+        'b' | 'B' => Some(VirtualKeyCode::B),
+        'c' | 'C' => Some(VirtualKeyCode::C),
+        'd' | 'D' => Some(VirtualKeyCode::D),
+        'e' | 'E' => Some(VirtualKeyCode::E),
+        'f' | 'F' => Some(VirtualKeyCode::F),
+        'g' | 'G' => Some(VirtualKeyCode::G),
+        'h' | 'H' => Some(VirtualKeyCode::H),
+        'i' | 'I' => Some(VirtualKeyCode::I),
+        'j' | 'J' => Some(VirtualKeyCode::J),
+        'k' | 'K' => Some(VirtualKeyCode::K),
+        'l' | 'L' => Some(VirtualKeyCode::L),
+        'm' | 'M' => Some(VirtualKeyCode::M),
+        'n' | 'N' => Some(VirtualKeyCode::N),
+        'o' | 'O' => Some(VirtualKeyCode::O),
+        'p' | 'P' => Some(VirtualKeyCode::P),
+        'q' | 'Q' => Some(VirtualKeyCode::Q),
+        'r' | 'R' => Some(VirtualKeyCode::R),
+        's' | 'S' => Some(VirtualKeyCode::S),
+        't' | 'T' => Some(VirtualKeyCode::T),
+        'u' | 'U' => Some(VirtualKeyCode::U),
+        'v' | 'V' => Some(VirtualKeyCode::V),
+        'w' | 'W' => Some(VirtualKeyCode::W),
+        'x' | 'X' => Some(VirtualKeyCode::X),
+        'y' | 'Y' => Some(VirtualKeyCode::Y),
+        'z' | 'Z' => Some(VirtualKeyCode::Z),
+        '0' => Some(VirtualKeyCode::Digital0),
+        '1' => Some(VirtualKeyCode::Digital1),
+        '2' => Some(VirtualKeyCode::Digital2),
+        '3' => Some(VirtualKeyCode::Digital3),
+        '4' => Some(VirtualKeyCode::Digital4),
+        '5' => Some(VirtualKeyCode::Digital5),
+        '6' => Some(VirtualKeyCode::Digital6),
+        '7' => Some(VirtualKeyCode::Digital7),
+        '8' => Some(VirtualKeyCode::Digital8),
+        '9' => Some(VirtualKeyCode::Digital9),
+        ';' => Some(VirtualKeyCode::OEM1),
+        ':' => Some(VirtualKeyCode::OEM1),
+        '=' => Some(VirtualKeyCode::OEMPlus),
+        '+' => Some(VirtualKeyCode::OEMPlus),
+        ',' => Some(VirtualKeyCode::OEMComma),
+        '<' => Some(VirtualKeyCode::OEMComma),
+        '-' => Some(VirtualKeyCode::OEMMinus),
+        '_' => Some(VirtualKeyCode::OEMMinus),
+        '.' => Some(VirtualKeyCode::OEMPeriod),
+        '>' => Some(VirtualKeyCode::OEMPeriod),
+        '/' => Some(VirtualKeyCode::OEM2),
+        '?' => Some(VirtualKeyCode::OEM2),
+        '`' => Some(VirtualKeyCode::OEM3),
+        '~' => Some(VirtualKeyCode::OEM3),
+        '[' => Some(VirtualKeyCode::OEM4),
+        '{' => Some(VirtualKeyCode::OEM4),
+        '\\' => Some(VirtualKeyCode::OEM5),
+        '|' => Some(VirtualKeyCode::OEM5),
+        ']' => Some(VirtualKeyCode::OEM6),
+        '}' => Some(VirtualKeyCode::OEM6),
+        '\'' => Some(VirtualKeyCode::OEM7),
+        '"' => Some(VirtualKeyCode::OEM7),
+        ch => {
+            let ch = ch as u16;
+            match ch {
+                NSPauseFunctionKey => Some(VirtualKeyCode::Pause),
+                NSSelectFunctionKey => Some(VirtualKeyCode::Select),
+                NSPrintFunctionKey => Some(VirtualKeyCode::Print),
+                NSExecuteFunctionKey => Some(VirtualKeyCode::Execute),
+                NSPrintScreenFunctionKey => Some(VirtualKeyCode::PrintScreen),
+                NSInsertFunctionKey => Some(VirtualKeyCode::Insert),
+                NSF21FunctionKey => Some(VirtualKeyCode::F21),
+                NSF22FunctionKey => Some(VirtualKeyCode::F22),
+                NSF23FunctionKey => Some(VirtualKeyCode::F23),
+                NSF24FunctionKey => Some(VirtualKeyCode::F24),
+                NSScrollLockFunctionKey => Some(VirtualKeyCode::ScrollLock),
+                _ => None,
+            }
+        }
     }
 }
 
-fn key_from_keycode(keycode: u16) -> Option<String> {
-    if keycode >= 0x80 {
-        return None;
-    }
-    Some(KEYBOARD_CODES[keycode as usize].to_string())
+fn virtual_keycode_from_keycode(keycode: u16) -> Option<VirtualKeyCode> {
+    KEYBOARD_CODES.get(keycode as usize).copied()
 }
 
-static KEYBOARD_CODES: [&str; 128] = [
-    "a",
-    "s",
-    "d",
-    "f",
-    "h",
-    "g",
-    "z",
-    "x",
-    "c",
-    "v",
-    "`",
-    "b",
-    "q",
-    "w",
-    "e",
-    "r",
-    "y",
-    "t",
-    "1",
-    "2",
-    "3",
-    "4",
-    "6",
-    "5",
-    "=",
-    "9",
-    "7",
-    "-",
-    "8",
-    "0",
-    "]",
-    "o",
-    "u",
-    "[",
-    "i",
-    "p",
-    "enter",
-    "l",
-    "j",
-    "'",
-    "k",
-    ";",
-    "\\",
-    ",",
-    "/",
-    "n",
-    "m",
-    ".",
-    "tab",
-    "space",
-    "`",
-    "backspace",
-    "unknown",
-    "escape",
-    "command",
-    "command",
-    "shift",
-    "capslock",
-    "alt",
-    "control",
-    "shift",
-    "alt",
-    "control",
-    "function",
-    "f17",
-    ".",
-    "unknown",
-    "*",
-    "unknown",
-    "+",
-    "unknown",
-    "clear",
-    "unknown",
-    "unknown",
-    "unknown",
-    "/",
-    "enter",
-    "unknown",
-    "-",
-    "f18",
-    "f19",
-    "+",
-    "0",
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "f20",
-    "8",
-    "9",
-    "unknown",
-    "unknown",
-    "unknown",
-    "f5",
-    "f6",
-    "f7",
-    "f3",
-    "f8",
-    "f9",
-    "unknown",
-    "f11",
-    "unknown",
-    "f13",
-    "f16",
-    "f14",
-    "unknown",
-    "f10",
-    "unknown",
-    "f12",
-    "unknown",
-    "f15",
-    "unknown",
-    "unknown",
-    "pageup",
-    "delete",
-    "f4",
-    "end",
-    "f2",
-    "pagedown",
-    "f1",
-    "left",
-    "right",
-    "down",
-    "up",
-    "unknown",
+static KEYBOARD_CODES: [VirtualKeyCode; 128] = [
+    VirtualKeyCode::A, // 0x00
+    VirtualKeyCode::S,
+    VirtualKeyCode::D,
+    VirtualKeyCode::F,
+    VirtualKeyCode::H,
+    VirtualKeyCode::G,
+    VirtualKeyCode::Z,
+    VirtualKeyCode::X,
+    VirtualKeyCode::C,
+    VirtualKeyCode::V,
+    VirtualKeyCode::OEM3, // Section key
+    VirtualKeyCode::B,
+    VirtualKeyCode::Q,
+    VirtualKeyCode::W,
+    VirtualKeyCode::E,
+    VirtualKeyCode::R,
+    VirtualKeyCode::Y,
+    VirtualKeyCode::T,
+    VirtualKeyCode::Digital1,
+    VirtualKeyCode::Digital2,
+    VirtualKeyCode::Digital3,
+    VirtualKeyCode::Digital4,
+    VirtualKeyCode::Digital6,
+    VirtualKeyCode::Digital5,
+    VirtualKeyCode::OEMPlus, // =+
+    VirtualKeyCode::Digital9,
+    VirtualKeyCode::Digital7,
+    VirtualKeyCode::OEMMinus, // -_
+    VirtualKeyCode::Digital8,
+    VirtualKeyCode::Digital0,
+    VirtualKeyCode::OEM6, // ]}
+    VirtualKeyCode::O,
+    VirtualKeyCode::U,
+    VirtualKeyCode::OEM4, // [{
+    VirtualKeyCode::I,
+    VirtualKeyCode::P,
+    VirtualKeyCode::Enter,
+    VirtualKeyCode::L,
+    VirtualKeyCode::J,
+    VirtualKeyCode::OEM7, // '"
+    VirtualKeyCode::K,
+    VirtualKeyCode::OEM1,     // ;:
+    VirtualKeyCode::OEM5,     // \|
+    VirtualKeyCode::OEMComma, // ,<
+    VirtualKeyCode::OEM2,     // /?
+    VirtualKeyCode::N,
+    VirtualKeyCode::M,
+    VirtualKeyCode::OEMPeriod, // .>
+    VirtualKeyCode::Tab,
+    VirtualKeyCode::Space,
+    VirtualKeyCode::OEM3, // `~
+    VirtualKeyCode::Backspace,
+    VirtualKeyCode::Unknown, // n/a
+    VirtualKeyCode::Escape,
+    VirtualKeyCode::App, // Right command
+    VirtualKeyCode::LeftPlatform,
+    VirtualKeyCode::Shift,
+    VirtualKeyCode::Capital,  // Capslock
+    VirtualKeyCode::Alt,      // Left option
+    VirtualKeyCode::Control,  // Left control
+    VirtualKeyCode::Shift,    // Right shift
+    VirtualKeyCode::Alt,      // Right option
+    VirtualKeyCode::Control,  // Right control
+    VirtualKeyCode::Function, // TODO: VK_UNKNOWN on Chrome
+    VirtualKeyCode::F17,
+    VirtualKeyCode::Decimal,  // Numpad .
+    VirtualKeyCode::Unknown,  // n/a
+    VirtualKeyCode::Multiply, // Numpad *
+    VirtualKeyCode::Unknown,  // n/a
+    VirtualKeyCode::Add,      // Numpad +
+    VirtualKeyCode::Unknown,  // n/a
+    VirtualKeyCode::Clear,    // Numpad clear
+    VirtualKeyCode::VolumeUp,
+    VirtualKeyCode::VolumeDown,
+    VirtualKeyCode::VolumeMute,
+    VirtualKeyCode::Divide,   // Numpad /
+    VirtualKeyCode::Enter,    // Numpad enter
+    VirtualKeyCode::Unknown,  // n/a
+    VirtualKeyCode::Subtract, // Numpad -
+    VirtualKeyCode::F18,
+    VirtualKeyCode::F19,
+    VirtualKeyCode::OEMPlus, // Numpad =.
+    VirtualKeyCode::Numpad0,
+    VirtualKeyCode::Numpad1,
+    VirtualKeyCode::Numpad2,
+    VirtualKeyCode::Numpad3,
+    VirtualKeyCode::Numpad4,
+    VirtualKeyCode::Numpad5,
+    VirtualKeyCode::Numpad6,
+    VirtualKeyCode::Numpad7,
+    VirtualKeyCode::F20,
+    VirtualKeyCode::Numpad8,
+    VirtualKeyCode::Numpad9,
+    VirtualKeyCode::Unknown, // Yen, JIS keyboad only
+    VirtualKeyCode::Unknown, // Underscore, JIS keyboard only
+    VirtualKeyCode::Unknown, // Keypad comma, JIS keyboard only
+    VirtualKeyCode::F5,
+    VirtualKeyCode::F6,
+    VirtualKeyCode::F7,
+    VirtualKeyCode::F3,
+    VirtualKeyCode::F8,
+    VirtualKeyCode::F9,
+    VirtualKeyCode::Unknown, // Eisu, JIS keyboard only
+    VirtualKeyCode::F11,
+    VirtualKeyCode::Unknown, // Kana, JIS keyboard only
+    VirtualKeyCode::F13,
+    VirtualKeyCode::F16,
+    VirtualKeyCode::F14,
+    VirtualKeyCode::Unknown, // n/a
+    VirtualKeyCode::F10,
+    VirtualKeyCode::App, // Context menu key
+    VirtualKeyCode::F12,
+    VirtualKeyCode::Unknown, // n/a
+    VirtualKeyCode::F15,
+    VirtualKeyCode::Insert, // Help
+    VirtualKeyCode::Home,   // Home
+    VirtualKeyCode::PageUp,
+    VirtualKeyCode::Delete, // Forward delete
+    VirtualKeyCode::F4,
+    VirtualKeyCode::End,
+    VirtualKeyCode::F2,
+    VirtualKeyCode::PageDown,
+    VirtualKeyCode::F1,
+    VirtualKeyCode::Left,
+    VirtualKeyCode::Right,
+    VirtualKeyCode::Down,
+    VirtualKeyCode::Up,
+    VirtualKeyCode::Unknown, // n/a
 ];
 const DIGITAL_1: u16 = 0x12;
 const DIGITAL_2: u16 = 0x13;
@@ -636,7 +649,7 @@ const DIGITAL_0: u16 = 0x1d;
 const KEYPAD_DECIMAL: u16 = 0x41;
 const KEYPAD_MULTIPLY: u16 = 0x43;
 const KEYPAD_PLUS: u16 = 0x45;
-const KEYPAD_CLEAR: u16 = 0x46;
+const KEYPAD_CLEAR: u16 = 0x47;
 const KEYPAD_DIVIDE: u16 = 0x4b;
 const KEYPAD_ENTER: u16 = 0x4c;
 const KEYPAD_MINUS: u16 = 0x4e;

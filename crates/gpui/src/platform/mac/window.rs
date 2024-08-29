@@ -1457,7 +1457,8 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
 
     let keystroke = Keystroke {
         modifiers: Default::default(),
-        key: ".".into(),
+        // key: ".".into(),
+        key: crate::VirtualKeyCode::OEMPeriod,
         ime_key: None,
     };
     let event = PlatformInput::KeyDown(KeyDownEvent {
