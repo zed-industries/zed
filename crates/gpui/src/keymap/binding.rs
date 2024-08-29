@@ -52,11 +52,12 @@ impl KeyBinding {
         }
 
         // TODO:
-        // for (target, typed) in self.keystrokes.iter().zip(typed.iter()) {
-        //     if !typed.should_match(target) {
-        //         return None;
-        //     }
-        // }
+        // should_match?
+        for (target, typed) in self.keystrokes.iter().zip(typed.iter()) {
+            if !typed.should_match(target) {
+                return None;
+            }
+        }
 
         Some(self.keystrokes.len() > typed.len())
     }

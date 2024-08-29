@@ -30,30 +30,33 @@ impl Keystroke {
     ///
     /// This method assumes that `self` was typed and `target' is in the keymap, and checks
     /// both possibilities for self against the target.
-    // pub(crate) fn should_match(&self, target: &Keystroke) -> bool {
-    //     if let Some(ime_key) = self
-    //         .ime_key
-    //         .as_ref()
-    //         .filter(|ime_key| ime_key != &&self.key)
-    //     {
-    //         let ime_modifiers = Modifiers {
-    //             control: self.modifiers.control,
-    //             ..Default::default()
-    //         };
+    // TODO:
+    // Is the hack above still needed?
+    pub(crate) fn should_match(&self, target: &Keystroke) -> bool {
+        // if let Some(ime_key) = self
+        //     .ime_key
+        //     .as_ref()
+        //     .filter(|ime_key| ime_key != &&self.key)
+        // {
+        //     let ime_modifiers = Modifiers {
+        //         control: self.modifiers.control,
+        //         ..Default::default()
+        //     };
 
-    //         if &target.key == ime_key && target.modifiers == ime_modifiers {
-    //             return true;
-    //         }
-    //     }
+        //     if &target.key == ime_key && target.modifiers == ime_modifiers {
+        //         return true;
+        //     }
+        // }
 
-    //     target.modifiers == self.modifiers && target.key == self.key
-    // }
+        target.modifiers == self.modifiers && target.key == self.key
+    }
 
     /// key syntax is:
     /// [ctrl-][alt-][shift-][cmd-][fn-]key[->ime_key]
     /// ime_key syntax is only used for generating test events,
     /// when matching a key with an ime_key set will be matched without it.
     pub fn parse(source: &str) -> anyhow::Result<Self> {
+        println!("-> Parsing: {}", source);
         let mut control = false;
         let mut alt = false;
         let mut shift = false;
@@ -121,8 +124,11 @@ impl Keystroke {
         println!("      => key: {:?}", key);
 
         let key = key.ok_or_else(|| anyhow!("Invalid keystroke `{}`", source))?;
+        if key == VirtualKeyCode::Unknown {
+            log::error!("Error parsing: {}->{:?}", source, key);
+        }
 
-        Ok(Keystroke {
+        let ret = Ok(Keystroke {
             modifiers: Modifiers {
                 control,
                 alt,
@@ -132,7 +138,9 @@ impl Keystroke {
             },
             key,
             ime_key,
-        })
+        });
+        println!("--> Res: {:#?}", ret);
+        ret
     }
 
     // TODO: https://github.com/zed-industries/zed/pull/13185
