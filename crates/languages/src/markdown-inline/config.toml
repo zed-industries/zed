@@ -1,7 +1,6 @@
 name = "Markdown-Inline"
 grammar = "markdown-inline"
 path_suffixes = []
-word_characters = ["-"]
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
     { start = "[", end = "]", close = true, newline = true },
