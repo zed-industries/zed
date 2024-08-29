@@ -14212,6 +14212,7 @@ dependencies = [
  "uuid",
  "vim",
  "welcome",
+ "windows 0.58.0",
  "winresource",
  "workspace",
  "zed_actions",

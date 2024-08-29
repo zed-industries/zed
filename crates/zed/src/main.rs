@@ -360,9 +360,19 @@ fn main() {
             }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+
+    #[cfg(target_os = "windows")]
     {
-        use zed::only_instance::*;
+        use zed::windows_only_instance::*;
+        if !check_single_instance() {
+            println!("zed is already running");
+            return;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use zed::mac_only_instance::*;
         if ensure_only_instance() != IsOnlyInstance::Yes {
             println!("zed is already running");
             return;
