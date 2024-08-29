@@ -59,11 +59,8 @@
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
       "shift-delete": "editor::Cut",
-      "ctrl-x": "editor::Cut",
       "ctrl-insert": "editor::Copy",
-      "ctrl-c": "editor::Copy",
       "shift-insert": "editor::Paste",
-      "ctrl-v": "editor::Paste",
       "ctrl-y": "editor::Redo",
       "ctrl-z": "editor::Undo",
       "ctrl-shift-z": "editor::Redo",
@@ -110,6 +107,15 @@
       "ctrl-\"": "editor::ExpandAllHunkDiffs",
       "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "editor::ToggleGitBlame"
+    }
+  },
+  {
+    // Separate block with same context so these display in context menus
+    "context": "Editor",
+    "bindings": {
+      "ctrl-x": "editor::Cut",
+      "ctrl-c": "editor::Copy",
+      "ctrl-v": "editor::Paste"
     }
   },
   {
@@ -535,18 +541,13 @@
       "right": "project_panel::ExpandSelectedEntry",
       "ctrl-n": "project_panel::NewFile",
       "alt-ctrl-n": "project_panel::NewDirectory",
-      "ctrl-x": "project_panel::Cut",
-      "ctrl-c": "project_panel::Copy",
       "ctrl-insert": "project_panel::Copy",
-      "ctrl-v": "project_panel::Paste",
       "shift-insert": "project_panel::Paste",
       "ctrl-alt-c": "project_panel::CopyPath",
       "alt-ctrl-shift-c": "project_panel::CopyRelativePath",
-      "f2": "project_panel::Rename",
       "enter": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
       "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
-      "delete": ["project_panel::Trash", { "skip_prompt": false }],
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-ctrl-r": "project_panel::RevealInFileManager",
@@ -554,6 +555,17 @@
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",
       "escape": "menu::Cancel"
+    }
+  },
+  {
+    // Separate block with same context so these display in context menus
+    "context": "ProjectPanel",
+    "bindings": {
+      "f2": "project_panel::Rename",
+      "ctrl-c": "project_panel::Copy",
+      "ctrl-x": "project_panel::Cut",
+      "ctrl-v": "project_panel::Paste",
+      "delete": ["project_panel::Trash", { "skip_prompt": false }]
     }
   },
   {
@@ -611,9 +623,7 @@
     "context": "Terminal",
     "bindings": {
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
-      "ctrl-shift-c": "terminal::Copy",
       "ctrl-insert": "terminal::Copy",
-      "ctrl-shift-v": "terminal::Paste",
       "shift-insert": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",
       // Overrides for conflicting keybindings
@@ -636,6 +646,14 @@
       "shift-down": "terminal::ScrollLineDown",
       "shift-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom"
+    }
+  },
+  {
+    // Separate block with same context so these display in context menus
+    "context": "Terminal",
+    "bindings": {
+      "ctrl-shift-c": "terminal::Copy",
+      "ctrl-shift-v": "terminal::Paste"
     }
   }
 ]

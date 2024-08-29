@@ -307,7 +307,7 @@ pub fn init(cx: &mut AppContext) {
     cx.on_action(move |_: &workspace::NewFile, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(app_state, cx, |workspace, cx| {
+            workspace::open_new(Default::default(), app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
             .detach();
@@ -316,7 +316,7 @@ pub fn init(cx: &mut AppContext) {
     cx.on_action(move |_: &workspace::NewWindow, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(app_state, cx, |workspace, cx| {
+            workspace::open_new(Default::default(), app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
             .detach();
@@ -9111,18 +9111,16 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Navigated>> {
         let definition = self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
-        let references = self.find_all_references(&FindAllReferences, cx);
-        cx.background_executor().spawn(async move {
+        cx.spawn(|editor, mut cx| async move {
             if definition.await? == Navigated::Yes {
                 return Ok(Navigated::Yes);
             }
-            if let Some(references) = references {
-                if references.await? == Navigated::Yes {
-                    return Ok(Navigated::Yes);
-                }
+            match editor.update(&mut cx, |editor, cx| {
+                editor.find_all_references(&FindAllReferences, cx)
+            })? {
+                Some(references) => references.await,
+                None => Ok(Navigated::No),
             }
-
-            Ok(Navigated::No)
         })
     }
 
@@ -10388,6 +10386,10 @@ impl Editor {
             self.scrollbar_marker_state.dirty = true;
             self.active_indent_guides_state.dirty = true;
         }
+    }
+
+    pub fn default_fold_placeholder(&self, cx: &AppContext) -> FoldPlaceholder {
+        self.display_map.read(cx).fold_placeholder.clone()
     }
 
     pub fn set_gutter_hovered(&mut self, hovered: bool, cx: &mut ViewContext<Self>) {

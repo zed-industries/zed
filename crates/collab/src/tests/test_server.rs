@@ -916,6 +916,7 @@ impl TestClient {
                 self.app_state.user_store.clone(),
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
+                None,
                 cx,
             )
         })

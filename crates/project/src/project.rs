@@ -13,6 +13,7 @@ pub mod worktree_store;
 #[cfg(test)]
 mod project_tests;
 
+mod environment;
 pub mod search_history;
 mod yarn;
 
@@ -26,6 +27,7 @@ use client::{
 use clock::ReplicaId;
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
+use environment::ProjectEnvironment;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::{join_all, try_join_all, Shared},
@@ -74,7 +76,7 @@ use paths::{
 };
 use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
-use project_settings::{DirenvSettings, LspSettings, ProjectSettings};
+use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use remote::SshSession;
 use rpc::{
@@ -95,7 +97,6 @@ use std::{
     cell::RefCell,
     cmp::Ordering,
     convert::TryInto,
-    env,
     ffi::OsStr,
     hash::Hash,
     iter, mem,
@@ -116,8 +117,8 @@ use task::{
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
 use util::{
-    debug_panic, defer, maybe, merge_json_value_into, parse_env_output, paths::compare_paths,
-    post_inc, ResultExt, TryFutureExt as _,
+    debug_panic, defer, maybe, merge_json_value_into, paths::compare_paths, post_inc, ResultExt,
+    TryFutureExt as _,
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
@@ -231,7 +232,7 @@ pub struct Project {
     search_history: SearchHistory,
     snippets: Model<SnippetProvider>,
     yarn: Model<YarnPathStore>,
-    cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
+    environment: Model<ProjectEnvironment>,
 }
 
 #[derive(Default)]
@@ -787,6 +788,7 @@ impl Project {
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        env: Option<HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx: &mut ModelContext<Self>| {
@@ -808,6 +810,7 @@ impl Project {
                 .detach();
 
             let yarn = YarnPathStore::new(fs.clone(), cx);
+            let environment = ProjectEnvironment::new(env, cx);
 
             Self {
                 buffer_ordered_messages_tx: tx,
@@ -862,7 +865,7 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
-                cached_shell_environments: HashMap::default(),
+                environment,
                 remotely_created_buffers: Default::default(),
             }
         })
@@ -877,7 +880,7 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        let this = Self::local(client, node, user_store, languages, fs, cx);
+        let this = Self::local(client, node, user_store, languages, fs, None, cx);
         this.update(cx, |this, cx| {
             let buffer_store = this.buffer_store.downgrade();
 
@@ -1057,7 +1060,7 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
-                cached_shell_environments: HashMap::default(),
+                environment: ProjectEnvironment::new(None, cx),
                 remotely_created_buffers: Arc::new(Mutex::new(RemotelyCreatedBuffers::default())),
             };
             this.set_role(role, cx);
@@ -1190,6 +1193,7 @@ impl Project {
                     user_store,
                     Arc::new(languages),
                     fs,
+                    None,
                     cx,
                 )
             })
@@ -1229,6 +1233,7 @@ impl Project {
                 user_store,
                 Arc::new(languages),
                 fs,
+                None,
                 cx,
             )
         });
@@ -1241,11 +1246,10 @@ impl Project {
                 .unwrap();
 
             project.update(cx, |project, cx| {
-                let tree_id = tree.read(cx).id();
                 // In tests we always populate the environment to be empty so we don't run the shell
-                project
-                    .cached_shell_environments
-                    .insert(tree_id, HashMap::default());
+                let tree_id = tree.read(cx).id();
+                project.environment =
+                    ProjectEnvironment::test(&[(tree_id, HashMap::default())], cx);
             });
 
             tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
@@ -1378,6 +1382,10 @@ impl Project {
 
     pub fn opened_buffers(&self, cx: &AppContext) -> Vec<Model<Buffer>> {
         self.buffer_store.read(cx).buffers().collect()
+    }
+
+    pub fn cli_environment(&self, cx: &AppContext) -> Option<HashMap<String, String>> {
+        self.environment.read(cx).get_cli_environment()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -3044,12 +3052,14 @@ impl Project {
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let lsp_adapter_delegate = ProjectLspAdapterDelegate::new(self, worktree_handle, cx);
+        let cli_environment = self.environment.read(cx).get_cli_environment();
         let pending_server = match self.languages.create_pending_language_server(
             stderr_capture.clone(),
             language.clone(),
             adapter.clone(),
             Arc::clone(&worktree_path),
             lsp_adapter_delegate.clone(),
+            cli_environment,
             cx,
         ) {
             Some(pending_server) => pending_server,
@@ -7918,7 +7928,9 @@ impl Project {
         }
         self.diagnostics.remove(&id_to_remove);
         self.diagnostic_summaries.remove(&id_to_remove);
-        self.cached_shell_environments.remove(&id_to_remove);
+        self.environment.update(cx, |environment, _| {
+            environment.remove_worktree_environment(id_to_remove);
+        });
 
         let mut servers_to_remove = HashMap::default();
         let mut servers_to_preserve = HashSet::default();
@@ -10281,16 +10293,16 @@ impl Project {
         cx: &mut ModelContext<'_, Project>,
     ) -> Task<Option<TaskContext>> {
         if self.is_local_or_ssh() {
-            let (worktree_id, cwd) = if let Some(worktree) = self.task_worktree(cx) {
+            let (worktree_id, worktree_abs_path) = if let Some(worktree) = self.task_worktree(cx) {
                 (
                     Some(worktree.read(cx).id()),
-                    Some(self.task_cwd(worktree, cx)),
+                    Some(worktree.read(cx).abs_path()),
                 )
             } else {
                 (None, None)
             };
 
-            cx.spawn(|project, cx| async move {
+            cx.spawn(|project, mut cx| async move {
                 let mut task_variables = cx
                     .update(|cx| {
                         combine_task_variables(
@@ -10306,17 +10318,19 @@ impl Project {
                 // Remove all custom entries starting with _, as they're not intended for use by the end user.
                 task_variables.sweep();
 
-                let mut project_env = None;
-                if let Some((worktree_id, cwd)) = worktree_id.zip(cwd.as_ref()) {
-                    let env = Self::get_worktree_shell_env(project, worktree_id, cwd, cx).await;
-                    if let Some(env) = env {
-                        project_env.replace(env);
-                    }
-                };
+                let project_env = project
+                    .update(&mut cx, |project, cx| {
+                        let worktree_abs_path = worktree_abs_path.clone();
+                        project.environment.update(cx, |environment, cx| {
+                            environment.get_environment(worktree_id, worktree_abs_path, cx)
+                        })
+                    })
+                    .ok()?
+                    .await;
 
                 Some(TaskContext {
                     project_env: project_env.unwrap_or_default(),
-                    cwd,
+                    cwd: worktree_abs_path.map(|p| p.to_path_buf()),
                     task_variables,
                 })
             })
@@ -10354,50 +10368,6 @@ impl Project {
             })
         } else {
             Task::ready(None)
-        }
-    }
-
-    async fn get_worktree_shell_env(
-        this: WeakModel<Self>,
-        worktree_id: WorktreeId,
-        cwd: &PathBuf,
-        mut cx: AsyncAppContext,
-    ) -> Option<HashMap<String, String>> {
-        let cached_env = this
-            .update(&mut cx, |project, _| {
-                project.cached_shell_environments.get(&worktree_id).cloned()
-            })
-            .ok()?;
-
-        if let Some(env) = cached_env {
-            Some(env)
-        } else {
-            let load_direnv = this
-                .update(&mut cx, |_, cx| {
-                    ProjectSettings::get_global(cx).load_direnv.clone()
-                })
-                .ok()?;
-
-            let shell_env = cx
-                .background_executor()
-                .spawn({
-                    let cwd = cwd.clone();
-                    async move {
-                        load_shell_environment(&cwd, &load_direnv)
-                            .await
-                            .unwrap_or_default()
-                    }
-                })
-                .await;
-
-            this.update(&mut cx, |project, _| {
-                project
-                    .cached_shell_environments
-                    .insert(worktree_id, shell_env.clone());
-            })
-            .ok()?;
-
-            Some(shell_env)
         }
     }
 
@@ -10548,10 +10518,6 @@ impl Project {
                 })
             }),
         }
-    }
-
-    fn task_cwd(&self, worktree: Model<Worktree>, cx: &AppContext) -> PathBuf {
-        worktree.read(cx).abs_path().to_path_buf()
     }
 }
 
@@ -10850,38 +10816,29 @@ pub struct ProjectLspAdapterDelegate {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
-    shell_env: Mutex<Option<HashMap<String, String>>>,
-    load_direnv: DirenvSettings,
+    load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
 }
 
 impl ProjectLspAdapterDelegate {
     pub fn new(
         project: &Project,
         worktree: &Model<Worktree>,
-        cx: &ModelContext<Project>,
+        cx: &mut ModelContext<Project>,
     ) -> Arc<Self> {
-        let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
+        let worktree_id = worktree.read(cx).id();
+        let worktree_abs_path = worktree.read(cx).abs_path();
+        let load_shell_env_task = project.environment.update(cx, |env, cx| {
+            env.get_environment(Some(worktree_id), Some(worktree_abs_path), cx)
+        });
+
         Arc::new(Self {
             project: cx.weak_model(),
             worktree: worktree.read(cx).snapshot(),
             fs: project.fs.clone(),
             http_client: project.client.http_client(),
             language_registry: project.languages.clone(),
-            shell_env: Default::default(),
-            load_direnv,
+            load_shell_env_task,
         })
-    }
-
-    async fn load_shell_env(&self) {
-        let worktree_abs_path = self.worktree.abs_path();
-        let shell_env = load_shell_environment(&worktree_abs_path, &self.load_direnv)
-            .await
-            .with_context(|| {
-                format!("failed to determine load login shell environment in {worktree_abs_path:?}")
-            })
-            .log_err()
-            .unwrap_or_default();
-        *self.shell_env.lock() = Some(shell_env);
     }
 }
 
@@ -10906,19 +10863,14 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {
-        self.load_shell_env().await;
-        self.shell_env.lock().as_ref().cloned().unwrap_or_default()
+        let task = self.load_shell_env_task.clone();
+        task.await.unwrap_or_default()
     }
 
     #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
-        self.load_shell_env().await;
-        let shell_path = self
-            .shell_env
-            .lock()
-            .as_ref()
-            .and_then(|shell_env| shell_env.get("PATH").cloned());
+        let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), &worktree_abs_path).ok()
     }
 
@@ -11080,115 +11032,6 @@ fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
             }
         },
     }
-}
-
-async fn load_direnv_environment(dir: &Path) -> Result<Option<HashMap<String, String>>> {
-    let Ok(direnv_path) = which::which("direnv") else {
-        return Ok(None);
-    };
-
-    let direnv_output = smol::process::Command::new(direnv_path)
-        .args(["export", "json"])
-        .current_dir(dir)
-        .output()
-        .await
-        .context("failed to spawn direnv to get local environment variables")?;
-
-    anyhow::ensure!(
-        direnv_output.status.success(),
-        "direnv exited with error {:?}",
-        direnv_output.status
-    );
-
-    let output = String::from_utf8_lossy(&direnv_output.stdout);
-    if output.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(
-        serde_json::from_str(&output).context("failed to parse direnv output")?,
-    ))
-}
-
-async fn load_shell_environment(
-    dir: &Path,
-    load_direnv: &DirenvSettings,
-) -> Result<HashMap<String, String>> {
-    let direnv_environment = match load_direnv {
-        DirenvSettings::ShellHook => None,
-        DirenvSettings::Direct => load_direnv_environment(dir).await?,
-    }
-    .unwrap_or(HashMap::default());
-
-    let marker = "ZED_SHELL_START";
-    let shell = env::var("SHELL").context(
-        "SHELL environment variable is not assigned so we can't source login environment variables",
-    )?;
-
-    // What we're doing here is to spawn a shell and then `cd` into
-    // the project directory to get the env in there as if the user
-    // `cd`'d into it. We do that because tools like direnv, asdf, ...
-    // hook into `cd` and only set up the env after that.
-    //
-    // If the user selects `Direct` for direnv, it would set an environment
-    // variable that later uses to know that it should not run the hook.
-    // We would include in `.envs` call so it is okay to run the hook
-    // even if direnv direct mode is enabled.
-    //
-    // In certain shells we need to execute additional_command in order to
-    // trigger the behavior of direnv, etc.
-    //
-    //
-    // The `exit 0` is the result of hours of debugging, trying to find out
-    // why running this command here, without `exit 0`, would mess
-    // up signal process for our process so that `ctrl-c` doesn't work
-    // anymore.
-    //
-    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
-    // do that, but it does, and `exit 0` helps.
-    let additional_command = PathBuf::from(&shell)
-        .file_name()
-        .and_then(|f| f.to_str())
-        .and_then(|shell| match shell {
-            "fish" => Some("emit fish_prompt;"),
-            _ => None,
-        });
-
-    let command = format!(
-        "cd '{}';{} printf '%s' {marker}; /usr/bin/env; exit 0;",
-        dir.display(),
-        additional_command.unwrap_or("")
-    );
-
-    let output = smol::process::Command::new(&shell)
-        .args(["-i", "-c", &command])
-        .envs(direnv_environment)
-        .output()
-        .await
-        .context("failed to spawn login shell to source login environment variables")?;
-
-    anyhow::ensure!(
-        output.status.success(),
-        "login shell exited with error {:?}",
-        output.status
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let env_output_start = stdout.find(marker).ok_or_else(|| {
-        anyhow!(
-            "failed to parse output of `env` command in login shell: {}",
-            stdout
-        )
-    })?;
-
-    let mut parsed_env = HashMap::default();
-    let env_output = &stdout[env_output_start + marker.len()..];
-
-    parse_env_output(env_output, |key, value| {
-        parsed_env.insert(key, value);
-    });
-
-    Ok(parsed_env)
 }
 
 fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
