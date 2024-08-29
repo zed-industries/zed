@@ -982,7 +982,8 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
         let should_close = window.handle_toplevel_event(event);
 
         if should_close {
-            this.drop_window(surface_id);
+            // The close logic will be handled in drop_window()
+            window.close();
         }
     }
 }

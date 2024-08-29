@@ -23,6 +23,7 @@ use language_model::{
 };
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
+use release_channel::ReleaseChannel;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -94,14 +95,16 @@ pub fn open_prompt_library(
         cx.spawn(|cx| async move {
             let store = store.await?;
             cx.update(|cx| {
+                let app_id = ReleaseChannel::global(cx).app_id();
                 let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
                 cx.open_window(
                     WindowOptions {
                         titlebar: Some(TitlebarOptions {
                             title: Some("Prompt Library".into()),
-                            appears_transparent: !cfg!(windows),
+                            appears_transparent: cfg!(target_os = "macos"),
                             traffic_light_position: Some(point(px(9.0), px(9.0))),
                         }),
+                        app_id: Some(app_id.to_owned()),
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
                         ..Default::default()
                     },
