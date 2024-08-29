@@ -138,14 +138,14 @@ impl Keystroke {
     // TODO: https://github.com/zed-industries/zed/pull/13185
     /// Returns true if this keystroke left
     /// the ime system in an incomplete state.
-    // pub fn is_ime_in_progress(&self) -> bool {
-    //     self.ime_key.is_none()
-    //         && (is_printable_key(&self.key) || self.key.is_empty())
-    //         && !(self.modifiers.platform
-    //             || self.modifiers.control
-    //             || self.modifiers.function
-    //             || self.modifiers.alt)
-    // }
+    pub fn is_ime_in_progress(&self) -> bool {
+        self.ime_key.is_none()
+            && (self.key.is_printable() || self.key == VirtualKeyCode::Unknown)
+            && !(self.modifiers.platform
+                || self.modifiers.control
+                || self.modifiers.function
+                || self.modifiers.alt)
+    }
 
     /// Returns a new keystroke with the ime_key filled.
     /// This is used for dispatch_keystroke where we want users to
