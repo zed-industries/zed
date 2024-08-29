@@ -1619,13 +1619,14 @@ impl Context {
 
                         let resolution = suggestion_groups.map(|suggestion_groups| {
                             let mut title = String::new();
-                            for chunk in buffer.text_for_range(
+                            for mut chunk in buffer.text_for_range(
                                 step.leading_tags_end
                                     ..step.trailing_tag_start.unwrap_or(step.range.end),
                             ) {
-                                if let Some((prefix, _)) =
-                                    chunk.trim_start_matches('\n').split_once('\n')
-                                {
+                                if title.is_empty() {
+                                    chunk = chunk.trim_start();
+                                }
+                                if let Some((prefix, _)) = chunk.split_once('\n') {
                                     title.push_str(prefix);
                                     break;
                                 } else {
