@@ -2056,7 +2056,7 @@ impl ContextEditor {
                         .unwrap();
                 let footer_range = step.trailing_tag_start.map(|start| {
                     let end = if buffer.contains_str_at(step.range.end, "\n") {
-                        buffer.anchor_after(step.range.end.to_offset(&buffer) + 1)
+                        buffer.anchor_before(step.range.end.to_offset(&buffer) + 1)
                     } else {
                         step.range.end
                     };
