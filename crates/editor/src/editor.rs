@@ -9115,17 +9115,12 @@ impl Editor {
             if definition.await? == Navigated::Yes {
                 return Ok(Navigated::Yes);
             }
-            let Some(references) = editor.update(&mut cx, |editor, cx| {
+            match editor.update(&mut cx, |editor, cx| {
                 editor.find_all_references(&FindAllReferences, cx)
-            })?
-            else {
-                return Ok(Navigated::No);
-            };
-            Ok(if references.await? == Navigated::Yes {
-                Navigated::Yes
-            } else {
-                Navigated::No
-            })
+            })? {
+                Some(references) => references.await,
+                None => Ok(Navigated::No),
+            }
         })
     }
 
