@@ -2030,6 +2030,10 @@ impl ContextEditor {
             }
         }
 
+        for range in updated {
+            self.reject_workflow_step(range.clone(), cx);
+        }
+
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let multibuffer = &snapshot.buffer_snapshot;
@@ -2234,6 +2238,8 @@ impl ContextEditor {
             editor.remove_creases(removed_crease_ids, cx);
             editor.remove_blocks(removed_block_ids, None, cx);
         });
+
+        self.update_active_workflow_step(cx);
     }
 
     fn insert_slash_command_output_sections(
@@ -3255,12 +3261,13 @@ impl ContextEditor {
                             ),
                         )),
                 )
-                .children(edit_paths.iter().map(|path| {
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(IconName::File))
-                        .child(Label::new(path.clone()))
-                }))
+                // todo!("do we wanna keep this?")
+                // .children(edit_paths.iter().map(|path| {
+                //     h_flex()
+                //         .gap_1()
+                //         .child(Icon::new(IconName::File))
+                //         .child(Label::new(path.clone()))
+                // }))
                 .into_any(),
         )
     }
