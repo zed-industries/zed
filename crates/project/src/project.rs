@@ -1247,7 +1247,9 @@ impl Project {
 
             project.update(cx, |project, cx| {
                 // In tests we always populate the environment to be empty so we don't run the shell
-                project.environment = ProjectEnvironment::new(Some(HashMap::default()), cx);
+                let tree_id = tree.read(cx).id();
+                project.environment =
+                    ProjectEnvironment::test(&[(tree_id, HashMap::default())], cx);
             });
 
             tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())

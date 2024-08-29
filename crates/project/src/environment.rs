@@ -31,6 +31,21 @@ impl ProjectEnvironment {
         })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn test(
+        shell_environments: &[(WorktreeId, HashMap<String, String>)],
+        cx: &mut AppContext,
+    ) -> Model<Self> {
+        cx.new_model(|_| Self {
+            cli_environment: None,
+            get_environment_task: None,
+            cached_shell_environments: shell_environments
+                .iter()
+                .cloned()
+                .collect::<HashMap<_, _>>(),
+        })
+    }
+
     pub(crate) fn remove_worktree_environment(&mut self, worktree_id: WorktreeId) {
         self.cached_shell_environments.remove(&worktree_id);
     }
