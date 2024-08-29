@@ -318,6 +318,15 @@ fn init_ui(
 }
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    {
+        use zed::single_instance::*;
+        if !check_single_instance() {
+            println!("zed is already running");
+            return;
+        }
+    }
+
     let start_time = std::time::Instant::now();
     menu::init();
     zed_actions::init();
@@ -360,7 +369,7 @@ fn main() {
             }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         use zed::only_instance::*;
         if ensure_only_instance() != IsOnlyInstance::Yes {
