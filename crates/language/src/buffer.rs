@@ -24,7 +24,6 @@ use gpui::{
     AnyElement, AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLabel,
     WindowContext,
 };
-use lazy_static::lazy_static;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -44,7 +43,7 @@ use std::{
     ops::{Deref, Range},
     path::{Path, PathBuf},
     str,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant, SystemTime},
     vec,
 };
@@ -67,11 +66,9 @@ pub use {tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
 
-lazy_static! {
-    /// A label for the background task spawned by the buffer to compute
-    /// a diff against the contents of its file.
-    pub static ref BUFFER_DIFF_TASK: TaskLabel = TaskLabel::new();
-}
+/// A label for the background task spawned by the buffer to compute
+/// a diff against the contents of its file.
+pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(|| TaskLabel::new());
 
 /// Indicate whether a [Buffer] has permissions to edit.
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -332,6 +329,8 @@ pub enum Event {
     CapabilityChanged,
     /// The buffer was explicitly requested to close.
     Closed,
+    /// The buffer was discarded when closing.
+    Discarded,
 }
 
 /// The file associated with a buffer.
@@ -384,7 +383,7 @@ pub trait File: Send + Sync {
 
 /// The file associated with a buffer, in the case where the file is on the local disk.
 pub trait LocalFile: File {
-    /// Returns the absolute path of this file.
+    /// Returns the absolute path of this file
     fn abs_path(&self, cx: &AppContext) -> PathBuf;
 
     /// Loads the file's contents from disk.
@@ -453,7 +452,7 @@ pub struct BufferChunks<'a> {
     buffer_snapshot: Option<&'a BufferSnapshot>,
     range: Range<usize>,
     chunks: text::Chunks<'a>,
-    diagnostic_endpoints: Peekable<vec::IntoIter<DiagnosticEndpoint>>,
+    diagnostic_endpoints: Option<Peekable<vec::IntoIter<DiagnosticEndpoint>>>,
     error_depth: usize,
     warning_depth: usize,
     information_depth: usize,
@@ -824,6 +823,12 @@ impl Buffer {
         self.has_conflict = false;
         self.saved_mtime = mtime;
         cx.emit(Event::Saved);
+        cx.notify();
+    }
+
+    /// This method is called to signal that the buffer has been discarded.
+    pub fn discarded(&mut self, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::Discarded);
         cx.notify();
     }
 
@@ -2573,8 +2578,9 @@ impl BufferSnapshot {
         if language_aware {
             syntax = Some(self.get_highlights(range.clone()));
         }
-
-        BufferChunks::new(self.text.as_rope(), range, syntax, Some(self))
+        // We want to look at diagnostic spans only when iterating over language-annotated chunks.
+        let diagnostics = language_aware;
+        BufferChunks::new(self.text.as_rope(), range, syntax, diagnostics, Some(self))
     }
 
     /// Invokes the given callback for each line of text in the given range of the buffer.
@@ -3793,6 +3799,7 @@ impl<'a> BufferChunks<'a> {
         text: &'a Rope,
         range: Range<usize>,
         syntax: Option<(SyntaxMapCaptures<'a>, Vec<HighlightMap>)>,
+        diagnostics: bool,
         buffer_snapshot: Option<&'a BufferSnapshot>,
     ) -> Self {
         let mut highlights = None;
@@ -3805,7 +3812,7 @@ impl<'a> BufferChunks<'a> {
             })
         }
 
-        let diagnostic_endpoints = Vec::new().into_iter().peekable();
+        let diagnostic_endpoints = diagnostics.then(|| Vec::new().into_iter().peekable());
         let chunks = text.chunks_in_range(range.clone());
 
         let mut this = BufferChunks {
@@ -3866,25 +3873,27 @@ impl<'a> BufferChunks<'a> {
     }
 
     fn initialize_diagnostic_endpoints(&mut self) {
-        if let Some(buffer) = self.buffer_snapshot {
-            let mut diagnostic_endpoints = Vec::new();
-            for entry in buffer.diagnostics_in_range::<_, usize>(self.range.clone(), false) {
-                diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.start,
-                    is_start: true,
-                    severity: entry.diagnostic.severity,
-                    is_unnecessary: entry.diagnostic.is_unnecessary,
-                });
-                diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.end,
-                    is_start: false,
-                    severity: entry.diagnostic.severity,
-                    is_unnecessary: entry.diagnostic.is_unnecessary,
-                });
+        if let Some(diagnostics) = self.diagnostic_endpoints.as_mut() {
+            if let Some(buffer) = self.buffer_snapshot {
+                let mut diagnostic_endpoints = Vec::new();
+                for entry in buffer.diagnostics_in_range::<_, usize>(self.range.clone(), false) {
+                    diagnostic_endpoints.push(DiagnosticEndpoint {
+                        offset: entry.range.start,
+                        is_start: true,
+                        severity: entry.diagnostic.severity,
+                        is_unnecessary: entry.diagnostic.is_unnecessary,
+                    });
+                    diagnostic_endpoints.push(DiagnosticEndpoint {
+                        offset: entry.range.end,
+                        is_start: false,
+                        severity: entry.diagnostic.severity,
+                        is_unnecessary: entry.diagnostic.is_unnecessary,
+                    });
+                }
+                diagnostic_endpoints
+                    .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
+                *diagnostics = diagnostic_endpoints.into_iter().peekable();
             }
-            diagnostic_endpoints
-                .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
-            self.diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
         }
     }
 
@@ -3970,15 +3979,19 @@ impl<'a> Iterator for BufferChunks<'a> {
             }
         }
 
-        while let Some(endpoint) = self.diagnostic_endpoints.peek().copied() {
-            if endpoint.offset <= self.range.start {
-                self.update_diagnostic_depths(endpoint);
-                self.diagnostic_endpoints.next();
-            } else {
-                next_diagnostic_endpoint = endpoint.offset;
-                break;
+        let mut diagnostic_endpoints = std::mem::take(&mut self.diagnostic_endpoints);
+        if let Some(diagnostic_endpoints) = diagnostic_endpoints.as_mut() {
+            while let Some(endpoint) = diagnostic_endpoints.peek().copied() {
+                if endpoint.offset <= self.range.start {
+                    self.update_diagnostic_depths(endpoint);
+                    diagnostic_endpoints.next();
+                } else {
+                    next_diagnostic_endpoint = endpoint.offset;
+                    break;
+                }
             }
         }
+        self.diagnostic_endpoints = diagnostic_endpoints;
 
         if let Some(chunk) = self.chunks.peek() {
             let chunk_start = self.range.start;

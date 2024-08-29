@@ -162,9 +162,10 @@ impl Keystroke {
 
 fn is_printable_key(key: &str) -> bool {
     match key {
-        "up" | "down" | "left" | "right" | "pageup" | "pagedown" | "home" | "end" | "delete"
-        | "escape" | "backspace" | "f1" | "f2" | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9"
-        | "f10" | "f11" | "f12" => false,
+        "f1" | "f2" | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9" | "f10" | "f11" | "f12"
+        | "f13" | "f14" | "f15" | "f16" | "f17" | "f18" | "f19" | "backspace" | "delete"
+        | "left" | "right" | "up" | "down" | "pageup" | "pagedown" | "insert" | "home" | "end"
+        | "escape" => false,
         _ => true,
     }
 }

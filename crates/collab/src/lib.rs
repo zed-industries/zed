@@ -1,5 +1,6 @@
 pub mod api;
 pub mod auth;
+pub mod clickhouse;
 pub mod db;
 pub mod env;
 pub mod executor;
@@ -8,6 +9,7 @@ pub mod migrations;
 mod rate_limiter;
 pub mod rpc;
 pub mod seed;
+pub mod user_backfiller;
 
 #[cfg(test)]
 mod tests;
@@ -167,6 +169,7 @@ pub struct Config {
     pub google_ai_api_key: Option<Arc<str>>,
     pub anthropic_api_key: Option<Arc<str>>,
     pub anthropic_staff_api_key: Option<Arc<str>>,
+    pub llm_closed_beta_model_name: Option<Arc<str>>,
     pub qwen2_7b_api_key: Option<Arc<str>>,
     pub qwen2_7b_api_url: Option<Arc<str>>,
     pub zed_client_checksum_seed: Option<String>,
@@ -175,6 +178,7 @@ pub struct Config {
     pub stripe_api_key: Option<String>,
     pub stripe_price_id: Option<Arc<str>>,
     pub supermaven_admin_api_key: Option<Arc<str>>,
+    pub user_backfiller_github_access_token: Option<Arc<str>>,
 }
 
 impl Config {
@@ -218,6 +222,7 @@ impl Config {
             google_ai_api_key: None,
             anthropic_api_key: None,
             anthropic_staff_api_key: None,
+            llm_closed_beta_model_name: None,
             clickhouse_url: None,
             clickhouse_user: None,
             clickhouse_password: None,
@@ -232,6 +237,7 @@ impl Config {
             supermaven_admin_api_key: None,
             qwen2_7b_api_key: None,
             qwen2_7b_api_url: None,
+            user_backfiller_github_access_token: None,
         }
     }
 }
@@ -267,7 +273,7 @@ pub struct AppState {
     pub stripe_client: Option<Arc<stripe::Client>>,
     pub rate_limiter: Arc<RateLimiter>,
     pub executor: Executor,
-    pub clickhouse_client: Option<clickhouse::Client>,
+    pub clickhouse_client: Option<::clickhouse::Client>,
     pub config: Config,
 }
 
@@ -358,8 +364,8 @@ async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::
     Ok(aws_sdk_s3::Client::new(&s3_config))
 }
 
-fn build_clickhouse_client(config: &Config) -> anyhow::Result<clickhouse::Client> {
-    Ok(clickhouse::Client::default()
+fn build_clickhouse_client(config: &Config) -> anyhow::Result<::clickhouse::Client> {
+    Ok(::clickhouse::Client::default()
         .with_url(
             config
                 .clickhouse_url

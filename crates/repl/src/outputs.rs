@@ -1,25 +1,61 @@
-use std::sync::Arc;
+//! # REPL Output Module
+//!
+//! This module provides the core functionality for handling and displaying
+//! various types of output from Jupyter kernels.
+//!
+//! ## Key Components
+//!
+//! - `Output`: Represents a single output item, which can be of various types.
+//! - `OutputContent`: An enum that encapsulates different types of output content.
+//! - `ExecutionView`: Manages the display of outputs for a single execution.
+//! - `ExecutionStatus`: Represents the current status of an execution.
+//!
+//! ## Output Types
+//!
+//! The module supports several output types, including:
+//! - Plain text
+//! - Markdown
+//! - Images (PNG and JPEG)
+//! - Tables
+//! - Error messages
+//!
+//! ## Clipboard Support
+//!
+//! Most output types implement the `SupportsClipboard` trait, allowing
+//! users to easily copy output content to the system clipboard.
+//!
+//! ## Rendering
+//!
+//! The module provides rendering capabilities for each output type,
+//! ensuring proper display within the REPL interface.
+//!
+//! ## Jupyter Integration
+//!
+//! This module is designed to work with Jupyter message protocols,
+//! interpreting and displaying various types of Jupyter output.
+
 use std::time::Duration;
 
-use crate::stdio::TerminalOutput;
-use anyhow::Result;
-use base64::prelude::*;
 use gpui::{
-    img, percentage, Animation, AnimationExt, AnyElement, FontWeight, Render, RenderImage, Task,
-    TextRun, Transformation, View,
+    percentage, Animation, AnimationExt, AnyElement, ClipboardItem, Render, Transformation, View,
 };
-use runtimelib::datatable::TableSchema;
-use runtimelib::media::datatable::TabularDataResource;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
-use serde_json::Value;
-use settings::Settings;
-use theme::ThemeSettings;
-use ui::{div, prelude::*, v_flex, IntoElement, Styled, ViewContext};
+use ui::{div, prelude::*, v_flex, IntoElement, Styled, Tooltip, ViewContext};
 
-use markdown_preview::{
-    markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,
-    markdown_renderer::render_markdown_block,
-};
+mod image;
+use image::ImageView;
+
+mod markdown;
+use markdown::MarkdownView;
+
+mod table;
+use table::TableView;
+
+pub mod plain;
+use plain::TerminalOutput;
+
+mod user_error;
+use user_error::ErrorView;
 
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
@@ -34,295 +70,9 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
     }
 }
 
-/// ImageView renders an image inline in an editor, adapting to the line height to fit the image.
-pub struct ImageView {
-    height: u32,
-    width: u32,
-    image: Arc<RenderImage>,
-}
-
-impl ImageView {
-    fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
-        let line_height = cx.line_height();
-
-        let (height, width) = if self.height as f32 / line_height.0 == u8::MAX as f32 {
-            let height = u8::MAX as f32 * line_height.0;
-            let width = self.width as f32 * height / self.height as f32;
-            (height, width)
-        } else {
-            (self.height as f32, self.width as f32)
-        };
-
-        let image = self.image.clone();
-
-        div()
-            .h(Pixels(height))
-            .w(Pixels(width))
-            .child(img(image))
-            .into_any_element()
-    }
-
-    fn from(base64_encoded_data: &str) -> Result<Self> {
-        let bytes = BASE64_STANDARD.decode(base64_encoded_data)?;
-
-        let format = image::guess_format(&bytes)?;
-        let mut data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
-
-        // Convert from RGBA to BGRA.
-        for pixel in data.chunks_exact_mut(4) {
-            pixel.swap(0, 2);
-        }
-
-        let height = data.height();
-        let width = data.width();
-
-        let gpui_image_data = RenderImage::new(vec![image::Frame::new(data)]);
-
-        return Ok(ImageView {
-            height,
-            width,
-            image: Arc::new(gpui_image_data),
-        });
-    }
-}
-
-/// TableView renders a static table inline in a buffer.
-/// It uses the https://specs.frictionlessdata.io/tabular-data-resource/ specification for data interchange.
-pub struct TableView {
-    pub table: TabularDataResource,
-    pub widths: Vec<Pixels>,
-}
-
-fn cell_content(row: &Value, field: &str) -> String {
-    match row.get(&field) {
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Number(n)) => n.to_string(),
-        Some(Value::Bool(b)) => b.to_string(),
-        Some(Value::Array(arr)) => format!("{:?}", arr),
-        Some(Value::Object(obj)) => format!("{:?}", obj),
-        Some(Value::Null) | None => String::new(),
-    }
-}
-
-// Declare constant for the padding multiple on the line height
-const TABLE_Y_PADDING_MULTIPLE: f32 = 0.5;
-
-impl TableView {
-    pub fn new(table: TabularDataResource, cx: &mut WindowContext) -> Self {
-        let mut widths = Vec::with_capacity(table.schema.fields.len());
-
-        let text_system = cx.text_system();
-        let text_style = cx.text_style();
-        let text_font = ThemeSettings::get_global(cx).buffer_font.clone();
-        let font_size = ThemeSettings::get_global(cx).buffer_font_size;
-        let mut runs = [TextRun {
-            len: 0,
-            font: text_font,
-            color: text_style.color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        }];
-
-        for field in table.schema.fields.iter() {
-            runs[0].len = field.name.len();
-            let mut width = text_system
-                .layout_line(&field.name, font_size, &runs)
-                .map(|layout| layout.width)
-                .unwrap_or(px(0.));
-
-            let Some(data) = table.data.as_ref() else {
-                widths.push(width);
-                continue;
-            };
-
-            for row in data {
-                let content = cell_content(&row, &field.name);
-                runs[0].len = content.len();
-                let cell_width = cx
-                    .text_system()
-                    .layout_line(&content, font_size, &runs)
-                    .map(|layout| layout.width)
-                    .unwrap_or(px(0.));
-
-                width = width.max(cell_width)
-            }
-
-            widths.push(width)
-        }
-
-        Self { table, widths }
-    }
-
-    pub fn render(&self, cx: &ViewContext<ExecutionView>) -> AnyElement {
-        let data = match &self.table.data {
-            Some(data) => data,
-            None => return div().into_any_element(),
-        };
-
-        let mut headings = serde_json::Map::new();
-        for field in &self.table.schema.fields {
-            headings.insert(field.name.clone(), Value::String(field.name.clone()));
-        }
-        let header = self.render_row(&self.table.schema, true, &Value::Object(headings), cx);
-
-        let body = data
-            .iter()
-            .map(|row| self.render_row(&self.table.schema, false, &row, cx));
-
-        v_flex()
-            .id("table")
-            .overflow_x_scroll()
-            .w_full()
-            .child(header)
-            .children(body)
-            .into_any_element()
-    }
-
-    pub fn render_row(
-        &self,
-        schema: &TableSchema,
-        is_header: bool,
-        row: &Value,
-        cx: &ViewContext<ExecutionView>,
-    ) -> AnyElement {
-        let theme = cx.theme();
-
-        let line_height = cx.line_height();
-
-        let row_cells = schema
-            .fields
-            .iter()
-            .zip(self.widths.iter())
-            .map(|(field, width)| {
-                let container = match field.field_type {
-                    runtimelib::datatable::FieldType::String => div(),
-
-                    runtimelib::datatable::FieldType::Number
-                    | runtimelib::datatable::FieldType::Integer
-                    | runtimelib::datatable::FieldType::Date
-                    | runtimelib::datatable::FieldType::Time
-                    | runtimelib::datatable::FieldType::Datetime
-                    | runtimelib::datatable::FieldType::Year
-                    | runtimelib::datatable::FieldType::Duration
-                    | runtimelib::datatable::FieldType::Yearmonth => v_flex().items_end(),
-
-                    _ => div(),
-                };
-
-                let value = cell_content(row, &field.name);
-
-                let mut cell = container
-                    .min_w(*width + px(22.))
-                    .w(*width + px(22.))
-                    .child(value)
-                    .px_2()
-                    .py((TABLE_Y_PADDING_MULTIPLE / 2.0) * line_height)
-                    .border_color(theme.colors().border);
-
-                if is_header {
-                    cell = cell.border_1().bg(theme.colors().border_focused)
-                } else {
-                    cell = cell.border_1()
-                }
-                cell
-            })
-            .collect::<Vec<_>>();
-
-        let mut total_width = px(0.);
-        for width in self.widths.iter() {
-            // Width fudge factor: border + 2 (heading), padding
-            total_width += *width + px(22.);
-        }
-
-        h_flex()
-            .w(total_width)
-            .children(row_cells)
-            .into_any_element()
-    }
-}
-
-/// Userspace error from the kernel
-pub struct ErrorView {
-    pub ename: String,
-    pub evalue: String,
-    pub traceback: TerminalOutput,
-}
-
-impl ErrorView {
-    fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
-        let theme = cx.theme();
-
-        let padding = cx.line_height() / 2.;
-
-        Some(
-            v_flex()
-                .w_full()
-                .px(padding)
-                .py(padding)
-                .border_1()
-                .border_color(theme.status().error_border)
-                .child(
-                    h_flex()
-                        .font_weight(FontWeight::BOLD)
-                        .child(format!("{}: {}", self.ename, self.evalue)),
-                )
-                .child(self.traceback.render(cx))
-                .into_any_element(),
-        )
-    }
-}
-
-pub struct MarkdownView {
-    contents: Option<ParsedMarkdown>,
-    parsing_markdown_task: Option<Task<Result<()>>>,
-}
-
-impl MarkdownView {
-    pub fn from(text: String, cx: &mut ViewContext<Self>) -> Self {
-        let task = cx.spawn(|markdown, mut cx| async move {
-            let text = text.clone();
-            let parsed = cx
-                .background_executor()
-                .spawn(async move { parse_markdown(&text, None, None).await });
-
-            let content = parsed.await;
-
-            markdown.update(&mut cx, |markdown, cx| {
-                markdown.parsing_markdown_task.take();
-                markdown.contents = Some(content);
-                cx.notify();
-            })
-        });
-
-        Self {
-            contents: None,
-            parsing_markdown_task: Some(task),
-        }
-    }
-}
-
-impl Render for MarkdownView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let Some(parsed) = self.contents.as_ref() else {
-            return div().into_any_element();
-        };
-
-        let mut markdown_render_context =
-            markdown_preview::markdown_renderer::RenderContext::new(None, cx);
-
-        v_flex()
-            .gap_3()
-            .py_4()
-            .children(parsed.children.iter().map(|child| {
-                div().relative().child(
-                    div()
-                        .relative()
-                        .child(render_markdown_block(child, &mut markdown_render_context)),
-                )
-            }))
-            .into_any_element()
-    }
+pub(crate) trait SupportsClipboard {
+    fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem>;
+    fn has_clipboard_content(&self, cx: &WindowContext) -> bool;
 }
 
 pub struct Output {
@@ -346,6 +96,34 @@ impl Output {
     }
 }
 
+impl SupportsClipboard for Output {
+    fn clipboard_content(&self, cx: &WindowContext) -> Option<ClipboardItem> {
+        match &self.content {
+            OutputContent::Plain(terminal) => terminal.clipboard_content(cx),
+            OutputContent::Stream(terminal) => terminal.clipboard_content(cx),
+            OutputContent::Image(image) => image.clipboard_content(cx),
+            OutputContent::ErrorOutput(error) => error.traceback.clipboard_content(cx),
+            OutputContent::Message(_) => None,
+            OutputContent::Table(table) => table.clipboard_content(cx),
+            OutputContent::Markdown(markdown) => markdown.read(cx).clipboard_content(cx),
+            OutputContent::ClearOutputWaitMarker => None,
+        }
+    }
+
+    fn has_clipboard_content(&self, cx: &WindowContext) -> bool {
+        match &self.content {
+            OutputContent::Plain(terminal) => terminal.has_clipboard_content(cx),
+            OutputContent::Stream(terminal) => terminal.has_clipboard_content(cx),
+            OutputContent::Image(image) => image.has_clipboard_content(cx),
+            OutputContent::ErrorOutput(error) => error.traceback.has_clipboard_content(cx),
+            OutputContent::Message(_) => false,
+            OutputContent::Table(table) => table.has_clipboard_content(cx),
+            OutputContent::Markdown(markdown) => markdown.read(cx).has_clipboard_content(cx),
+            OutputContent::ClearOutputWaitMarker => false,
+        }
+    }
+}
+
 pub enum OutputContent {
     Plain(TerminalOutput),
     Stream(TerminalOutput),
@@ -358,7 +136,7 @@ pub enum OutputContent {
 }
 
 impl OutputContent {
-    fn render(&self, cx: &ViewContext<ExecutionView>) -> Option<AnyElement> {
+    fn render(&self, cx: &mut ViewContext<ExecutionView>) -> Option<AnyElement> {
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
@@ -406,8 +184,12 @@ pub enum ExecutionStatus {
     ShuttingDown,
     Shutdown,
     KernelErrored(String),
+    Restarting,
 }
 
+/// An ExecutionView shows the outputs of an execution.
+/// It can hold zero or more outputs, which the user
+/// sees as "the output" for a single execution.
 pub struct ExecutionView {
     pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
@@ -599,6 +381,9 @@ impl Render for ExecutionView {
             ExecutionStatus::ShuttingDown => Label::new("Kernel shutting down...")
                 .color(Color::Muted)
                 .into_any_element(),
+            ExecutionStatus::Restarting => Label::new("Kernel restarting...")
+                .color(Color::Muted)
+                .into_any_element(),
             ExecutionStatus::Shutdown => Label::new("Kernel shutdown")
                 .color(Color::Muted)
                 .into_any_element(),
@@ -620,11 +405,42 @@ impl Render for ExecutionView {
 
         div()
             .w_full()
-            .children(
-                self.outputs
-                    .iter()
-                    .filter_map(|output| output.content.render(cx)),
-            )
+            .children(self.outputs.iter().enumerate().map(|(index, output)| {
+                h_flex()
+                    .w_full()
+                    .items_start()
+                    .child(
+                        div().flex_1().child(
+                            output
+                                .content
+                                .render(cx)
+                                .unwrap_or_else(|| div().into_any_element()),
+                        ),
+                    )
+                    .when(output.has_clipboard_content(cx), |el| {
+                        let clipboard_content = output.clipboard_content(cx);
+
+                        el.child(
+                            div().pl_1().child(
+                                IconButton::new(
+                                    ElementId::Name(format!("copy-output-{}", index).into()),
+                                    IconName::Copy,
+                                )
+                                .style(ButtonStyle::Transparent)
+                                .tooltip(move |cx| Tooltip::text("Copy Output", cx))
+                                .on_click(cx.listener(
+                                    move |_, _, cx| {
+                                        if let Some(clipboard_content) = clipboard_content.as_ref()
+                                        {
+                                            cx.write_to_clipboard(clipboard_content.clone());
+                                            // todo!(): let the user know that the content was copied
+                                        }
+                                    },
+                                )),
+                            ),
+                        )
+                    })
+            }))
             .children(match self.status {
                 ExecutionStatus::Executing => vec![status],
                 ExecutionStatus::Queued => vec![status],

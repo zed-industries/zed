@@ -177,10 +177,6 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         self.0.read().all_font_names()
     }
 
-    fn all_font_families(&self) -> Vec<String> {
-        self.0.read().all_font_families()
-    }
-
     fn font_id(&self, font: &Font) -> Result<FontId> {
         let lock = self.0.upgradable_read();
         if let Some(font_id) = lock.font_selections.get(font) {
@@ -301,7 +297,7 @@ impl DirectWriteState {
                         continue;
                     };
                     if fonts.GetFontCount() == 0 {
-                        log::error!("No mathcing font find for {}", family_name);
+                        log::error!("No matching font found for {}", family_name);
                         continue;
                     }
                     let font = fonts.GetFontFaceReference(0)?.CreateFontFace()?;
@@ -961,10 +957,6 @@ impl DirectWriteState {
             &self.components.locale,
         ));
         result
-    }
-
-    fn all_font_families(&self) -> Vec<String> {
-        get_font_names_from_collection(&self.system_font_collection, &self.components.locale)
     }
 }
 

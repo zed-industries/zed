@@ -41,7 +41,7 @@ Previously, Zed shipped with `Zed Mono` and `Zed Sans`, customized versions of t
 Here's how you can use the old Zed fonts instead of `Zed Plex Mono` and `Zed Plex Sans`:
 
 1. Download [zed-app-fonts-1.2.0.zip](https://github.com/zed-industries/zed-fonts/releases/download/1.2.0/zed-app-fonts-1.2.0.zip) from the [zed-fonts releases](https://github.com/zed-industries/zed-fonts/releases) page.
-2. Open MacOS `Font Book.app`
+2. Open macOS `Font Book.app`
 3. Unzip the file and drag the `ttf` files into the Font Book app.
 4. Update your settings `ui_font_family` and `buffer_font_family` to use `Zed Mono` or `Zed Sans` in your `settings.json` file.
 

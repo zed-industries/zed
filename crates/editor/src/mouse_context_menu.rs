@@ -1,11 +1,10 @@
 use std::ops::Range;
 
-use crate::GoToDeclaration;
 use crate::{
-    selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut, DisplayPoint,
-    DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation,
-    GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode, ToDisplayPoint,
-    ToggleCodeActions,
+    actions::Format, selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut,
+    DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDeclaration,
+    GoToDefinition, GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager,
+    SelectMode, ToDisplayPoint, ToggleCodeActions,
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
@@ -162,12 +161,14 @@ pub fn deploy_context_menu(
         ui::ContextMenu::build(cx, |menu, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
-                .action("Rename Symbol", Box::new(Rename))
                 .action("Go to Definition", Box::new(GoToDefinition))
                 .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
                 .action("Go to Implementation", Box::new(GoToImplementation))
                 .action("Find All References", Box::new(FindAllReferences))
+                .separator()
+                .action("Rename Symbol", Box::new(Rename))
+                .action("Format Buffer", Box::new(Format))
                 .action(
                     "Code Actions",
                     Box::new(ToggleCodeActions {

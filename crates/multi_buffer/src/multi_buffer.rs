@@ -106,6 +106,7 @@ pub enum Event {
     Saved,
     FileHandleChanged,
     Closed,
+    Discarded,
     DirtyChanged,
     DiagnosticsUpdated,
 }
@@ -1691,6 +1692,7 @@ impl MultiBuffer {
             language::Event::Reparsed => Event::Reparsed(buffer.read(cx).remote_id()),
             language::Event::DiagnosticsUpdated => Event::DiagnosticsUpdated,
             language::Event::Closed => Event::Closed,
+            language::Event::Discarded => Event::Discarded,
             language::Event::CapabilityChanged => {
                 self.capability = buffer.read(cx).capability();
                 Event::CapabilityChanged
