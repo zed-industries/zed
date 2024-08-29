@@ -12,6 +12,7 @@ use gpui::{Task, WeakView, WindowContext};
 use language::{CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use text::LineEnding;
 use ui::{IconName, SharedString};
 use workspace::Workspace;
 
@@ -127,10 +128,14 @@ impl SlashCommand for ContextServerSlashCommand {
                     return Err(anyhow!("Context server not initialized"));
                 };
                 let result = protocol.run_prompt(&prompt_name, prompt_args).await?;
+                let mut prompt = result.prompt;
+
+                // We must normalize the line endings here, since servers might return CR characters.
+                LineEnding::normalize(&mut prompt);
 
                 Ok(SlashCommandOutput {
                     sections: vec![SlashCommandOutputSection {
-                        range: 0..(result.prompt.len()),
+                        range: 0..(prompt.len()),
                         icon: IconName::ZedAssistant,
                         label: SharedString::from(
                             result
@@ -138,7 +143,7 @@ impl SlashCommand for ContextServerSlashCommand {
                                 .unwrap_or(format!("Result from {}", prompt_name)),
                         ),
                     }],
-                    text: result.prompt,
+                    text: prompt,
                     run_commands_in_text: false,
                 })
             })
