@@ -508,17 +508,15 @@ impl ContextProvider for GoContextProvider {
         Some(TaskTemplates(vec![
             TaskTemplate {
                 label: format!(
-                    "go test {} -run {}",
+                    "cd {} && go test -run {}",
                     GO_PACKAGE_TASK_VARIABLE.template_value(),
                     VariableName::Symbol.template_value(),
                 ),
-                command: "go".into(),
-                args: vec![
-                    "test".into(),
+                command: format!(
+                    "cd {} && go test -run {}",
                     GO_PACKAGE_TASK_VARIABLE.template_value(),
-                    "-run".into(),
-                    format!("^{}\\$", VariableName::Symbol.template_value(),),
-                ],
+                    VariableName::Symbol.template_value(),
+                    ),
                 tags: vec!["go-test".to_owned()],
                 ..TaskTemplate::default()
             },
