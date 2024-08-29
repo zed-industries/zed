@@ -1,8 +1,8 @@
 mod outline_panel_settings;
 
 use std::{
-    cell::OnceCell,
     cmp,
+    hash::Hash,
     ops::Range,
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
@@ -34,6 +34,7 @@ use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrev};
 
+use multi_buffer::MultiBufferRow;
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
 use project::{File, Fs, Item, Project};
 use search::{BufferSearchBar, ProjectSearchView};
@@ -114,6 +115,7 @@ pub struct OutlinePanel {
     mode: ItemsDisplayMode,
     search: Option<(SearchKind, String)>,
     search_matches: Vec<Range<editor::Anchor>>,
+    search_matches_update_tasks: HashMap<FsEntry, Task<()>>,
 }
 
 #[derive(Debug)]
@@ -220,7 +222,7 @@ struct SearchEntry {
     match_range: Range<editor::Anchor>,
     same_line_matches: Vec<Range<editor::Anchor>>,
     kind: SearchKind,
-    render_data: Option<OnceCell<SearchData>>,
+    render_data: Option<SearchData>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -376,6 +378,25 @@ impl PartialEq for FsEntry {
     }
 }
 
+impl Hash for FsEntry {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Self::ExternalFile(buffer_id, _) => {
+                buffer_id.hash(state);
+            }
+            Self::Directory(worktree_id, entry) => {
+                worktree_id.hash(state);
+                entry.id.hash(state);
+            }
+            Self::File(worktree_id, entry, buffer_id, _) => {
+                worktree_id.hash(state);
+                entry.id.hash(state);
+                buffer_id.hash(state);
+            }
+        }
+    }
+}
+
 struct ActiveItem {
     item_handle: Box<dyn WeakItemHandle>,
     active_editor: WeakView<Editor>,
@@ -521,6 +542,7 @@ impl OutlinePanel {
                 updating_fs_entries: false,
                 fs_entries_update_task: Task::ready(()),
                 cached_entries_update_task: Task::ready(()),
+                search_matches_update_tasks: HashMap::default(),
                 reveal_selection_task: Task::ready(Ok(())),
                 outline_fetch_tasks: HashMap::default(),
                 excerpts: HashMap::default(),
@@ -752,7 +774,7 @@ impl OutlinePanel {
         }) {
             self.select_entry(entry_to_select, true, cx);
         } else {
-            self.select_first(&SelectFirst {}, cx)
+            self.select_last(&SelectLast, cx)
         }
     }
 
@@ -1718,7 +1740,7 @@ impl OutlinePanel {
                 kind,
                 match_range: match_range.clone(),
                 same_line_matches: Vec::new(),
-                render_data: Some(OnceCell::new()),
+                render_data: None,
             }),
             ElementId::from(SharedString::from(format!("search-{match_range:?}"))),
             depth,
@@ -2188,6 +2210,7 @@ impl OutlinePanel {
         self.selected_entry = SelectedEntry::None;
         self.fs_entries_update_task = Task::ready(());
         self.cached_entries_update_task = Task::ready(());
+        self.search_matches_update_tasks.clear();
         self.active_item = None;
         self.fs_entries.clear();
         self.fs_entries_depth.clear();
@@ -2633,16 +2656,16 @@ impl OutlinePanel {
                 let track_matches = query.is_some();
 
                 #[derive(Debug)]
-                struct ParentStats<'a> {
-                    path: &'a Path,
+                struct ParentStats {
+                    path: Arc<Path>,
                     folded: bool,
                     expanded: bool,
                     depth: usize,
                 }
                 let mut parent_dirs = Vec::<ParentStats>::new();
-                for entry in &outline_panel.fs_entries {
-                    let is_expanded = outline_panel.is_expanded(entry);
-                    let (depth, should_add) = match entry {
+                for entry in outline_panel.fs_entries.clone() {
+                    let is_expanded = outline_panel.is_expanded(&entry);
+                    let (depth, should_add) = match &entry {
                         FsEntry::Directory(worktree_id, dir_entry) => {
                             let mut should_add = true;
                             let is_root = project
@@ -2673,7 +2696,7 @@ impl OutlinePanel {
                             let auto_fold = match parent_dirs.last() {
                                 Some(parent) => {
                                     parent.folded
-                                        && Some(parent.path) == dir_entry.path.parent()
+                                        && Some(parent.path.as_ref()) == dir_entry.path.parent()
                                         && outline_panel
                                             .fs_children_count
                                             .get(worktree_id)
@@ -2695,7 +2718,7 @@ impl OutlinePanel {
                                         parent.depth + 1
                                     };
                                     parent_dirs.push(ParentStats {
-                                        path: &dir_entry.path,
+                                        path: dir_entry.path.clone(),
                                         folded,
                                         expanded: parent_expanded && is_expanded,
                                         depth: new_depth,
@@ -2704,7 +2727,7 @@ impl OutlinePanel {
                                 }
                                 None => {
                                     parent_dirs.push(ParentStats {
-                                        path: &dir_entry.path,
+                                        path: dir_entry.path.clone(),
                                         folded,
                                         expanded: is_expanded,
                                         depth: fs_depth,
@@ -2779,9 +2802,7 @@ impl OutlinePanel {
                                     .iter()
                                     .rev()
                                     .find(|parent| {
-                                        folded_dirs
-                                            .iter()
-                                            .all(|entry| entry.path.as_ref() != parent.path)
+                                        folded_dirs.iter().all(|entry| entry.path != parent.path)
                                     })
                                     .map_or(true, |parent| parent.expanded);
                                 if !is_singleton && (parent_expanded || query.is_some()) {
@@ -2806,9 +2827,7 @@ impl OutlinePanel {
                                     .iter()
                                     .rev()
                                     .find(|parent| {
-                                        folded_dirs
-                                            .iter()
-                                            .all(|entry| entry.path.as_ref() != parent.path)
+                                        folded_dirs.iter().all(|entry| entry.path != parent.path)
                                     })
                                     .map_or(true, |parent| parent.expanded);
                                 if !is_singleton && (parent_expanded || query.is_some()) {
@@ -2861,13 +2880,37 @@ impl OutlinePanel {
                     match outline_panel.mode {
                         ItemsDisplayMode::Search => {
                             if is_singleton || query.is_some() || (should_add && is_expanded) {
-                                outline_panel.add_search_entries(
-                                    entry,
+                                let previous_search_entries = outline_panel
+                                    .cached_entries
+                                    .iter()
+                                    .skip_while(|cached_entry| match &cached_entry.entry {
+                                        PanelEntry::Fs(cached_fs_entry) => {
+                                            cached_fs_entry != &entry
+                                        }
+                                        _ => true,
+                                    })
+                                    .take_while(|entry| {
+                                        matches!(entry.entry, PanelEntry::Search(_))
+                                    })
+                                    .map(|entry| {
+                                        outline_panel.push_entry(
+                                            &mut entries,
+                                            &mut match_candidates,
+                                            track_matches,
+                                            entry.entry.clone(),
+                                            depth,
+                                            cx,
+                                        );
+                                        entry.clone()
+                                    })
+                                    .collect::<Vec<_>>();
+
+                                outline_panel.spawn_search_entries_resolve(
+                                    previous_search_entries,
+                                    entry.clone(),
                                     depth,
-                                    track_matches,
+                                    query.clone(),
                                     is_singleton,
-                                    &mut entries,
-                                    &mut match_candidates,
                                     cx,
                                 );
                             }
@@ -2875,7 +2918,7 @@ impl OutlinePanel {
                         ItemsDisplayMode::Outline => {
                             let excerpts_to_consider =
                                 if is_singleton || query.is_some() || (should_add && is_expanded) {
-                                    match entry {
+                                    match &entry {
                                         FsEntry::File(_, _, buffer_id, entry_excerpts) => {
                                             Some((*buffer_id, entry_excerpts))
                                         }
@@ -2890,7 +2933,7 @@ impl OutlinePanel {
                             if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider {
                                 outline_panel.add_excerpt_entries(
                                     buffer_id,
-                                    entry_excerpts,
+                                    &entry_excerpts,
                                     depth,
                                     track_matches,
                                     is_singleton,
@@ -2924,11 +2967,7 @@ impl OutlinePanel {
                     let parent_expanded = parent_dirs
                         .iter()
                         .rev()
-                        .find(|parent| {
-                            folded_dirs
-                                .iter()
-                                .all(|entry| entry.path.as_ref() != parent.path)
-                        })
+                        .find(|parent| folded_dirs.iter().all(|entry| entry.path != parent.path))
                         .map_or(true, |parent| parent.expanded);
                     if parent_expanded || query.is_some() {
                         outline_panel.push_entry(
@@ -2949,6 +2988,7 @@ impl OutlinePanel {
                 .update(&mut cx, |outline_panel, _| {
                     if outline_panel.search.is_some() {
                         cleanup_fs_entries_without_search_children(
+                            &outline_panel.search_matches_update_tasks,
                             &outline_panel.collapsed_entries,
                             &mut entries,
                             &mut match_candidates,
@@ -3047,11 +3087,7 @@ impl OutlinePanel {
                     OutlineEntry::Excerpt(..) => {}
                 },
                 PanelEntry::Search(new_search_entry) => {
-                    if let Some(search_data) = new_search_entry
-                        .render_data
-                        .as_ref()
-                        .and_then(|data| data.get())
-                    {
+                    if let Some(search_data) = new_search_entry.render_data.as_ref() {
                         match_candidates.push(StringMatchCandidate {
                             id,
                             char_bag: search_data.context_text.chars().collect(),
@@ -3237,17 +3273,22 @@ impl OutlinePanel {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn add_search_entries(
-        &self,
-        entry: &FsEntry,
+    fn spawn_search_entries_resolve(
+        &mut self,
+        previous_search_entries: Vec<CachedEntry>,
+        parent_entry: FsEntry,
         parent_depth: usize,
-        track_matches: bool,
+        filter_query: Option<String>,
         is_singleton: bool,
-        entries: &mut Vec<CachedEntry>,
-        match_candidates: &mut Vec<StringMatchCandidate>,
         cx: &mut ViewContext<Self>,
     ) {
-        let related_excerpts = match entry {
+        let Some(kind) = self.search.as_ref().map(|&(kind, _)| kind) else {
+            return;
+        };
+        let Some(active_editor) = self.active_editor() else {
+            return;
+        };
+        let related_excerpts = match &parent_entry {
             FsEntry::Directory(_, _) => return,
             FsEntry::ExternalFile(_, excerpts) => excerpts,
             FsEntry::File(_, _, _, excerpts) => excerpts,
@@ -3255,43 +3296,105 @@ impl OutlinePanel {
         .iter()
         .copied()
         .collect::<HashSet<_>>();
-        if related_excerpts.is_empty() || self.search_matches.is_empty() {
-            return;
-        }
-        let Some(kind) = self.search.as_ref().map(|&(kind, _)| kind) else {
-            return;
-        };
+        let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
 
-        for match_range in &self.search_matches {
-            if related_excerpts.contains(&match_range.start.excerpt_id)
-                || related_excerpts.contains(&match_range.end.excerpt_id)
-            {
-                let depth = if is_singleton { 0 } else { parent_depth + 1 };
-                let previous_search_entry = entries.last_mut().and_then(|entry| {
-                    if let PanelEntry::Search(previous_search_entry) = &mut entry.entry {
-                        Some(previous_search_entry)
-                    } else {
-                        None
-                    }
-                });
-                let mut new_search_entry = SearchEntry {
-                    kind,
-                    match_range: match_range.clone(),
-                    same_line_matches: Vec::new(),
-                    render_data: Some(OnceCell::new()),
-                };
-                if self.init_search_data(previous_search_entry, &mut new_search_entry, cx) {
-                    self.push_entry(
-                        entries,
-                        match_candidates,
-                        track_matches,
-                        PanelEntry::Search(new_search_entry),
-                        depth,
-                        cx,
-                    );
-                }
-            }
+        let matches_to_render = self
+            .search_matches
+            .iter()
+            .filter(|match_range| {
+                related_excerpts.contains(&match_range.start.excerpt_id)
+                    || related_excerpts.contains(&match_range.end.excerpt_id)
+            })
+            .fold(HashMap::default(), |mut matches_per_row, match_range| {
+                let match_point_range = match_range.to_point(&multi_buffer_snapshot);
+                let entire_row_range_start = language::Point::new(match_point_range.start.row, 0);
+                let entire_row_range_end = language::Point::new(
+                    match_point_range.end.row,
+                    multi_buffer_snapshot.line_len(MultiBufferRow(match_point_range.end.row)),
+                );
+                let entire_row_range = (entire_row_range_start..entire_row_range_end)
+                    .to_anchors(&multi_buffer_snapshot);
+                matches_per_row
+                    .entry(entire_row_range)
+                    .or_insert_with(|| Vec::new())
+                    .push(match_range.clone());
+                matches_per_row
+            });
+        if matches_to_render.is_empty() {
+            return;
         }
+
+        let theme = cx.theme().syntax().clone();
+        let depth = if is_singleton { 0 } else { parent_depth + 1 };
+        let search = self.search.clone();
+        self.search_matches_update_tasks.insert(
+            parent_entry.clone(),
+            cx.spawn(|outline_panel, mut cx| async move {
+                let mut search_entries = cx
+                    .background_executor()
+                    .spawn(prepare_search_match_data(
+                        matches_to_render,
+                        kind,
+                        previous_search_entries,
+                        theme,
+                        depth,
+                        filter_query,
+                        multi_buffer_snapshot,
+                    ))
+                    .await;
+                outline_panel
+                    .update(&mut cx, |outline_panel, cx| {
+                        outline_panel
+                            .search_matches_update_tasks
+                            .remove(&parent_entry);
+                        if outline_panel.search != search {
+                            return;
+                        }
+
+                        if search_entries.is_empty() {
+                            cleanup_fs_entries_without_search_children(
+                                &outline_panel.search_matches_update_tasks,
+                                &mut outline_panel.collapsed_entries,
+                                &mut outline_panel.cached_entries,
+                                &mut Vec::new(),
+                            );
+                        } else {
+                            let mut new_cached_entries = Vec::with_capacity(
+                                search_entries.len() + outline_panel.cached_entries.len(),
+                            );
+                            let expected_parent_entry = PanelEntry::Fs(parent_entry);
+                            let mut parent_found = false;
+                            let mut skipped_old_search_entries = false;
+                            for cached_entry in outline_panel.cached_entries.drain(..) {
+                                let entry_is_parent =
+                                    !parent_found && expected_parent_entry == cached_entry.entry;
+                                if parent_found && !skipped_old_search_entries {
+                                    match &cached_entry.entry {
+                                        PanelEntry::Search(_) => {
+                                            continue;
+                                        }
+                                        _ => skipped_old_search_entries = true,
+                                    }
+                                }
+                                new_cached_entries.push(cached_entry);
+                                if !parent_found && entry_is_parent {
+                                    new_cached_entries.extend(search_entries.drain(..).map(
+                                        |(string_match, search_entry)| CachedEntry {
+                                            depth,
+                                            string_match,
+                                            entry: PanelEntry::Search(search_entry),
+                                        },
+                                    ));
+                                    parent_found = true;
+                                }
+                            }
+                            outline_panel.cached_entries = new_cached_entries;
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+            }),
+        );
     }
 
     fn active_editor(&self) -> Option<View<Editor>> {
@@ -3335,59 +3438,6 @@ impl OutlinePanel {
         }
     }
 
-    fn init_search_data(
-        &self,
-        previous_search_entry: Option<&mut SearchEntry>,
-        new_search_entry: &mut SearchEntry,
-        cx: &WindowContext,
-    ) -> bool {
-        let Some(active_editor) = self.active_editor() else {
-            return false;
-        };
-        let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
-        let theme = cx.theme().syntax().clone();
-        let previous_search_data = previous_search_entry.and_then(|previous_search_entry| {
-            let previous_search_data = previous_search_entry.render_data.as_mut()?;
-            previous_search_data.get_or_init(|| {
-                SearchData::new(
-                    new_search_entry.kind,
-                    &previous_search_entry.match_range,
-                    &multi_buffer_snapshot,
-                    &theme,
-                )
-            });
-            previous_search_data.get_mut()
-        });
-        let new_search_data = new_search_entry.render_data.as_mut().and_then(|data| {
-            data.get_or_init(|| {
-                SearchData::new(
-                    new_search_entry.kind,
-                    &new_search_entry.match_range,
-                    &multi_buffer_snapshot,
-                    &theme,
-                )
-            });
-            data.get_mut()
-        });
-        match (previous_search_data, new_search_data) {
-            (_, None) => false,
-            (None, Some(_)) => true,
-            (Some(previous_search_data), Some(new_search_data)) => {
-                if previous_search_data.context_range == new_search_data.context_range {
-                    previous_search_data
-                        .highlight_ranges
-                        .append(&mut new_search_data.highlight_ranges);
-                    previous_search_data
-                        .search_match_indices
-                        .append(&mut new_search_data.search_match_indices);
-                    false
-                } else {
-                    true
-                }
-            }
-        }
-    }
-
     fn select_entry(&mut self, entry: PanelEntry, focus: bool, cx: &mut ViewContext<Self>) {
         if focus {
             self.focus_handle.focus(cx);
@@ -3398,7 +3448,45 @@ impl OutlinePanel {
     }
 }
 
+async fn prepare_search_match_data(
+    matches_to_render: HashMap<Range<editor::Anchor>, Vec<Range<editor::Anchor>>>,
+    kind: SearchKind,
+    previous_search_entries: Vec<CachedEntry>,
+    theme: Arc<SyntaxTheme>,
+    depth: usize,
+    filter_query: Option<String>,
+    multi_buffer_snapshot: MultiBufferSnapshot,
+) -> Vec<(Option<StringMatch>, SearchEntry)> {
+    // TODO kb take a context range (~20 chars) around each match, merge overlapping matches into same line and split off the rest into another search entry
+    // do SearchMatch::new on it where it'll colour the line, cuts off trimming whitespaces, prepends and appends `…` etc.
+    // Do filter out by filter_query too.
+    // let mut previous_search_entries = previous_search_entries.into_iter().peekable();
+    //
+    // TODO kb overly blinks when changing selections in the editor
+
+    matches_to_render
+        .into_iter()
+        .flat_map(|(whole_line_range, matches)| matches)
+        .map(|match_range| {
+            let render_data = Some(SearchData::new(
+                kind,
+                &match_range,
+                &multi_buffer_snapshot,
+                &theme,
+            ));
+            SearchEntry {
+                match_range,
+                same_line_matches: Vec::new(),
+                kind,
+                render_data,
+            }
+        })
+        .map(|search_entry| (None, search_entry))
+        .collect()
+}
+
 fn cleanup_fs_entries_without_search_children(
+    search_matches_update_tasks: &HashMap<FsEntry, Task<()>>,
     collapsed_entries: &HashSet<CollapsedEntry>,
     entries: &mut Vec<CachedEntry>,
     string_match_candidates: &mut Vec<StringMatchCandidate>,
@@ -3493,6 +3581,13 @@ fn cleanup_fs_entries_without_search_children(
         if has_search_items {
             previous_entry = Some(&entry.entry);
         } else {
+            if let PanelEntry::Fs(fs_entry) = &entry.entry {
+                if search_matches_update_tasks.contains_key(fs_entry) {
+                    previous_entry = Some(&entry.entry);
+                    continue;
+                }
+            }
+
             if let Some(collapsed_entry_to_check) = collapsed_entry_to_check {
                 if collapsed_entries.contains(&collapsed_entry_to_check) {
                     previous_entry = Some(&entry.entry);
@@ -3805,17 +3900,16 @@ impl Render for OutlinePanel {
                                         match_range,
                                         render_data,
                                         kind,
-                                        same_line_matches: _,
-                                    }) => render_data.as_ref().and_then(|search_data| {
-                                        let search_data = search_data.get()?;
-                                        Some(outline_panel.render_search_match(
+                                        ..
+                                    }) => render_data.as_ref().map(|search_data| {
+                                        outline_panel.render_search_match(
                                             &match_range,
                                             search_data,
                                             kind,
                                             cached_entry.depth,
                                             cached_entry.string_match.as_ref(),
                                             cx,
-                                        ))
+                                        )
                                     }),
                                 })
                                 .collect()
@@ -4209,10 +4303,7 @@ mod tests {
                             format!("outline: {}", outline.text),
                     },
                     PanelEntry::Search(SearchEntry { render_data, .. }) => {
-                        format!(
-                            "search: {}",
-                            &render_data.as_ref().unwrap().get().unwrap().context_text
-                        )
+                        format!("search: {}", &render_data.as_ref().unwrap().context_text)
                     }
                 }
             );

@@ -7640,6 +7640,7 @@ dependencies = [
  "language",
  "log",
  "menu",
+ "multi_buffer",
  "pretty_assertions",
  "project",
  "schemars",
