@@ -6,6 +6,7 @@ use serde::Deserialize;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Deserialize, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum VirtualKeyCode {
+    /// Un-recognized key
     #[default]
     Unknown,
     /// Fn on macOS
@@ -393,6 +394,7 @@ pub enum VirtualKeyCode {
 }
 
 impl VirtualKeyCode {
+    /// TODO:
     pub fn is_printable(&self) -> bool {
         // match key {
         //     "up" | "down" | "left" | "right" | "pageup" | "pagedown" | "home" | "end" | "delete"
@@ -748,6 +750,7 @@ impl VirtualKeyCode {
         }
     }
 
+    /// TODO:
     pub fn to_string(&self) -> String {
         match self {
             VirtualKeyCode::Unknown => "UnImplemented",

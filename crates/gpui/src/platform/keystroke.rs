@@ -441,3 +441,58 @@ impl Modifiers {
             && (other.function || !self.function)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::Keystroke;
+
+    ///   Code     Modifiers
+    /// ---------+---------------------------
+    ///    2     | Shift
+    ///    3     | Alt
+    ///    4     | Shift + Alt
+    ///    5     | Control
+    ///    6     | Shift + Control
+    ///    7     | Alt + Control
+    ///    8     | Shift + Alt + Control
+    /// ---------+---------------------------
+    /// from: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-PC-Style-Function-Keys
+    fn modifier_code(keystroke: &Keystroke) -> u32 {
+        let mut modifier_code = 0;
+        if keystroke.modifiers.shift {
+            modifier_code |= 1;
+        }
+        if keystroke.modifiers.alt {
+            modifier_code |= 1 << 1;
+        }
+        if keystroke.modifiers.control {
+            modifier_code |= 1 << 2;
+        }
+        modifier_code + 1
+    }
+
+    #[test]
+    fn test_modifier_code_calc() {
+        //   Code     Modifiers
+        // ---------+---------------------------
+        //    2     | Shift
+        //    3     | Alt
+        //    4     | Shift + Alt
+        //    5     | Control
+        //    6     | Shift + Control
+        //    7     | Alt + Control
+        //    8     | Shift + Alt + Control
+        // ---------+---------------------------
+        // from: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-PC-Style-Function-Keys
+        assert_eq!(2, modifier_code(&Keystroke::parse("shift-a").unwrap()));
+        assert_eq!(3, modifier_code(&Keystroke::parse("alt-a").unwrap()));
+        assert_eq!(4, modifier_code(&Keystroke::parse("shift-alt-a").unwrap()));
+        assert_eq!(5, modifier_code(&Keystroke::parse("ctrl-a").unwrap()));
+        assert_eq!(6, modifier_code(&Keystroke::parse("shift-ctrl-a").unwrap()));
+        assert_eq!(7, modifier_code(&Keystroke::parse("alt-ctrl-a").unwrap()));
+        assert_eq!(
+            8,
+            modifier_code(&Keystroke::parse("shift-ctrl-alt-a").unwrap())
+        );
+    }
+}

@@ -1,5 +1,5 @@
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
-use gpui::{relative, Action, FocusHandle, IntoElement, Keystroke};
+use gpui::{relative, Action, FocusHandle, IntoElement, Keystroke, VirtualKeyCode};
 
 #[derive(IntoElement, Clone)]
 pub struct KeyBinding {
@@ -31,25 +31,37 @@ impl KeyBinding {
     }
 
     fn icon_for_key(&self, keystroke: &Keystroke) -> Option<IconName> {
-        match keystroke.key.as_str() {
-            "left" => Some(IconName::ArrowLeft),
-            "right" => Some(IconName::ArrowRight),
-            "up" => Some(IconName::ArrowUp),
-            "down" => Some(IconName::ArrowDown),
-            "backspace" => Some(IconName::Backspace),
-            "delete" => Some(IconName::Delete),
-            "return" => Some(IconName::Return),
-            "enter" => Some(IconName::Return),
-            "tab" => Some(IconName::Tab),
-            "space" => Some(IconName::Space),
-            "escape" => Some(IconName::Escape),
-            "pagedown" => Some(IconName::PageDown),
-            "pageup" => Some(IconName::PageUp),
-            "shift" if self.platform_style == PlatformStyle::Mac => Some(IconName::Shift),
-            "control" if self.platform_style == PlatformStyle::Mac => Some(IconName::Control),
-            "platform" if self.platform_style == PlatformStyle::Mac => Some(IconName::Command),
-            "function" if self.platform_style == PlatformStyle::Mac => Some(IconName::Control),
-            "alt" if self.platform_style == PlatformStyle::Mac => Some(IconName::Option),
+        match keystroke.key {
+            VirtualKeyCode::Left => Some(IconName::ArrowLeft),
+            VirtualKeyCode::Right => Some(IconName::ArrowRight),
+            VirtualKeyCode::Up => Some(IconName::ArrowUp),
+            VirtualKeyCode::Down => Some(IconName::ArrowDown),
+            VirtualKeyCode::Backspace => Some(IconName::Backspace),
+            VirtualKeyCode::Delete => Some(IconName::Delete),
+            VirtualKeyCode::Enter => Some(IconName::Return),
+            // VirtualKeyCode::Enter => Some(IconName::Return),
+            VirtualKeyCode::Tab => Some(IconName::Tab),
+            VirtualKeyCode::Space => Some(IconName::Space),
+            VirtualKeyCode::Escape => Some(IconName::Escape),
+            VirtualKeyCode::PageDown => Some(IconName::PageDown),
+            VirtualKeyCode::PageUp => Some(IconName::PageUp),
+            VirtualKeyCode::Shift if self.platform_style == PlatformStyle::Mac => {
+                Some(IconName::Shift)
+            }
+            VirtualKeyCode::Control if self.platform_style == PlatformStyle::Mac => {
+                Some(IconName::Control)
+            }
+            VirtualKeyCode::LeftPlatform | VirtualKeyCode::RightPlatform
+                if self.platform_style == PlatformStyle::Mac =>
+            {
+                Some(IconName::Command)
+            }
+            VirtualKeyCode::Function if self.platform_style == PlatformStyle::Mac => {
+                Some(IconName::Control)
+            }
+            VirtualKeyCode::Alt if self.platform_style == PlatformStyle::Mac => {
+                Some(IconName::Option)
+            }
             _ => None,
         }
     }
@@ -133,7 +145,7 @@ impl RenderOnce for KeyBinding {
                     })
                     .map(|el| match key_icon {
                         Some(icon) => el.child(KeyIcon::new(icon)),
-                        None => el.child(Key::new(keystroke.key.to_uppercase())),
+                        None => el.child(Key::new(keystroke.key.to_string().to_uppercase())),
                     })
             }))
     }

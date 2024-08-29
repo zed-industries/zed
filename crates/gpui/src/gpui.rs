@@ -132,6 +132,7 @@ pub use gpui_macros::{register_action, test, IntoElement, Render};
 pub use input::*;
 pub use interactive::*;
 use key_dispatch::*;
+pub use keycodes::*;
 pub use keymap::*;
 pub use platform::*;
 pub use refineable::*;
