@@ -286,7 +286,7 @@ impl LogStore {
                     cx.subscribe(project, |this, project, event, cx| match event {
                         project::Event::LanguageServerAdded(id) => {
                             let read_project = project.read(cx);
-                            if let Some(server) = read_project.language_server_for_id(*id) {
+                            if let Some(server) = read_project.language_server_for_id(*id, cx) {
                                 this.add_language_server(
                                     LanguageServerKind::Local {
                                         project: project.downgrade(),
@@ -671,7 +671,7 @@ impl LspLogView {
         let mut rows = self
             .project
             .read(cx)
-            .language_servers()
+            .language_servers(cx)
             .filter_map(|(server_id, language_server_name, worktree_id)| {
                 let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
                 let state = log_store.language_servers.get(&server_id)?;
@@ -687,7 +687,7 @@ impl LspLogView {
             .chain(
                 self.project
                     .read(cx)
-                    .supplementary_language_servers()
+                    .supplementary_language_servers(cx)
                     .filter_map(|(&server_id, name)| {
                         let state = log_store.language_servers.get(&server_id)?;
                         Some(LogMenuItem {
@@ -853,7 +853,7 @@ impl LspLogView {
         level: TraceValue,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(server) = self.project.read(cx).language_server_for_id(server_id) {
+        if let Some(server) = self.project.read(cx).language_server_for_id(server_id, cx) {
             self.log_store.update(cx, |this, _| {
                 if let Some(state) = this.get_language_server_state(server_id) {
                     state.trace_level = level;

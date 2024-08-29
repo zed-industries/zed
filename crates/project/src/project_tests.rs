@@ -1287,7 +1287,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     project.update(cx, |project, _| {
         assert_eq!(
             project
-                .language_servers_running_disk_based_diagnostics()
+                .language_servers_running_disk_based_diagnostics(cx)
                 .collect::<Vec<_>>(),
             [LanguageServerId(1)]
         );
@@ -1305,7 +1305,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     project.update(cx, |project, _| {
         assert_eq!(
             project
-                .language_servers_running_disk_based_diagnostics()
+                .language_servers_running_disk_based_diagnostics(cx)
                 .collect::<Vec<_>>(),
             [] as [language::LanguageServerId; 0]
         );
@@ -4574,14 +4574,6 @@ async fn test_search_ordering(cx: &mut gpui::TestAppContext) {
     assert_eq!(file_name(search.next().await, cx), "node_modules/10 eleven");
     assert_eq!(file_name(search.next().await, cx), "aaa.txt");
     assert!(search.next().await.is_none())
-}
-
-#[test]
-fn test_glob_literal_prefix() {
-    assert_eq!(glob_literal_prefix("**/*.js"), "");
-    assert_eq!(glob_literal_prefix("node_modules/**/*.js"), "node_modules");
-    assert_eq!(glob_literal_prefix("foo/{bar,baz}.js"), "foo");
-    assert_eq!(glob_literal_prefix("foo/bar/baz.js"), "foo/bar/baz.js");
 }
 
 #[gpui::test]

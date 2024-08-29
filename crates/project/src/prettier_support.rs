@@ -352,10 +352,14 @@ fn register_new_prettier(
                     };
                     LanguageServerName(Arc::from(name))
                 };
-                project
-                    .supplementary_language_servers
-                    .insert(new_server_id, (name, Arc::clone(prettier_server)));
-                cx.emit(Event::LanguageServerAdded(new_server_id));
+                project.lsp_store.update(cx, |lsp_store, cx| {
+                    lsp_store.register_supplementary_language_server(
+                        new_server_id,
+                        name,
+                        Arc::clone(prettier_server),
+                        cx,
+                    )
+                });
             })
             .ok();
     }

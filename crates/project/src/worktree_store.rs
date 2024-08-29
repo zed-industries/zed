@@ -105,6 +105,13 @@ impl WorktreeStore {
             .find_map(|worktree| worktree.read(cx).entry_for_id(entry_id))
     }
 
+    pub fn entry_for_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<Entry> {
+        self.worktree_for_id(path.worktree_id, cx)?
+            .read(cx)
+            .entry_for_path(&path.path)
+            .cloned()
+    }
+
     pub fn add(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
         let push_strong_handle = self.is_shared || worktree.read(cx).is_visible();
         let handle = if push_strong_handle {
