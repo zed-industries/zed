@@ -576,8 +576,8 @@ impl VirtualKeyCode {
     }
 
     /// input is standard US English layout key
-    pub fn from_str(input: &str) -> Self {
-        match input {
+    pub fn from_str(input: &str) -> anyhow::Result<Self> {
+        let map_result = match input {
             "UnImplemented" | "Unknown" => Self::Unknown,
             "fn" => Self::Function,
             "cancel" => Self::Cancel,
@@ -683,20 +683,20 @@ impl VirtualKeyCode {
             "f8" => VirtualKeyCode::F8,
             "f9" => VirtualKeyCode::F9,
             "f10" => VirtualKeyCode::F10,
-            // VirtualKeyCode::F11 => "UnImplemented",
-            // VirtualKeyCode::F12 => "UnImplemented",
-            // VirtualKeyCode::F13 => "UnImplemented",
-            // VirtualKeyCode::F14 => "UnImplemented",
-            // VirtualKeyCode::F15 => "UnImplemented",
-            // VirtualKeyCode::F16 => "UnImplemented",
-            // VirtualKeyCode::F17 => "UnImplemented",
-            // VirtualKeyCode::F18 => "UnImplemented",
-            // VirtualKeyCode::F19 => "UnImplemented",
-            // VirtualKeyCode::F20 => "UnImplemented",
-            // VirtualKeyCode::F21 => "UnImplemented",
-            // VirtualKeyCode::F22 => "UnImplemented",
-            // VirtualKeyCode::F23 => "UnImplemented",
-            // VirtualKeyCode::F24 => "UnImplemented",
+            "f11" => VirtualKeyCode::F11,
+            "f12" => VirtualKeyCode::F12,
+            "f13" => VirtualKeyCode::F13,
+            "f14" => VirtualKeyCode::F14,
+            "f15" => VirtualKeyCode::F15,
+            "f16" => VirtualKeyCode::F16,
+            "f17" => VirtualKeyCode::F17,
+            "f18" => VirtualKeyCode::F18,
+            "f19" => VirtualKeyCode::F19,
+            "f20" => VirtualKeyCode::F20,
+            "f21" => VirtualKeyCode::F21,
+            "f22" => VirtualKeyCode::F22,
+            "f23" => VirtualKeyCode::F23,
+            "f24" => VirtualKeyCode::F24,
             // VirtualKeyCode::NumLock => "UnImplemented",
             // VirtualKeyCode::ScrollLock => "UnImplemented",
             // VirtualKeyCode::LeftShift => "shift", // TODO:
@@ -747,6 +747,13 @@ impl VirtualKeyCode {
             // VirtualKeyCode::PA1 => "UnImplemented",
             // VirtualKeyCode::OEMClear => "UnImplemented",
             _ => VirtualKeyCode::Unknown,
+        };
+        if map_result == VirtualKeyCode::Unknown {
+            Err(anyhow::anyhow!(
+                "Error parsing keystroke to virtual keycode: {input}"
+            ))
+        } else {
+            Ok(map_result)
         }
     }
 
