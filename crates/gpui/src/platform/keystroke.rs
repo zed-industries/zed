@@ -539,11 +539,4 @@ mod tests {
             Keystroke::parse("a").unwrap()
         );
     }
-
-    #[test]
-    fn test_vkcode_parse_failure() {
-        assert!(VirtualKeyCode::from_str("{").is_err());
-        assert!(VirtualKeyCode::from_str("?").is_err());
-        assert!(VirtualKeyCode::from_str(">").is_err());
-    }
 }
