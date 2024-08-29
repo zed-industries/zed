@@ -112,7 +112,7 @@ impl InitializedContextServerProtocol {
         &self,
         prompt: P,
         arguments: HashMap<String, String>,
-    ) -> Result<String> {
+    ) -> Result<types::PromptsGetResponse> {
         self.check_capability(ServerCapability::Prompts)?;
 
         let params = types::PromptsGetParams {
@@ -125,7 +125,7 @@ impl InitializedContextServerProtocol {
             .request(types::RequestType::PromptsGet.as_str(), params)
             .await?;
 
-        Ok(response.prompt)
+        Ok(response)
     }
 }
 

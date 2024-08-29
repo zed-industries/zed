@@ -102,6 +102,7 @@ pub struct ResourcesListResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsGetResponse {
+    pub description: Option<String>,
     pub prompt: String,
 }
 
