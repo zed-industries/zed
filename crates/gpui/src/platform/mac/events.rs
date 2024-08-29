@@ -298,8 +298,8 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     //     Some(NSHomeFunctionKey) => "home".to_string(),
     //     Some(NSEndFunctionKey) => "end".to_string(),
     //     Some(NSDeleteFunctionKey) => "delete".to_string(),
-        // Observed Insert==NSHelpFunctionKey not NSInsertFunctionKey.
-        Some(NSHelpFunctionKey) => "insert".to_string(),
+    //     // Observed Insert==NSHelpFunctionKey not NSInsertFunctionKey.
+    //     Some(NSHelpFunctionKey) => "insert".to_string(),
     //     Some(NSF1FunctionKey) => "f1".to_string(),
     //     Some(NSF2FunctionKey) => "f2".to_string(),
     //     Some(NSF3FunctionKey) => "f3".to_string(),
@@ -312,13 +312,13 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     //     Some(NSF10FunctionKey) => "f10".to_string(),
     //     Some(NSF11FunctionKey) => "f11".to_string(),
     //     Some(NSF12FunctionKey) => "f12".to_string(),
-        Some(NSF13FunctionKey) => "f13".to_string(),
-        Some(NSF14FunctionKey) => "f14".to_string(),
-        Some(NSF15FunctionKey) => "f15".to_string(),
-        Some(NSF16FunctionKey) => "f16".to_string(),
-        Some(NSF17FunctionKey) => "f17".to_string(),
-        Some(NSF18FunctionKey) => "f18".to_string(),
-        Some(NSF19FunctionKey) => "f19".to_string(),
+    //     Some(NSF13FunctionKey) => "f13".to_string(),
+    //     Some(NSF14FunctionKey) => "f14".to_string(),
+    //     Some(NSF15FunctionKey) => "f15".to_string(),
+    //     Some(NSF16FunctionKey) => "f16".to_string(),
+    //     Some(NSF17FunctionKey) => "f17".to_string(),
+    //     Some(NSF18FunctionKey) => "f18".to_string(),
+    //     Some(NSF19FunctionKey) => "f19".to_string(),
     //     _ => {
     //         let mut chars_ignoring_modifiers_and_shift =
     //             chars_for_modified_key(native_event.keyCode(), false, false);
