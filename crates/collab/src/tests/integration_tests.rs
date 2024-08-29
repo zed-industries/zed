@@ -4780,7 +4780,7 @@ async fn test_references(
 
     // User is informed that a request is pending.
     executor.run_until_parked();
-    project_b.read_with(cx_b, |project, _| {
+    project_b.read_with(cx_b, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
         assert_eq!(status.name, "my-fake-lsp-adapter");
         assert_eq!(

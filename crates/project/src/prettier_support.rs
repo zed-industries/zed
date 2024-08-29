@@ -22,9 +22,7 @@ use paths::default_prettier_dir;
 use prettier::Prettier;
 use util::{ResultExt, TryFutureExt};
 
-use crate::{
-    Event, File, FormatOperation, PathChange, Project, ProjectEntryId, Worktree, WorktreeId,
-};
+use crate::{File, FormatOperation, PathChange, Project, ProjectEntryId, Worktree, WorktreeId};
 
 pub fn prettier_plugins_for_language(
     language_settings: &LanguageSettings,

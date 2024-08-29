@@ -1,10 +1,10 @@
 mod signature_help;
 
 use crate::{
-    lsp_store::LspStore, CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
-    HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
-    InlayHintTooltip, Location, LocationLink, MarkupContent, Project, ProjectTransaction,
-    ResolveState,
+    buffer_store::BufferStore, lsp_store::LspStore, CodeAction, CoreCompletion, DocumentHighlight,
+    Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart,
+    InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, MarkupContent, Project,
+    ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -12,7 +12,7 @@ use client::proto::{self, PeerId};
 use clock::Global;
 use collections::HashSet;
 use futures::future;
-use gpui::{AppContext, AsyncAppContext, Model};
+use gpui::{AppContext, AsyncAppContext, Entity, Model};
 use language::{
     language_settings::{language_settings, InlayHintKind, LanguageSettings},
     point_from_lsp, point_to_lsp,
@@ -412,8 +412,8 @@ impl LspCommand for PerformRename {
         let message = message
             .transaction
             .ok_or_else(|| anyhow!("missing transaction"))?;
-        LspStore::deserialize_project_transaction(
-            lsp_store.downgrade(),
+        BufferStore::deserialize_project_transaction(
+            lsp_store.read_with(&cx, |lsp_store, _| lsp_store.buffer_store().downgrade())?,
             message,
             self.push_to_history,
             cx,
@@ -991,9 +991,14 @@ fn location_links_to_proto(
         .into_iter()
         .map(|definition| {
             let origin = definition.origin.map(|origin| {
-                let buffer_id = lsp_store
-                    .create_buffer_for_peer(&origin.buffer, peer_id, cx)
-                    .into();
+                lsp_store
+                    .buffer_store()
+                    .update(cx, |buffer_store, cx| {
+                        buffer_store.create_buffer_for_peer(&origin.buffer, peer_id, cx)
+                    })
+                    .detach_and_log_err(cx);
+
+                let buffer_id = origin.buffer.read(cx).remote_id().into();
                 proto::Location {
                     start: Some(serialize_anchor(&origin.range.start)),
                     end: Some(serialize_anchor(&origin.range.end)),
@@ -1001,9 +1006,14 @@ fn location_links_to_proto(
                 }
             });
 
-            let buffer_id = lsp_store
-                .create_buffer_for_peer(&definition.target.buffer, peer_id, cx)
-                .into();
+            lsp_store
+                .buffer_store()
+                .update(cx, |buffer_store, cx| {
+                    buffer_store.create_buffer_for_peer(&definition.target.buffer, peer_id, cx)
+                })
+                .detach_and_log_err(cx);
+
+            let buffer_id = definition.target.buffer.read(cx).remote_id().into();
             let target = proto::Location {
                 start: Some(serialize_anchor(&definition.target.range.start)),
                 end: Some(serialize_anchor(&definition.target.range.end)),
@@ -1143,7 +1153,13 @@ impl LspCommand for GetReferences {
         let locations = response
             .into_iter()
             .map(|definition| {
-                let buffer_id = lsp_store.create_buffer_for_peer(&definition.buffer, peer_id, cx);
+                lsp_store
+                    .buffer_store()
+                    .update(cx, |buffer_store, cx| {
+                        buffer_store.create_buffer_for_peer(&definition.buffer, peer_id, cx)
+                    })
+                    .detach_and_log_err(cx);
+                let buffer_id = definition.buffer.read(cx).remote_id();
                 proto::Location {
                     start: Some(serialize_anchor(&definition.range.start)),
                     end: Some(serialize_anchor(&definition.range.end)),
@@ -1312,7 +1328,7 @@ impl LspCommand for GetDocumentHighlights {
         self,
         message: proto::GetDocumentHighlightsResponse,
         _: Model<LspStore>,
-        buffer: Model<LspStore>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<DocumentHighlight>> {
         let mut highlights = Vec::new();
@@ -1445,7 +1461,7 @@ impl LspCommand for GetSignatureHelp {
         self,
         response: proto::GetSignatureHelpResponse,
         _: Model<LspStore>,
-        buffer: Model<LspStore>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self::Response> {
         let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
@@ -2235,7 +2251,7 @@ impl LspCommand for OnTypeFormatting {
         if let Some(edits) = message {
             let (lsp_adapter, lsp_server) =
                 language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
-            Project::deserialize_edits(
+            LspStore::deserialize_text_edits(
                 lsp_store,
                 buffer,
                 edits,

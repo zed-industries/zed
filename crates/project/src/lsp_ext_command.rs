@@ -1,5 +1,4 @@
-use std::{path::Path, sync::Arc};
-
+use crate::{lsp_command::LspCommand, lsp_store::LspStore};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use gpui::{AppContext, AsyncAppContext, Model};
@@ -7,9 +6,8 @@ use language::{point_to_lsp, proto::deserialize_anchor, Buffer};
 use lsp::{LanguageServer, LanguageServerId};
 use rpc::proto::{self, PeerId};
 use serde::{Deserialize, Serialize};
+use std::{path::Path, sync::Arc};
 use text::{BufferId, PointUtf16, ToPointUtf16};
-
-use crate::{lsp_command::LspCommand, lsp_store::LspStore, Project};
 
 pub enum LspExpandMacro {}
 

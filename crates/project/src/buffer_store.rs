@@ -22,7 +22,7 @@ use rpc::{
     ErrorExt as _, TypedEnvelope,
 };
 use smol::channel::Receiver;
-use std::{io, path::Path, str::FromStr as _, sync::Arc};
+use std::{io, path::Path, str::FromStr as _, sync::Arc, time::Instant};
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt as _, TryFutureExt};
 use worktree::{
@@ -32,6 +32,7 @@ use worktree::{
 
 /// A set of open buffers.
 pub struct BufferStore {
+    downstream_client: Option<AnyProtoClient>,
     remote_id: Option<u64>,
     #[allow(unused)]
     worktree_store: Model<WorktreeStore>,
@@ -65,6 +66,9 @@ pub enum BufferStoreEvent {
     MessageToReplicas(Box<proto::Envelope>),
 }
 
+#[derive(Default)]
+pub struct ProjectTransaction(pub HashMap<Model<Buffer>, language::Transaction>);
+
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
 
 impl BufferStore {
@@ -89,6 +93,7 @@ impl BufferStore {
 
         Self {
             remote_id,
+            downstream_client: None,
             worktree_store,
             opened_buffers: Default::default(),
             remote_buffer_listeners: Default::default(),
@@ -759,6 +764,7 @@ impl BufferStore {
     }
 
     pub fn disconnected_from_host(&mut self, cx: &mut AppContext) {
+        self.downstream_client.take();
         self.set_remote_id(None, cx);
 
         for buffer in self.buffers() {
@@ -772,7 +778,21 @@ impl BufferStore {
         self.remote_buffer_listeners.clear();
     }
 
-    pub fn set_remote_id(&mut self, remote_id: Option<u64>, cx: &mut AppContext) {
+    pub fn shared(
+        &mut self,
+        remote_id: u64,
+        downstream_client: AnyProtoClient,
+        cx: &mut AppContext,
+    ) {
+        self.downstream_client = Some(downstream_client);
+        self.set_remote_id(Some(remote_id), cx);
+    }
+
+    pub fn unshared(&mut self, _cx: &mut ModelContext<Self>) {
+        self.remote_id.take();
+    }
+
+    fn set_remote_id(&mut self, remote_id: Option<u64>, cx: &mut AppContext) {
         self.remote_id = remote_id;
         for open_buffer in self.opened_buffers.values_mut() {
             if remote_id.is_some() {
@@ -1406,8 +1426,6 @@ impl BufferStore {
         &mut self,
         buffer: &Model<Buffer>,
         peer_id: proto::PeerId,
-        project_id: u64,
-        client: AnyProtoClient,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let buffer_id = buffer.read(cx).remote_id();
@@ -1419,6 +1437,10 @@ impl BufferStore {
         {
             return Task::ready(Ok(()));
         }
+
+        let Some((client, project_id)) = self.downstream_client.clone().zip(self.remote_id) else {
+            return Task::ready(Ok(()));
+        };
 
         cx.spawn(|this, mut cx| async move {
             let Some(buffer) = this.update(&mut cx, |this, _| this.get(buffer_id))? else {
@@ -1479,6 +1501,41 @@ impl BufferStore {
 
     pub fn shared_buffers(&self) -> &HashMap<proto::PeerId, HashSet<BufferId>> {
         &self.shared_buffers
+    }
+
+    pub async fn deserialize_project_transaction(
+        this: WeakModel<Self>,
+        message: proto::ProjectTransaction,
+        push_to_history: bool,
+        mut cx: AsyncAppContext,
+    ) -> Result<ProjectTransaction> {
+        let mut project_transaction = ProjectTransaction::default();
+        for (buffer_id, transaction) in message.buffer_ids.into_iter().zip(message.transactions) {
+            let buffer_id = BufferId::new(buffer_id)?;
+            let buffer = this
+                .update(&mut cx, |this, cx| {
+                    this.wait_for_remote_buffer(buffer_id, cx)
+                })?
+                .await?;
+            let transaction = language::proto::deserialize_transaction(transaction)?;
+            project_transaction.0.insert(buffer, transaction);
+        }
+
+        for (buffer, transaction) in &project_transaction.0 {
+            buffer
+                .update(&mut cx, |buffer, _| {
+                    buffer.wait_for_edits(transaction.edit_ids.iter().copied())
+                })?
+                .await?;
+
+            if push_to_history {
+                buffer.update(&mut cx, |buffer, _| {
+                    buffer.push_transaction(transaction.clone(), Instant::now());
+                })?;
+            }
+        }
+
+        Ok(project_transaction)
     }
 }
 

@@ -5,19 +5,19 @@ use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
-    tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
-    LanguageMatcher, LineEnding, OffsetRangeExt, Point, ToPoint,
+    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, FakeLspAdapter,
+    LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
-use lsp::NumberOrString;
+use lsp::{DiagnosticSeverity, NumberOrString};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
-use std::task::Poll;
+use std::{mem, task::Poll};
 use task::{ResolvedTask, TaskContext, TaskTemplate, TaskTemplates};
 use unindent::Unindent as _;
-use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
+use util::{assert_set_eq, paths::PathMatcher, test::temp_tree, TryFutureExt as _};
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
@@ -923,7 +923,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 5)),
-                        severity: Some(lsp::DiagnosticSeverity::WARNING),
+                        severity: Some(DiagnosticSeverity::WARNING),
                         message: "error 2".to_string(),
                         ..Default::default()
                     }],
@@ -1284,7 +1284,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             language_server_id: LanguageServerId(1)
         }
     );
-    project.update(cx, |project, _| {
+    project.update(cx, |project, cx| {
         assert_eq!(
             project
                 .language_servers_running_disk_based_diagnostics(cx)
@@ -1302,7 +1302,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             language_server_id: LanguageServerId(1)
         }
     );
-    project.update(cx, |project, _| {
+    project.update(cx, |project, cx| {
         assert_eq!(
             project
                 .language_servers_running_disk_based_diagnostics(cx)
@@ -1908,32 +1908,36 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     project.update(cx, |project, cx| {
-        project
-            .update_buffer_diagnostics(
-                &buffer,
-                LanguageServerId(0),
-                None,
-                vec![
-                    DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(0, 10))..Unclipped(PointUtf16::new(0, 10)),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "syntax error 1".to_string(),
-                            ..Default::default()
+        project.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_buffer_diagnostics(
+                    &buffer,
+                    LanguageServerId(0),
+                    None,
+                    vec![
+                        DiagnosticEntry {
+                            range: Unclipped(PointUtf16::new(0, 10))
+                                ..Unclipped(PointUtf16::new(0, 10)),
+                            diagnostic: Diagnostic {
+                                severity: DiagnosticSeverity::ERROR,
+                                message: "syntax error 1".to_string(),
+                                ..Default::default()
+                            },
                         },
-                    },
-                    DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(1, 10))..Unclipped(PointUtf16::new(1, 10)),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "syntax error 2".to_string(),
-                            ..Default::default()
+                        DiagnosticEntry {
+                            range: Unclipped(PointUtf16::new(1, 10))
+                                ..Unclipped(PointUtf16::new(1, 10)),
+                            diagnostic: Diagnostic {
+                                severity: DiagnosticSeverity::ERROR,
+                                message: "syntax error 2".to_string(),
+                                ..Default::default()
+                            },
                         },
-                    },
-                ],
-                cx,
-            )
-            .unwrap();
+                    ],
+                    cx,
+                )
+                .unwrap();
+        })
     });
 
     // An empty range is extended forward to include the following character.
@@ -4178,9 +4182,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 false,
                 Default::default(),
-
-                    PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
-
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
             ).unwrap(),
             cx
         )
@@ -4599,8 +4601,8 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
             let id = project.worktrees(cx).next().unwrap().read(cx).id();
             project.create_entry((id, "b.."), true, cx)
         })
-        .unwrap()
         .await
+        .unwrap()
         .to_included()
         .unwrap();
 
