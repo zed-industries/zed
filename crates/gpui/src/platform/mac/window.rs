@@ -1120,6 +1120,13 @@ impl PlatformWindow for MacWindow {
         None
     }
 
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+        unsafe {
+            let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
+            let _: () = msg_send![input_context, invalidateCharacterCoordinates];
+        }
+    }
+
     fn fps(&self) -> Option<f32> {
         Some(self.0.lock().renderer.fps())
     }
@@ -1311,7 +1318,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                     // enter it will still swallow certain keys (e.g. 'f', 'j') and not others
                     // (e.g. 'n'). This is a problem for certain kinds of views, like the terminal.
                     with_input_handler(this, |input_handler| {
-                        if input_handler.selected_text_range().is_none() {
+                        if input_handler.selected_text_range(false).is_none() {
                             handled = true;
                             input_handler.replace_text_in_range(None, &text)
                         }
@@ -1683,10 +1690,12 @@ extern "C" fn marked_range(this: &Object, _: Sel) -> NSRange {
 }
 
 extern "C" fn selected_range(this: &Object, _: Sel) -> NSRange {
-    let selected_range_result =
-        with_input_handler(this, |input_handler| input_handler.selected_text_range()).flatten();
+    let selected_range_result = with_input_handler(this, |input_handler| {
+        input_handler.selected_text_range(false)
+    })
+    .flatten();
 
-    selected_range_result.map_or(NSRange::invalid(), |range| range.into())
+    selected_range_result.map_or(NSRange::invalid(), |selection| selection.range.into())
 }
 
 extern "C" fn first_rect_for_character_range(

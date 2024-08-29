@@ -579,8 +579,8 @@ fn handle_mouse_horizontal_wheel_msg(
 
 fn retrieve_caret_position(state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<POINT> {
     with_input_handler_and_scale_factor(state_ptr, |input_handler, scale_factor| {
-        let caret_range = input_handler.selected_text_range()?;
-        let caret_position = input_handler.bounds_for_range(caret_range)?;
+        let caret_range = input_handler.selected_text_range(false)?;
+        let caret_position = input_handler.bounds_for_range(caret_range.range)?;
         Some(POINT {
             // logical to physical
             x: (caret_position.origin.x.0 * scale_factor) as i32,
@@ -593,6 +593,7 @@ fn retrieve_caret_position(state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<POIN
 fn handle_ime_position(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     unsafe {
         let ctx = ImmGetContext(handle);
+
         let Some(caret_position) = retrieve_caret_position(&state_ptr) else {
             return Some(0);
         };

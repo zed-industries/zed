@@ -2,11 +2,11 @@ mod app_menus;
 pub mod inline_completion_registry;
 #[cfg(target_os = "linux")]
 pub(crate) mod linux_prompts;
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
-pub(crate) mod only_instance;
+#[cfg(target_os = "macos")]
+pub(crate) mod mac_only_instance;
 mod open_listener;
 #[cfg(target_os = "windows")]
-pub(crate) mod single_instance;
+pub(crate) mod windows_only_instance;
 
 pub use app_menus::*;
 use assistant::PromptBuilder;
