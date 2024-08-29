@@ -386,22 +386,18 @@ fn handle_char_msg(
         keystroke,
         is_held: lparam.0 & (0x1 << 30) > 0,
     };
-
     let dispatch_event_result = func(PlatformInput::KeyDown(event));
-    let mut lock = state_ptr.state.borrow_mut();
-    lock.callbacks.input = Some(func);
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
+
     if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
         return Some(0);
     }
     let Some(ime_char) = ime_key else {
         return Some(1);
     };
-    let Some(mut input_handler) = lock.input_handler.take() else {
-        return Some(1);
-    };
-    drop(lock);
-    input_handler.replace_text_in_range(None, &ime_char);
-    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+    with_input_handler(&state_ptr, |input_handler| {
+        input_handler.replace_text_in_range(None, &ime_char);
+    });
 
     Some(0)
 }
@@ -581,33 +577,41 @@ fn handle_mouse_horizontal_wheel_msg(
     }
 }
 
+fn retrieve_caret_position(state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<POINT> {
+    with_input_handler_and_scale_factor(state_ptr, |input_handler, scale_factor| {
+        let caret_range = input_handler.selected_text_range()?;
+        let caret_position = input_handler.bounds_for_range(caret_range)?;
+        Some(POINT {
+            // logical to physical
+            x: (caret_position.origin.x.0 * scale_factor) as i32,
+            y: (caret_position.origin.y.0 * scale_factor) as i32
+                + ((caret_position.size.height.0 * scale_factor) as i32 / 2),
+        })
+    })
+}
+
 fn handle_ime_position(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     unsafe {
-        let mut lock = state_ptr.state.borrow_mut();
         let ctx = ImmGetContext(handle);
-        let Some(mut input_handler) = lock.input_handler.take() else {
-            return Some(1);
-        };
-        let scale_factor = lock.scale_factor;
-        drop(lock);
-
-        let Some(caret_range) = input_handler.selected_text_range() else {
-            state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        let Some(caret_position) = retrieve_caret_position(&state_ptr) else {
             return Some(0);
         };
-        let caret_position = input_handler.bounds_for_range(caret_range).unwrap();
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
-        let config = CANDIDATEFORM {
-            dwStyle: CFS_CANDIDATEPOS,
-            // logical to physical
-            ptCurrentPos: POINT {
-                x: (caret_position.origin.x.0 * scale_factor) as i32,
-                y: (caret_position.origin.y.0 * scale_factor) as i32
-                    + ((caret_position.size.height.0 * scale_factor) as i32 / 2),
-            },
-            ..Default::default()
-        };
-        ImmSetCandidateWindow(ctx, &config as _).ok().log_err();
+        {
+            let config = COMPOSITIONFORM {
+                dwStyle: CFS_POINT,
+                ptCurrentPos: caret_position,
+                ..Default::default()
+            };
+            ImmSetCompositionWindow(ctx, &config as _).ok().log_err();
+        }
+        {
+            let config = CANDIDATEFORM {
+                dwStyle: CFS_CANDIDATEPOS,
+                ptCurrentPos: caret_position,
+                ..Default::default()
+            };
+            ImmSetCandidateWindow(ctx, &config as _).ok().log_err();
+        }
         ImmReleaseContext(handle, ctx).ok().log_err();
         Some(0)
     }
@@ -618,34 +622,45 @@ fn handle_ime_composition(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    let ctx = unsafe { ImmGetContext(handle) };
+    let result = handle_ime_composition_inner(ctx, lparam, state_ptr);
+    unsafe { ImmReleaseContext(handle, ctx).ok().log_err() };
+    result
+}
+
+fn handle_ime_composition_inner(
+    ctx: HIMC,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
     let mut ime_input = None;
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
-        let (comp_string, string_len) = parse_ime_compostion_string(handle)?;
-        let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
-        input_handler.replace_and_mark_text_in_range(
-            None,
-            &comp_string,
-            Some(string_len..string_len),
-        );
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        let (comp_string, string_len) = parse_ime_compostion_string(ctx)?;
+        with_input_handler(&state_ptr, |input_handler| {
+            input_handler.replace_and_mark_text_in_range(
+                None,
+                &comp_string,
+                Some(string_len..string_len),
+            );
+        })?;
         ime_input = Some(comp_string);
     }
     if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
         let comp_string = &ime_input?;
-        let caret_pos = retrieve_composition_cursor_position(handle);
-        let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
-        input_handler.replace_and_mark_text_in_range(None, comp_string, Some(caret_pos..caret_pos));
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        let caret_pos = retrieve_composition_cursor_position(ctx);
+        with_input_handler(&state_ptr, |input_handler| {
+            input_handler.replace_and_mark_text_in_range(
+                None,
+                comp_string,
+                Some(caret_pos..caret_pos),
+            );
+        })?;
     }
     if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
-        let comp_result = parse_ime_compostion_result(handle)?;
-        let mut lock = state_ptr.state.borrow_mut();
-        let Some(mut input_handler) = lock.input_handler.take() else {
-            return Some(1);
-        };
-        drop(lock);
-        input_handler.replace_text_in_range(None, &comp_result);
-        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+        let comp_result = parse_ime_compostion_result(ctx)?;
+        with_input_handler(&state_ptr, |input_handler| {
+            input_handler.replace_text_in_range(None, &comp_result);
+        })?;
         return Some(0);
     }
     // currently, we don't care other stuff
@@ -1218,11 +1233,10 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     }
 }
 
-fn parse_ime_compostion_string(handle: HWND) -> Option<(String, usize)> {
+fn parse_ime_compostion_string(ctx: HIMC) -> Option<(String, usize)> {
     unsafe {
-        let ctx = ImmGetContext(handle);
         let string_len = ImmGetCompositionStringW(ctx, GCS_COMPSTR, None, 0);
-        let result = if string_len >= 0 {
+        if string_len >= 0 {
             let mut buffer = vec![0u8; string_len as usize + 2];
             ImmGetCompositionStringW(
                 ctx,
@@ -1238,26 +1252,19 @@ fn parse_ime_compostion_string(handle: HWND) -> Option<(String, usize)> {
             Some((string, string_len as usize / 2))
         } else {
             None
-        };
-        ImmReleaseContext(handle, ctx).ok().log_err();
-        result
+        }
     }
 }
 
-fn retrieve_composition_cursor_position(handle: HWND) -> usize {
-    unsafe {
-        let ctx = ImmGetContext(handle);
-        let ret = ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0);
-        ImmReleaseContext(handle, ctx).ok().log_err();
-        ret as usize
-    }
+#[inline]
+fn retrieve_composition_cursor_position(ctx: HIMC) -> usize {
+    unsafe { ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0) as usize }
 }
 
-fn parse_ime_compostion_result(handle: HWND) -> Option<String> {
+fn parse_ime_compostion_result(ctx: HIMC) -> Option<String> {
     unsafe {
-        let ctx = ImmGetContext(handle);
         let string_len = ImmGetCompositionStringW(ctx, GCS_RESULTSTR, None, 0);
-        let result = if string_len >= 0 {
+        if string_len >= 0 {
             let mut buffer = vec![0u8; string_len as usize + 2];
             ImmGetCompositionStringW(
                 ctx,
@@ -1273,9 +1280,7 @@ fn parse_ime_compostion_result(handle: HWND) -> Option<String> {
             Some(string)
         } else {
             None
-        };
-        ImmReleaseContext(handle, ctx).ok().log_err();
-        result
+        }
     }
 }
 
@@ -1322,4 +1327,30 @@ pub(crate) fn current_modifiers() -> Modifiers {
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
     }
+}
+
+fn with_input_handler<F, R>(state_ptr: &Rc<WindowsWindowStatePtr>, f: F) -> Option<R>
+where
+    F: FnOnce(&mut PlatformInputHandler) -> R,
+{
+    let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
+    let result = f(&mut input_handler);
+    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+    Some(result)
+}
+
+fn with_input_handler_and_scale_factor<F, R>(
+    state_ptr: &Rc<WindowsWindowStatePtr>,
+    f: F,
+) -> Option<R>
+where
+    F: FnOnce(&mut PlatformInputHandler, f32) -> Option<R>,
+{
+    let mut lock = state_ptr.state.borrow_mut();
+    let mut input_handler = lock.input_handler.take()?;
+    let scale_factor = lock.scale_factor;
+    drop(lock);
+    let result = f(&mut input_handler, scale_factor);
+    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+    result
 }
