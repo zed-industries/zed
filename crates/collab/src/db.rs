@@ -23,17 +23,12 @@ use sea_orm::{
 };
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
-use sqlx::{
-    migrate::{Migrate, Migration, MigrationSource},
-    Connection,
-};
 use std::ops::RangeInclusive;
 use std::{
     fmt::Write as _,
     future::Future,
     marker::PhantomData,
     ops::{Deref, DerefMut},
-    path::Path,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -45,7 +40,12 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 pub use tests::TestDb;
 
 pub use ids::*;
+pub use queries::billing_customers::{CreateBillingCustomerParams, UpdateBillingCustomerParams};
+pub use queries::billing_subscriptions::{
+    CreateBillingSubscriptionParams, UpdateBillingSubscriptionParams,
+};
 pub use queries::contributors::ContributorSelector;
+pub use queries::processed_stripe_events::CreateProcessedStripeEventParams;
 pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
 pub use tables::*;
@@ -85,52 +85,14 @@ impl Database {
         })
     }
 
+    pub fn options(&self) -> &ConnectOptions {
+        &self.options
+    }
+
     #[cfg(test)]
     pub fn reset(&self) {
         self.rooms.clear();
         self.projects.clear();
-    }
-
-    /// Runs the database migrations.
-    pub async fn migrate(
-        &self,
-        migrations_path: &Path,
-        ignore_checksum_mismatch: bool,
-    ) -> anyhow::Result<Vec<(Migration, Duration)>> {
-        let migrations = MigrationSource::resolve(migrations_path)
-            .await
-            .map_err(|err| anyhow!("failed to load migrations: {err:?}"))?;
-
-        let mut connection = sqlx::AnyConnection::connect(self.options.get_url()).await?;
-
-        connection.ensure_migrations_table().await?;
-        let applied_migrations: HashMap<_, _> = connection
-            .list_applied_migrations()
-            .await?
-            .into_iter()
-            .map(|m| (m.version, m))
-            .collect();
-
-        let mut new_migrations = Vec::new();
-        for migration in migrations {
-            match applied_migrations.get(&migration.version) {
-                Some(applied_migration) => {
-                    if migration.checksum != applied_migration.checksum && !ignore_checksum_mismatch
-                    {
-                        Err(anyhow!(
-                            "checksum mismatch for applied migration {}",
-                            migration.description
-                        ))?;
-                    }
-                }
-                None => {
-                    let elapsed = connection.apply(&migration).await?;
-                    new_migrations.push((migration, elapsed));
-                }
-            }
-        }
-
-        Ok(new_migrations)
     }
 
     /// Transaction runs things in a transaction. If you want to call other methods
@@ -448,7 +410,7 @@ fn is_serialization_error(error: &Error) -> bool {
 }
 
 /// A handle to a [`DatabaseTransaction`].
-pub struct TransactionHandle(Arc<Option<DatabaseTransaction>>);
+pub struct TransactionHandle(pub(crate) Arc<Option<DatabaseTransaction>>);
 
 impl Deref for TransactionHandle {
     type Target = DatabaseTransaction;

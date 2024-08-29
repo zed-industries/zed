@@ -5,11 +5,12 @@ pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::AsyncReadExt;
-use http::HttpClient;
+use http_client::HttpClient;
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex, process::Command};
+use std::ffi::OsString;
 use std::io;
 use std::process::{Output, Stdio};
 use std::{
@@ -22,7 +23,7 @@ use util::ResultExt;
 #[cfg(windows)]
 use smol::process::windows::CommandExt;
 
-const VERSION: &str = "v18.15.0";
+const VERSION: &str = "v22.5.1";
 
 #[cfg(not(windows))]
 const NODE_PATH: &str = "bin/node";
@@ -55,6 +56,7 @@ pub struct NpmInfoDistTags {
 #[async_trait::async_trait]
 pub trait NodeRuntime: Send + Sync {
     async fn binary_path(&self) -> Result<PathBuf>;
+    async fn node_environment_path(&self) -> Result<OsString>;
 
     async fn run_npm_subcommand(
         &self,
@@ -216,6 +218,22 @@ impl NodeRuntime for RealNodeRuntime {
         Ok(installation_path.join(NODE_PATH))
     }
 
+    async fn node_environment_path(&self) -> Result<OsString> {
+        let installation_path = self.install_if_needed().await?;
+        let node_binary = installation_path.join(NODE_PATH);
+        let mut env_path = vec![node_binary
+            .parent()
+            .expect("invalid node binary path")
+            .to_path_buf()];
+
+        if let Some(existing_path) = std::env::var_os("PATH") {
+            let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
+            env_path.append(&mut paths);
+        }
+
+        Ok(std::env::join_paths(env_path).context("failed to create PATH env variable")?)
+    }
+
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
@@ -224,21 +242,9 @@ impl NodeRuntime for RealNodeRuntime {
     ) -> Result<Output> {
         let attempt = || async move {
             let installation_path = self.install_if_needed().await?;
-
             let node_binary = installation_path.join(NODE_PATH);
             let npm_file = installation_path.join(NPM_PATH);
-            let mut env_path = vec![node_binary
-                .parent()
-                .expect("invalid node binary path")
-                .to_path_buf()];
-
-            if let Some(existing_path) = std::env::var_os("PATH") {
-                let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
-                env_path.append(&mut paths);
-            }
-
-            let env_path =
-                std::env::join_paths(env_path).context("failed to create PATH env variable")?;
+            let env_path = self.node_environment_path().await?;
 
             if smol::fs::metadata(&node_binary).await.is_err() {
                 return Err(anyhow!("missing node binary file"));
@@ -269,7 +275,16 @@ impl NodeRuntime for RealNodeRuntime {
             }
 
             if let Some(proxy) = self.http.proxy() {
-                command.args(["--proxy", proxy]);
+                // Map proxy settings from `http://localhost:10809` to `http://127.0.0.1:10809`
+                // NodeRuntime without environment information can not parse `localhost`
+                // correctly.
+                // TODO: map to `[::1]` if we are using ipv6
+                let proxy = proxy
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .replace("localhost", "127.0.0.1");
+
+                command.args(["--proxy", &proxy]);
             }
 
             #[cfg(windows)]
@@ -280,6 +295,13 @@ impl NodeRuntime for RealNodeRuntime {
                     .log_err()
                 {
                     command.env("SYSTEMROOT", val);
+                }
+                // Without ComSpec, the post-install will always fail.
+                if let Some(val) = std::env::var("ComSpec")
+                    .context("Missing environment variable: ComSpec!")
+                    .log_err()
+                {
+                    command.env("ComSpec", val);
                 }
                 command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
             }
@@ -404,6 +426,10 @@ impl FakeNodeRuntime {
 #[async_trait::async_trait]
 impl NodeRuntime for FakeNodeRuntime {
     async fn binary_path(&self) -> anyhow::Result<PathBuf> {
+        unreachable!()
+    }
+
+    async fn node_environment_path(&self) -> anyhow::Result<OsString> {
         unreachable!()
     }
 

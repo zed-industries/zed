@@ -137,7 +137,6 @@ impl LanguageServerManifestEntry {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct SlashCommandManifestEntry {
     pub description: String,
-    pub tooltip_text: String,
     pub requires_argument: bool,
 }
 

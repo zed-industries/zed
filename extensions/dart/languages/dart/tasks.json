@@ -1,0 +1,26 @@
+[
+  {
+    "label": "flutter run",
+    "command": "flutter",
+    "args": ["run"],
+    "tags": ["flutter-main"]
+  },
+  {
+    "label": "fvm flutter run",
+    "command": "fvm flutter",
+    "args": ["run"],
+    "tags": ["flutter-main"]
+  },
+  {
+    "label": "flutter test $ZED_STEM",
+    "command": "flutter",
+    "args": ["test", "$ZED_FILE"],
+    "tags": ["flutter-test-main"]
+  },
+  {
+    "label": "fvm flutter test $ZED_STEM",
+    "command": "fvm flutter",
+    "args": ["test", "$ZED_FILE"],
+    "tags": ["flutter-test-main"]
+  }
+]

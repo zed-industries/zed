@@ -7,7 +7,7 @@ use gpui::{
 };
 use language::DiagnosticSeverity;
 
-use std::{any::TypeId, ops::DerefMut};
+use std::{any::TypeId, ops::DerefMut, time::Duration};
 use ui::{prelude::*, Tooltip};
 use util::ResultExt;
 
@@ -160,12 +160,21 @@ impl Workspace {
         self.show_notification(
             NotificationId::unique::<WorkspaceErrorNotification>(),
             cx,
-            |cx| {
-                cx.new_view(|_cx| {
-                    simple_message_notification::MessageNotification::new(format!("Error: {err:#}"))
-                })
-            },
+            |cx| cx.new_view(|_cx| ErrorMessagePrompt::new(format!("Error: {err:#}"))),
         );
+    }
+
+    pub fn show_portal_error(&mut self, err: String, cx: &mut ViewContext<Self>) {
+        struct PortalError;
+
+        self.show_notification(NotificationId::unique::<PortalError>(), cx, |cx| {
+            cx.new_view(|_cx| {
+                ErrorMessagePrompt::new(err.to_string()).with_link_button(
+                    "See docs",
+                    "https://zed.dev/docs/linux#i-cant-open-any-files",
+                )
+            })
+        });
     }
 
     pub fn dismiss_notification(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
@@ -174,7 +183,7 @@ impl Workspace {
 
     pub fn show_toast(&mut self, toast: Toast, cx: &mut ViewContext<Self>) {
         self.dismiss_notification(&toast.id, cx);
-        self.show_notification(toast.id, cx, |cx| {
+        self.show_notification(toast.id.clone(), cx, |cx| {
             cx.new_view(|_cx| match toast.on_click.as_ref() {
                 Some((click_msg, on_click)) => {
                     let on_click = on_click.clone();
@@ -184,7 +193,20 @@ impl Workspace {
                 }
                 None => simple_message_notification::MessageNotification::new(toast.msg.clone()),
             })
-        })
+        });
+        if toast.autohide {
+            cx.spawn(|workspace, mut cx| async move {
+                cx.background_executor()
+                    .timer(Duration::from_millis(5000))
+                    .await;
+                workspace
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.dismiss_toast(&toast.id, cx)
+                    })
+                    .ok();
+            })
+            .detach();
+        }
     }
 
     pub fn dismiss_toast(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
@@ -320,7 +342,7 @@ impl Render for LanguageServerPrompt {
                                         .on_click({
                                             let message = request.message.clone();
                                             move |_, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new(
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
                                                     message.clone(),
                                                 ))
                                             }
@@ -348,6 +370,84 @@ impl Render for LanguageServerPrompt {
 }
 
 impl EventEmitter<DismissEvent> for LanguageServerPrompt {}
+
+pub struct ErrorMessagePrompt {
+    message: SharedString,
+    label_and_url_button: Option<(SharedString, SharedString)>,
+}
+
+impl ErrorMessagePrompt {
+    pub fn new<S>(message: S) -> Self
+    where
+        S: Into<SharedString>,
+    {
+        Self {
+            message: message.into(),
+            label_and_url_button: None,
+        }
+    }
+
+    pub fn with_link_button<S>(mut self, label: S, url: S) -> Self
+    where
+        S: Into<SharedString>,
+    {
+        self.label_and_url_button = Some((label.into(), url.into()));
+        self
+    }
+}
+
+impl Render for ErrorMessagePrompt {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .id("error_message_prompt_notification")
+            .occlude()
+            .elevation_3(cx)
+            .items_start()
+            .justify_between()
+            .p_2()
+            .gap_2()
+            .w_full()
+            .child(
+                v_flex()
+                    .w_full()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .child(
+                                svg()
+                                    .size(cx.text_style().font_size)
+                                    .flex_none()
+                                    .mr_2()
+                                    .mt(px(-2.0))
+                                    .map(|icon| {
+                                        icon.path(IconName::ExclamationTriangle.path())
+                                            .text_color(Color::Error.color(cx))
+                                    }),
+                            )
+                            .child(
+                                ui::IconButton::new("close", ui::IconName::Close)
+                                    .on_click(cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent))),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .max_w_80()
+                            .child(Label::new(self.message.clone()).size(LabelSize::Small)),
+                    )
+                    .when_some(self.label_and_url_button.clone(), |elm, (label, url)| {
+                        elm.child(
+                            div().mt_2().child(
+                                ui::Button::new("error_message_prompt_notification_button", label)
+                                    .on_click(move |_, cx| cx.open_url(&url)),
+                            ),
+                        )
+                    }),
+            )
+    }
+}
+
+impl EventEmitter<DismissEvent> for ErrorMessagePrompt {}
 
 pub mod simple_message_notification {
     use gpui::{
@@ -525,13 +625,13 @@ where
     }
 }
 
-pub trait DetachAndPromptErr {
+pub trait DetachAndPromptErr<R> {
     fn prompt_err(
         self,
         msg: &str,
         cx: &mut WindowContext,
         f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
-    ) -> Task<()>;
+    ) -> Task<Option<R>>;
 
     fn detach_and_prompt_err(
         self,
@@ -541,7 +641,7 @@ pub trait DetachAndPromptErr {
     );
 }
 
-impl<R> DetachAndPromptErr for Task<anyhow::Result<R>>
+impl<R> DetachAndPromptErr<R> for Task<anyhow::Result<R>>
 where
     R: 'static,
 {
@@ -550,10 +650,11 @@ where
         msg: &str,
         cx: &mut WindowContext,
         f: impl FnOnce(&anyhow::Error, &mut WindowContext) -> Option<String> + 'static,
-    ) -> Task<()> {
+    ) -> Task<Option<R>> {
         let msg = msg.to_owned();
         cx.spawn(|mut cx| async move {
-            if let Err(err) = self.await {
+            let result = self.await;
+            if let Err(err) = result.as_ref() {
                 log::error!("{err:?}");
                 if let Ok(prompt) = cx.update(|cx| {
                     let detail = f(&err, cx).unwrap_or_else(|| format!("{err}. Please try again."));
@@ -561,7 +662,9 @@ where
                 }) {
                     prompt.await.ok();
                 }
+                return None;
             }
+            return Some(result.unwrap());
         })
     }
 

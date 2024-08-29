@@ -8,9 +8,9 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
 use futures::AsyncReadExt;
-use gpui::{AppContext, Task, WeakView};
+use gpui::{Task, WeakView};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
-use http::{AsyncBody, HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::LspAdapterDelegate;
 use ui::prelude::*;
 use workspace::Workspace;
@@ -27,7 +27,7 @@ pub(crate) struct FetchSlashCommand;
 impl FetchSlashCommand {
     async fn build_message(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<String> {
         let mut url = url.to_owned();
-        if !url.starts_with("https://") {
+        if !url.starts_with("https://") && !url.starts_with("http://") {
             url = format!("https://{url}");
         }
 
@@ -117,22 +117,22 @@ impl SlashCommand for FetchSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
         workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let Some(argument) = argument else {
+        let Some(argument) = arguments.first() else {
             return Task::ready(Err(anyhow!("missing URL")));
         };
         let Some(workspace) = workspace.upgrade() else {
@@ -150,6 +150,10 @@ impl SlashCommand for FetchSlashCommand {
         let url = SharedString::from(url);
         cx.foreground_executor().spawn(async move {
             let text = text.await?;
+            if text.trim().is_empty() {
+                bail!("no textual content found");
+            }
+
             let range = 0..text.len();
             Ok(SlashCommandOutput {
                 text,

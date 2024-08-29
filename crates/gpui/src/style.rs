@@ -5,10 +5,10 @@ use std::{
 };
 
 use crate::{
-    black, phi, point, quad, rems, AbsoluteLength, Bounds, ContentMask, Corners, CornersRefinement,
-    CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures, FontStyle, FontWeight,
-    Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled,
-    TextRun, WindowContext,
+    black, phi, point, quad, rems, size, AbsoluteLength, Bounds, ContentMask, Corners,
+    CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
+    FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
+    PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -26,6 +26,121 @@ pub struct DebugBelow;
 
 #[cfg(debug_assertions)]
 impl crate::Global for DebugBelow {}
+
+/// How to fit the image into the bounds of the element.
+pub enum ObjectFit {
+    /// The image will be stretched to fill the bounds of the element.
+    Fill,
+    /// The image will be scaled to fit within the bounds of the element.
+    Contain,
+    /// The image will be scaled to cover the bounds of the element.
+    Cover,
+    /// The image will be scaled down to fit within the bounds of the element.
+    ScaleDown,
+    /// The image will maintain its original size.
+    None,
+}
+
+impl ObjectFit {
+    /// Get the bounds of the image within the given bounds.
+    pub fn get_bounds(
+        &self,
+        bounds: Bounds<Pixels>,
+        image_size: Size<DevicePixels>,
+    ) -> Bounds<Pixels> {
+        let image_size = image_size.map(|dimension| Pixels::from(u32::from(dimension)));
+        let image_ratio = image_size.width / image_size.height;
+        let bounds_ratio = bounds.size.width / bounds.size.height;
+
+        let result_bounds = match self {
+            ObjectFit::Fill => bounds,
+            ObjectFit::Contain => {
+                let new_size = if bounds_ratio > image_ratio {
+                    size(
+                        image_size.width * (bounds.size.height / image_size.height),
+                        bounds.size.height,
+                    )
+                } else {
+                    size(
+                        bounds.size.width,
+                        image_size.height * (bounds.size.width / image_size.width),
+                    )
+                };
+
+                Bounds {
+                    origin: point(
+                        bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
+                        bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
+                    ),
+                    size: new_size,
+                }
+            }
+            ObjectFit::ScaleDown => {
+                // Check if the image is larger than the bounds in either dimension.
+                if image_size.width > bounds.size.width || image_size.height > bounds.size.height {
+                    // If the image is larger, use the same logic as Contain to scale it down.
+                    let new_size = if bounds_ratio > image_ratio {
+                        size(
+                            image_size.width * (bounds.size.height / image_size.height),
+                            bounds.size.height,
+                        )
+                    } else {
+                        size(
+                            bounds.size.width,
+                            image_size.height * (bounds.size.width / image_size.width),
+                        )
+                    };
+
+                    Bounds {
+                        origin: point(
+                            bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
+                            bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
+                        ),
+                        size: new_size,
+                    }
+                } else {
+                    // If the image is smaller than or equal to the container, display it at its original size,
+                    // centered within the container.
+                    let original_size = size(image_size.width, image_size.height);
+                    Bounds {
+                        origin: point(
+                            bounds.origin.x + (bounds.size.width - original_size.width) / 2.0,
+                            bounds.origin.y + (bounds.size.height - original_size.height) / 2.0,
+                        ),
+                        size: original_size,
+                    }
+                }
+            }
+            ObjectFit::Cover => {
+                let new_size = if bounds_ratio > image_ratio {
+                    size(
+                        bounds.size.width,
+                        image_size.height * (bounds.size.width / image_size.width),
+                    )
+                } else {
+                    size(
+                        image_size.width * (bounds.size.height / image_size.height),
+                        bounds.size.height,
+                    )
+                };
+
+                Bounds {
+                    origin: point(
+                        bounds.origin.x + (bounds.size.width - new_size.width) / 2.0,
+                        bounds.origin.y + (bounds.size.height - new_size.height) / 2.0,
+                    ),
+                    size: new_size,
+                }
+            }
+            ObjectFit::None => Bounds {
+                origin: bounds.origin,
+                size: image_size,
+            },
+        };
+
+        result_bounds
+    }
+}
 
 /// The CSS styling that can be applied to an element via the `Styled` trait
 #[derive(Clone, Refineable, Debug)]
@@ -167,6 +282,16 @@ pub enum WhiteSpace {
     Nowrap,
 }
 
+/// How to truncate text that overflows the width of the element
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Truncate {
+    /// Truncate the text without an ellipsis
+    #[default]
+    Truncate,
+    /// Truncate the text with an ellipsis
+    Ellipsis,
+}
+
 /// The properties that can be used to style text in GPUI
 #[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug)]
@@ -179,6 +304,9 @@ pub struct TextStyle {
 
     /// The font features to use
     pub font_features: FontFeatures,
+
+    /// The fallback fonts to use
+    pub font_fallbacks: Option<FontFallbacks>,
 
     /// The font size to use, in pixels or rems.
     pub font_size: AbsoluteLength,
@@ -203,6 +331,9 @@ pub struct TextStyle {
 
     /// How to handle whitespace in the text
     pub white_space: WhiteSpace,
+
+    /// The text should be truncated if it overflows the width of the element
+    pub truncate: Option<Truncate>,
 }
 
 impl Default for TextStyle {
@@ -212,10 +343,13 @@ impl Default for TextStyle {
             // todo(linux) make this configurable or choose better default
             font_family: if cfg!(target_os = "linux") {
                 "FreeMono".into()
+            } else if cfg!(target_os = "windows") {
+                "Segoe UI".into()
             } else {
                 "Helvetica".into()
             },
             font_features: FontFeatures::default(),
+            font_fallbacks: None,
             font_size: rems(1.).into(),
             line_height: phi(),
             font_weight: FontWeight::default(),
@@ -224,6 +358,7 @@ impl Default for TextStyle {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
+            truncate: None,
         }
     }
 }
@@ -267,6 +402,7 @@ impl TextStyle {
         Font {
             family: self.font_family.clone(),
             features: self.font_features.clone(),
+            fallbacks: self.font_fallbacks.clone(),
             weight: self.font_weight,
             style: self.font_style,
         }
@@ -284,6 +420,7 @@ impl TextStyle {
             font: Font {
                 family: self.font_family.clone(),
                 features: Default::default(),
+                fallbacks: self.font_fallbacks.clone(),
                 weight: self.font_weight,
                 style: self.font_style,
             },

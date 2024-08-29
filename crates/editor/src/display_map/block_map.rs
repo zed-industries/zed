@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{AnyElement, Pixels, WindowContext};
+use gpui::{AnyElement, EntityId, Pixels, WindowContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
 use multi_buffer::{Anchor, ExcerptId, ExcerptRange, MultiBufferRow, ToPoint as _};
 use parking_lot::Mutex;
@@ -18,10 +18,12 @@ use std::{
         Arc,
     },
 };
-use sum_tree::{Bias, SumTree};
+use sum_tree::{Bias, SumTree, TreeMap};
 use text::Edit;
+use ui::ElementId;
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
+const BULLETS: &str = "********************************************************************************************************************************";
 
 /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
 ///
@@ -29,16 +31,17 @@ const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 pub struct BlockMap {
     next_block_id: AtomicUsize,
     wrap_snapshot: RefCell<WrapSnapshot>,
-    blocks: Vec<Arc<Block>>,
+    custom_blocks: Vec<Arc<CustomBlock>>,
+    custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     transforms: RefCell<SumTree<Transform>>,
     show_excerpt_controls: bool,
-    buffer_header_height: u8,
-    excerpt_header_height: u8,
-    excerpt_footer_height: u8,
+    buffer_header_height: u32,
+    excerpt_header_height: u32,
+    excerpt_footer_height: u32,
 }
 
 pub struct BlockMapReader<'a> {
-    blocks: &'a Vec<Arc<Block>>,
+    blocks: &'a Vec<Arc<CustomBlock>>,
     pub snapshot: BlockSnapshot,
 }
 
@@ -48,10 +51,20 @@ pub struct BlockMapWriter<'a>(&'a mut BlockMap);
 pub struct BlockSnapshot {
     wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
+    custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
+    pub(super) buffer_header_height: u32,
+    pub(super) excerpt_header_height: u32,
+    pub(super) excerpt_footer_height: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BlockId(usize);
+pub struct CustomBlockId(usize);
+
+impl Into<ElementId> for CustomBlockId {
+    fn into(self) -> ElementId {
+        ElementId::Integer(self.0)
+    }
+}
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct BlockPoint(pub Point);
@@ -62,26 +75,39 @@ pub struct BlockRow(pub(super) u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
-pub type RenderBlock = Box<dyn Send + Fn(&mut BlockContext) -> AnyElement>;
+pub type RenderBlock = Box<dyn Send + FnMut(&mut BlockContext) -> AnyElement>;
 
-pub struct Block {
-    id: BlockId,
+pub struct CustomBlock {
+    id: CustomBlockId,
     position: Anchor,
-    height: u8,
+    height: u32,
     style: BlockStyle,
-    render: Mutex<RenderBlock>,
+    render: Arc<Mutex<RenderBlock>>,
     disposition: BlockDisposition,
+    priority: usize,
 }
 
 pub struct BlockProperties<P> {
     pub position: P,
-    pub height: u8,
+    pub height: u32,
     pub style: BlockStyle,
-    pub render: Box<dyn Send + Fn(&mut BlockContext) -> AnyElement>,
+    pub render: RenderBlock,
     pub disposition: BlockDisposition,
+    pub priority: usize,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+impl<P: Debug> Debug for BlockProperties<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockProperties")
+            .field("position", &self.position)
+            .field("height", &self.height)
+            .field("style", &self.style)
+            .field("disposition", &self.disposition)
+            .finish()
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum BlockStyle {
     Fixed,
     Flex,
@@ -95,8 +121,45 @@ pub struct BlockContext<'a, 'b> {
     pub gutter_dimensions: &'b GutterDimensions,
     pub em_width: Pixels,
     pub line_height: Pixels,
-    pub block_id: usize,
+    pub block_id: BlockId,
     pub editor_style: &'b EditorStyle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BlockId {
+    Custom(CustomBlockId),
+    ExcerptHeader(ExcerptId),
+    ExcerptFooter(ExcerptId),
+}
+
+impl From<BlockId> for EntityId {
+    fn from(value: BlockId) -> Self {
+        match value {
+            BlockId::Custom(CustomBlockId(id)) => EntityId::from(id as u64),
+            BlockId::ExcerptHeader(id) => id.into(),
+            BlockId::ExcerptFooter(id) => id.into(),
+        }
+    }
+}
+
+impl From<BlockId> for ElementId {
+    fn from(value: BlockId) -> Self {
+        match value {
+            BlockId::Custom(CustomBlockId(id)) => ("Block", id).into(),
+            BlockId::ExcerptHeader(id) => ("ExcerptHeader", EntityId::from(id)).into(),
+            BlockId::ExcerptFooter(id) => ("ExcerptFooter", EntityId::from(id)).into(),
+        }
+    }
+}
+
+impl std::fmt::Display for BlockId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Custom(id) => write!(f, "Block({id:?})"),
+            Self::ExcerptHeader(id) => write!(f, "ExcerptHeader({id:?})"),
+            Self::ExcerptFooter(id) => write!(f, "ExcerptFooter({id:?})"),
+        }
+    }
 }
 
 /// Whether the block should be considered above or below the anchor line
@@ -109,11 +172,11 @@ pub enum BlockDisposition {
 #[derive(Clone, Debug)]
 struct Transform {
     summary: TransformSummary,
-    block: Option<TransformBlock>,
+    block: Option<Block>,
 }
 
 pub(crate) enum BlockType {
-    Custom(BlockId),
+    Custom(CustomBlockId),
     Header,
     Footer,
 }
@@ -121,60 +184,85 @@ pub(crate) enum BlockType {
 pub(crate) trait BlockLike {
     fn block_type(&self) -> BlockType;
     fn disposition(&self) -> BlockDisposition;
+    fn priority(&self) -> usize;
 }
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
-pub enum TransformBlock {
-    Custom(Arc<Block>),
+pub enum Block {
+    Custom(Arc<CustomBlock>),
     ExcerptHeader {
         id: ExcerptId,
         buffer: BufferSnapshot,
         range: ExcerptRange<text::Anchor>,
-        height: u8,
+        height: u32,
         starts_new_buffer: bool,
         show_excerpt_controls: bool,
     },
     ExcerptFooter {
         id: ExcerptId,
         disposition: BlockDisposition,
-        height: u8,
+        height: u32,
     },
 }
 
-impl BlockLike for TransformBlock {
+impl BlockLike for Block {
     fn block_type(&self) -> BlockType {
         match self {
-            TransformBlock::Custom(block) => BlockType::Custom(block.id),
-            TransformBlock::ExcerptHeader { .. } => BlockType::Header,
-            TransformBlock::ExcerptFooter { .. } => BlockType::Footer,
+            Block::Custom(block) => BlockType::Custom(block.id),
+            Block::ExcerptHeader { .. } => BlockType::Header,
+            Block::ExcerptFooter { .. } => BlockType::Footer,
         }
     }
 
     fn disposition(&self) -> BlockDisposition {
         self.disposition()
     }
+
+    fn priority(&self) -> usize {
+        match self {
+            Block::Custom(block) => block.priority,
+            Block::ExcerptHeader { .. } => usize::MAX,
+            Block::ExcerptFooter { .. } => 0,
+        }
+    }
 }
 
-impl TransformBlock {
+impl Block {
+    pub fn id(&self) -> BlockId {
+        match self {
+            Block::Custom(block) => BlockId::Custom(block.id),
+            Block::ExcerptHeader { id, .. } => BlockId::ExcerptHeader(*id),
+            Block::ExcerptFooter { id, .. } => BlockId::ExcerptFooter(*id),
+        }
+    }
+
     fn disposition(&self) -> BlockDisposition {
         match self {
-            TransformBlock::Custom(block) => block.disposition,
-            TransformBlock::ExcerptHeader { .. } => BlockDisposition::Above,
-            TransformBlock::ExcerptFooter { disposition, .. } => *disposition,
+            Block::Custom(block) => block.disposition,
+            Block::ExcerptHeader { .. } => BlockDisposition::Above,
+            Block::ExcerptFooter { disposition, .. } => *disposition,
         }
     }
 
-    pub fn height(&self) -> u8 {
+    pub fn height(&self) -> u32 {
         match self {
-            TransformBlock::Custom(block) => block.height,
-            TransformBlock::ExcerptHeader { height, .. } => *height,
-            TransformBlock::ExcerptFooter { height, .. } => *height,
+            Block::Custom(block) => block.height,
+            Block::ExcerptHeader { height, .. } => *height,
+            Block::ExcerptFooter { height, .. } => *height,
+        }
+    }
+
+    pub fn style(&self) -> BlockStyle {
+        match self {
+            Block::Custom(block) => block.style,
+            Block::ExcerptHeader { .. } => BlockStyle::Sticky,
+            Block::ExcerptFooter { .. } => BlockStyle::Sticky,
         }
     }
 }
 
-impl Debug for TransformBlock {
+impl Debug for Block {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Custom(block) => f.debug_struct("Custom").field("block", block).finish(),
@@ -189,7 +277,7 @@ impl Debug for TransformBlock {
                 .field("path", &buffer.file().map(|f| f.path()))
                 .field("starts_new_buffer", &starts_new_buffer)
                 .finish(),
-            TransformBlock::ExcerptFooter {
+            Block::ExcerptFooter {
                 id, disposition, ..
             } => f
                 .debug_struct("ExcerptFooter")
@@ -212,6 +300,7 @@ pub struct BlockChunks<'a> {
     input_chunk: Chunk<'a>,
     output_row: u32,
     max_output_row: u32,
+    masked: bool,
 }
 
 #[derive(Clone)]
@@ -226,14 +315,15 @@ impl BlockMap {
     pub fn new(
         wrap_snapshot: WrapSnapshot,
         show_excerpt_controls: bool,
-        buffer_header_height: u8,
-        excerpt_header_height: u8,
-        excerpt_footer_height: u8,
+        buffer_header_height: u32,
+        excerpt_header_height: u32,
+        excerpt_footer_height: u32,
     ) -> Self {
         let row_count = wrap_snapshot.max_point().row() + 1;
         let map = Self {
             next_block_id: AtomicUsize::new(0),
-            blocks: Vec::new(),
+            custom_blocks: Vec::new(),
+            custom_blocks_by_id: TreeMap::default(),
             transforms: RefCell::new(SumTree::from_item(Transform::isomorphic(row_count), &())),
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             show_excerpt_controls,
@@ -255,10 +345,14 @@ impl BlockMap {
         self.sync(&wrap_snapshot, edits);
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot.clone();
         BlockMapReader {
-            blocks: &self.blocks,
+            blocks: &self.custom_blocks,
             snapshot: BlockSnapshot {
                 wrap_snapshot,
                 transforms: self.transforms.borrow().clone(),
+                custom_blocks_by_id: self.custom_blocks_by_id.clone(),
+                buffer_header_height: self.buffer_header_height,
+                excerpt_header_height: self.excerpt_header_height,
+                excerpt_footer_height: self.excerpt_footer_height,
             },
         }
     }
@@ -380,25 +474,26 @@ impl BlockMap {
             let new_buffer_start =
                 wrap_snapshot.to_point(WrapPoint::new(new_start.0, 0), Bias::Left);
             let start_bound = Bound::Included(new_buffer_start);
-            let start_block_ix = match self.blocks[last_block_ix..].binary_search_by(|probe| {
-                probe
-                    .position
-                    .to_point(buffer)
-                    .cmp(&new_buffer_start)
-                    .then(Ordering::Greater)
-            }) {
-                Ok(ix) | Err(ix) => last_block_ix + ix,
-            };
+            let start_block_ix =
+                match self.custom_blocks[last_block_ix..].binary_search_by(|probe| {
+                    probe
+                        .position
+                        .to_point(buffer)
+                        .cmp(&new_buffer_start)
+                        .then(Ordering::Greater)
+                }) {
+                    Ok(ix) | Err(ix) => last_block_ix + ix,
+                };
 
             let end_bound;
             let end_block_ix = if new_end.0 > wrap_snapshot.max_point().row() {
                 end_bound = Bound::Unbounded;
-                self.blocks.len()
+                self.custom_blocks.len()
             } else {
                 let new_buffer_end =
                     wrap_snapshot.to_point(WrapPoint::new(new_end.0, 0), Bias::Left);
                 end_bound = Bound::Excluded(new_buffer_end);
-                match self.blocks[start_block_ix..].binary_search_by(|probe| {
+                match self.custom_blocks[start_block_ix..].binary_search_by(|probe| {
                     probe
                         .position
                         .to_point(buffer)
@@ -411,24 +506,22 @@ impl BlockMap {
             last_block_ix = end_block_ix;
 
             debug_assert!(blocks_in_edit.is_empty());
-            blocks_in_edit.extend(
-                self.blocks[start_block_ix..end_block_ix]
-                    .iter()
-                    .map(|block| {
-                        let mut position = block.position.to_point(buffer);
-                        match block.disposition {
-                            BlockDisposition::Above => position.column = 0,
-                            BlockDisposition::Below => {
-                                position.column = buffer.line_len(MultiBufferRow(position.row))
-                            }
+            blocks_in_edit.extend(self.custom_blocks[start_block_ix..end_block_ix].iter().map(
+                |block| {
+                    let mut position = block.position.to_point(buffer);
+                    match block.disposition {
+                        BlockDisposition::Above => position.column = 0,
+                        BlockDisposition::Below => {
+                            position.column = buffer.line_len(MultiBufferRow(position.row))
                         }
-                        let position = wrap_snapshot.make_wrap_point(position, Bias::Left);
-                        (position.row(), TransformBlock::Custom(block.clone()))
-                    }),
-            );
+                    }
+                    let position = wrap_snapshot.make_wrap_point(position, Bias::Left);
+                    (position.row(), Block::Custom(block.clone()))
+                },
+            ));
 
             if buffer.show_headers() {
-                blocks_in_edit.extend(BlockMap::header_blocks(
+                blocks_in_edit.extend(BlockMap::header_and_footer_blocks(
                     self.show_excerpt_controls,
                     self.excerpt_footer_height,
                     self.buffer_header_height,
@@ -475,8 +568,8 @@ impl BlockMap {
         *transforms = new_transforms;
     }
 
-    pub fn replace_renderers(&mut self, mut renderers: HashMap<BlockId, RenderBlock>) {
-        for block in &mut self.blocks {
+    pub fn replace_blocks(&mut self, mut renderers: HashMap<CustomBlockId, RenderBlock>) {
+        for block in &mut self.custom_blocks {
             if let Some(render) = renderers.remove(&block.id) {
                 *block.render.lock() = render;
             }
@@ -487,15 +580,15 @@ impl BlockMap {
         self.show_excerpt_controls
     }
 
-    pub fn header_blocks<'a, 'b: 'a, 'c: 'a + 'b, R, T>(
+    pub fn header_and_footer_blocks<'a, 'b: 'a, 'c: 'a + 'b, R, T>(
         show_excerpt_controls: bool,
-        excerpt_footer_height: u8,
-        buffer_header_height: u8,
-        excerpt_header_height: u8,
+        excerpt_footer_height: u32,
+        buffer_header_height: u32,
+        excerpt_header_height: u32,
         buffer: &'b multi_buffer::MultiBufferSnapshot,
         range: R,
         wrap_snapshot: &'c WrapSnapshot,
-    ) -> impl Iterator<Item = (u32, TransformBlock)> + 'b
+    ) -> impl Iterator<Item = (u32, Block)> + 'b
     where
         R: RangeBounds<T>,
         T: multi_buffer::ToOffset,
@@ -503,24 +596,36 @@ impl BlockMap {
         buffer
             .excerpt_boundaries_in_range(range)
             .flat_map(move |excerpt_boundary| {
-                let wrap_row = wrap_snapshot
+                let mut wrap_row = wrap_snapshot
                     .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
                     .row();
 
                 [
                     show_excerpt_controls
                         .then(|| {
+                            let disposition;
+                            if excerpt_boundary.next.is_some() {
+                                disposition = BlockDisposition::Above;
+                            } else {
+                                wrap_row = wrap_snapshot
+                                    .make_wrap_point(
+                                        Point::new(
+                                            excerpt_boundary.row.0,
+                                            buffer.line_len(excerpt_boundary.row),
+                                        ),
+                                        Bias::Left,
+                                    )
+                                    .row();
+                                disposition = BlockDisposition::Below;
+                            }
+
                             excerpt_boundary.prev.as_ref().map(|prev| {
                                 (
                                     wrap_row,
-                                    TransformBlock::ExcerptFooter {
+                                    Block::ExcerptFooter {
                                         id: prev.id,
                                         height: excerpt_footer_height,
-                                        disposition: if excerpt_boundary.next.is_some() {
-                                            BlockDisposition::Above
-                                        } else {
-                                            BlockDisposition::Below
-                                        },
+                                        disposition,
                                     },
                                 )
                             })
@@ -533,7 +638,7 @@ impl BlockMap {
 
                         (
                             wrap_row,
-                            TransformBlock::ExcerptHeader {
+                            Block::ExcerptHeader {
                                 id: next.id,
                                 buffer: next.buffer,
                                 range: next.range,
@@ -566,7 +671,10 @@ impl BlockMap {
                         (BlockType::Header, BlockType::Header) => Ordering::Equal,
                         (BlockType::Header, _) => Ordering::Less,
                         (_, BlockType::Header) => Ordering::Greater,
-                        (BlockType::Custom(a_id), BlockType::Custom(b_id)) => a_id.cmp(&b_id),
+                        (BlockType::Custom(a_id), BlockType::Custom(b_id)) => block_b
+                            .priority()
+                            .cmp(&block_a.priority())
+                            .then_with(|| a_id.cmp(&b_id)),
                     })
             })
         });
@@ -629,7 +737,7 @@ impl<'a> DerefMut for BlockMapReader<'a> {
 }
 
 impl<'a> BlockMapReader<'a> {
-    pub fn row_for_block(&self, block_id: BlockId) -> Option<BlockRow> {
+    pub fn row_for_block(&self, block_id: CustomBlockId) -> Option<BlockRow> {
         let block = self.blocks.iter().find(|block| block.id == block_id)?;
         let buffer_row = block
             .position
@@ -674,14 +782,16 @@ impl<'a> BlockMapWriter<'a> {
     pub fn insert(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
-    ) -> Vec<BlockId> {
-        let mut ids = Vec::new();
+    ) -> Vec<CustomBlockId> {
+        let blocks = blocks.into_iter();
+        let mut ids = Vec::with_capacity(blocks.size_hint().1.unwrap_or(0));
         let mut edits = Patch::default();
         let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
 
+        let mut previous_wrap_row_range: Option<Range<u32>> = None;
         for block in blocks {
-            let id = BlockId(self.0.next_block_id.fetch_add(1, SeqCst));
+            let id = CustomBlockId(self.0.next_block_id.fetch_add(1, SeqCst));
             ids.push(id);
 
             let position = block.position;
@@ -689,29 +799,36 @@ impl<'a> BlockMapWriter<'a> {
             let wrap_row = wrap_snapshot
                 .make_wrap_point(Point::new(point.row, 0), Bias::Left)
                 .row();
-            let start_row = wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
-            let end_row = wrap_snapshot
-                .next_row_boundary(WrapPoint::new(wrap_row, 0))
-                .unwrap_or(wrap_snapshot.max_point().row() + 1);
 
+            let (start_row, end_row) = {
+                previous_wrap_row_range.take_if(|range| !range.contains(&wrap_row));
+                let range = previous_wrap_row_range.get_or_insert_with(|| {
+                    let start_row = wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
+                    let end_row = wrap_snapshot
+                        .next_row_boundary(WrapPoint::new(wrap_row, 0))
+                        .unwrap_or(wrap_snapshot.max_point().row() + 1);
+                    start_row..end_row
+                });
+                (range.start, range.end)
+            };
             let block_ix = match self
                 .0
-                .blocks
+                .custom_blocks
                 .binary_search_by(|probe| probe.position.cmp(&position, buffer))
             {
                 Ok(ix) | Err(ix) => ix,
             };
-            self.0.blocks.insert(
-                block_ix,
-                Arc::new(Block {
-                    id,
-                    position,
-                    height: block.height,
-                    render: Mutex::new(block.render),
-                    disposition: block.disposition,
-                    style: block.style,
-                }),
-            );
+            let new_block = Arc::new(CustomBlock {
+                id,
+                position,
+                height: block.height,
+                render: Arc::new(Mutex::new(block.render)),
+                disposition: block.disposition,
+                style: block.style,
+                priority: block.priority,
+            });
+            self.0.custom_blocks.insert(block_ix, new_block.clone());
+            self.0.custom_blocks_by_id.insert(id, new_block);
 
             edits = edits.compose([Edit {
                 old: start_row..end_row,
@@ -723,24 +840,27 @@ impl<'a> BlockMapWriter<'a> {
         ids
     }
 
-    pub fn replace(&mut self, mut heights_and_renderers: HashMap<BlockId, (u8, RenderBlock)>) {
+    pub fn resize(&mut self, mut heights: HashMap<CustomBlockId, u32>) {
         let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
         let mut edits = Patch::default();
         let mut last_block_buffer_row = None;
 
-        for block in &mut self.0.blocks {
-            if let Some((new_height, render)) = heights_and_renderers.remove(&block.id) {
+        for block in &mut self.0.custom_blocks {
+            if let Some(new_height) = heights.remove(&block.id) {
                 if block.height != new_height {
-                    let new_block = Block {
+                    let new_block = CustomBlock {
                         id: block.id,
                         position: block.position,
                         height: new_height,
                         style: block.style,
-                        render: Mutex::new(render),
+                        render: block.render.clone(),
                         disposition: block.disposition,
+                        priority: block.priority,
                     };
-                    *block = Arc::new(new_block);
+                    let new_block = Arc::new(new_block);
+                    *block = new_block.clone();
+                    self.0.custom_blocks_by_id.insert(block.id, new_block);
 
                     let buffer_row = block.position.to_point(buffer).row;
                     if last_block_buffer_row != Some(buffer_row) {
@@ -765,12 +885,13 @@ impl<'a> BlockMapWriter<'a> {
         self.0.sync(wrap_snapshot, edits);
     }
 
-    pub fn remove(&mut self, block_ids: HashSet<BlockId>) {
+    pub fn remove(&mut self, block_ids: HashSet<CustomBlockId>) {
         let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
         let mut edits = Patch::default();
         let mut last_block_buffer_row = None;
-        self.0.blocks.retain(|block| {
+        let mut previous_wrap_row_range: Option<Range<u32>> = None;
+        self.0.custom_blocks.retain(|block| {
             if block_ids.contains(&block.id) {
                 let buffer_row = block.position.to_point(buffer).row;
                 if last_block_buffer_row != Some(buffer_row) {
@@ -778,10 +899,19 @@ impl<'a> BlockMapWriter<'a> {
                     let wrap_row = wrap_snapshot
                         .make_wrap_point(Point::new(buffer_row, 0), Bias::Left)
                         .row();
-                    let start_row = wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
-                    let end_row = wrap_snapshot
-                        .next_row_boundary(WrapPoint::new(wrap_row, 0))
-                        .unwrap_or(wrap_snapshot.max_point().row() + 1);
+                    let (start_row, end_row) = {
+                        previous_wrap_row_range.take_if(|range| !range.contains(&wrap_row));
+                        let range = previous_wrap_row_range.get_or_insert_with(|| {
+                            let start_row =
+                                wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
+                            let end_row = wrap_snapshot
+                                .next_row_boundary(WrapPoint::new(wrap_row, 0))
+                                .unwrap_or(wrap_snapshot.max_point().row() + 1);
+                            start_row..end_row
+                        });
+                        (range.start, range.end)
+                    };
+
                     edits.push(Edit {
                         old: start_row..end_row,
                         new: start_row..end_row,
@@ -792,6 +922,9 @@ impl<'a> BlockMapWriter<'a> {
                 true
             }
         });
+        self.0
+            .custom_blocks_by_id
+            .retain(|id, _| !block_ids.contains(id));
         self.0.sync(wrap_snapshot, edits);
     }
 }
@@ -801,6 +934,7 @@ impl BlockSnapshot {
     pub fn text(&self) -> String {
         self.chunks(
             0..self.transforms.summary().output_rows,
+            false,
             false,
             Highlights::default(),
         )
@@ -812,6 +946,7 @@ impl BlockSnapshot {
         &'a self,
         rows: Range<u32>,
         language_aware: bool,
+        masked: bool,
         highlights: Highlights<'a>,
     ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
@@ -850,6 +985,7 @@ impl BlockSnapshot {
             transforms: cursor,
             output_row: rows.start,
             max_output_row,
+            masked,
         }
     }
 
@@ -871,16 +1007,23 @@ impl BlockSnapshot {
         }
     }
 
-    pub fn blocks_in_range(
-        &self,
-        rows: Range<u32>,
-    ) -> impl Iterator<Item = (u32, &TransformBlock)> {
+    pub fn blocks_in_range(&self, rows: Range<u32>) -> impl Iterator<Item = (u32, &Block)> {
         let mut cursor = self.transforms.cursor::<BlockRow>();
-        cursor.seek(&BlockRow(rows.start), Bias::Right, &());
+        cursor.seek(&BlockRow(rows.start), Bias::Left, &());
+        while cursor.start().0 < rows.start && cursor.end(&()).0 <= rows.start {
+            cursor.next(&());
+        }
+
         std::iter::from_fn(move || {
             while let Some(transform) = cursor.item() {
                 let start_row = cursor.start().0;
-                if start_row >= rows.end {
+                if start_row > rows.end
+                    || (start_row == rows.end
+                        && transform
+                            .block
+                            .as_ref()
+                            .map_or(false, |block| block.height() > 0))
+                {
                     break;
                 }
                 if let Some(block) = &transform.block {
@@ -892,6 +1035,60 @@ impl BlockSnapshot {
             }
             None
         })
+    }
+
+    pub fn block_for_id(&self, block_id: BlockId) -> Option<Block> {
+        let buffer = self.wrap_snapshot.buffer_snapshot();
+
+        match block_id {
+            BlockId::Custom(custom_block_id) => {
+                let custom_block = self.custom_blocks_by_id.get(&custom_block_id)?;
+                Some(Block::Custom(custom_block.clone()))
+            }
+            BlockId::ExcerptHeader(excerpt_id) => {
+                let excerpt_range = buffer.range_for_excerpt::<Point>(excerpt_id)?;
+                let wrap_point = self
+                    .wrap_snapshot
+                    .make_wrap_point(excerpt_range.start, Bias::Left);
+                let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>();
+                cursor.seek(&WrapRow(wrap_point.row()), Bias::Left, &());
+                while let Some(transform) = cursor.item() {
+                    if let Some(block) = transform.block.as_ref() {
+                        if block.id() == block_id {
+                            return Some(block.clone());
+                        }
+                    } else if cursor.start().0 > WrapRow(wrap_point.row()) {
+                        break;
+                    }
+
+                    cursor.next(&());
+                }
+
+                None
+            }
+            BlockId::ExcerptFooter(excerpt_id) => {
+                let excerpt_range = buffer.range_for_excerpt::<Point>(excerpt_id)?;
+                let wrap_point = self
+                    .wrap_snapshot
+                    .make_wrap_point(excerpt_range.end, Bias::Left);
+
+                let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>();
+                cursor.seek(&WrapRow(wrap_point.row()), Bias::Left, &());
+                while let Some(transform) = cursor.item() {
+                    if let Some(block) = transform.block.as_ref() {
+                        if block.id() == block_id {
+                            return Some(block.clone());
+                        }
+                    } else if cursor.start().0 > WrapRow(wrap_point.row()) {
+                        break;
+                    }
+
+                    cursor.next(&());
+                }
+
+                None
+            }
+        }
     }
 
     pub fn max_point(&self) -> BlockPoint {
@@ -1023,11 +1220,11 @@ impl Transform {
         }
     }
 
-    fn block(block: TransformBlock) -> Self {
+    fn block(block: Block) -> Self {
         Self {
             summary: TransformSummary {
                 input_rows: 0,
-                output_rows: block.height() as u32,
+                output_rows: block.height(),
             },
             block: Some(block),
         }
@@ -1035,6 +1232,23 @@ impl Transform {
 
     fn is_isomorphic(&self) -> bool {
         self.block.is_none()
+    }
+}
+
+impl<'a> BlockChunks<'a> {
+    fn advance(&mut self) {
+        self.transforms.next(&());
+        while let Some(transform) = self.transforms.item() {
+            if transform
+                .block
+                .as_ref()
+                .map_or(false, |block| block.height() == 0)
+            {
+                self.transforms.next(&());
+            } else {
+                break;
+            }
+        }
     }
 }
 
@@ -1050,7 +1264,7 @@ impl<'a> Iterator for BlockChunks<'a> {
         if transform.block.is_some() {
             let block_start = self.transforms.start().0 .0;
             let mut block_end = self.transforms.end(&()).0 .0;
-            self.transforms.next(&());
+            self.advance();
             if self.transforms.item().is_none() {
                 block_end -= 1;
             }
@@ -1072,7 +1286,7 @@ impl<'a> Iterator for BlockChunks<'a> {
             } else {
                 self.output_row += 1;
                 if self.output_row < self.max_output_row {
-                    self.transforms.next(&());
+                    self.advance();
                     return Some(Chunk {
                         text: "\n",
                         ..Default::default()
@@ -1087,10 +1301,18 @@ impl<'a> Iterator for BlockChunks<'a> {
         let (prefix_rows, prefix_bytes) =
             offset_for_row(self.input_chunk.text, transform_end - self.output_row);
         self.output_row += prefix_rows;
-        let (prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
+        let (mut prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
         self.input_chunk.text = suffix;
         if self.output_row == transform_end {
-            self.transforms.next(&());
+            self.advance();
+        }
+
+        if self.masked {
+            // Not great for multibyte text because to keep cursor math correct we
+            // need to have the same number of bytes in the input as output.
+            let chars = prefix.chars().count();
+            let bullet_len = chars;
+            prefix = &BULLETS[..bullet_len];
         }
 
         Some(Chunk {
@@ -1112,6 +1334,18 @@ impl<'a> Iterator for BlockBufferRows<'a> {
 
         if self.output_row.0 >= self.transforms.end(&()).0 .0 {
             self.transforms.next(&());
+        }
+
+        while let Some(transform) = self.transforms.item() {
+            if transform
+                .block
+                .as_ref()
+                .map_or(false, |block| block.height() == 0)
+            {
+                self.transforms.next(&());
+            } else {
+                break;
+            }
         }
 
         let transform = self.transforms.item()?;
@@ -1172,7 +1406,7 @@ impl DerefMut for BlockContext<'_, '_> {
     }
 }
 
-impl Block {
+impl CustomBlock {
     pub fn render(&self, cx: &mut BlockContext) -> AnyElement {
         self.render.lock()(cx)
     }
@@ -1186,7 +1420,7 @@ impl Block {
     }
 }
 
-impl Debug for Block {
+impl Debug for CustomBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Block")
             .field("id", &self.id)
@@ -1216,15 +1450,16 @@ fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
-
     use super::*;
-    use crate::display_map::inlay_map::InlayMap;
-    use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
-    use gpui::{div, font, px, Element};
+    use crate::display_map::{
+        fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
+    };
+    use gpui::{div, font, px, AppContext, Context as _, Element};
+    use language::{Buffer, Capability};
     use multi_buffer::MultiBuffer;
     use rand::prelude::*;
     use settings::SettingsStore;
+    use std::env;
     use util::RandomCharIter;
 
     #[gpui::test]
@@ -1265,6 +1500,7 @@ mod tests {
                 height: 1,
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1272,6 +1508,7 @@ mod tests {
                 height: 2,
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1279,6 +1516,7 @@ mod tests {
                 height: 3,
                 disposition: BlockDisposition::Below,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
         ]);
 
@@ -1289,7 +1527,7 @@ mod tests {
             .blocks_in_range(0..8)
             .map(|(start_row, block)| {
                 let block = block.as_custom().unwrap();
-                (start_row..start_row + block.height as u32, block.id)
+                (start_row..start_row + block.height, block.id)
             })
             .collect::<Vec<_>>();
 
@@ -1412,6 +1650,89 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_multibuffer_headers_and_footers(cx: &mut AppContext) {
+        init_test(cx);
+
+        let buffer1 = cx.new_model(|cx| Buffer::local("Buffer 1", cx));
+        let buffer2 = cx.new_model(|cx| Buffer::local("Buffer 2", cx));
+        let buffer3 = cx.new_model(|cx| Buffer::local("Buffer 3", cx));
+
+        let mut excerpt_ids = Vec::new();
+        let multi_buffer = cx.new_model(|cx| {
+            let mut multi_buffer = MultiBuffer::new(0, Capability::ReadWrite);
+            excerpt_ids.extend(multi_buffer.push_excerpts(
+                buffer1.clone(),
+                [ExcerptRange {
+                    context: 0..buffer1.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            ));
+            excerpt_ids.extend(multi_buffer.push_excerpts(
+                buffer2.clone(),
+                [ExcerptRange {
+                    context: 0..buffer2.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            ));
+            excerpt_ids.extend(multi_buffer.push_excerpts(
+                buffer3.clone(),
+                [ExcerptRange {
+                    context: 0..buffer3.read(cx).len(),
+                    primary: None,
+                }],
+                cx,
+            ));
+
+            multi_buffer
+        });
+
+        let font = font("Helvetica");
+        let font_size = px(14.);
+        let font_id = cx.text_system().resolve_font(&font);
+        let mut wrap_width = px(0.);
+        for c in "Buff".chars() {
+            wrap_width += cx
+                .text_system()
+                .advance(font_id, font_size, c)
+                .unwrap()
+                .width;
+        }
+
+        let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+        let (_, inlay_snapshot) = InlayMap::new(multi_buffer_snapshot.clone());
+        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, wraps_snapshot) = WrapMap::new(tab_snapshot, font, font_size, Some(wrap_width), cx);
+
+        let block_map = BlockMap::new(wraps_snapshot.clone(), true, 1, 1, 1);
+        let snapshot = block_map.read(wraps_snapshot, Default::default());
+
+        // Each excerpt has a header above and footer below. Excerpts are also *separated* by a newline.
+        assert_eq!(
+            snapshot.text(),
+            "\nBuff\ner 1\n\n\nBuff\ner 2\n\n\nBuff\ner 3\n"
+        );
+
+        let blocks: Vec<_> = snapshot
+            .blocks_in_range(0..u32::MAX)
+            .map(|(row, block)| (row, block.id()))
+            .collect();
+        assert_eq!(
+            blocks,
+            vec![
+                (0, BlockId::ExcerptHeader(excerpt_ids[0])),
+                (3, BlockId::ExcerptFooter(excerpt_ids[0])),
+                (4, BlockId::ExcerptHeader(excerpt_ids[1])),
+                (7, BlockId::ExcerptFooter(excerpt_ids[1])),
+                (8, BlockId::ExcerptHeader(excerpt_ids[2])),
+                (11, BlockId::ExcerptFooter(excerpt_ids[2]))
+            ]
+        );
+    }
+
+    #[gpui::test]
     fn test_replace_with_heights(cx: &mut gpui::TestAppContext) {
         let _update = cx.update(|cx| init_test(cx));
 
@@ -1435,6 +1756,7 @@ mod tests {
                 height: 1,
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1442,6 +1764,7 @@ mod tests {
                 height: 2,
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1449,6 +1772,7 @@ mod tests {
                 height: 3,
                 disposition: BlockDisposition::Below,
                 render: Box::new(|_| div().into_any()),
+                priority: 0,
             },
         ]);
 
@@ -1458,10 +1782,9 @@ mod tests {
 
             let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
 
-            let mut hash_map = HashMap::default();
-            let render: RenderBlock = Box::new(|_| div().into_any());
-            hash_map.insert(block_ids[0], (2_u8, render));
-            block_map_writer.replace(hash_map);
+            let mut new_heights = HashMap::default();
+            new_heights.insert(block_ids[0], 2);
+            block_map_writer.resize(new_heights);
             let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
             assert_eq!(snapshot.text(), "aaa\n\n\n\n\nbbb\nccc\nddd\n\n\n");
         }
@@ -1469,10 +1792,9 @@ mod tests {
         {
             let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
 
-            let mut hash_map = HashMap::default();
-            let render: RenderBlock = Box::new(|_| div().into_any());
-            hash_map.insert(block_ids[0], (1_u8, render));
-            block_map_writer.replace(hash_map);
+            let mut new_heights = HashMap::default();
+            new_heights.insert(block_ids[0], 1);
+            block_map_writer.resize(new_heights);
 
             let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
             assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
@@ -1481,10 +1803,9 @@ mod tests {
         {
             let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
 
-            let mut hash_map = HashMap::default();
-            let render: RenderBlock = Box::new(|_| div().into_any());
-            hash_map.insert(block_ids[0], (0_u8, render));
-            block_map_writer.replace(hash_map);
+            let mut new_heights = HashMap::default();
+            new_heights.insert(block_ids[0], 0);
+            block_map_writer.resize(new_heights);
 
             let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
             assert_eq!(snapshot.text(), "aaa\n\n\nbbb\nccc\nddd\n\n\n");
@@ -1493,10 +1814,9 @@ mod tests {
         {
             let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
 
-            let mut hash_map = HashMap::default();
-            let render: RenderBlock = Box::new(|_| div().into_any());
-            hash_map.insert(block_ids[0], (3_u8, render));
-            block_map_writer.replace(hash_map);
+            let mut new_heights = HashMap::default();
+            new_heights.insert(block_ids[0], 3);
+            block_map_writer.resize(new_heights);
 
             let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
             assert_eq!(snapshot.text(), "aaa\n\n\n\n\n\nbbb\nccc\nddd\n\n\n");
@@ -1505,10 +1825,9 @@ mod tests {
         {
             let mut block_map_writer = block_map.write(wraps_snapshot.clone(), Default::default());
 
-            let mut hash_map = HashMap::default();
-            let render: RenderBlock = Box::new(|_| div().into_any());
-            hash_map.insert(block_ids[0], (3_u8, render));
-            block_map_writer.replace(hash_map);
+            let mut new_heights = HashMap::default();
+            new_heights.insert(block_ids[0], 3);
+            block_map_writer.resize(new_heights);
 
             let snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
             // Same height as before, should remain the same
@@ -1543,6 +1862,7 @@ mod tests {
                 disposition: BlockDisposition::Above,
                 render: Box::new(|_| div().into_any()),
                 height: 1,
+                priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1550,6 +1870,7 @@ mod tests {
                 disposition: BlockDisposition::Below,
                 render: Box::new(|_| div().into_any()),
                 height: 1,
+                priority: 0,
             },
         ]);
 
@@ -1635,7 +1956,7 @@ mod tests {
                             } else {
                                 BlockDisposition::Below
                             };
-                            let height = rng.gen_range(1..5);
+                            let height = rng.gen_range(0..5);
                             log::info!(
                                 "inserting block {:?} {:?} with height {}",
                                 disposition,
@@ -1648,6 +1969,7 @@ mod tests {
                                 height,
                                 disposition,
                                 render: Box::new(|_| div().into_any()),
+                                priority: 0,
                             }
                         })
                         .collect::<Vec<_>>();
@@ -1668,6 +1990,7 @@ mod tests {
                             style: props.style,
                             render: Box::new(|_| div().into_any()),
                             disposition: props.disposition,
+                            priority: 0,
                         }));
                     for (block_id, props) in block_ids.into_iter().zip(block_properties) {
                         custom_blocks.push((block_id, props));
@@ -1738,13 +2061,14 @@ mod tests {
                         disposition: block.disposition,
                         id: *id,
                         height: block.height,
+                        priority: block.priority,
                     },
                 )
             }));
 
             // Note that this needs to be synced with the related section in BlockMap::sync
             expected_blocks.extend(
-                BlockMap::header_blocks(
+                BlockMap::header_and_footer_blocks(
                     true,
                     excerpt_footer_height,
                     buffer_start_header_height,
@@ -1822,6 +2146,7 @@ mod tests {
                     .chunks(
                         start_row as u32..blocks_snapshot.max_point().row + 1,
                         false,
+                        false,
                         Highlights::default(),
                     )
                     .map(|chunk| chunk.text)
@@ -1845,8 +2170,20 @@ mod tests {
                     .blocks_in_range(0..(expected_row_count as u32))
                     .map(|(row, block)| (row, block.clone().into()))
                     .collect::<Vec<_>>(),
-                expected_block_positions
+                expected_block_positions,
+                "invalid blocks_in_range({:?})",
+                0..expected_row_count
             );
+
+            for (_, expected_block) in
+                blocks_snapshot.blocks_in_range(0..(expected_row_count as u32))
+            {
+                let actual_block = blocks_snapshot.block_for_id(expected_block.id());
+                assert_eq!(
+                    actual_block.map(|block| block.id()),
+                    Some(expected_block.id())
+                );
+            }
 
             for (block_row, block) in expected_block_positions {
                 if let BlockType::Custom(block_id) = block.block_type() {
@@ -1935,17 +2272,18 @@ mod tests {
         #[derive(Debug, Eq, PartialEq)]
         enum ExpectedBlock {
             ExcerptHeader {
-                height: u8,
+                height: u32,
                 starts_new_buffer: bool,
             },
             ExcerptFooter {
-                height: u8,
+                height: u32,
                 disposition: BlockDisposition,
             },
             Custom {
                 disposition: BlockDisposition,
-                id: BlockId,
-                height: u8,
+                id: CustomBlockId,
+                height: u32,
+                priority: usize,
             },
         }
 
@@ -1961,10 +2299,18 @@ mod tests {
             fn disposition(&self) -> BlockDisposition {
                 self.disposition()
             }
+
+            fn priority(&self) -> usize {
+                match self {
+                    ExpectedBlock::Custom { priority, .. } => *priority,
+                    ExpectedBlock::ExcerptHeader { .. } => usize::MAX,
+                    ExpectedBlock::ExcerptFooter { .. } => 0,
+                }
+            }
         }
 
         impl ExpectedBlock {
-            fn height(&self) -> u8 {
+            fn height(&self) -> u32 {
                 match self {
                     ExpectedBlock::ExcerptHeader { height, .. } => *height,
                     ExpectedBlock::Custom { height, .. } => *height,
@@ -1981,15 +2327,16 @@ mod tests {
             }
         }
 
-        impl From<TransformBlock> for ExpectedBlock {
-            fn from(block: TransformBlock) -> Self {
+        impl From<Block> for ExpectedBlock {
+            fn from(block: Block) -> Self {
                 match block {
-                    TransformBlock::Custom(block) => ExpectedBlock::Custom {
+                    Block::Custom(block) => ExpectedBlock::Custom {
                         id: block.id,
                         disposition: block.disposition,
                         height: block.height,
+                        priority: block.priority,
                     },
-                    TransformBlock::ExcerptHeader {
+                    Block::ExcerptHeader {
                         height,
                         starts_new_buffer,
                         ..
@@ -1997,7 +2344,7 @@ mod tests {
                         height,
                         starts_new_buffer,
                     },
-                    TransformBlock::ExcerptFooter {
+                    Block::ExcerptFooter {
                         height,
                         disposition,
                         ..
@@ -2017,12 +2364,12 @@ mod tests {
         assets::Assets.load_test_fonts(cx);
     }
 
-    impl TransformBlock {
-        fn as_custom(&self) -> Option<&Block> {
+    impl Block {
+        fn as_custom(&self) -> Option<&CustomBlock> {
             match self {
-                TransformBlock::Custom(block) => Some(block),
-                TransformBlock::ExcerptHeader { .. } => None,
-                TransformBlock::ExcerptFooter { .. } => None,
+                Block::Custom(block) => Some(block),
+                Block::ExcerptHeader { .. } => None,
+                Block::ExcerptFooter { .. } => None,
             }
         }
     }

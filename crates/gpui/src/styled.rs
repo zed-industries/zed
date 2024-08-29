@@ -1,12 +1,13 @@
-use crate::TextStyleRefinement;
 use crate::{
     self as gpui, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle, DefiniteLength,
     Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
     SharedString, StyleRefinement, WhiteSpace,
 };
+use crate::{TextStyleRefinement, Truncate};
 pub use gpui_macros::{
-    box_shadow_style_methods, cursor_style_methods, margin_style_methods, overflow_style_methods,
-    padding_style_methods, position_style_methods, visibility_style_methods,
+    border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
+    overflow_style_methods, padding_style_methods, position_style_methods,
+    visibility_style_methods,
 };
 use taffy::style::{AlignContent, Display};
 
@@ -23,6 +24,7 @@ pub trait Styled: Sized {
     gpui_macros::position_style_methods!();
     gpui_macros::overflow_style_methods!();
     gpui_macros::cursor_style_methods!();
+    gpui_macros::border_style_methods!();
     gpui_macros::box_shadow_style_methods!();
 
     /// Sets the display type of the element to `block`.
@@ -54,6 +56,24 @@ pub trait Styled: Sized {
         self.text_style()
             .get_or_insert_with(Default::default)
             .white_space = Some(WhiteSpace::Nowrap);
+        self
+    }
+
+    /// Sets the truncate overflowing text with an ellipsis (…) if needed.
+    /// [Docs](https://tailwindcss.com/docs/text-overflow#ellipsis)
+    fn text_ellipsis(mut self) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .truncate = Some(Truncate::Ellipsis);
+        self
+    }
+
+    /// Sets the truncate overflowing text.
+    /// [Docs](https://tailwindcss.com/docs/text-overflow#truncate)
+    fn truncate(mut self) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .truncate = Some(Truncate::Truncate);
         self
     }
 
@@ -190,18 +210,10 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Sets the element to justify flex items along the container's main axis
-    /// such that there is an equal amount of space between each item.
-    /// [Docs](https://tailwindcss.com/docs/justify-content#space-between)
-    fn justify_between(mut self) -> Self {
-        self.style().justify_content = Some(JustifyContent::SpaceBetween);
-        self
-    }
-
-    /// Sets the element to justify flex items along the center of the container's main axis.
-    /// [Docs](https://tailwindcss.com/docs/justify-content#center)
-    fn justify_center(mut self) -> Self {
-        self.style().justify_content = Some(JustifyContent::Center);
+    /// Sets the element to align flex items along the baseline of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-items#baseline)
+    fn items_baseline(mut self) -> Self {
+        self.style().align_items = Some(AlignItems::Baseline);
         self
     }
 
@@ -216,6 +228,21 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/justify-content#end)
     fn justify_end(mut self) -> Self {
         self.style().justify_content = Some(JustifyContent::End);
+        self
+    }
+
+    /// Sets the element to justify flex items along the center of the container's main axis.
+    /// [Docs](https://tailwindcss.com/docs/justify-content#center)
+    fn justify_center(mut self) -> Self {
+        self.style().justify_content = Some(JustifyContent::Center);
+        self
+    }
+
+    /// Sets the element to justify flex items along the container's main axis
+    /// such that there is an equal amount of space between each item.
+    /// [Docs](https://tailwindcss.com/docs/justify-content#space-between)
+    fn justify_between(mut self) -> Self {
+        self.style().justify_content = Some(JustifyContent::SpaceBetween);
         self
     }
 
@@ -293,16 +320,6 @@ pub trait Styled: Sized {
         Self: Sized,
     {
         self.style().background = Some(fill.into());
-        self
-    }
-
-    /// Sets the border color of the element.
-    fn border_color<C>(mut self, border_color: C) -> Self
-    where
-        C: Into<Hsla>,
-        Self: Sized,
-    {
-        self.style().border_color = Some(border_color.into());
         self
     }
 
@@ -507,6 +524,7 @@ pub trait Styled: Sized {
         let Font {
             family,
             features,
+            fallbacks,
             weight,
             style,
         } = font;
@@ -516,6 +534,7 @@ pub trait Styled: Sized {
         text_style.font_features = Some(features);
         text_style.font_weight = Some(weight);
         text_style.font_style = Some(style);
+        text_style.font_fallbacks = fallbacks;
 
         self
     }

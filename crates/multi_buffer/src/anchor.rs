@@ -131,11 +131,7 @@ impl AnchorRangeExt for Range<Anchor> {
     }
 
     fn overlaps(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool {
-        let start_cmp = self.start.cmp(&other.start, buffer);
-        let end_cmp = self.end.cmp(&other.end, buffer);
-
-        (start_cmp == Ordering::Less || start_cmp == Ordering::Equal)
-            && (end_cmp == Ordering::Greater || end_cmp == Ordering::Equal)
+        self.end.cmp(&other.start, buffer).is_ge() && self.start.cmp(&other.end, buffer).is_le()
     }
 
     fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize> {

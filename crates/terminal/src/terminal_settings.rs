@@ -1,14 +1,12 @@
 use collections::HashMap;
-use gpui::{px, AbsoluteLength, AppContext, FontFeatures, FontWeight, Pixels};
-use schemars::{
-    gen::SchemaGenerator,
-    schema::{InstanceType, RootSchema, Schema, SchemaObject},
-    JsonSchema,
+use gpui::{
+    px, AbsoluteLength, AppContext, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString,
 };
+use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde_derive::{Deserialize, Serialize};
-use serde_json::Value;
-use settings::{SettingsJsonSchemaParams, SettingsSources};
+use settings::{add_references_to_properties, SettingsJsonSchemaParams, SettingsSources};
 use std::path::PathBuf;
+use task::Shell;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -23,15 +21,16 @@ pub struct Toolbar {
     pub title: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct TerminalSettings {
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
     pub font_size: Option<Pixels>,
-    pub font_family: Option<String>,
-    pub line_height: TerminalLineHeight,
+    pub font_family: Option<SharedString>,
+    pub font_fallbacks: Option<FontFallbacks>,
     pub font_features: Option<FontFeatures>,
     pub font_weight: Option<FontWeight>,
+    pub line_height: TerminalLineHeight,
     pub env: HashMap<String, String>,
     pub blinking: TerminalBlink,
     pub alternate_scroll: AlternateScroll,
@@ -110,6 +109,13 @@ pub struct TerminalSettingsContent {
     /// If this option is not included,
     /// the terminal will default to matching the buffer's font family.
     pub font_family: Option<String>,
+
+    /// Sets the terminal's font fallbacks.
+    ///
+    /// If this option is not included,
+    /// the terminal will default to matching the buffer's font fallbacks.
+    pub font_fallbacks: Option<Vec<String>>,
+
     /// Sets the terminal's line height.
     ///
     /// Default: comfortable
@@ -135,7 +141,7 @@ pub struct TerminalSettingsContent {
     pub alternate_scroll: Option<AlternateScroll>,
     /// Sets whether the option key behaves as the meta key.
     ///
-    /// Default: false
+    /// Default: true
     pub option_as_meta: Option<bool>,
     /// Whether or not selecting text in the terminal will automatically
     /// copy to the system clipboard.
@@ -191,30 +197,18 @@ impl settings::Settings for TerminalSettings {
         _: &AppContext,
     ) -> RootSchema {
         let mut root_schema = generator.root_schema_for::<Self::FileContent>();
-        let available_fonts = params
-            .font_names
-            .iter()
-            .cloned()
-            .map(Value::String)
-            .collect();
-        let fonts_schema = SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            enum_values: Some(available_fonts),
-            ..Default::default()
-        };
-        root_schema
-            .definitions
-            .extend([("FontFamilies".into(), fonts_schema.into())]);
-        root_schema
-            .schema
-            .object
-            .as_mut()
-            .unwrap()
-            .properties
-            .extend([(
-                "font_family".to_owned(),
-                Schema::new_ref("#/definitions/FontFamilies".into()),
-            )]);
+        root_schema.definitions.extend([
+            ("FontFamilies".into(), params.font_family_schema()),
+            ("FontFallbacks".into(), params.font_fallback_schema()),
+        ]);
+
+        add_references_to_properties(
+            &mut root_schema,
+            &[
+                ("font_family", "#/definitions/FontFamilies"),
+                ("font_fallbacks", "#/definitions/FontFallbacks"),
+            ],
+        );
 
         root_schema
     }
@@ -254,18 +248,6 @@ pub enum TerminalBlink {
     TerminalControlled,
     /// Always blink the cursor, ignoring the terminal mode.
     On,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Shell {
-    /// Use the system's default terminal configuration in /etc/passwd
-    System,
-    Program(String),
-    WithArguments {
-        program: String,
-        args: Vec<String>,
-    },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

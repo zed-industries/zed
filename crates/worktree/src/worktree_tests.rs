@@ -841,6 +841,10 @@ async fn test_write_file(cx: &mut TestAppContext) {
     )
     .await
     .unwrap();
+
+    #[cfg(target_os = "linux")]
+    fs::watcher::global(|_| {}).unwrap();
+
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
     tree.flush_fs_events(cx).await;
@@ -1205,6 +1209,76 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
     assert_eq!(
         snapshot1.lock().entries(true, 0).collect::<Vec<_>>(),
         snapshot2.entries(true, 0).collect::<Vec<_>>()
+    );
+}
+
+#[gpui::test]
+async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    // Create a worktree with a git directory.
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {},
+            "a.txt": "",
+            "b":  {
+                "c.txt": "",
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        "/root".as_ref(),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+
+    let (old_entry_ids, old_mtimes) = tree.read_with(cx, |tree, _| {
+        (
+            tree.entries(true, 0).map(|e| e.id).collect::<Vec<_>>(),
+            tree.entries(true, 0).map(|e| e.mtime).collect::<Vec<_>>(),
+        )
+    });
+
+    // Regression test: after the directory is scanned, touch the git repo's
+    // working directory, bumping its mtime. That directory keeps its project
+    // entry id after the directories are re-scanned.
+    fs.touch_path("/root").await;
+    cx.executor().run_until_parked();
+
+    let (new_entry_ids, new_mtimes) = tree.read_with(cx, |tree, _| {
+        (
+            tree.entries(true, 0).map(|e| e.id).collect::<Vec<_>>(),
+            tree.entries(true, 0).map(|e| e.mtime).collect::<Vec<_>>(),
+        )
+    });
+    assert_eq!(new_entry_ids, old_entry_ids);
+    assert_ne!(new_mtimes, old_mtimes);
+
+    // Regression test: changes to the git repository should still be
+    // detected.
+    fs.set_status_for_repo_via_git_operation(
+        &Path::new("/root/.git"),
+        &[(Path::new("b/c.txt"), GitFileStatus::Modified)],
+    );
+    cx.executor().run_until_parked();
+
+    let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new(""), Some(GitFileStatus::Modified)),
+            (Path::new("a.txt"), None),
+            (Path::new("b/c.txt"), Some(GitFileStatus::Modified)),
+        ],
     );
 }
 
@@ -2405,25 +2479,25 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
             (Path::new("f/no-status.txt"), None),
         ],
     );
+}
 
-    #[track_caller]
-    fn check_propagated_statuses(
-        snapshot: &Snapshot,
-        expected_statuses: &[(&Path, Option<GitFileStatus>)],
-    ) {
-        let mut entries = expected_statuses
+#[track_caller]
+fn check_propagated_statuses(
+    snapshot: &Snapshot,
+    expected_statuses: &[(&Path, Option<GitFileStatus>)],
+) {
+    let mut entries = expected_statuses
+        .iter()
+        .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
+        .collect::<Vec<_>>();
+    snapshot.propagate_git_statuses(&mut entries);
+    assert_eq!(
+        entries
             .iter()
-            .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
-            .collect::<Vec<_>>();
-        snapshot.propagate_git_statuses(&mut entries);
-        assert_eq!(
-            entries
-                .iter()
-                .map(|e| (e.path.as_ref(), e.git_status))
-                .collect::<Vec<_>>(),
-            expected_statuses
-        );
-    }
+            .map(|e| (e.path.as_ref(), e.git_status))
+            .collect::<Vec<_>>(),
+        expected_statuses
+    );
 }
 
 #[track_caller]

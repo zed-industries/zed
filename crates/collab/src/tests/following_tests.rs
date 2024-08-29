@@ -1,3 +1,4 @@
+#![allow(clippy::reversed_empty_ranges)]
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::{ActiveCall, ParticipantLocation};
 use client::ChannelId;
@@ -135,7 +136,7 @@ async fn test_basic_following(
         assert_eq!(editor.selections.ranges(cx), vec![2..1]);
     });
 
-    // When client B starts following client A, all visible view states are replicated to client B.
+    // When client B starts following client A, only the active view state is replicated to client B.
     workspace_b.update(cx_b, |workspace, cx| workspace.follow(peer_id_a, cx));
 
     cx_c.executor().run_until_parked();
@@ -156,7 +157,7 @@ async fn test_basic_following(
     );
     assert_eq!(
         editor_b1.update(cx_b, |editor, cx| editor.selections.ranges(cx)),
-        vec![3..2]
+        vec![3..3]
     );
 
     executor.run_until_parked();
@@ -194,7 +195,7 @@ async fn test_basic_following(
 
     // Client C unfollows client A.
     workspace_c.update(cx_c, |workspace, cx| {
-        workspace.unfollow(&workspace.active_pane().clone(), cx);
+        workspace.unfollow(peer_id_a, cx).unwrap();
     });
 
     // All clients see that clients B is following client A.
@@ -266,7 +267,7 @@ async fn test_basic_following(
 
     // When client A activates a different editor, client B does so as well.
     workspace_a.update(cx_a, |workspace, cx| {
-        workspace.activate_item(&editor_a1, cx)
+        workspace.activate_item(&editor_a1, true, true, cx)
     });
     executor.run_until_parked();
     workspace_b.update(cx_b, |workspace, cx| {
@@ -311,7 +312,7 @@ async fn test_basic_following(
         let editor = cx.new_view(|cx| {
             Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), true, cx)
         });
-        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, cx);
         editor
     });
     executor.run_until_parked();
@@ -398,10 +399,10 @@ async fn test_basic_following(
 
     // After unfollowing, client B stops receiving updates from client A.
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.unfollow(&workspace.active_pane().clone(), cx)
+        workspace.unfollow(peer_id_a, cx).unwrap()
     });
     workspace_a.update(cx_a, |workspace, cx| {
-        workspace.activate_item(&editor_a2, cx)
+        workspace.activate_item(&editor_a2, true, true, cx)
     });
     executor.run_until_parked();
     assert_eq!(
@@ -466,7 +467,7 @@ async fn test_basic_following(
 
     // Client B activates a multibuffer that was created by following client A. Client A returns to that multibuffer.
     workspace_b.update(cx_b, |workspace, cx| {
-        workspace.activate_item(&multibuffer_editor_b, cx)
+        workspace.activate_item(&multibuffer_editor_b, true, true, cx)
     });
     executor.run_until_parked();
     workspace_a.update(cx_a, |workspace, cx| {

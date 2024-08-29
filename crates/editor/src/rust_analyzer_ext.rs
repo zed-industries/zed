@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::Context as _;
 use gpui::{Context, View, ViewContext, VisualContext, WindowContext};
 use language::Language;
@@ -7,22 +5,24 @@ use multi_buffer::MultiBuffer;
 use project::lsp_ext_command::ExpandMacro;
 use text::ToPointUtf16;
 
-use crate::{element::register_action, Editor, ExpandMacroRecursively};
+use crate::{
+    element::register_action, lsp_ext::find_specific_language_server_in_selection, Editor,
+    ExpandMacroRecursively,
+};
+
+static RUST_ANALYZER_NAME: &str = "rust-analyzer";
+
+fn is_rust_language(language: &Language) -> bool {
+    language.name().as_ref() == "Rust"
+}
 
 pub fn apply_related_actions(editor: &View<Editor>, cx: &mut WindowContext) {
-    let is_rust_related = editor.update(cx, |editor, cx| {
-        editor
-            .buffer()
-            .read(cx)
-            .all_buffers()
-            .iter()
-            .any(|b| match b.read(cx).language() {
-                Some(l) => is_rust_language(l),
-                None => false,
-            })
-    });
-
-    if is_rust_related {
+    if editor
+        .update(cx, |e, cx| {
+            find_specific_language_server_in_selection(e, cx, &is_rust_language, RUST_ANALYZER_NAME)
+        })
+        .is_some()
+    {
         register_action(editor, cx, expand_macro_recursively);
     }
 }
@@ -42,39 +42,13 @@ pub fn expand_macro_recursively(
         return;
     };
 
-    let multibuffer = editor.buffer().read(cx);
-
-    let Some((trigger_anchor, rust_language, server_to_query, buffer)) = editor
-        .selections
-        .disjoint_anchors()
-        .into_iter()
-        .filter(|selection| selection.start == selection.end)
-        .filter_map(|selection| Some((selection.start.buffer_id?, selection.start)))
-        .filter_map(|(buffer_id, trigger_anchor)| {
-            let buffer = multibuffer.buffer(buffer_id)?;
-            let rust_language = buffer.read(cx).language_at(trigger_anchor.text_anchor)?;
-            if !is_rust_language(&rust_language) {
-                return None;
-            }
-            Some((trigger_anchor, rust_language, buffer))
-        })
-        .find_map(|(trigger_anchor, rust_language, buffer)| {
-            project
-                .read(cx)
-                .language_servers_for_buffer(buffer.read(cx), cx)
-                .find_map(|(adapter, server)| {
-                    if adapter.name.0.as_ref() == "rust-analyzer" {
-                        Some((
-                            trigger_anchor,
-                            Arc::clone(&rust_language),
-                            server.server_id(),
-                            buffer.clone(),
-                        ))
-                    } else {
-                        None
-                    }
-                })
-        })
+    let Some((trigger_anchor, rust_language, server_to_query, buffer)) =
+        find_specific_language_server_in_selection(
+            &editor,
+            cx,
+            &is_rust_language,
+            RUST_ANALYZER_NAME,
+        )
     else {
         return;
     };
@@ -113,13 +87,10 @@ pub fn expand_macro_recursively(
                     cx.new_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), true, cx)),
                 ),
                 None,
+                true,
                 cx,
             );
         })
     })
     .detach_and_log_err(cx);
-}
-
-fn is_rust_language(language: &Language) -> bool {
-    language.name().as_ref() == "Rust"
 }

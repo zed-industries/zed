@@ -1,19 +1,20 @@
-use anyhow::Context;
-
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, Modifiers,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
+    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
+    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowParams,
     X11ClientStatePtr,
 };
 
+use anyhow::Context;
 use blade_graphics as gpu;
+use futures::channel::oneshot;
 use raw_window_handle as rwh;
 use util::{maybe, ResultExt};
 use x11rb::{
     connection::Connection,
+    properties::WmSizeHints,
     protocol::{
         sync,
         xinput::{self, ConnectionExt as _},
@@ -55,6 +56,7 @@ x11rb::atom_manager! {
         _GTK_SHOW_WINDOW_MENU,
         _GTK_FRAME_EXTENTS,
         _GTK_EDGE_CONSTRAINTS,
+        _NET_CLIENT_LIST_STACKING,
     }
 }
 
@@ -211,6 +213,7 @@ pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
     input: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
+    hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
@@ -238,6 +241,7 @@ pub struct X11WindowState {
     maximized_horizontal: bool,
     hidden: bool,
     active: bool,
+    hovered: bool,
     fullscreen: bool,
     client_side_decorations_supported: bool,
     decorations: WindowDecorations,
@@ -369,6 +373,14 @@ impl X11WindowState {
                     visual.depth, x_window, visual_set.root, bounds.origin.x.0 + 2, bounds.origin.y.0, bounds.size.width.0, bounds.size.height.0)
             })?;
 
+        if let Some(size) = params.window_min_size {
+            let mut size_hints = WmSizeHints::new();
+            size_hints.min_size = Some((size.width.0 as i32, size.height.0 as i32));
+            size_hints
+                .set_normal_hints(xcb_connection, x_window)
+                .unwrap();
+        }
+
         let reply = xcb_connection
             .get_geometry(x_window)
             .unwrap()
@@ -451,6 +463,7 @@ impl X11WindowState {
                         xinput::XIEventMask::MOTION
                             | xinput::XIEventMask::BUTTON_PRESS
                             | xinput::XIEventMask::BUTTON_RELEASE
+                            | xinput::XIEventMask::ENTER
                             | xinput::XIEventMask::LEAVE,
                     ],
                 }],
@@ -507,6 +520,7 @@ impl X11WindowState {
             atoms: *atoms,
             input_handler: None,
             active: false,
+            hovered: false,
             fullscreen: false,
             maximized_vertical: false,
             maximized_horizontal: false,
@@ -859,8 +873,8 @@ impl X11WindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some(range) = input_handler.selected_text_range() {
-                bounds = input_handler.bounds_for_range(range);
+            if let Some(selection) = input_handler.selected_text_range(true) {
+                bounds = input_handler.bounds_for_range(selection.range);
             }
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);
@@ -912,8 +926,14 @@ impl X11WindowStatePtr {
         }
     }
 
-    pub fn set_focused(&self, focus: bool) {
+    pub fn set_active(&self, focus: bool) {
         if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
+            fun(focus);
+        }
+    }
+
+    pub fn set_hovered(&self, focus: bool) {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().hovered_status_change {
             fun(focus);
         }
     }
@@ -1046,6 +1066,10 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().active
     }
 
+    fn is_hovered(&self) -> bool {
+        self.0.state.borrow().hovered
+    }
+
     fn set_title(&mut self, title: &str) {
         self.0
             .xcb_connection
@@ -1162,6 +1186,10 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 
+    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.callbacks.borrow_mut().hovered_status_change = Some(callback);
+    }
+
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.callbacks.borrow_mut().resize = Some(callback);
     }
@@ -1182,9 +1210,10 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    // TODO: on_complete not yet supported for X11 windows
+    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene);
+        inner.renderer.draw(scene, on_complete);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -1194,6 +1223,14 @@ impl PlatformWindow for X11Window {
 
     fn show_window_menu(&self, position: Point<Pixels>) {
         let state = self.0.state.borrow();
+
+        self.0
+            .xcb_connection
+            .ungrab_pointer(x11rb::CURRENT_TIME)
+            .unwrap()
+            .check()
+            .unwrap();
+
         let coords = self.get_root_position(position);
         let message = ClientMessageEvent::new(
             32,
@@ -1357,5 +1394,20 @@ impl PlatformWindow for X11Window {
         if let Some(appearance_changed) = callbacks.appearance_changed.as_mut() {
             appearance_changed();
         }
+    }
+
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        let mut state = self.0.state.borrow_mut();
+        let client = state.client.clone();
+        drop(state);
+        client.update_ime_position(bounds);
+    }
+
+    fn gpu_specs(&self) -> Option<GPUSpecs> {
+        self.0.state.borrow().renderer.gpu_specs().into()
+    }
+
+    fn fps(&self) -> Option<f32> {
+        None
     }
 }

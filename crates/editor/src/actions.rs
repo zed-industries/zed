@@ -65,6 +65,12 @@ pub struct ConfirmCompletion {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ComposeCompletion {
+    #[serde(default)]
+    pub item_ix: Option<usize>,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
@@ -129,18 +135,23 @@ pub struct ExpandExcerptsDown {
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct ShowCompletions {
     #[serde(default)]
-    pub(super) trigger: Option<char>,
+    pub(super) trigger: Option<String>,
 }
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct HandleInput(pub String);
 
 impl_actions!(
     editor,
     [
         ConfirmCodeAction,
         ConfirmCompletion,
+        ComposeCompletion,
         ExpandExcerpts,
         ExpandExcerptsUp,
         ExpandExcerptsDown,
         FoldAt,
+        HandleInput,
         MoveDownByLines,
         MovePageDown,
         MovePageUp,
@@ -188,6 +199,7 @@ gpui::actions!(
         CopyHighlightJson,
         CopyPath,
         CopyPermalinkToLine,
+        CopyFileLocation,
         CopyRelativePath,
         Cut,
         CutToEndOfLine,
@@ -210,6 +222,8 @@ gpui::actions!(
         Format,
         GoToDefinition,
         GoToDefinitionSplit,
+        GoToDeclaration,
+        GoToDeclarationSplit,
         GoToDiagnostic,
         GoToHunk,
         GoToImplementation,
@@ -249,6 +263,7 @@ gpui::actions!(
         OpenExcerptsSplit,
         OpenPermalinkToLine,
         OpenUrl,
+        OpenFile,
         Outdent,
         PageDown,
         PageUp,
@@ -260,10 +275,12 @@ gpui::actions!(
         RestartLanguageServer,
         RevealInFileManager,
         ReverseLines,
+        RevertFile,
         RevertSelectedHunks,
         ScrollCursorBottom,
         ScrollCursorCenter,
         ScrollCursorTop,
+        ScrollCursorCenterTopBottom,
         SelectAll,
         SelectAllMatches,
         SelectDown,
@@ -286,18 +303,23 @@ gpui::actions!(
         SelectPageUp,
         ShowCharacterPalette,
         ShowInlineCompletion,
+        ShowSignatureHelp,
         ShuffleLines,
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
         SplitSelectionIntoLines,
+        SwitchSourceHeader,
         Tab,
         TabPrev,
+        ToggleAutoSignatureHelp,
         ToggleGitBlame,
         ToggleGitBlameInline,
         ToggleSelectionMenu,
         ToggleHunkDiff,
         ToggleInlayHints,
+        ToggleInlineCompletions,
         ToggleLineNumbers,
+        ToggleRelativeLineNumbers,
         ToggleIndentGuides,
         ToggleSoftWrap,
         ToggleTabBar,

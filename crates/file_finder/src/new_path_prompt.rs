@@ -32,7 +32,7 @@ impl Match {
                     path_match.path.join(suffix),
                 )
             } else {
-                (project.worktrees().next(), PathBuf::from(suffix))
+                (project.worktrees(cx).next(), PathBuf::from(suffix))
             };
 
             worktree.and_then(|worktree| worktree.read(cx).entry_for_path(path))
@@ -72,7 +72,7 @@ impl Match {
         let worktree_id = if let Some(path_match) = &self.path_match {
             WorktreeId::from_usize(path_match.worktree_id)
         } else {
-            project.worktrees().next()?.read(cx).id()
+            project.worktrees(cx).next()?.read(cx).id()
         };
 
         let path = PathBuf::from(self.relative_path());
@@ -84,7 +84,7 @@ impl Match {
     }
 
     fn existing_prefix(&self, project: &Project, cx: &WindowContext) -> Option<PathBuf> {
-        let worktree = project.worktrees().next()?.read(cx);
+        let worktree = project.worktrees(cx).next()?.read(cx);
         let mut prefix = PathBuf::new();
         let parts = self.suffix.as_ref()?.split('/');
         for part in parts {
@@ -107,8 +107,10 @@ impl Match {
 
         if let Some(path_match) = &self.path_match {
             text.push_str(&path_match.path.to_string_lossy());
+            let mut whole_path = PathBuf::from(path_match.path_prefix.to_string());
+            whole_path = whole_path.join(path_match.path.clone());
             for (range, style) in highlight_ranges(
-                &path_match.path.to_string_lossy(),
+                &whole_path.to_string_lossy(),
                 &path_match.positions,
                 gpui::HighlightStyle::color(Color::Accent.color(cx)),
             ) {
@@ -197,14 +199,12 @@ pub struct NewPathDelegate {
 }
 
 impl NewPathPrompt {
-    pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        if workspace.project().read(cx).is_remote() {
-            workspace.set_prompt_for_new_path(Box::new(|workspace, cx| {
-                let (tx, rx) = futures::channel::oneshot::channel();
-                Self::prompt_for_new_path(workspace, tx, cx);
-                rx
-            }));
-        }
+    pub(crate) fn register(workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>) {
+        workspace.set_prompt_for_new_path(Box::new(|workspace, cx| {
+            let (tx, rx) = futures::channel::oneshot::channel();
+            Self::prompt_for_new_path(workspace, tx, cx);
+            rx
+        }));
     }
 
     fn prompt_for_new_path(
@@ -250,7 +250,10 @@ impl PickerDelegate for NewPathDelegate {
         query: String,
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> gpui::Task<()> {
-        let query = query.trim().trim_start_matches('/');
+        let query = query
+            .trim()
+            .trim_start_matches("./")
+            .trim_start_matches('/');
         let (dir, suffix) = if let Some(index) = query.rfind('/') {
             let suffix = if index + 1 < query.len() {
                 Some(query[index + 1..].to_string())

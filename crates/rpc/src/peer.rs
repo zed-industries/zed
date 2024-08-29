@@ -516,11 +516,7 @@ impl Peer {
                 future::ready(match response {
                     Ok(response) => {
                         if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                            Some(Err(anyhow!(
-                                "RPC request {} failed - {}",
-                                T::NAME,
-                                error.message
-                            )))
+                            Some(Err(RpcError::from_proto(&error, T::NAME)))
                         } else if let Some(proto::envelope::Payload::EndStream(_)) =
                             &response.payload
                         {
@@ -554,6 +550,14 @@ impl Peer {
             .unbounded_send(proto::Message::Envelope(
                 message.into_envelope(message_id, None, None),
             ))?;
+        Ok(())
+    }
+
+    pub fn send_dynamic(&self, receiver_id: ConnectionId, message: proto::Envelope) -> Result<()> {
+        let connection = self.connection_state(receiver_id)?;
+        connection
+            .outgoing_tx
+            .unbounded_send(proto::Message::Envelope(message))?;
         Ok(())
     }
 

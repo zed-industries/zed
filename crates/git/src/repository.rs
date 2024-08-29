@@ -36,11 +36,7 @@ pub trait GitRepository: Send + Sync {
     /// Returns the SHA of the current HEAD.
     fn head_sha(&self) -> Option<String>;
 
-    fn statuses(&self, path_prefix: &Path) -> Result<GitStatus>;
-
-    fn status(&self, path: &Path) -> Option<GitFileStatus> {
-        Some(self.statuses(path).ok()?.entries.first()?.1)
-    }
+    fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus>;
 
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
@@ -75,6 +71,9 @@ impl RealGitRepository {
     }
 }
 
+// https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
+const GIT_MODE_SYMLINK: u32 = 0o120000;
+
 impl GitRepository for RealGitRepository {
     fn reload_index(&self) {
         if let Ok(mut index) = self.repository.lock().index() {
@@ -91,8 +90,8 @@ impl GitRepository for RealGitRepository {
             check_path_to_repo_path_errors(relative_file_path)?;
 
             let oid = match index.get_path(relative_file_path, STAGE_NORMAL) {
-                Some(entry) => entry.id,
-                None => return Ok(None),
+                Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
+                _ => return Ok(None),
             };
 
             let content = repo.find_blob(oid)?.content().to_owned();
@@ -123,14 +122,14 @@ impl GitRepository for RealGitRepository {
         Some(self.repository.lock().head().ok()?.target()?.to_string())
     }
 
-    fn statuses(&self, path_prefix: &Path) -> Result<GitStatus> {
+    fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus> {
         let working_directory = self
             .repository
             .lock()
             .workdir()
             .context("failed to read git work directory")?
             .to_path_buf();
-        GitStatus::new(&self.git_binary_path, &working_directory, path_prefix)
+        GitStatus::new(&self.git_binary_path, &working_directory, path_prefixes)
     }
 
     fn branches(&self) -> Result<Vec<Branch>> {
@@ -242,13 +241,16 @@ impl GitRepository for FakeGitRepository {
         None
     }
 
-    fn statuses(&self, path_prefix: &Path) -> Result<GitStatus> {
+    fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus> {
         let state = self.state.lock();
         let mut entries = state
             .worktree_statuses
             .iter()
             .filter_map(|(repo_path, status)| {
-                if repo_path.0.starts_with(path_prefix) {
+                if path_prefixes
+                    .iter()
+                    .any(|path_prefix| repo_path.0.starts_with(path_prefix))
+                {
                     Some((repo_path.to_owned(), *status))
                 } else {
                     None

@@ -5,6 +5,8 @@ use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
 use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, IconButton};
+use workspace::notifications::NotificationId;
+use workspace::{Toast, Workspace};
 
 pub mod buffer_search;
 pub mod project_search;
@@ -50,10 +52,10 @@ bitflags! {
 impl SearchOptions {
     pub fn label(&self) -> &'static str {
         match *self {
-            SearchOptions::WHOLE_WORD => "whole word",
-            SearchOptions::CASE_SENSITIVE => "match case",
-            SearchOptions::INCLUDE_IGNORED => "include Ignored",
-            SearchOptions::REGEX => "regular expression",
+            SearchOptions::WHOLE_WORD => "Match whole words",
+            SearchOptions::CASE_SENSITIVE => "Match case sensitively",
+            SearchOptions::INCLUDE_IGNORED => "Also search files ignored by configuration",
+            SearchOptions::REGEX => "Use regular expressions",
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }
@@ -62,7 +64,7 @@ impl SearchOptions {
         match *self {
             SearchOptions::WHOLE_WORD => ui::IconName::WholeWord,
             SearchOptions::CASE_SENSITIVE => ui::IconName::CaseSensitive,
-            SearchOptions::INCLUDE_IGNORED => ui::IconName::FileGit,
+            SearchOptions::INCLUDE_IGNORED => ui::IconName::Sliders,
             SearchOptions::REGEX => ui::IconName::Regex,
             _ => panic!("{:?} is not a named SearchOption", self),
         }
@@ -102,8 +104,26 @@ impl SearchOptions {
             .selected(active)
             .tooltip({
                 let action = self.to_toggle_action();
-                let label: SharedString = format!("Toggle {}", self.label()).into();
-                move |cx| Tooltip::for_action(label.clone(), &*action, cx)
+                let label = self.label();
+                move |cx| Tooltip::for_action(label, &*action, cx)
             })
     }
+}
+
+pub(crate) fn show_no_more_matches(cx: &mut WindowContext) {
+    cx.defer(|cx| {
+        struct NotifType();
+        let notification_id = NotificationId::unique::<NotifType>();
+        let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
+            return;
+        };
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.show_toast(
+                    Toast::new(notification_id.clone(), "No more matches").autohide(),
+                    cx,
+                );
+            })
+            .ok();
+    });
 }

@@ -18,7 +18,7 @@ test-support = [
     "settings/test-support",
     "text/test-support",
     "gpui/test-support",
-    "http/test-support",
+    "http_client/test-support",
 ]
 
 [dependencies]
@@ -41,6 +41,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+smallvec.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
@@ -52,7 +53,7 @@ collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 git2.workspace = true
 gpui = {workspace = true, features = ["test-support"]}
-http.workspace = true
+http_client.workspace = true
 rand.workspace = true
 settings = {workspace = true, features = ["test-support"]}
 pretty_assertions.workspace = true

@@ -4,17 +4,15 @@ use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayP
 use gpui::{impl_actions, ViewContext};
 use language::{Bias, SelectionGoal};
 use serde::Deserialize;
-use workspace::Workspace;
 
 use crate::{
-    normal::yank::copy_selections_content,
     state::{Mode, Register},
     Vim,
 };
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct Paste {
+pub struct Paste {
     #[serde(default)]
     before: bool,
     #[serde(default)]
@@ -23,35 +21,34 @@ struct Paste {
 
 impl_actions!(vim, [Paste]);
 
-pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-    workspace.register_action(paste);
-}
+impl Vim {
+    pub fn paste(&mut self, action: &Paste, cx: &mut ViewContext<Self>) {
+        self.record_current_action(cx);
+        self.store_visual_marks(cx);
+        let count = self.take_count(cx).unwrap_or(1);
 
-fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| {
-        vim.record_current_action(cx);
-        let count = vim.take_count(cx).unwrap_or(1);
-        vim.update_active_editor(cx, |vim, editor, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
-                let selected_register = vim.update_state(|state| state.selected_register.take());
+                let selected_register = vim.selected_register.take();
 
                 let Some(Register {
                     text,
                     clipboard_selections,
-                }) = vim
-                    .read_register(selected_register, Some(editor), cx)
-                    .filter(|reg| !reg.text.is_empty())
+                }) = Vim::update_globals(cx, |globals, cx| {
+                    globals.read_register(selected_register, Some(editor), cx)
+                })
+                .filter(|reg| !reg.text.is_empty())
                 else {
                     return;
                 };
                 let clipboard_selections = clipboard_selections
-                    .filter(|sel| sel.len() > 1 && vim.state().mode != Mode::VisualLine);
+                    .filter(|sel| sel.len() > 1 && vim.mode != Mode::VisualLine);
 
-                if !action.preserve_clipboard && vim.state().mode.is_visual() {
-                    copy_selections_content(vim, editor, vim.state().mode == Mode::VisualLine, cx);
+                if !action.preserve_clipboard && vim.mode.is_visual() {
+                    vim.copy_selections_content(editor, vim.mode == Mode::VisualLine, cx);
                 }
 
                 let (display_map, current_selections) = editor.selections.all_adjusted_display(cx);
@@ -88,7 +85,7 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                             .first()
                             .map(|selection| selection.first_line_indent)
                     });
-                let before = action.before || vim.state().mode == Mode::VisualLine;
+                let before = action.before || vim.mode == Mode::VisualLine;
 
                 let mut edits = Vec::new();
                 let mut new_selections = Vec::new();
@@ -119,7 +116,7 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                         } else {
                             to_insert = "\n".to_owned() + &to_insert;
                         }
-                    } else if !line_mode && vim.state().mode == Mode::VisualLine {
+                    } else if !line_mode && vim.mode == Mode::VisualLine {
                         to_insert = to_insert + "\n";
                     }
 
@@ -143,7 +140,7 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
 
                     let point_range = display_range.start.to_point(&display_map)
                         ..display_range.end.to_point(&display_map);
-                    let anchor = if is_multiline || vim.state().mode == Mode::VisualLine {
+                    let anchor = if is_multiline || vim.mode == Mode::VisualLine {
                         display_map.buffer_snapshot.anchor_before(point_range.start)
                     } else {
                         display_map.buffer_snapshot.anchor_after(point_range.end)
@@ -183,7 +180,7 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                                 cursor = movement::saturating_left(map, cursor)
                             }
                             cursors.push(cursor);
-                            if vim.state().mode == Mode::VisualBlock {
+                            if vim.mode == Mode::VisualBlock {
                                 break;
                             }
                         }
@@ -193,8 +190,8 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
                 })
             });
         });
-        vim.switch_mode(Mode::Normal, true, cx);
-    });
+        self.switch_mode(Mode::Normal, true, cx);
+    }
 }
 
 #[cfg(test)]
@@ -359,7 +356,8 @@ mod test {
             Mode::Normal,
         );
         assert_eq!(
-            cx.read_from_clipboard().map(|item| item.text().clone()),
+            cx.read_from_clipboard()
+                .map(|item| item.text().unwrap().to_string()),
             Some("jumps".into())
         );
         cx.simulate_keystrokes("d d p");
@@ -371,10 +369,11 @@ mod test {
             Mode::Normal,
         );
         assert_eq!(
-            cx.read_from_clipboard().map(|item| item.text().clone()),
+            cx.read_from_clipboard()
+                .map(|item| item.text().unwrap().to_string()),
             Some("jumps".into())
         );
-        cx.write_to_clipboard(ClipboardItem::new("test-copy".to_string()));
+        cx.write_to_clipboard(ClipboardItem::new_string("test-copy".to_string()));
         cx.simulate_keystrokes("shift-p");
         cx.assert_state(
             indoc! {"

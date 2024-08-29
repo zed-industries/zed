@@ -11,6 +11,7 @@ use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
+use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
@@ -18,7 +19,7 @@ use gpui::{
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
-use rpc::proto::DevServerStatus;
+use rpc::proto::{self, DevServerStatus};
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -73,6 +74,15 @@ impl Render for TitleBar {
         let height = Self::height(cx);
         let supported_controls = cx.window_controls();
         let decorations = cx.window_decorations();
+        let titlebar_color = if cfg!(target_os = "linux") {
+            if cx.is_window_active() {
+                cx.theme().colors().title_bar_background
+            } else {
+                cx.theme().colors().title_bar_inactive_background
+            }
+        } else {
+            cx.theme().colors().title_bar_background
+        };
 
         h_flex()
             .id("titlebar")
@@ -99,9 +109,9 @@ impl Render for TitleBar {
                     // this border is to avoid a transparent gap in the rounded corners
                     .mt(px(-1.))
                     .border(px(1.))
-                    .border_color(cx.theme().colors().title_bar_background),
+                    .border_color(titlebar_color),
             })
-            .bg(cx.theme().colors().title_bar_background)
+            .bg(titlebar_color)
             .content_stretch()
             .child(
                 div()
@@ -498,16 +508,32 @@ impl TitleBar {
     }
 
     pub fn render_user_menu_button(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
-        if let Some(user) = self.user_store.read(cx).current_user() {
+        let user_store = self.user_store.read(cx);
+        if let Some(user) = user_store.current_user() {
+            let plan = user_store.current_plan();
             PopoverMenu::new("user-menu")
-                .menu(|cx| {
-                    ContextMenu::build(cx, |menu, _| {
-                        menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
-                            .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
-                            .action("Themes…", theme_selector::Toggle::default().boxed_clone())
-                            .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                .menu(move |cx| {
+                    ContextMenu::build(cx, |menu, cx| {
+                        menu.when(cx.has_flag::<ZedPro>(), |menu| {
+                            menu.action(
+                                format!(
+                                    "Current Plan: {}",
+                                    match plan {
+                                        None => "",
+                                        Some(proto::Plan::Free) => "Free",
+                                        Some(proto::Plan::ZedPro) => "Pro",
+                                    }
+                                ),
+                                zed_actions::OpenAccountSettings.boxed_clone(),
+                            )
                             .separator()
-                            .action("Sign Out", client::SignOut.boxed_clone())
+                        })
+                        .action("Settings", zed_actions::OpenSettings.boxed_clone())
+                        .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                        .action("Themes…", theme_selector::Toggle::default().boxed_clone())
+                        .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                        .separator()
+                        .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
                 })

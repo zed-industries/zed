@@ -103,20 +103,33 @@ impl TabMap {
                 }
             }
 
+            let _old_alloc_ptr = fold_edits.as_ptr();
             // Combine any edits that overlap due to the expansion.
-            let mut ix = 1;
-            while ix < fold_edits.len() {
-                let (prev_edits, next_edits) = fold_edits.split_at_mut(ix);
-                let prev_edit = prev_edits.last_mut().unwrap();
-                let edit = &next_edits[0];
-                if prev_edit.old.end >= edit.old.start {
-                    prev_edit.old.end = edit.old.end;
-                    prev_edit.new.end = edit.new.end;
-                    fold_edits.remove(ix);
-                } else {
-                    ix += 1;
-                }
-            }
+            let mut fold_edits = fold_edits.into_iter();
+            let fold_edits = if let Some(mut first_edit) = fold_edits.next() {
+                // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
+                #[allow(clippy::filter_map_identity)]
+                let mut v: Vec<_> = fold_edits
+                    .scan(&mut first_edit, |state, edit| {
+                        if state.old.end >= edit.old.start {
+                            state.old.end = edit.old.end;
+                            state.new.end = edit.new.end;
+                            Some(None) // Skip this edit, it's merged
+                        } else {
+                            let new_state = edit.clone();
+                            let result = Some(Some(state.clone())); // Yield the previous edit
+                            **state = new_state;
+                            result
+                        }
+                    })
+                    .filter_map(|x| x)
+                    .collect();
+                v.push(first_edit);
+                debug_assert_eq!(v.as_ptr(), _old_alloc_ptr, "Fold edits were reallocated");
+                v
+            } else {
+                vec![]
+            };
 
             for fold_edit in fold_edits {
                 let old_start = fold_edit.old.start.to_point(&old_snapshot.fold_snapshot);

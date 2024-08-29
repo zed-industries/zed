@@ -20,6 +20,27 @@ pub struct ProjectSettings {
     /// Configuration for Git-related features
     #[serde(default)]
     pub git: GitSettings,
+
+    /// Configuration for how direnv configuration should be loaded
+    #[serde(default)]
+    pub load_direnv: DirenvSettings,
+
+    /// Configuration for session-related features
+    #[serde(default)]
+    pub session: SessionSettings,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DirenvSettings {
+    /// Load direnv configuration through a shell hook
+    #[default]
+    ShellHook,
+    /// Load direnv configuration directly using `direnv export json`
+    ///
+    /// Warning: This option is experimental and might cause some inconsistent behavior compared to using the shell hook.
+    /// If it does, please report it to GitHub
+    Direct,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -103,6 +124,25 @@ pub struct LspSettings {
     pub binary: Option<BinarySettings>,
     pub initialization_options: Option<serde_json::Value>,
     pub settings: Option<serde_json::Value>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SessionSettings {
+    /// Whether or not to restore unsaved buffers on restart.
+    ///
+    /// If this is true, user won't be prompted whether to save/discard
+    /// dirty files when closing the application.
+    ///
+    /// Default: true
+    pub restore_unsaved_buffers: bool,
+}
+
+impl Default for SessionSettings {
+    fn default() -> Self {
+        Self {
+            restore_unsaved_buffers: true,
+        }
+    }
 }
 
 impl Settings for ProjectSettings {

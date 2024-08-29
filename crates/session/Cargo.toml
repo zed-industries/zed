@@ -1,0 +1,25 @@
+[package]
+name = "session"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/session.rs"
+doctest = false
+
+[features]
+test-support = [
+    "db/test-support",
+]
+
+[dependencies]
+db.workspace = true
+gpui.workspace = true
+uuid.workspace = true
+util.workspace = true
+serde_json.workspace = true

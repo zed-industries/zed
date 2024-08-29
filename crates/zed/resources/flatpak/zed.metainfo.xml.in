@@ -54,27 +54,32 @@
     <screenshots>
         <screenshot type="default">
             <caption>Zed with a large project open, showing language server and gitblame support</caption>
-            <image type="source" width="1122" height="859" xml:lang="en">https://zed.dev/img/flatpak/flatpak-1.png</image>
+            <image>https://zed.dev/img/flatpak/flatpak-1.png</image>
         </screenshot>
         <screenshot>
             <caption>Zed with a file open and a channel message thread in the right sidebar</caption>
-            <image type="source" width="1122" height="859" xml:lang="en">https://zed.dev/img/flatpak/flatpak-2.png</image>
+            <image>https://zed.dev/img/flatpak/flatpak-2.png</image>
         </screenshot>
         <screenshot>
             <caption>Example of a channel's shared document</caption>
-            <image type="source" width="1122" height="859" xml:lang="en">https://zed.dev/img/flatpak/flatpak-3.png</image>
+            <image>https://zed.dev/img/flatpak/flatpak-3.png</image>
         </screenshot>
         <screenshot>
             <caption>Zed's extension list</caption>
-            <image type="source" width="1122" height="859" xml:lang="en">https://zed.dev/img/flatpak/flatpak-4.png</image>
+            <image>https://zed.dev/img/flatpak/flatpak-4.png</image>
         </screenshot>
         <screenshot>
             <caption>Theme switcher UI and example theme</caption>
-            <image type="source" width="1122" height="859" xml:lang="en">https://zed.dev/img/flatpak/flatpak-5.png</image>
+            <image>https://zed.dev/img/flatpak/flatpak-5.png</image>
         </screenshot>
     </screenshots>
 
     <releases>
-        @release_info@
+		@release_info@
+		<release version="0.0.0" date="1970-01-01">
+			<description>
+				<p>Dummy release to keep flatpak-builder AppStream metadata validation from complaining</p>
+			</description>
+		</release>
     </releases>
 </component>

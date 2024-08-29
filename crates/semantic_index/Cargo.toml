@@ -29,7 +29,7 @@ gpui.workspace = true
 language.workspace = true
 log.workspace = true
 heed.workspace = true
-http.workspace = true
+http_client.workspace = true
 open_ai.workspace = true
 parking_lot.workspace = true
 project.workspace = true
@@ -59,4 +59,4 @@ tempfile.workspace = true
 util = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
-http = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }

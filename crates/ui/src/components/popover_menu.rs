@@ -1,10 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    anchored, deferred, div, point, prelude::FluentBuilder, px, AnchorCorner, AnyElement, Bounds,
-    DismissEvent, DispatchPhase, Element, ElementId, GlobalElementId, HitboxId, InteractiveElement,
-    IntoElement, LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View,
-    VisualContext, WindowContext,
+    anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnchorCorner, AnyElement,
+    Bounds, DismissEvent, DispatchPhase, Element, ElementId, GlobalElementId, HitboxId,
+    InteractiveElement, IntoElement, LayoutId, Length, ManagedView, MouseDownEvent, ParentElement,
+    Pixels, Point, Style, View, VisualContext, WindowContext,
 };
 
 use crate::prelude::*;
@@ -56,6 +56,23 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
             }
         }
     }
+
+    pub fn is_deployed(&self) -> bool {
+        self.0
+            .borrow()
+            .as_ref()
+            .map_or(false, |state| state.menu.borrow().as_ref().is_some())
+    }
+
+    pub fn is_focused(&self, cx: &mut WindowContext) -> bool {
+        self.0.borrow().as_ref().map_or(false, |state| {
+            state
+                .menu
+                .borrow()
+                .as_ref()
+                .map_or(false, |view| view.focus_handle(cx).is_focused(cx))
+        })
+    }
 }
 
 pub struct PopoverMenu<M: ManagedView> {
@@ -74,6 +91,7 @@ pub struct PopoverMenu<M: ManagedView> {
     attach: Option<AnchorCorner>,
     offset: Option<Point<Pixels>>,
     trigger_handle: Option<PopoverMenuHandle<M>>,
+    full_width: bool,
 }
 
 impl<M: ManagedView> PopoverMenu<M> {
@@ -87,7 +105,13 @@ impl<M: ManagedView> PopoverMenu<M> {
             attach: None,
             offset: None,
             trigger_handle: None,
+            full_width: false,
         }
+    }
+
+    pub fn full_width(mut self, full_width: bool) -> Self {
+        self.full_width = full_width;
+        self
     }
 
     pub fn menu(mut self, f: impl Fn(&mut WindowContext) -> Option<View<M>> + 'static) -> Self {
@@ -201,14 +225,15 @@ impl<M> Default for PopoverMenuElementState<M> {
     }
 }
 
-pub struct PopoverMenuFrameState {
+pub struct PopoverMenuFrameState<M: ManagedView> {
     child_layout_id: Option<LayoutId>,
     child_element: Option<AnyElement>,
     menu_element: Option<AnyElement>,
+    menu_handle: Rc<RefCell<Option<View<M>>>>,
 }
 
 impl<M: ManagedView> Element for PopoverMenu<M> {
-    type RequestLayoutState = PopoverMenuFrameState;
+    type RequestLayoutState = PopoverMenuFrameState<M>;
     type PrepaintState = Option<HitboxId>;
 
     fn id(&self) -> Option<ElementId> {
@@ -258,10 +283,13 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                     .as_mut()
                     .map(|child_element| child_element.request_layout(cx));
 
-                let layout_id = cx.request_layout(
-                    gpui::Style::default(),
-                    menu_layout_id.into_iter().chain(child_layout_id),
-                );
+                let mut style = Style::default();
+                if self.full_width {
+                    style.size = size(relative(1.).into(), Length::Auto);
+                }
+
+                let layout_id =
+                    cx.request_layout(style, menu_layout_id.into_iter().chain(child_layout_id));
 
                 (
                     (
@@ -270,6 +298,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                             child_element,
                             child_layout_id,
                             menu_element,
+                            menu_handle: element_state.menu.clone(),
                         },
                     ),
                     element_state,
@@ -323,11 +352,17 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             menu.paint(cx);
 
             if let Some(child_hitbox) = *child_hitbox {
+                let menu_handle = request_layout.menu_handle.clone();
                 // Mouse-downing outside the menu dismisses it, so we don't
                 // want a click on the toggle to re-open it.
                 cx.on_mouse_event(move |_: &MouseDownEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble && child_hitbox.is_hovered(cx) {
-                        cx.stop_propagation()
+                        if let Some(menu) = menu_handle.borrow().as_ref() {
+                            menu.update(cx, |_, cx| {
+                                cx.emit(DismissEvent);
+                            });
+                        }
+                        cx.stop_propagation();
                     }
                 })
             }

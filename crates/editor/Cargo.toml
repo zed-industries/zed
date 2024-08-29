@@ -28,27 +28,29 @@ test-support = [
 ]
 
 [dependencies]
-aho-corasick = "1.1"
+aho-corasick.workspace = true
 anyhow.workspace = true
 assets.workspace = true
+chrono.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
 convert_case = "0.6.0"
 db.workspace = true
 emojis.workspace = true
+file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
 gpui.workspace = true
-http.workspace = true
+http_client.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
-lazy_static.workspace = true
 linkify.workspace = true
 log.workspace = true
 lsp.workspace = true
+markdown.workspace = true
 multi_buffer.workspace = true
 ordered-float.workspace = true
 parking_lot.workspace = true
@@ -95,4 +97,4 @@ tree-sitter-typescript.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
-http = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }

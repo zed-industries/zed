@@ -2,33 +2,37 @@ mod components;
 mod extension_suggest;
 mod extension_version_selector;
 
-use crate::components::ExtensionCard;
-use crate::extension_version_selector::{
-    ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
-};
+use std::ops::DerefMut;
+use std::sync::OnceLock;
+use std::time::Duration;
+use std::{ops::Range, sync::Arc};
+
 use client::telemetry::Telemetry;
 use client::ExtensionMetadata;
+use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, AnyElement, AppContext, EventEmitter, FocusableView, FontStyle,
-    InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WhiteSpace, WindowContext,
+    actions, uniform_list, AppContext, EventEmitter, Flatten, FocusableView, InteractiveElement,
+    KeyContext, ParentElement, Render, Styled, Task, TextStyle, UniformListScrollHandle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use num_format::{Locale, ToFormattedString};
+use project::DirectoryLister;
 use release_channel::ReleaseChannel;
 use settings::Settings;
-use std::ops::DerefMut;
-use std::time::Duration;
-use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
-use ui::{prelude::*, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
-use util::ResultExt as _;
-use workspace::item::TabContentParams;
+use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
+use vim::VimModeSetting;
 use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
+};
+
+use crate::components::{ExtensionCard, FeatureUpsell};
+use crate::extension_version_selector::{
+    ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
 
 actions!(zed, [Extensions, InstallDevExtension]);
@@ -44,23 +48,41 @@ pub fn init(cx: &mut AppContext) {
                     .find_map(|item| item.downcast::<ExtensionsPage>());
 
                 if let Some(existing) = existing {
-                    workspace.activate_item(&existing, cx);
+                    workspace.activate_item(&existing, true, true, cx);
                 } else {
                     let extensions_page = ExtensionsPage::new(workspace, cx);
-                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, cx)
+                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, true, cx)
                 }
             })
-            .register_action(move |_, _: &InstallDevExtension, cx| {
+            .register_action(move |workspace, _: &InstallDevExtension, cx| {
                 let store = ExtensionStore::global(cx);
-                let prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
-                    files: false,
-                    directories: true,
-                    multiple: false,
-                });
+                let prompt = workspace.prompt_for_open_path(
+                    gpui::PathPromptOptions {
+                        files: false,
+                        directories: true,
+                        multiple: false,
+                    },
+                    DirectoryLister::Local(workspace.app_state().fs.clone()),
+                    cx,
+                );
 
+                let workspace_handle = cx.view().downgrade();
                 cx.deref_mut()
                     .spawn(|mut cx| async move {
-                        let extension_path = prompt.await.log_err()??.pop()?;
+                        let extension_path =
+                            match Flatten::flatten(prompt.await.map_err(|e| e.into())) {
+                                Ok(Some(mut paths)) => paths.pop()?,
+                                Ok(None) => return None,
+                                Err(err) => {
+                                    workspace_handle
+                                        .update(&mut cx, |workspace, cx| {
+                                            workspace.show_portal_error(err.to_string(), cx);
+                                        })
+                                        .ok();
+                                    return None;
+                                }
+                            };
+
                         store
                             .update(&mut cx, |store, cx| {
                                 store
@@ -109,6 +131,55 @@ impl ExtensionFilter {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+enum Feature {
+    Git,
+    OpenIn,
+    Vim,
+    LanguageBash,
+    LanguageC,
+    LanguageCpp,
+    LanguageGo,
+    LanguagePython,
+    LanguageReact,
+    LanguageRust,
+    LanguageTypescript,
+}
+
+fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
+    static KEYWORDS_BY_FEATURE: OnceLock<BTreeMap<Feature, Vec<&'static str>>> = OnceLock::new();
+    KEYWORDS_BY_FEATURE.get_or_init(|| {
+        BTreeMap::from_iter([
+            (Feature::Git, vec!["git"]),
+            (
+                Feature::OpenIn,
+                vec![
+                    "github",
+                    "gitlab",
+                    "bitbucket",
+                    "codeberg",
+                    "sourcehut",
+                    "permalink",
+                    "link",
+                    "open in",
+                ],
+            ),
+            (Feature::Vim, vec!["vim"]),
+            (Feature::LanguageBash, vec!["sh", "bash"]),
+            (Feature::LanguageC, vec!["c", "clang"]),
+            (Feature::LanguageCpp, vec!["c++", "cpp", "clang"]),
+            (Feature::LanguageGo, vec!["go", "golang"]),
+            (Feature::LanguagePython, vec!["python", "py"]),
+            (Feature::LanguageReact, vec!["react"]),
+            (Feature::LanguageRust, vec!["rust", "rs"]),
+            (
+                Feature::LanguageTypescript,
+                vec!["type", "typescript", "ts"],
+            ),
+        ])
+    })
+}
+
 pub struct ExtensionsPage {
     workspace: WeakView<Workspace>,
     list: UniformListScrollHandle,
@@ -122,6 +193,7 @@ pub struct ExtensionsPage {
     query_contains_error: bool,
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
+    upsells: BTreeSet<Feature>,
 }
 
 impl ExtensionsPage {
@@ -160,6 +232,7 @@ impl ExtensionsPage {
                 extension_fetch_task: None,
                 _subscriptions: subscriptions,
                 query_editor,
+                upsells: BTreeSet::default(),
             };
             this.fetch_extensions(None, cx);
             this
@@ -379,28 +452,34 @@ impl ExtensionsPage {
             )
             .child(
                 h_flex()
+                    .gap_2()
                     .justify_between()
                     .child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small),
+                        div().overflow_x_hidden().text_ellipsis().child(
+                            Label::new(format!(
+                                "{}: {}",
+                                if extension.authors.len() > 1 {
+                                    "Authors"
+                                } else {
+                                    "Author"
+                                },
+                                extension.authors.join(", ")
+                            ))
+                            .size(LabelSize::Small),
+                        ),
                     )
                     .child(Label::new("<>").size(LabelSize::Small)),
             )
             .child(
                 h_flex()
+                    .gap_2()
                     .justify_between()
                     .children(extension.description.as_ref().map(|description| {
-                        Label::new(description.clone())
-                            .size(LabelSize::Small)
-                            .color(Color::Default)
+                        div().overflow_x_hidden().text_ellipsis().child(
+                            Label::new(description.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Default),
+                        )
                     }))
                     .children(repository_url.map(|repository_url| {
                         IconButton::new(
@@ -474,18 +553,21 @@ impl ExtensionsPage {
             )
             .child(
                 h_flex()
+                    .gap_2()
                     .justify_between()
                     .child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.manifest.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.manifest.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small),
+                        div().overflow_x_hidden().text_ellipsis().child(
+                            Label::new(format!(
+                                "{}: {}",
+                                if extension.manifest.authors.len() > 1 {
+                                    "Authors"
+                                } else {
+                                    "Author"
+                                },
+                                extension.manifest.authors.join(", ")
+                            ))
+                            .size(LabelSize::Small),
+                        ),
                     )
                     .child(
                         Label::new(format!(
@@ -500,7 +582,7 @@ impl ExtensionsPage {
                     .gap_2()
                     .justify_between()
                     .children(extension.manifest.description.as_ref().map(|description| {
-                        h_flex().overflow_x_hidden().child(
+                        div().overflow_x_hidden().text_ellipsis().child(
                             Label::new(description.clone())
                                 .size(LabelSize::Small)
                                 .color(Color::Default),
@@ -718,25 +800,19 @@ impl ExtensionsPage {
             cx.theme().colors().border
         };
 
-        h_flex()
-            .w_full()
-            .gap_2()
-            .key_context(key_context)
-            // .capture_action(cx.listener(Self::tab))
-            // .on_action(cx.listener(Self::dismiss))
-            .child(
-                h_flex()
-                    .flex_1()
-                    .px_2()
-                    .py_1()
-                    .gap_2()
-                    .border_1()
-                    .border_color(editor_border)
-                    .min_w(rems_from_px(384.))
-                    .rounded_lg()
-                    .child(Icon::new(IconName::MagnifyingGlass))
-                    .child(self.render_text_input(&self.query_editor, cx)),
-            )
+        h_flex().w_full().gap_2().key_context(key_context).child(
+            h_flex()
+                .flex_1()
+                .px_2()
+                .py_1()
+                .gap_2()
+                .border_1()
+                .border_color(editor_border)
+                .min_w(rems_from_px(384.))
+                .rounded_lg()
+                .child(Icon::new(IconName::MagnifyingGlass))
+                .child(self.render_text_input(&self.query_editor, cx)),
+        )
     }
 
     fn render_text_input(&self, editor: &View<Editor>, cx: &ViewContext<Self>) -> impl IntoElement {
@@ -749,14 +825,11 @@ impl ExtensionsPage {
             },
             font_family: settings.ui_font.family.clone(),
             font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
+            ..Default::default()
         };
 
         EditorElement::new(
@@ -779,6 +852,7 @@ impl ExtensionsPage {
         if let editor::EditorEvent::Edited { .. } = event {
             self.query_contains_error = false;
             self.fetch_extensions_debounced(cx);
+            self.refresh_feature_upsells(cx);
         }
     }
 
@@ -849,6 +923,125 @@ impl ExtensionsPage {
         };
 
         Label::new(message)
+    }
+
+    fn update_settings<T: Settings>(
+        &mut self,
+        selection: &Selection,
+        cx: &mut ViewContext<Self>,
+        callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let fs = workspace.read(cx).app_state().fs.clone();
+            let selection = *selection;
+            settings::update_settings_file::<T>(fs, cx, move |settings, _| {
+                let value = match selection {
+                    Selection::Unselected => false,
+                    Selection::Selected => true,
+                    _ => return,
+                };
+
+                callback(settings, value)
+            });
+        }
+    }
+
+    fn refresh_feature_upsells(&mut self, cx: &mut ViewContext<Self>) {
+        let Some(search) = self.search_query(cx) else {
+            self.upsells.clear();
+            return;
+        };
+
+        let search = search.to_lowercase();
+        let search_terms = search
+            .split_whitespace()
+            .map(|term| term.trim())
+            .collect::<Vec<_>>();
+
+        for (feature, keywords) in keywords_by_feature() {
+            if keywords
+                .iter()
+                .any(|keyword| search_terms.contains(keyword))
+            {
+                self.upsells.insert(*feature);
+            } else {
+                self.upsells.remove(&feature);
+            }
+        }
+    }
+
+    fn render_feature_upsells(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let upsells_count = self.upsells.len();
+
+        v_flex().children(self.upsells.iter().enumerate().map(|(ix, feature)| {
+            let telemetry = self.telemetry.clone();
+            let upsell = match feature {
+                Feature::Git => FeatureUpsell::new(
+                    telemetry,
+                    "Zed comes with basic Git support. More Git features are coming in the future.",
+                )
+                .docs_url("https://zed.dev/docs/git"),
+                Feature::OpenIn => FeatureUpsell::new(
+                    telemetry,
+                    "Zed supports linking to a source line on GitHub and others.",
+                )
+                .docs_url("https://zed.dev/docs/git#git-integrations"),
+                Feature::Vim => FeatureUpsell::new(telemetry, "Vim support is built-in to Zed!")
+                    .docs_url("https://zed.dev/docs/vim")
+                    .child(CheckboxWithLabel::new(
+                        "enable-vim",
+                        Label::new("Enable vim mode"),
+                        if VimModeSetting::get_global(cx).0 {
+                            ui::Selection::Selected
+                        } else {
+                            ui::Selection::Unselected
+                        },
+                        cx.listener(move |this, selection, cx| {
+                            this.telemetry
+                                .report_app_event("feature upsell: toggle vim".to_string());
+                            this.update_settings::<VimModeSetting>(
+                                selection,
+                                cx,
+                                |setting, value| *setting = Some(value),
+                            );
+                        }),
+                    )),
+                Feature::LanguageBash => {
+                    FeatureUpsell::new(telemetry, "Shell support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/bash")
+                }
+                Feature::LanguageC => {
+                    FeatureUpsell::new(telemetry, "C support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/c")
+                }
+                Feature::LanguageCpp => {
+                    FeatureUpsell::new(telemetry, "C++ support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/cpp")
+                }
+                Feature::LanguageGo => {
+                    FeatureUpsell::new(telemetry, "Go support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/go")
+                }
+                Feature::LanguagePython => {
+                    FeatureUpsell::new(telemetry, "Python support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/python")
+                }
+                Feature::LanguageReact => {
+                    FeatureUpsell::new(telemetry, "React support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/typescript")
+                }
+                Feature::LanguageRust => {
+                    FeatureUpsell::new(telemetry, "Rust support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/rust")
+                }
+                Feature::LanguageTypescript => {
+                    FeatureUpsell::new(telemetry, "Typescript support is built-in to Zed!")
+                        .docs_url("https://zed.dev/docs/languages/typescript")
+                }
+            };
+
+            upsell.when(ix < upsells_count, |upsell| upsell.border_b_1())
+        }))
     }
 }
 
@@ -932,6 +1125,7 @@ impl Render for ExtensionsPage {
                             ),
                     ),
             )
+            .child(self.render_feature_upsells(cx))
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 let mut count = self.filtered_remote_extension_indices.len();
                 if self.filter.include_dev_extensions() {
@@ -965,14 +1159,8 @@ impl FocusableView for ExtensionsPage {
 impl Item for ExtensionsPage {
     type Event = ItemEvent;
 
-    fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
-        Label::new("Extensions")
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+        Some("Extensions".into())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

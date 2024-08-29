@@ -119,12 +119,11 @@
         </script>
 
         <div id="page-wrapper" class="page-wrapper">
-
             <div class="page">
                 {{> header}}
                 <div id="menu-bar-hover-placeholder"></div>
                 <div id="menu-bar" class="menu-bar sticky">
-                    <div class="left-buttons" style="height: 36px; margin-top: 16px">
+                    <div class="left-buttons">
                         <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
                             <i class="fa fa-bars"></i>
                         </label>
@@ -145,11 +144,11 @@
                         {{/if}}
                     </div>
 
-                    <h1 class="menu-title">
+                    <header class="menu-title">
                         <a href="/">
-                            <img src="https://zed.dev/logo_wordmark_36.webp" alt="Zed Industries" style="margin-top: 24px; height: 36px;">
+                            <img src="https://zed.dev/logo_wordmark_36.webp" alt="Zed Industries" style="height: 28px;">
                         </a>
-                    </h1>
+                    </header>
 
                     <div class="right-buttons">
                         <a class="download-button" href="https://zed.dev/download" title="Download Zed" aria-label="Download Zed">
@@ -192,7 +191,12 @@
 
                 <div id="content" class="content">
                     <main>
-                        {{{ content }}}
+                      <div class="sidetoc">
+                          <nav class="pagetoc">
+                            <p class="toc-title">On this page</p>
+                          </nav>
+                      </div>
+                      {{{ content }}}
                     </main>
                 </div>
             </div>

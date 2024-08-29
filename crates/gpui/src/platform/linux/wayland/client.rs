@@ -11,6 +11,7 @@ use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
 
+use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
@@ -311,6 +312,23 @@ impl WaylandClientStatePtr {
         }
     }
 
+    pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        let client = self.get_client();
+        let mut state = client.borrow_mut();
+        if state.composing || state.text_input.is_none() {
+            return;
+        }
+
+        let text_input = state.text_input.as_ref().unwrap();
+        text_input.set_cursor_rectangle(
+            bounds.origin.x.0 as i32,
+            bounds.origin.y.0 as i32,
+            bounds.size.width.0 as i32,
+            bounds.size.height.0 as i32,
+        );
+        text_input.commit();
+    }
+
     pub fn drop_window(&self, surface_id: &ObjectId) {
         let mut client = self.get_client();
         let mut state = client.borrow_mut();
@@ -394,6 +412,7 @@ impl WaylandClient {
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
+        #[allow(clippy::mutable_key_type)]
         let mut in_progress_outputs = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
@@ -748,6 +767,10 @@ impl LinuxClient for WaylandClient {
             .map(|window| window.handle())
     }
 
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        None
+    }
+
     fn compositor_name(&self) -> &'static str {
         "Wayland"
     }
@@ -873,6 +896,7 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientStatePtr {
         let Some(window) = get_window(&mut state, &surface.id()) else {
             return;
         };
+        #[allow(clippy::mutable_key_type)]
         let outputs = state.outputs.clone();
         drop(state);
 
@@ -958,7 +982,8 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
         let should_close = window.handle_toplevel_event(event);
 
         if should_close {
-            this.drop_window(surface_id);
+            // The close logic will be handled in drop_window()
+            window.close();
         }
     }
 }
@@ -1103,10 +1128,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 state.keymap_state = Some(xkb::State::new(&keymap));
                 state.compose_state = get_xkb_compose_state(&xkb_context);
             }
-            wl_keyboard::Event::Enter {
-                serial, surface, ..
-            } => {
-                state.serial_tracker.update(SerialKind::KeyEnter, serial);
+            wl_keyboard::Event::Enter { surface, .. } => {
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.enter_token = Some(());
 
@@ -1119,7 +1141,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.keyboard_focused_window = None;
                 state.enter_token.take();
-                state.clipboard.set_offer(None);
+                // Prevent keyboard events from repeating after opening e.g. a file chooser and closing it quickly
+                state.repeat.current_id += 1;
 
                 if let Some(window) = keyboard_focused_window {
                     if let Some(ref mut compose) = state.compose_state {
@@ -1348,6 +1371,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                         }
                     }
                 } else {
+                    state.composing = false;
                     drop(state);
                     window.handle_ime(ImeInput::DeleteText);
                 }
@@ -1403,6 +1427,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
                     state.mouse_focused_window = Some(window.clone());
+
                     if state.enter_token.is_some() {
                         state.enter_token = None;
                     }
@@ -1416,7 +1441,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         }
                     }
                     drop(state);
-                    window.set_focused(true);
+                    window.set_hovered(true);
                 }
             }
             wl_pointer::Event::Leave { .. } => {
@@ -1432,7 +1457,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
 
                     drop(state);
                     focused_window.handle_input(input);
-                    focused_window.set_focused(false);
+                    focused_window.set_hovered(false);
                 }
             }
             wl_pointer::Event::Motion {
@@ -1791,13 +1816,13 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
 
                             let paths: SmallVec<[_; 2]> = file_list
                                 .lines()
-                                .map(|path| PathBuf::from(path.replace("file://", "")))
+                                .filter_map(|path| Url::parse(path).log_err())
+                                .filter_map(|url| url.to_file_path().log_err())
                                 .collect();
                             let position = Point::new(x.into(), y.into());
 
                             // Prevent dropping text from other programs.
                             if paths.is_empty() {
-                                data_offer.finish();
                                 data_offer.destroy();
                                 return;
                             }

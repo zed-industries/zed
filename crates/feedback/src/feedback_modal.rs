@@ -10,7 +10,7 @@ use gpui::{
     div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     PromptLevel, Render, Task, View, ViewContext,
 };
-use http::HttpClient;
+use http_client::HttpClient;
 use isahc::Request;
 use language::Buffer;
 use project::Project;
@@ -126,7 +126,7 @@ impl FeedbackModal {
                 .language_for_name("Markdown");
 
             let project = workspace.project().clone();
-            let is_local_project = project.read(cx).is_local();
+            let is_local_project = project.read(cx).is_local_or_ssh();
 
             if !is_local_project {
                 struct FeedbackInRemoteProject;
@@ -186,7 +186,7 @@ impl FeedbackModal {
             );
             editor.set_show_gutter(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_show_inline_completions(false);
+            editor.set_show_inline_completions(Some(false), cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor.set_use_modal_editing(false);
             editor

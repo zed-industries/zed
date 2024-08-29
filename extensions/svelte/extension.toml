@@ -1,7 +1,7 @@
 id = "svelte"
 name = "Svelte"
 description = "Svelte support"
-version = "0.0.1"
+version = "0.0.3"
 schema_version = 1
 authors = []
 repository = "https://github.com/zed-extensions/svelte"

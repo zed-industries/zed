@@ -17,8 +17,10 @@ Vim mode has several "core Zed" key bindings, that will help you make the most o
 ```
 # Language server
 g d     Go to definition
-g D     Go to type definition
-g cmd-d Go to implementation
+g D     Go to declaration
+g y     Go to type definition
+g I     Go to implementation
+
 c d     Rename (change definition)
 g A     Go to All references to the current word
 
@@ -55,7 +57,6 @@ g <space>  Open the current search excerpt
 <ctrl-w> g D      Go to type definition in a split
 
 # Insert mode
-i a / a a      Select the function argument the cursor is in
 ctrl-x ctrl-o  Open the completion menu
 ctrl-x ctrl-c  Request GitHub Copilot suggestion (if configured)
 ctrl-x ctrl-a  Open the inline AI assistant (if configured)
@@ -85,36 +86,22 @@ Finally, Vim mode's search and replace functionality is backed by Zed's. This me
 ## Custom key bindings
 
 You can edit your personal key bindings with `:keymap`.
-For vim-specific shortcuts, you may find the following template a good place to start:
+For vim-specific shortcuts, you may find the following template a good place to start.
+
+> **Note:** We made some breaking changes in Zed version `0.145.0`. For older versions, see [the previous version of this document](https://github.com/zed-industries/zed/blob/c67aeaa9c58619a58708722ac7d7a78c75c29336/docs/src/vim.md#L90).
 
 ```json
 [
   {
-    "context": "Editor && (vim_mode == normal || vim_mode == visual) && !VimWaiting && !menu",
+    "context": "VimControl && !menu",
     "bindings": {
       // put key-bindings here if you want them to work in normal & visual mode
     }
   },
   {
-    "context": "Editor && vim_mode == normal && !VimWaiting && !menu",
+    "context": "vim_mode == insert",
     "bindings": {
-      // put key-bindings here if you want them to work only in normal mode
-      // "down": ["workspace::SendKeystrokes", "4 j"]
-      // "up": ["workspace::SendKeystrokes", "4 k"]
-    }
-  },
-  {
-    "context": "Editor && vim_mode == visual && !VimWaiting && !menu",
-    "bindings": {
-      // visual, visual line & visual block modes
-    }
-  },
-  {
-    "context": "Editor && vim_mode == insert && !menu",
-    "bindings": {
-      // put key-bindings here if you want them to work in insert mode
-      // e.g.
-      // "j j": "vim::NormalBefore" // remap jj in insert mode to escape.
+      // "j k": "vim::NormalBefore" // remap jk in insert mode to escape.
     }
   },
   {
@@ -122,43 +109,37 @@ For vim-specific shortcuts, you may find the following template a good place to 
     "bindings": {
       // put key-bindings here (in addition to above) if you want them to
       // work when no editor exists
-      // e.g.
       // "space f": "file_finder::Toggle"
     }
   }
 ]
 ```
 
-If you would like to emulate vim's `map` (`nmap` etc.) commands you can bind to the [`workspace::SendKeystrokes`](/docs/key-bindings#remapping-keys) action in the correct context.
+If you would like to emulate vim's `map` (`nmap` etc.) commands you can bind to the [`workspace::SendKeystrokes`](./key-bindings.md#remapping-keys) action in the correct context.
 
 You can see the bindings that are enabled by default in vim mode [here](https://github.com/zed-industries/zed/blob/main/assets/keymaps/vim.json).
 
-The details of the context are a little out of scope for this doc, but suffice to say that `menu` is true when a menu is open (e.g. the completions menu), `VimWaiting` is true after you type `f` or `t` when we’re waiting for a new key (and you probably don’t want bindings to happen). Please reach out on [GitHub](https://github.com/zed-industries/zed) if you want help making a key bindings work.
+#### Contexts
 
-### Examples
+Zed's keyboard bindings are evaluated only when the `"context"` matches the location you are in on the screen. Locations are nested, so when you're editing you're in the `"Workspace"` location is at the top, containing a `"Pane"` which contains an `"Editor"`. Contexts are matched only on one level at a time. So it is possible to combine `Editor && vim_mode == normal`, but `Workspace && vim_mode == normal` will never match because we set the vim context at the `Editor` level.
 
-Binding `jk` to exit insert mode and go to normal mode:
+Vim mode adds several contexts to the `Editor`:
 
-```
-{
-  "context": "Editor && vim_mode == insert && !menu",
-  "bindings": {
-    "j k": ["vim::SwitchMode", "Normal"]
-  }
-}
-```
+- `vim_mode` is similar to, but not identical to, the current mode. It starts as one of `normal`, `visual`, `insert` or `replace` (depending on your mode). If you are mid-way through typing a sequence, `vim_mode` will be either `waiting` if it's waiting for an arbitrary key (for example after typing `f` or `t`), or `operator` if it's waiting for another binding to trigger (for example after typing `c` or `d`).
+- `vim_operator` is set to `none` unless `vim_mode == operator` in which case it is set to the current operator's default keybinding (for example after typing `d`, `vim_operator == d`).
+- `"VimControl"` indicates that vim keybindings should work. It is currently an alias for `vim_mode == normal || vim_mode == visual || vim_mode == operator`, but the definition may change over time.
 
 ### Restoring some sense of normality
 
 If you're using Vim mode on Linux or Windows, you may find that it has overridden keybindings
 that you can't live without. You can restore them to their defaults by copying these into your keymap:
 
-```
+```json
 {
-  "context": "Editor && !VimWaiting && !menu",
+  "context": "Editor && !menu",
   "bindings": {
     "ctrl-c": "editor::Copy",          // vim default: return to normal mode
-    "ctrl-x": "editor::Cut",           // vim default: increment
+    "ctrl-x": "editor::Cut",           // vim default: decrement
     "ctrl-v": "editor::Paste",         // vim default: visual block mode
     "ctrl-y": "editor::Undo",          // vim default: line up
     "ctrl-f": "buffer_search::Deploy", // vim default: page down
@@ -241,6 +222,16 @@ As any Zed command is available, you may find that it's helpful to remember mnem
 
 ## Settings
 
+Vim mode is not enabled by default. To enable Vim mode, you need to add the following configuration to your settings file:
+
+```json
+{
+  "vim_mode": true
+}
+```
+
+Alternatively, you can enable Vim mode by running the `toggle vim mode` command from the command palette.
+
 Some vim settings are available to modify the default vim behavior:
 
 ```json
@@ -250,8 +241,17 @@ Some vim settings are available to modify the default vim behavior:
     // "never": don't use system clipboard unless "+ or "* is specified
     // "on_yank": use system clipboard for yank operations when no register is specified
     "use_system_clipboard": "always",
-    // Lets `f` and `t` motions extend across multiple lines
-    "use_multiline_find": true
+    // Let `f` and `t` motions extend across multiple lines
+    "use_multiline_find": true,
+    // Let `f` and `t` motions match case insensitively if the target is lowercase
+    "use_smartcase_find": true,
+    // Use relative line numbers in normal mode, absolute in insert mode
+    // c.f. https://github.com/jeffkreeftmeijer/vim-numbertoggle
+    "toggle_relative_line_numbers": true,
+    // Add custom digraphs (e.g. ctrl-k f z will insert a zombie emoji)
+    "custom_digraphs": {
+      "fz": "🧟‍♀️"
+    }
   }
 }
 ```
@@ -266,11 +266,18 @@ There are also a few Zed settings that you may also enjoy if you use vim mode:
   "relative_line_numbers": true,
   // hide the scroll bar
   "scrollbar": { "show": "never" },
+  // prevent the buffer from scrolling beyond the last line
+  "scroll_beyond_last_line": "off",
   // allow cursor to reach edges of screen
   "vertical_scroll_margin": 0,
   "gutter": {
     // disable line numbers completely:
     "line_numbers": false
+  },
+  "command_aliases": {
+    "W": "w",
+    "Wq": "wq",
+    "Q": "q"
   }
 }
 ```
@@ -293,31 +300,33 @@ If you want to navigate between the editor and docks (terminal, project panel, A
 Subword motion is not enabled by default. To enable it, add these bindings to your keymap.
 
 ```json
+[
   {
-    "context": "Editor && VimControl && !VimWaiting && !menu",
+    "context": "VimControl && !menu && vim_mode != operator",
     "bindings": {
       "w": "vim::NextSubwordStart",
       "b": "vim::PreviousSubwordStart",
       "e": "vim::NextSubwordEnd",
       "g e": "vim::PreviousSubwordEnd"
     }
-  },
+  }
+]
 ```
 
 Surrounding the selection in visual mode is also not enabled by default (`shift-s` normally behaves like `c`). To enable it, add the following to your keymap.
 
 ```json
-  {
-    "context": "Editor && vim_mode == visual && !VimWaiting && !VimObject",
-    "bindings": {
-      "shift-s": [
-        "vim::PushOperator",
-        {
-          "AddSurrounds": {}
-        }
-      ]
-    }
+{
+  "context": "vim_mode == visual",
+  "bindings": {
+    "shift-s": [
+      "vim::PushOperator",
+      {
+        "AddSurrounds": {}
+      }
+    ]
   }
+}
 ```
 
 ## Supported plugins

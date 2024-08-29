@@ -72,7 +72,7 @@ impl Render for Breadcrumbs {
                 .into_any()
         });
         let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
-            Label::new("›").color(Color::Muted).into_any_element()
+            Label::new("›").color(Color::Placeholder).into_any_element()
         });
 
         let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
@@ -83,7 +83,7 @@ impl Render for Breadcrumbs {
             Some(editor) => element.child(
                 ButtonLike::new("toggle outline view")
                     .child(breadcrumbs_stack)
-                    .style(ButtonStyle::Subtle)
+                    .style(ButtonStyle::Transparent)
                     .on_click(move |_, cx| {
                         if let Some(editor) = editor.upgrade() {
                             outline::toggle(editor, &editor::actions::ToggleOutline, cx)
@@ -113,29 +113,30 @@ impl ToolbarItemView for Breadcrumbs {
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_item = None;
-        if let Some(item) = active_pane_item {
-            let this = cx.view().downgrade();
-            self.subscription = Some(item.subscribe_to_item_events(
-                cx,
-                Box::new(move |event, cx| {
-                    if let ItemEvent::UpdateBreadcrumbs = event {
-                        this.update(cx, |this, cx| {
-                            cx.notify();
-                            if let Some(active_item) = this.active_item.as_ref() {
-                                cx.emit(ToolbarItemEvent::ChangeLocation(
-                                    active_item.breadcrumb_location(cx),
-                                ))
-                            }
-                        })
-                        .ok();
-                    }
-                }),
-            ));
-            self.active_item = Some(item.boxed_clone());
-            item.breadcrumb_location(cx)
-        } else {
-            ToolbarItemLocation::Hidden
-        }
+
+        let Some(item) = active_pane_item else {
+            return ToolbarItemLocation::Hidden;
+        };
+
+        let this = cx.view().downgrade();
+        self.subscription = Some(item.subscribe_to_item_events(
+            cx,
+            Box::new(move |event, cx| {
+                if let ItemEvent::UpdateBreadcrumbs = event {
+                    this.update(cx, |this, cx| {
+                        cx.notify();
+                        if let Some(active_item) = this.active_item.as_ref() {
+                            cx.emit(ToolbarItemEvent::ChangeLocation(
+                                active_item.breadcrumb_location(cx),
+                            ))
+                        }
+                    })
+                    .ok();
+                }
+            }),
+        ));
+        self.active_item = Some(item.boxed_clone());
+        item.breadcrumb_location(cx)
     }
 
     fn pane_focus_update(&mut self, pane_focused: bool, _: &mut ViewContext<Self>) {

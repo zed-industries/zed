@@ -1,11 +1,11 @@
 use crate::{
-    point, px, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun,
-    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
+    point, px, size, Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics,
+    FontRun, FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
     RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
-use cocoa::appkit::{CGFloat, CGPoint};
-use collections::{BTreeSet, HashMap};
+use cocoa::appkit::CGFloat;
+use collections::HashMap;
 use core_foundation::{
     attributed_string::CFMutableAttributedString,
     base::{CFRange, TCFType},
@@ -16,6 +16,7 @@ use core_graphics::{
     base::{kCGImageAlphaPremultipliedLast, CGGlyph},
     color_space::CGColorSpace,
     context::CGContext,
+    display::CGPoint,
 };
 use core_text::{
     font::CTFont,
@@ -43,7 +44,7 @@ use pathfinder_geometry::{
 use smallvec::SmallVec;
 use std::{borrow::Cow, char, cmp, convert::TryFrom, sync::Arc};
 
-use super::open_type;
+use super::open_type::apply_features_and_fallbacks;
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
@@ -54,6 +55,7 @@ pub(crate) struct MacTextSystem(RwLock<MacTextSystemState>);
 struct FontKey {
     font_family: SharedString,
     font_features: FontFeatures,
+    font_fallbacks: Option<FontFallbacks>,
 }
 
 struct MacTextSystemState {
@@ -92,26 +94,18 @@ impl PlatformTextSystem for MacTextSystem {
     }
 
     fn all_font_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
         let collection = core_text::font_collection::create_for_all_families();
         let Some(descriptors) = collection.get_descriptors() else {
-            return Vec::new();
+            return names;
         };
-        let mut names = BTreeSet::new();
         for descriptor in descriptors.into_iter() {
             names.extend(lenient_font_attributes::family_name(&descriptor));
         }
         if let Ok(fonts_in_memory) = self.0.read().memory_source.all_families() {
             names.extend(fonts_in_memory);
         }
-        names.into_iter().collect()
-    }
-
-    fn all_font_families(&self) -> Vec<String> {
-        self.0
-            .read()
-            .system_source
-            .all_families()
-            .expect("core text should never return an error")
+        names
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {
@@ -123,11 +117,13 @@ impl PlatformTextSystem for MacTextSystem {
             let font_key = FontKey {
                 font_family: font.family.clone(),
                 font_features: font.features.clone(),
+                font_fallbacks: font.fallbacks.clone(),
             };
             let candidates = if let Some(font_ids) = lock.font_ids_by_font_key.get(&font_key) {
                 font_ids.as_slice()
             } else {
-                let font_ids = lock.load_family(&font.family, &font.features)?;
+                let font_ids =
+                    lock.load_family(&font.family, &font.features, font.fallbacks.as_ref())?;
                 lock.font_ids_by_font_key.insert(font_key.clone(), font_ids);
                 lock.font_ids_by_font_key[&font_key].as_ref()
             };
@@ -212,6 +208,7 @@ impl MacTextSystemState {
         &mut self,
         name: &str,
         features: &FontFeatures,
+        fallbacks: Option<&FontFallbacks>,
     ) -> Result<SmallVec<[FontId; 4]>> {
         let name = if name == ".SystemUIFont" {
             ".AppleSystemUIFont"
@@ -227,8 +224,7 @@ impl MacTextSystemState {
         for font in family.fonts() {
             let mut font = font.load()?;
 
-            open_type::apply_features(&mut font, features);
-
+            apply_features_and_fallbacks(&mut font, features, fallbacks)?;
             // This block contains a precautionary fix to guard against loading fonts
             // that might cause panics due to `.unwrap()`s up the chain.
             {
@@ -457,6 +453,7 @@ impl MacTextSystemState {
                     CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
 
                 let font: &FontKitFont = &self.fonts[run.font_id.0];
+
                 unsafe {
                     string.set_attribute(
                         cf_range,
@@ -634,7 +631,7 @@ impl From<FontStyle> for FontkitStyle {
     }
 }
 
-// Some fonts may have no attributest despite `core_text` requiring them (and panicking).
+// Some fonts may have no attributes despite `core_text` requiring them (and panicking).
 // This is the same version as `core_text` has without `expect` calls.
 mod lenient_font_attributes {
     use core_foundation::{

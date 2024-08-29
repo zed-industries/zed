@@ -307,8 +307,8 @@ impl ScrollManager {
         self.show_scrollbars
     }
 
-    pub fn autoscroll_requested(&self) -> bool {
-        self.autoscroll_request.is_some()
+    pub fn autoscroll_request(&self) -> Option<Autoscroll> {
+        self.autoscroll_request.map(|(autoscroll, _)| autoscroll)
     }
 
     pub fn is_dragging_scrollbar(&self) -> bool {
@@ -476,7 +476,10 @@ impl Editor {
         }
 
         let cur_position = self.scroll_position(cx);
-        let new_pos = cur_position + point(0., amount.lines(self));
+        let Some(visible_line_count) = self.visible_line_count() else {
+            return;
+        };
+        let new_pos = cur_position + point(0., amount.lines(visible_line_count));
         self.set_scroll_position(new_pos, cx);
     }
 
@@ -502,7 +505,7 @@ impl Editor {
         }
 
         if let Some(visible_lines) = self.visible_line_count() {
-            if newest_head.row() < DisplayRow(screen_top.row().0 + visible_lines as u32) {
+            if newest_head.row() <= DisplayRow(screen_top.row().0 + visible_lines as u32) {
                 return Ordering::Equal;
             }
         }

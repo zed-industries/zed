@@ -1,58 +1,61 @@
 /* Globals */
 
 :root {
-    --sidebar-width: 300px;
-    --sidebar-resize-indicator-width: 8px;
-    --sidebar-resize-indicator-space: 2px;
-    --page-padding: 15px;
-    --content-max-width: 750px;
-    --menu-bar-height: 50px;
-    --font: "IA Writer Quattro S", sans-serif;
-    --title-font: "Agrandir", "Helvetica Neue", Helvetica, Arial, sans-serif;
-    --mono-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-        Liberation Mono, Courier New, monospace;
-    --code-font-size: 0.875em
-        /* please adjust the ace font size accordingly in editor.js */;
+  --sidebar-width: 300px;
+  --sidebar-resize-indicator-width: 0px;
+  --sidebar-resize-indicator-space: 2px;
+  --page-padding: 15px;
+  --content-max-width: 750px;
+  --menu-bar-height: 64px;
+  --font: "IA Writer Quattro S", sans-serif;
+  --title-font: "Agrandir", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --mono-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    Liberation Mono, Courier New, monospace;
+  --code-font-size: 0.875em
+    /* please adjust the ace font size accordingly in editor.js */;
 
-    --bg: rgb(246, 245, 240);
-    --fg: rgb(75, 83, 97);
-    --title-color: rgb(8, 76, 207);
+  --bg: rgb(246, 245, 240);
+  --fg: rgb(75, 83, 97);
+  --title-color: rgb(8, 76, 207);
 
-    --sidebar-fg: hsl(0, 0%, 0%);
-    --sidebar-non-existant: #aaaaaa;
-    --sidebar-active: rgb(8, 76, 207);
-    --sidebar-spacer: #f4f4f4;
+  --sidebar-fg: hsl(0, 0%, 0%);
+  --sidebar-non-existant: #aaaaaa;
+  --sidebar-active: hsl(219, 93%, 42%);
+  --sidebar-active-bg: hsl(219, 93%, 42%, 0.1);
+  --sidebar-spacer: #f4f4f4;
 
-    --scrollbar: #8f8f8f;
+  --scrollbar: #8f8f8f;
 
-    --icons: #747474;
-    --icons-hover: #000000;
+  --icons: #747474;
+  --icons-hover: #000000;
 
-    --links: rgb(8, 76, 207);
+  --links: rgb(8, 76, 207);
 
-    --inline-code-color: #301900;
+  --inline-code-color: #301900;
 
-    --theme-popup-bg: #fafafa;
-    --theme-popup-border: #cccccc;
-    --theme-hover: #e6e6e6;
+  --theme-popup-bg: #fafafa;
+  --theme-popup-border: #cccccc;
+  --theme-hover: #e6e6e6;
 
-    --quote-bg: hsl(197, 37%, 96%);
-    --quote-border: hsl(197, 37%, 91%);
+  --quote-bg: hsl(197, 37%, 96%);
+  --quote-border: hsl(197, 37%, 88%);
 
-    --warning-border: #ff8e00;
+  --warning-border: hsl(25, 100%, 85%);
+  --warning-bg: hsl(42, 100%, 60%, 0.1);
+  --warning-icon: hsl(42, 100%, 30%);
 
-    --table-border-color: hsl(0, 0%, 95%);
-    --table-header-bg: hsl(0, 0%, 80%);
-    --table-alternate-bg: hsl(0, 0%, 97%);
+  --table-border-color: hsl(219, 93%, 42%, 0.15);
+  --table-header-bg: hsl(0, 0%, 80%);
+  --table-alternate-bg: hsl(0, 0%, 97%);
 
-    --searchbar-border-color: #aaa;
-    --searchbar-bg: #fafafa;
-    --searchbar-fg: #000;
-    --searchbar-shadow-color: #aaa;
-    --searchresults-header-fg: #666;
-    --searchresults-border-color: #888;
-    --searchresults-li-bg: #e4f2fe;
-    --search-mark-bg: #a2cff5;
+  --searchbar-border-color: #aaa;
+  --searchbar-bg: #fafafa;
+  --searchbar-fg: #000;
+  --searchbar-shadow-color: #aaa;
+  --searchresults-header-fg: #666;
+  --searchresults-border-color: #888;
+  --searchresults-li-bg: #e4f2fe;
+  --search-mark-bg: #a2cff5;
 
-    --color-scheme: light;
+  --color-scheme: light;
 }

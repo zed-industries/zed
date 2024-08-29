@@ -25,13 +25,14 @@ test-support = [
     "settings/test-support",
     "util/test-support",
     "workspace/test-support",
-    "http/test-support",
+    "http_client/test-support",
 ]
 
 [dependencies]
 anyhow.workspace = true
 call.workspace = true
 channel.workspace = true
+chrono.workspace = true
 client.workspace = true
 collections.workspace = true
 db.workspace = true
@@ -41,7 +42,6 @@ futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 language.workspace = true
-lazy_static.workspace = true
 menu.workspace = true
 notifications.workspace = true
 parking_lot.workspace = true
@@ -77,7 +77,7 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
-tree-sitter-markdown.workspace = true
+tree-sitter-md.workspace = true
 util = { workspace = true, features = ["test-support"] }
-http = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

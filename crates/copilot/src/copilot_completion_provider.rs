@@ -8,7 +8,7 @@ use language::{
     Buffer, OffsetRangeExt, ToOffset,
 };
 use settings::Settings;
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{ops::Range, path::Path, sync::Arc, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -239,7 +239,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str> {
+    ) -> Option<(&'a str, Option<Range<language::Anchor>>)> {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
         let completion = self.active_completion()?;
@@ -269,7 +269,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             if completion_text.trim().is_empty() {
                 None
             } else {
-                Some(completion_text)
+                Some((completion_text, None))
             }
         } else {
             None
@@ -333,7 +333,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -341,7 +341,7 @@ mod tests {
                 three
             "},
             vec!["completion_a", "completion_b"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -375,7 +375,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -383,7 +383,7 @@ mod tests {
                 three
             "},
             vec![],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -408,7 +408,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -416,7 +416,7 @@ mod tests {
                 three
             "},
             vec!["completion_a", "completion_b"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -590,7 +590,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -598,7 +598,7 @@ mod tests {
                 three
             "},
             vec![],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -632,7 +632,7 @@ mod tests {
             three
         "});
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
@@ -640,7 +640,7 @@ mod tests {
                 three
             "},
             vec![],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -889,7 +889,7 @@ mod tests {
                 three
             "});
 
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one
@@ -897,7 +897,7 @@ mod tests {
                 three
             "},
             vec!["completion_a", "completion_b"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -917,7 +917,7 @@ mod tests {
         });
 
         cx.simulate_keystroke("o");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one
@@ -925,7 +925,7 @@ mod tests {
                 three
             "},
             vec!["completion_a_2", "completion_b_2"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -944,7 +944,7 @@ mod tests {
         });
 
         cx.simulate_keystroke(".");
-        let _ = handle_completion_request(
+        drop(handle_completion_request(
             &mut cx,
             indoc! {"
                 one
@@ -952,7 +952,7 @@ mod tests {
                 three
             "},
             vec!["something_else()"],
-        );
+        ));
         handle_copilot_completion_request(
             &copilot_lsp,
             vec![crate::request::Completion {
@@ -1060,7 +1060,7 @@ mod tests {
             editor.change_selections(None, cx, |selections| {
                 selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
             });
-            editor.next_inline_completion(&Default::default(), cx);
+            editor.refresh_inline_completion(true, false, cx);
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
@@ -1070,7 +1070,7 @@ mod tests {
             editor.change_selections(None, cx, |s| {
                 s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
             });
-            editor.next_inline_completion(&Default::default(), cx);
+            editor.refresh_inline_completion(true, false, cx);
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);

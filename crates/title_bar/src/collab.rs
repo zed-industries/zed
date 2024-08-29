@@ -168,7 +168,11 @@ impl TitleBar {
                                     cx.listener(move |this, _, cx| {
                                         this.workspace
                                             .update(cx, |workspace, cx| {
-                                                workspace.follow(peer_id, cx);
+                                                if is_following {
+                                                    workspace.unfollow(peer_id, cx);
+                                                } else {
+                                                    workspace.follow(peer_id, cx);
+                                                }
                                             })
                                             .ok();
                                     })
@@ -280,7 +284,7 @@ impl TitleBar {
 
         let room = room.read(cx);
         let project = self.project.read(cx);
-        let is_local = project.is_local();
+        let is_local = project.is_local_or_ssh();
         let is_dev_server_project = project.dev_server_project_id().is_some();
         let is_shared = (is_local || is_dev_server_project) && project.is_shared();
         let is_muted = room.is_muted();

@@ -43,7 +43,7 @@ use std::{
     },
 };
 use text::Point;
-use workspace::Workspace;
+use workspace::{CloseIntent, Workspace};
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -76,7 +76,7 @@ async fn test_host_disconnect(
     let active_call_a = cx_a.read(ActiveCall::global);
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
 
-    let worktree_a = project_a.read_with(cx_a, |project, _| project.worktrees().next().unwrap());
+    let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -134,7 +134,9 @@ async fn test_host_disconnect(
 
     // Ensure client B is not prompted to save edits when closing window after disconnecting.
     let can_close = workspace_b
-        .update(cx_b, |workspace, cx| workspace.prepare_to_close(true, cx))
+        .update(cx_b, |workspace, cx| {
+            workspace.prepare_to_close(CloseIntent::Quit, cx)
+        })
         .unwrap()
         .await
         .unwrap();
@@ -1144,7 +1146,7 @@ async fn test_share_project(
     });
 
     project_b.read_with(cx_b, |project, cx| {
-        let worktree = project.worktrees().next().unwrap().read(cx);
+        let worktree = project.worktrees(cx).next().unwrap().read(cx);
         assert_eq!(
             worktree.paths().map(AsRef::as_ref).collect::<Vec<_>>(),
             [
@@ -1158,7 +1160,7 @@ async fn test_share_project(
 
     project_b
         .update(cx_b, |project, cx| {
-            let worktree = project.worktrees().next().unwrap();
+            let worktree = project.worktrees(cx).next().unwrap();
             let entry = worktree.read(cx).entry_for_path("ignored-dir").unwrap();
             project.expand_entry(worktree_id, entry.id, cx).unwrap()
         })
@@ -1166,7 +1168,7 @@ async fn test_share_project(
         .unwrap();
 
     project_b.read_with(cx_b, |project, cx| {
-        let worktree = project.worktrees().next().unwrap().read(cx);
+        let worktree = project.worktrees(cx).next().unwrap().read(cx);
         assert_eq!(
             worktree.paths().map(AsRef::as_ref).collect::<Vec<_>>(),
             [

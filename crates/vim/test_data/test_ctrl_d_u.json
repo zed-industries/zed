@@ -20,3 +20,9 @@
 {"Key":"ctrl-u"}
 {"Key":"ctrl-u"}
 {"Get":{"state":"aa\nbb\ncc\ndd\nee\nff\ngg\nˇhh\nii\njj\nkk\nll\nmm\nnn\noo\npp\nqq\nrr\nss\ntt\nuu\nvv\nww\nxx\nyy\nzz","mode":"Normal"}}
+{"Key":"g"}
+{"Key":"g"}
+{"Key":"ctrl-d"}
+{"Key":"ctrl-u"}
+{"Key":"ctrl-u"}
+{"Get":{"state":"ˇaa\nbb\ncc\ndd\nee\nff\ngg\nhh\nii\njj\nkk\nll\nmm\nnn\noo\npp\nqq\nrr\nss\ntt\nuu\nvv\nww\nxx\nyy\nzz","mode":"Normal"}}

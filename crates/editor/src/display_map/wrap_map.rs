@@ -5,9 +5,9 @@ use super::{
 };
 use gpui::{AppContext, Context, Font, LineWrapper, Model, ModelContext, Pixels, Task};
 use language::{Chunk, Point};
-use lazy_static::lazy_static;
 use multi_buffer::MultiBufferSnapshot;
 use smol::future::yield_now;
+use std::sync::LazyLock;
 use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::Patch;
@@ -567,7 +567,7 @@ impl WrapSnapshot {
             });
         }
 
-        consolidate_wrap_edits(&mut wrap_edits);
+        wrap_edits = consolidate_wrap_edits(wrap_edits);
         Patch::new(wrap_edits)
     }
 
@@ -887,14 +887,12 @@ impl Transform {
     }
 
     fn wrap(indent: u32) -> Self {
-        lazy_static! {
-            static ref WRAP_TEXT: String = {
-                let mut wrap_text = String::new();
-                wrap_text.push('\n');
-                wrap_text.extend((0..LineWrapper::MAX_INDENT as usize).map(|_| ' '));
-                wrap_text
-            };
-        }
+        static WRAP_TEXT: LazyLock<String> = LazyLock::new(|| {
+            let mut wrap_text = String::new();
+            wrap_text.push('\n');
+            wrap_text.extend((0..LineWrapper::MAX_INDENT as usize).map(|_| ' '));
+            wrap_text
+        });
 
         Self {
             summary: TransformSummary {
@@ -1008,19 +1006,33 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapPoint {
     }
 }
 
-fn consolidate_wrap_edits(edits: &mut Vec<WrapEdit>) {
-    let mut i = 1;
-    while i < edits.len() {
-        let edit = edits[i].clone();
-        let prev_edit = &mut edits[i - 1];
-        if prev_edit.old.end >= edit.old.start {
-            prev_edit.old.end = edit.old.end;
-            prev_edit.new.end = edit.new.end;
-            edits.remove(i);
-            continue;
-        }
-        i += 1;
-    }
+fn consolidate_wrap_edits(edits: Vec<WrapEdit>) -> Vec<WrapEdit> {
+    let _old_alloc_ptr = edits.as_ptr();
+    let mut wrap_edits = edits.into_iter();
+    let wrap_edits = if let Some(mut first_edit) = wrap_edits.next() {
+        // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
+        #[allow(clippy::filter_map_identity)]
+        let mut v: Vec<_> = wrap_edits
+            .scan(&mut first_edit, |prev_edit, edit| {
+                if prev_edit.old.end >= edit.old.start {
+                    prev_edit.old.end = edit.old.end;
+                    prev_edit.new.end = edit.new.end;
+                    Some(None) // Skip this edit, it's merged
+                } else {
+                    let prev = std::mem::replace(*prev_edit, edit);
+                    Some(Some(prev)) // Yield the previous edit
+                }
+            })
+            .filter_map(|x| x)
+            .collect();
+        v.push(first_edit.clone());
+        debug_assert_eq!(v.as_ptr(), _old_alloc_ptr, "Wrap edits were reallocated");
+        v
+    } else {
+        vec![]
+    };
+
+    wrap_edits
 }
 
 #[cfg(test)]

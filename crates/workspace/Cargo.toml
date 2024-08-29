@@ -17,9 +17,10 @@ no-webrtc = ["call/no-webrtc"]
 test-support = [
     "call/test-support",
     "client/test-support",
-    "http/test-support",
+    "http_client/test-support",
     "db/test-support",
     "project/test-support",
+    "session/test-support",
     "settings/test-support",
     "gpui/test-support",
     "fs/test-support",
@@ -38,11 +39,11 @@ db.workspace = true
 derive_more.workspace = true
 fs.workspace = true
 futures.workspace = true
+git.workspace = true
 gpui.workspace = true
-http.workspace = true
+http_client.workspace = true
 itertools.workspace = true
 language.workspace = true
-lazy_static.workspace = true
 log.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
@@ -53,6 +54,7 @@ task.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+session.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 sqlez.workspace = true
@@ -69,5 +71,7 @@ env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
-http =  { workspace = true, features = ["test-support"] }
+http_client =  { workspace = true, features = ["test-support"] }
+tempfile.workspace = true

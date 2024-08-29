@@ -1,3 +1,6 @@
+(attribute_item) @annotation
+(line_comment) @annotation
+
 (struct_item
     (visibility_modifier)? @context
     "struct" @context
@@ -16,7 +19,8 @@
     "impl" @context
     trait: (_)? @name
     "for"? @context
-    type: (_) @name) @item
+    type: (_) @name
+    body: (_ "{" @open (_)* "}" @close)) @item
 
 (trait_item
     (visibility_modifier)? @context
@@ -56,6 +60,11 @@
 (const_item
     (visibility_modifier)? @context
     "const" @context
+    name: (_) @name) @item
+
+(static_item
+    (visibility_modifier)? @context
+    "static" @context
     name: (_) @name) @item
 
 (field_declaration

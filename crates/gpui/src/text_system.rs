@@ -1,8 +1,10 @@
+mod font_fallbacks;
 mod font_features;
 mod line;
 mod line_layout;
 mod line_wrapper;
 
+pub use font_fallbacks::*;
 pub use font_features::*;
 pub use line::*;
 pub use line_layout::*;
@@ -15,7 +17,7 @@ use crate::{
     StrikethroughStyle, UnderlineStyle,
 };
 use anyhow::anyhow;
-use collections::{BTreeSet, FxHashMap};
+use collections::FxHashMap;
 use core::fmt;
 use derive_more::Deref;
 use itertools::Itertools;
@@ -62,10 +64,10 @@ impl TextSystem {
             wrapper_pool: Mutex::default(),
             font_runs_pool: Mutex::default(),
             fallback_font_stack: smallvec![
-                // TODO: This is currently Zed-specific.
-                // We should allow GPUI users to provide their own fallback font stack.
+                // TODO: Remove this when Linux have implemented setting fallbacks.
                 font("Zed Plex Mono"),
                 font("Helvetica"),
+                font("Segoe UI"),  // Windows
                 font("Cantarell"), // Gnome
                 font("Ubuntu"),    // Gnome (Ubuntu)
                 font("Noto Sans"), // KDE
@@ -76,18 +78,16 @@ impl TextSystem {
 
     /// Get a list of all available font names from the operating system.
     pub fn all_font_names(&self) -> Vec<String> {
-        let mut names: BTreeSet<_> = self
-            .platform_text_system
-            .all_font_names()
-            .into_iter()
-            .collect();
-        names.extend(self.platform_text_system.all_font_families());
+        let mut names = self.platform_text_system.all_font_names();
         names.extend(
             self.fallback_font_stack
                 .iter()
                 .map(|font| font.family.to_string()),
         );
-        names.into_iter().collect()
+        names.push(".SystemUIFont".to_string());
+        names.sort();
+        names.dedup();
+        names
     }
 
     /// Add a font's data to the text system.
@@ -375,7 +375,7 @@ impl WindowTextSystem {
         runs: &[TextRun],
         wrap_width: Option<Pixels>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
-        let mut runs = runs.iter().cloned().peekable();
+        let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
         let mut lines = SmallVec::new();
@@ -443,7 +443,7 @@ impl WindowTextSystem {
             // Skip `\n` character.
             line_start = line_end + 1;
             if let Some(run) = runs.peek_mut() {
-                run.len = run.len.saturating_sub(1);
+                run.len -= 1;
                 if run.len == 0 {
                     runs.next();
                 }
@@ -594,6 +594,19 @@ impl FontWeight {
     pub const EXTRA_BOLD: FontWeight = FontWeight(800.0);
     /// Black weight (900), the thickest value.
     pub const BLACK: FontWeight = FontWeight(900.0);
+
+    /// All of the font weights, in order from thinnest to thickest.
+    pub const ALL: [FontWeight; 9] = [
+        Self::THIN,
+        Self::EXTRA_LIGHT,
+        Self::LIGHT,
+        Self::NORMAL,
+        Self::MEDIUM,
+        Self::SEMIBOLD,
+        Self::BOLD,
+        Self::EXTRA_BOLD,
+        Self::BLACK,
+    ];
 }
 
 /// Allows italic or oblique faces to be selected.
@@ -658,26 +671,6 @@ impl Hash for RenderGlyphParams {
     }
 }
 
-/// The parameters for rendering an emoji glyph.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RenderEmojiParams {
-    pub(crate) font_id: FontId,
-    pub(crate) glyph_id: GlyphId,
-    pub(crate) font_size: Pixels,
-    pub(crate) scale_factor: f32,
-}
-
-impl Eq for RenderEmojiParams {}
-
-impl Hash for RenderEmojiParams {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.font_id.0.hash(state);
-        self.glyph_id.0.hash(state);
-        self.font_size.0.to_bits().hash(state);
-        self.scale_factor.to_bits().hash(state);
-    }
-}
-
 /// The configuration details for identifying a specific font.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Font {
@@ -688,6 +681,9 @@ pub struct Font {
 
     /// The font features to use.
     pub features: FontFeatures,
+
+    /// The fallbacks fonts to use.
+    pub fallbacks: Option<FontFallbacks>,
 
     /// The font weight.
     pub weight: FontWeight,
@@ -703,6 +699,7 @@ pub fn font(family: impl Into<SharedString>) -> Font {
         features: FontFeatures::default(),
         weight: FontWeight::default(),
         style: FontStyle::default(),
+        fallbacks: None,
     }
 }
 

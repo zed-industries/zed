@@ -1,6 +1,11 @@
-use crate::{pane_group::element::pane_axis, AppState, FollowerState, Pane, Workspace};
+use crate::{
+    pane_group::element::pane_axis,
+    workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
+    AppState, FollowerState, Pane, Workspace, WorkspaceSettings,
+};
 use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
+use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
     point, size, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, MouseButton, Pixels,
@@ -9,6 +14,7 @@ use gpui::{
 use parking_lot::Mutex;
 use project::Project;
 use serde::Deserialize;
+use settings::Settings;
 use std::sync::Arc;
 use ui::prelude::*;
 
@@ -95,7 +101,7 @@ impl PaneGroup {
     pub(crate) fn render(
         &self,
         project: &Model<Project>,
-        follower_states: &HashMap<View<Pane>, FollowerState>,
+        follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
@@ -168,7 +174,7 @@ impl Member {
         &self,
         project: &Model<Project>,
         basis: usize,
-        follower_states: &HashMap<View<Pane>, FollowerState>,
+        follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
@@ -181,18 +187,28 @@ impl Member {
                     return div().into_any();
                 }
 
-                let follower_state = follower_states.get(pane);
-
-                let leader = follower_state.and_then(|state| {
-                    let room = active_call?.read(cx).room()?.read(cx);
-                    room.remote_participant_for_peer_id(state.leader_id)
+                let follower_state = follower_states.iter().find_map(|(leader_id, state)| {
+                    if state.center_pane == *pane {
+                        Some((*leader_id, state))
+                    } else {
+                        None
+                    }
                 });
 
-                let is_in_unshared_view = follower_state.map_or(false, |state| {
+                let leader = follower_state.as_ref().and_then(|(leader_id, _)| {
+                    let room = active_call?.read(cx).room()?.read(cx);
+                    room.remote_participant_for_peer_id(*leader_id)
+                });
+
+                let is_in_unshared_view = follower_state.as_ref().map_or(false, |(_, state)| {
                     state.active_view_id.is_some_and(|view_id| {
                         !state.items_by_leader_view_id.contains_key(&view_id)
                     })
                 });
+
+                let is_in_panel = follower_state
+                    .as_ref()
+                    .map_or(false, |(_, state)| state.dock_pane.is_some());
 
                 let mut leader_border = None;
                 let mut leader_status_box = None;
@@ -203,7 +219,11 @@ impl Member {
                         .players()
                         .color_for_participant(leader.participant_index.0)
                         .cursor;
-                    leader_color.fade_out(0.3);
+                    if is_in_panel {
+                        leader_color.fade_out(0.75);
+                    } else {
+                        leader_color.fade_out(0.3);
+                    }
                     leader_border = Some(leader_color);
 
                     leader_status_box = match leader.location {
@@ -483,7 +503,7 @@ impl PaneAxis {
         &self,
         project: &Model<Project>,
         basis: usize,
-        follower_states: &HashMap<View<Pane>, FollowerState>,
+        follower_states: &HashMap<PeerId, FollowerState>,
         active_call: Option<&Model<ActiveCall>>,
         active_pane: &View<Pane>,
         zoomed: Option<&AnyWeakView>,
@@ -544,6 +564,20 @@ impl std::fmt::Display for SplitDirection {
 impl SplitDirection {
     pub fn all() -> [Self; 4] {
         [Self::Up, Self::Down, Self::Left, Self::Right]
+    }
+
+    pub fn vertical(cx: &WindowContext) -> Self {
+        match WorkspaceSettings::get_global(cx).pane_split_direction_vertical {
+            PaneSplitDirectionVertical::Left => SplitDirection::Left,
+            PaneSplitDirectionVertical::Right => SplitDirection::Right,
+        }
+    }
+
+    pub fn horizontal(cx: &WindowContext) -> Self {
+        match WorkspaceSettings::get_global(cx).pane_split_direction_horizontal {
+            PaneSplitDirectionHorizontal::Down => SplitDirection::Down,
+            PaneSplitDirectionHorizontal::Up => SplitDirection::Up,
+        }
     }
 
     pub fn edge(&self, rect: Bounds<Pixels>) -> Pixels {

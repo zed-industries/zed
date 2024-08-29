@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncAppContext;
-use http::github::{latest_github_release, GitHubLspBinaryVersion};
+use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lsp::LanguageServerBinary;
 use project::project_settings::{BinarySettings, ProjectSettings};

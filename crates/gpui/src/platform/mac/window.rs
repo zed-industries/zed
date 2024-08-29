@@ -9,7 +9,7 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
+        NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
         NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
@@ -20,7 +20,7 @@ use cocoa::{
         NSSize, NSString, NSUInteger,
     },
 };
-use core_graphics::display::{CGDirectDisplayID, CGRect};
+use core_graphics::display::{CGDirectDisplayID, CGPoint, CGRect};
 use ctor::ctor;
 use futures::channel::oneshot;
 use objc::{
@@ -54,7 +54,7 @@ static mut VIEW_CLASS: *const Class = ptr::null();
 
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
-    unsafe { NSWindowStyleMask::from_bits_unchecked(1 << 7) };
+    NSWindowStyleMask::from_bits_retain(1 << 7);
 #[allow(non_upper_case_globals)]
 const NSNormalWindowLevel: NSInteger = 0;
 #[allow(non_upper_case_globals)]
@@ -233,7 +233,7 @@ unsafe fn build_classes() {
 pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -> Point<Pixels> {
     point(
         px(position.x as f32),
-        // MacOS screen coordinates are relative to bottom left
+        // macOS screen coordinates are relative to bottom left
         window_height - px(position.y as f32),
     )
 }
@@ -452,7 +452,7 @@ impl MacWindowState {
         let bounds = Bounds::new(
             point(
                 px((window_frame.origin.x - screen_frame.origin.x) as f32),
-                px((window_frame.origin.y - screen_frame.origin.y) as f32),
+                px((window_frame.origin.y + screen_frame.origin.y) as f32),
             ),
             size(
                 px(window_frame.size.width as f32),
@@ -546,7 +546,7 @@ impl MacWindow {
             let count: u64 = cocoa::foundation::NSArray::count(screens);
             for i in 0..count {
                 let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
-                let frame = NSScreen::visibleFrame(screen);
+                let frame = NSScreen::frame(screen);
                 let display_id = display_id_for_screen(screen);
                 if display_id == display.0 {
                     screen_frame = Some(frame);
@@ -557,7 +557,7 @@ impl MacWindow {
             let screen_frame = screen_frame.unwrap_or_else(|| {
                 let screen = NSScreen::mainScreen(nil);
                 target_screen = screen;
-                NSScreen::visibleFrame(screen)
+                NSScreen::frame(screen)
             });
 
             let window_rect = NSRect::new(
@@ -738,6 +738,25 @@ impl MacWindow {
             }
         }
     }
+
+    pub fn ordered_windows() -> Vec<AnyWindowHandle> {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let windows: id = msg_send![app, orderedWindows];
+            let count: NSUInteger = msg_send![windows, count];
+
+            let mut window_handles = Vec::new();
+            for i in 0..count {
+                let window: id = msg_send![windows, objectAtIndex:i];
+                if msg_send![window, isKindOfClass: WINDOW_CLASS] {
+                    let handle = get_window_state(&*window).lock().handle;
+                    window_handles.push(handle);
+                }
+            }
+
+            window_handles
+        }
+    }
 }
 
 impl Drop for MacWindow {
@@ -765,12 +784,12 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().bounds()
     }
 
-    fn window_bounds(&self) -> WindowBounds {
-        self.0.as_ref().lock().window_bounds()
-    }
-
     fn is_maximized(&self) -> bool {
         self.0.as_ref().lock().is_maximized()
+    }
+
+    fn window_bounds(&self) -> WindowBounds {
+        self.0.as_ref().lock().window_bounds()
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -940,6 +959,11 @@ impl PlatformWindow for MacWindow {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
     }
 
+    // is_hovered is unused on macOS. See WindowContext::is_window_hovered.
+    fn is_hovered(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
@@ -950,8 +974,6 @@ impl PlatformWindow for MacWindow {
             self.0.lock().move_traffic_light();
         }
     }
-
-    fn set_app_id(&mut self, _app_id: &str) {}
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut this = self.0.as_ref().lock();
@@ -981,30 +1003,6 @@ impl PlatformWindow for MacWindow {
             let window_number = this.native_window.windowNumber();
             CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
         }
-    }
-
-    fn set_edited(&mut self, edited: bool) {
-        unsafe {
-            let window = self.0.lock().native_window;
-            msg_send![window, setDocumentEdited: edited as BOOL]
-        }
-
-        // Changing the document edited state resets the traffic light position,
-        // so we have to move it again.
-        self.0.lock().move_traffic_light();
-    }
-
-    fn show_character_palette(&self) {
-        let this = self.0.lock();
-        let window = this.native_window;
-        this.executor
-            .spawn(async move {
-                unsafe {
-                    let app = NSApplication::sharedApplication(nil);
-                    let _: () = msg_send![app, orderFrontCharacterPalette: window];
-                }
-            })
-            .detach();
     }
 
     fn minimize(&self) {
@@ -1061,6 +1059,8 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().activate_callback = Some(callback);
     }
 
+    fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
+
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.as_ref().lock().resize_callback = Some(callback);
     }
@@ -1081,13 +1081,54 @@ impl PlatformWindow for MacWindow {
         self.0.lock().appearance_changed_callback = Some(callback);
     }
 
-    fn draw(&self, scene: &crate::Scene) {
+    fn draw(&self, scene: &crate::Scene, on_complete: Option<oneshot::Sender<()>>) {
         let mut this = self.0.lock();
-        this.renderer.draw(scene);
+        this.renderer.draw(scene, on_complete);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
+    }
+
+    fn set_edited(&mut self, edited: bool) {
+        unsafe {
+            let window = self.0.lock().native_window;
+            msg_send![window, setDocumentEdited: edited as BOOL]
+        }
+
+        // Changing the document edited state resets the traffic light position,
+        // so we have to move it again.
+        self.0.lock().move_traffic_light();
+    }
+
+    fn show_character_palette(&self) {
+        let this = self.0.lock();
+        let window = this.native_window;
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    let app = NSApplication::sharedApplication(nil);
+                    let _: () = msg_send![app, orderFrontCharacterPalette: window];
+                }
+            })
+            .detach();
+    }
+
+    fn set_app_id(&mut self, _app_id: &str) {}
+
+    fn gpu_specs(&self) -> Option<crate::GPUSpecs> {
+        None
+    }
+
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+        unsafe {
+            let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
+            let _: () = msg_send![input_context, invalidateCharacterCoordinates];
+        }
+    }
+
+    fn fps(&self) -> Option<f32> {
+        Some(self.0.lock().renderer.fps())
     }
 }
 
@@ -1273,11 +1314,11 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
             if !handled && is_held {
                 if let Some(text) = previous_keydown_inserted_text {
-                    // MacOS IME is a bit funky, and even when you've told it there's nothing to
+                    // macOS IME is a bit funky, and even when you've told it there's nothing to
                     // enter it will still swallow certain keys (e.g. 'f', 'j') and not others
                     // (e.g. 'n'). This is a problem for certain kinds of views, like the terminal.
                     with_input_handler(this, |input_handler| {
-                        if input_handler.selected_text_range().is_none() {
+                        if input_handler.selected_text_range(false).is_none() {
                             handled = true;
                             input_handler.replace_text_in_range(None, &text)
                         }
@@ -1649,10 +1690,12 @@ extern "C" fn marked_range(this: &Object, _: Sel) -> NSRange {
 }
 
 extern "C" fn selected_range(this: &Object, _: Sel) -> NSRange {
-    let selected_range_result =
-        with_input_handler(this, |input_handler| input_handler.selected_text_range()).flatten();
+    let selected_range_result = with_input_handler(this, |input_handler| {
+        input_handler.selected_text_range(false)
+    })
+    .flatten();
 
-    selected_range_result.map_or(NSRange::invalid(), |range| range.into())
+    selected_range_result.map_or(NSRange::invalid(), |selection| selection.range.into())
 }
 
 extern "C" fn first_rect_for_character_range(

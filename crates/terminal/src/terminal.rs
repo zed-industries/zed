@@ -18,7 +18,7 @@ use alacritty_terminal::{
         Config, RenderableCursor, TermMode,
     },
     tty::{self, setup_env},
-    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode, Rgb},
+    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode},
     Term,
 };
 use anyhow::{bail, Result};
@@ -39,8 +39,8 @@ use pty_info::PtyProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
-use task::TaskId;
-use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
+use task::{HideStrategy, Shell, TaskId};
+use terminal_settings::{AlternateScroll, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
 
@@ -127,7 +127,6 @@ pub enum MaybeNavigationTarget {
 
 #[derive(Clone)]
 enum InternalEvent {
-    ColorRequest(usize, Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>),
     Resize(TerminalSize),
     Clear,
     // FocusNextMatch,
@@ -142,7 +141,7 @@ enum InternalEvent {
 
 ///A translation struct for Alacritty to communicate with us from their event loop
 #[derive(Clone)]
-pub struct ZedListener(UnboundedSender<AlacTermEvent>);
+pub struct ZedListener(pub UnboundedSender<AlacTermEvent>);
 
 impl EventListener for ZedListener {
     fn send_event(&self, event: AlacTermEvent) {
@@ -319,12 +318,18 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
+        cx: &mut AppContext,
     ) -> Result<TerminalBuilder> {
         // TODO: Properly set the current locale,
         env.entry("LC_ALL".to_string())
             .or_insert_with(|| "en_US.UTF-8".to_string());
 
         env.insert("ZED_TERM".to_string(), "true".to_string());
+        env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
+        env.insert(
+            "TERM_PROGRAM_VERSION".to_string(),
+            release_channel::AppVersion::global(cx).to_string(),
+        );
 
         let pty_options = {
             let alac_shell = match shell.clone() {
@@ -417,7 +422,10 @@ impl TerminalBuilder {
         let _io_thread = event_loop.spawn(); // DANGER
 
         let url_regex = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
-        let word_regex = RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~]+"#).unwrap();
+        // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
+        // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
+        let word_regex =
+            RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~]+(?:\((?:\d+|\d+,\d+)\))?"#).unwrap();
 
         let terminal = Terminal {
             task,
@@ -602,6 +610,7 @@ pub struct TaskState {
     pub command_label: String,
     pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
+    pub hide: HideStrategy,
 }
 
 /// A status of the current terminal tab's task.
@@ -642,13 +651,17 @@ impl Terminal {
                 cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ClipboardStore(_, data) => {
-                cx.write_to_clipboard(ClipboardItem::new(data.to_string()))
+                cx.write_to_clipboard(ClipboardItem::new_string(data.to_string()))
             }
-            AlacTermEvent::ClipboardLoad(_, format) => self.write_to_pty(format(
-                &cx.read_from_clipboard()
-                    .map(|ci| ci.text().to_string())
-                    .unwrap_or_else(|| "".to_string()),
-            )),
+            AlacTermEvent::ClipboardLoad(_, format) => {
+                self.write_to_pty(
+                    match &cx.read_from_clipboard().and_then(|item| item.text()) {
+                        // The terminal only supports pasting strings, not images.
+                        Some(text) => format(text),
+                        _ => format(""),
+                    },
+                )
+            }
             AlacTermEvent::PtyWrite(out) => self.write_to_pty(out.clone()),
             AlacTermEvent::TextAreaSizeRequest(format) => {
                 self.write_to_pty(format(self.last_content.size.into()))
@@ -670,9 +683,19 @@ impl Terminal {
                     cx.emit(Event::TitleChanged);
                 }
             }
-            AlacTermEvent::ColorRequest(idx, fun_ptr) => {
-                self.events
-                    .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
+            AlacTermEvent::ColorRequest(index, format) => {
+                // It's important that the color request is processed here to retain relative order
+                // with other PTY writes. Otherwise applications might witness out-of-order
+                // responses to requests. For example: An application sending `OSC 11 ; ? ST`
+                // (color request) followed by `CSI c` (request device attributes) would receive
+                // the response to `CSI c` first.
+                // Instead of locking, we could store the colors in `self.last_content`. But then
+                // we might respond with out of date value if a "set color" sequence is immediately
+                // followed by a color request sequence.
+                let color = self.term.lock().colors()[*index].unwrap_or_else(|| {
+                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
+                });
+                self.write_to_pty(format(color));
             }
             AlacTermEvent::ChildExit(error_code) => {
                 self.register_task_finished(Some(*error_code), cx);
@@ -696,12 +719,6 @@ impl Terminal {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            InternalEvent::ColorRequest(index, format) => {
-                let color = term.colors()[*index].unwrap_or_else(|| {
-                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
-                });
-                self.write_to_pty(format(color))
-            }
             InternalEvent::Resize(mut new_size) => {
                 new_size.size.height = cmp::max(new_size.line_height, new_size.height());
                 new_size.size.width = cmp::max(new_size.cell_width, new_size.width());
@@ -753,7 +770,7 @@ impl Terminal {
 
                 #[cfg(target_os = "linux")]
                 if let Some(selection_text) = term.selection_to_string() {
-                    cx.write_to_primary(ClipboardItem::new(selection_text));
+                    cx.write_to_primary(ClipboardItem::new_string(selection_text));
                 }
 
                 if let Some((_, head)) = selection {
@@ -774,7 +791,7 @@ impl Terminal {
 
                     #[cfg(target_os = "linux")]
                     if let Some(selection_text) = term.selection_to_string() {
-                        cx.write_to_primary(ClipboardItem::new(selection_text));
+                        cx.write_to_primary(ClipboardItem::new_string(selection_text));
                     }
 
                     self.selection_head = Some(point);
@@ -784,7 +801,7 @@ impl Terminal {
 
             InternalEvent::Copy => {
                 if let Some(txt) = term.selection_to_string() {
-                    cx.write_to_clipboard(ClipboardItem::new(txt))
+                    cx.write_to_clipboard(ClipboardItem::new_string(txt))
                 }
             }
             InternalEvent::ScrollToAlacPoint(point) => {
@@ -831,37 +848,26 @@ impl Terminal {
                     let url_match = min_index..=max_index;
 
                     Some((url, true, url_match))
+                } else if let Some(url_match) = regex_match_at(term, point, &mut self.url_regex) {
+                    let url = term.bounds_to_string(*url_match.start(), *url_match.end());
+                    Some((url, true, url_match))
                 } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
-                    let maybe_url_or_path =
-                        term.bounds_to_string(*word_match.start(), *word_match.end());
-                    let original_match = word_match.clone();
+                    let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
+
                     let (sanitized_match, sanitized_word) =
-                        if maybe_url_or_path.starts_with('[') && maybe_url_or_path.ends_with(']') {
+                        if file_path.starts_with('[') && file_path.ends_with(']') {
                             (
                                 Match::new(
                                     word_match.start().add(term, Boundary::Cursor, 1),
                                     word_match.end().sub(term, Boundary::Cursor, 1),
                                 ),
-                                maybe_url_or_path[1..maybe_url_or_path.len() - 1].to_owned(),
+                                file_path[1..file_path.len() - 1].to_owned(),
                             )
                         } else {
-                            (word_match, maybe_url_or_path)
+                            (word_match, file_path)
                         };
 
-                    let is_url = match regex_match_at(term, point, &mut self.url_regex) {
-                        Some(url_match) => {
-                            // `]` is a valid symbol in the `file://` URL, so the regex match will include it
-                            // consider that when ensuring that the URL match is the same as the original word
-                            if sanitized_match == original_match {
-                                url_match == sanitized_match
-                            } else {
-                                url_match.start() == sanitized_match.start()
-                                    && url_match.end() == original_match.end()
-                            }
-                        }
-                        None => false,
-                    };
-                    Some((sanitized_word, is_url, sanitized_match))
+                    Some((sanitized_word, false, sanitized_match))
                 } else {
                     None
                 };
@@ -1328,7 +1334,7 @@ impl Terminal {
                 #[cfg(target_os = "linux")]
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
-                        let text = item.text().to_string();
+                        let text = item.text().unwrap_or_default().to_string();
                         self.input(text);
                     }
                 }
@@ -1557,32 +1563,43 @@ impl Terminal {
             }
         };
 
-        let (task_line, command_line) = task_summary(task, error_code);
+        let (finished_successfully, task_line, command_line) = task_summary(task, error_code);
         // SAFETY: the invocation happens on non `TaskStatus::Running` tasks, once,
         // after either `AlacTermEvent::Exit` or `AlacTermEvent::ChildExit` events that are spawned
         // when Zed task finishes and no more output is made.
         // After the task summary is output once, no more text is appended to the terminal.
         unsafe { append_text_to_term(&mut self.term.lock(), &[&task_line, &command_line]) };
+        match task.hide {
+            HideStrategy::Never => {}
+            HideStrategy::Always => {
+                cx.emit(Event::CloseTerminal);
+            }
+            HideStrategy::OnSuccess => {
+                if finished_successfully {
+                    cx.emit(Event::CloseTerminal);
+                }
+            }
+        }
     }
 }
 
 const TASK_DELIMITER: &str = "⏵ ";
-fn task_summary(task: &TaskState, error_code: Option<i32>) -> (String, String) {
+fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, String) {
     let escaped_full_label = task.full_label.replace("\r\n", "\r").replace('\n', "\r");
-    let task_line = match error_code {
+    let (success, task_line) = match error_code {
         Some(0) => {
-            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully")
+            (true, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"))
         }
         Some(error_code) => {
-            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}")
+            (false, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"))
         }
         None => {
-            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished")
+            (false, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"))
         }
     };
     let escaped_command_label = task.command_label.replace("\r\n", "\r").replace('\n', "\r");
     let command_line = format!("{TASK_DELIMITER}Command: '{escaped_command_label}'");
-    (task_line, command_line)
+    (success, task_line, command_line)
 }
 
 /// Appends a stringified task summary to the terminal, after its output.

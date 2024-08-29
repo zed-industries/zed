@@ -1,19 +1,25 @@
-pub mod ai;
 pub mod api;
 pub mod auth;
+pub mod clickhouse;
 pub mod db;
 pub mod env;
 pub mod executor;
+pub mod llm;
+pub mod migrations;
 mod rate_limiter;
 pub mod rpc;
 pub mod seed;
+pub mod user_backfiller;
 
 #[cfg(test)]
 mod tests;
 
 use anyhow::anyhow;
 use aws_config::{BehaviorVersion, Region};
-use axum::{http::StatusCode, response::IntoResponse};
+use axum::{
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+};
 use db::{ChannelId, Database};
 use executor::Executor;
 pub use rate_limiter::*;
@@ -24,9 +30,10 @@ use util::ResultExt;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub enum Error {
-    Http(StatusCode, String),
+    Http(StatusCode, String, HeaderMap),
     Database(sea_orm::error::DbErr),
     Internal(anyhow::Error),
+    Stripe(stripe::StripeError),
 }
 
 impl From<anyhow::Error> for Error {
@@ -38,6 +45,12 @@ impl From<anyhow::Error> for Error {
 impl From<sea_orm::error::DbErr> for Error {
     fn from(error: sea_orm::error::DbErr) -> Self {
         Self::Database(error)
+    }
+}
+
+impl From<stripe::StripeError> for Error {
+    fn from(error: stripe::StripeError) -> Self {
+        Self::Stripe(error)
     }
 }
 
@@ -59,12 +72,18 @@ impl From<serde_json::Error> for Error {
     }
 }
 
+impl Error {
+    fn http(code: StatusCode, message: String) -> Self {
+        Self::Http(code, message, HeaderMap::default())
+    }
+}
+
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
         match self {
-            Error::Http(code, message) => {
+            Error::Http(code, message, headers) => {
                 log::error!("HTTP error {}: {}", code, &message);
-                (code, message).into_response()
+                (code, headers, message).into_response()
             }
             Error::Database(error) => {
                 log::error!(
@@ -82,6 +101,14 @@ impl IntoResponse for Error {
                 );
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
             }
+            Error::Stripe(error) => {
+                log::error!(
+                    "HTTP error {}: {:?}",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &error
+                );
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", &error)).into_response()
+            }
         }
     }
 }
@@ -89,9 +116,10 @@ impl IntoResponse for Error {
 impl std::fmt::Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Http(code, message) => (code, message).fmt(f),
+            Error::Http(code, message, _headers) => (code, message).fmt(f),
             Error::Database(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
+            Error::Stripe(error) => error.fmt(f),
         }
     }
 }
@@ -99,16 +127,17 @@ impl std::fmt::Debug for Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Http(code, message) => write!(f, "{code}: {message}"),
+            Error::Http(code, message, _) => write!(f, "{code}: {message}"),
             Error::Database(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
+            Error::Stripe(error) => error.fmt(f),
         }
     }
 }
 
 impl std::error::Error for Error {}
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Config {
     pub http_port: u16,
     pub database_url: String,
@@ -124,6 +153,10 @@ pub struct Config {
     pub live_kit_server: Option<String>,
     pub live_kit_key: Option<String>,
     pub live_kit_secret: Option<String>,
+    pub llm_database_url: Option<String>,
+    pub llm_database_max_connections: Option<u32>,
+    pub llm_database_migrations_path: Option<PathBuf>,
+    pub llm_api_secret: Option<String>,
     pub rust_log: Option<String>,
     pub log_json: Option<bool>,
     pub blob_store_url: Option<String>,
@@ -135,15 +168,101 @@ pub struct Config {
     pub openai_api_key: Option<Arc<str>>,
     pub google_ai_api_key: Option<Arc<str>>,
     pub anthropic_api_key: Option<Arc<str>>,
+    pub anthropic_staff_api_key: Option<Arc<str>>,
+    pub llm_closed_beta_model_name: Option<Arc<str>>,
+    pub qwen2_7b_api_key: Option<Arc<str>>,
+    pub qwen2_7b_api_url: Option<Arc<str>>,
     pub zed_client_checksum_seed: Option<String>,
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
+    pub stripe_api_key: Option<String>,
+    pub stripe_price_id: Option<Arc<str>>,
     pub supermaven_admin_api_key: Option<Arc<str>>,
+    pub user_backfiller_github_access_token: Option<Arc<str>>,
 }
 
 impl Config {
     pub fn is_development(&self) -> bool {
         self.zed_environment == "development".into()
+    }
+
+    /// Returns the base `zed.dev` URL.
+    pub fn zed_dot_dev_url(&self) -> &str {
+        match self.zed_environment.as_ref() {
+            "development" => "http://localhost:3000",
+            "staging" => "https://staging.zed.dev",
+            _ => "https://zed.dev",
+        }
+    }
+
+    #[cfg(test)]
+    pub fn test() -> Self {
+        Self {
+            http_port: 0,
+            database_url: "".into(),
+            database_max_connections: 0,
+            api_token: "".into(),
+            invite_link_prefix: "".into(),
+            live_kit_server: None,
+            live_kit_key: None,
+            live_kit_secret: None,
+            llm_database_url: None,
+            llm_database_max_connections: None,
+            llm_database_migrations_path: None,
+            llm_api_secret: None,
+            rust_log: None,
+            log_json: None,
+            zed_environment: "test".into(),
+            blob_store_url: None,
+            blob_store_region: None,
+            blob_store_access_key: None,
+            blob_store_secret_key: None,
+            blob_store_bucket: None,
+            openai_api_key: None,
+            google_ai_api_key: None,
+            anthropic_api_key: None,
+            anthropic_staff_api_key: None,
+            llm_closed_beta_model_name: None,
+            clickhouse_url: None,
+            clickhouse_user: None,
+            clickhouse_password: None,
+            clickhouse_database: None,
+            zed_client_checksum_seed: None,
+            slack_panics_webhook: None,
+            auto_join_channel_id: None,
+            migrations_path: None,
+            seed_path: None,
+            stripe_api_key: None,
+            stripe_price_id: None,
+            supermaven_admin_api_key: None,
+            qwen2_7b_api_key: None,
+            qwen2_7b_api_url: None,
+            user_backfiller_github_access_token: None,
+        }
+    }
+}
+
+/// The service mode that collab should run in.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display)]
+#[strum(serialize_all = "snake_case")]
+pub enum ServiceMode {
+    Api,
+    Collab,
+    Llm,
+    All,
+}
+
+impl ServiceMode {
+    pub fn is_collab(&self) -> bool {
+        matches!(self, Self::Collab | Self::All)
+    }
+
+    pub fn is_api(&self) -> bool {
+        matches!(self, Self::Api | Self::All)
+    }
+
+    pub fn is_llm(&self) -> bool {
+        matches!(self, Self::Llm | Self::All)
     }
 }
 
@@ -151,9 +270,10 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
+    pub stripe_client: Option<Arc<stripe::Client>>,
     pub rate_limiter: Arc<RateLimiter>,
     pub executor: Executor,
-    pub clickhouse_client: Option<clickhouse::Client>,
+    pub clickhouse_client: Option<::clickhouse::Client>,
     pub config: Config,
 }
 
@@ -184,6 +304,10 @@ impl AppState {
             db: db.clone(),
             live_kit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
+            stripe_client: build_stripe_client(&config)
+                .await
+                .map(|client| Arc::new(client))
+                .log_err(),
             rate_limiter: Arc::new(RateLimiter::new(db)),
             executor,
             clickhouse_client: config
@@ -194,6 +318,15 @@ impl AppState {
         };
         Ok(Arc::new(this))
     }
+}
+
+async fn build_stripe_client(config: &Config) -> anyhow::Result<stripe::Client> {
+    let api_key = config
+        .stripe_api_key
+        .as_ref()
+        .ok_or_else(|| anyhow!("missing stripe_api_key"))?;
+
+    Ok(stripe::Client::new(api_key))
 }
 
 async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::Client> {
@@ -231,8 +364,8 @@ async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::
     Ok(aws_sdk_s3::Client::new(&s3_config))
 }
 
-fn build_clickhouse_client(config: &Config) -> anyhow::Result<clickhouse::Client> {
-    Ok(clickhouse::Client::default()
+fn build_clickhouse_client(config: &Config) -> anyhow::Result<::clickhouse::Client> {
+    Ok(::clickhouse::Client::default()
         .with_url(
             config
                 .clickhouse_url

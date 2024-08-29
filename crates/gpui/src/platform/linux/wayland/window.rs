@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use blade_graphics as gpu;
 use collections::HashMap;
-use futures::channel::oneshot::Receiver;
+use futures::channel::oneshot;
 
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
@@ -25,7 +25,7 @@ use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, AnyWindowHandle, Bounds, Decorations, Globals, Modifiers, Output, Pixels,
+    px, size, AnyWindowHandle, Bounds, Decorations, GPUSpecs, Globals, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, Size, Tiling,
     WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControls, WindowDecorations, WindowParams,
@@ -36,6 +36,7 @@ pub(crate) struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
     input: Option<Box<dyn FnMut(crate::PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
+    hover_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
@@ -97,6 +98,7 @@ pub struct WaylandWindowState {
     client: WaylandClientStatePtr,
     handle: AnyWindowHandle,
     active: bool,
+    hovered: bool,
     in_progress_configure: Option<InProgressConfigure>,
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
@@ -181,14 +183,9 @@ impl WaylandWindowState {
             appearance,
             handle,
             active: false,
+            hovered: false,
             in_progress_window_controls: None,
-            // Assume that we can do anything, unless told otherwise
-            window_controls: WindowControls {
-                fullscreen: true,
-                maximize: true,
-                minimize: true,
-                window_menu: true,
-            },
+            window_controls: WindowControls::default(),
             inset: None,
         })
     }
@@ -261,7 +258,10 @@ impl WaylandWindow {
             .wm_base
             .get_xdg_surface(&surface, &globals.qh, surface.id());
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
-        toplevel.set_min_size(50, 50);
+
+        if let Some(size) = params.window_min_size {
+            toplevel.set_min_size(size.width.0 as i32, size.height.0 as i32);
+        }
 
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
@@ -542,6 +542,7 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    #[allow(clippy::mutable_key_type)]
     pub fn handle_surface_event(
         &self,
         event: wl_surface::Event,
@@ -621,8 +622,12 @@ impl WaylandWindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some(range) = input_handler.selected_text_range() {
-                bounds = input_handler.bounds_for_range(range);
+            if let Some(selection) = input_handler.selected_text_range(true) {
+                bounds = input_handler.bounds_for_range(if selection.reversed {
+                    selection.range.start..selection.range.start
+                } else {
+                    selection.range.end..selection.range.end
+                });
             }
             self.state.borrow_mut().input_handler = Some(input_handler);
         }
@@ -696,6 +701,12 @@ impl WaylandWindowStatePtr {
     pub fn set_focused(&self, focus: bool) {
         self.state.borrow_mut().active = focus;
         if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
+            fun(focus);
+        }
+    }
+
+    pub fn set_hovered(&self, focus: bool) {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().hover_status_change {
             fun(focus);
         }
     }
@@ -820,7 +831,7 @@ impl PlatformWindow for WaylandWindow {
         _msg: &str,
         _detail: Option<&str>,
         _answers: &[&str],
-    ) -> Option<Receiver<usize>> {
+    ) -> Option<oneshot::Receiver<usize>> {
         None
     }
 
@@ -843,6 +854,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn is_active(&self) -> bool {
         self.borrow().active
+    }
+
+    fn is_hovered(&self) -> bool {
+        self.borrow().hovered
     }
 
     fn set_title(&mut self, title: &str) {
@@ -899,6 +914,10 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 
+    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.callbacks.borrow_mut().hover_status_change = Some(callback);
+    }
+
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.callbacks.borrow_mut().resize = Some(callback);
     }
@@ -919,9 +938,9 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
         let mut state = self.borrow_mut();
-        state.renderer.draw(scene);
+        state.renderer.draw(scene, on_complete);
     }
 
     fn completed_frame(&self) {
@@ -989,6 +1008,21 @@ impl PlatformWindow for WaylandWindow {
             state.inset = Some(inset);
             update_window(state);
         }
+    }
+
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        let state = self.borrow();
+        let client = state.client.clone();
+        drop(state);
+        client.update_ime_position(bounds);
+    }
+
+    fn gpu_specs(&self) -> Option<GPUSpecs> {
+        self.borrow().renderer.gpu_specs().into()
+    }
+
+    fn fps(&self) -> Option<f32> {
+        None
     }
 }
 

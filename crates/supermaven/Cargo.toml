@@ -27,8 +27,12 @@ serde_json.workspace = true
 settings.workspace = true
 supermaven_api.workspace = true
 smol.workspace = true
+text.workspace = true
 ui.workspace = true
 util.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
@@ -39,4 +43,4 @@ project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-http = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }

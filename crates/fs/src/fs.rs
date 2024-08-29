@@ -9,9 +9,13 @@ use std::{fs::File, os::fd::AsFd};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
+#[cfg(unix)]
+use std::os::unix::fs::FileTypeExt;
+
 use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
 use git::repository::{GitRepository, RealGitRepository};
+use gpui::{AppContext, Global, ReadGlobal};
 use rope::Rope;
 use smol::io::AsyncWriteExt;
 use std::{
@@ -67,7 +71,10 @@ pub trait Fs: Send + Sync {
         self.remove_file(path, options).await
     }
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
-    async fn load(&self, path: &Path) -> Result<String>;
+    async fn load(&self, path: &Path) -> Result<String> {
+        Ok(String::from_utf8(self.load_bytes(path).await?)?)
+    }
+    async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
@@ -92,8 +99,27 @@ pub trait Fs: Send + Sync {
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
+
     #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &FakeFs;
+    fn as_fake(&self) -> &FakeFs {
+        panic!("called as_fake on a real fs");
+    }
+}
+
+struct GlobalFs(Arc<dyn Fs>);
+
+impl Global for GlobalFs {}
+
+impl dyn Fs {
+    /// Returns the global [`Fs`].
+    pub fn global(cx: &AppContext) -> Arc<Self> {
+        GlobalFs::global(cx).0.clone()
+    }
+
+    /// Sets the global [`Fs`].
+    pub fn set_global(fs: Arc<Self>, cx: &mut AppContext) {
+        cx.set_global(GlobalFs(fs));
+    }
 }
 
 #[derive(Copy, Clone, Default)]
@@ -126,6 +152,7 @@ pub struct Metadata {
     pub mtime: SystemTime,
     pub is_symlink: bool,
     pub is_dir: bool,
+    pub is_fifo: bool,
 }
 
 #[derive(Default)]
@@ -134,10 +161,7 @@ pub struct RealFs {
     git_binary_path: Option<PathBuf>,
 }
 
-pub struct RealWatcher {
-    #[cfg(target_os = "linux")]
-    fs_watcher: parking_lot::Mutex<notify::INotifyWatcher>,
-}
+pub struct RealWatcher {}
 
 impl RealFs {
     pub fn new(
@@ -318,6 +342,11 @@ impl Fs for RealFs {
         let text = smol::unblock(|| std::fs::read_to_string(path)).await?;
         Ok(text)
     }
+    async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
+        let path = path.to_path_buf();
+        let bytes = smol::unblock(|| std::fs::read(path)).await?;
+        Ok(bytes)
+    }
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
@@ -325,6 +354,16 @@ impl Fs for RealFs {
                 // Use the directory of the destination as temp dir to avoid
                 // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
                 // See https://github.com/zed-industries/zed/pull/8437 for more details.
+                NamedTempFile::new_in(path.parent().unwrap_or(&paths::temp_dir()))
+            } else if cfg!(target_os = "windows") {
+                // If temp dir is set to a different drive than the destination,
+                // we receive error:
+                //
+                // failed to persist temporary file:
+                // The system cannot move the file to a different disk drive. (os error 17)
+                //
+                // So we use the directory of the destination as a temp dir to avoid it.
+                // https://github.com/zed-industries/zed/issues/16571
                 NamedTempFile::new_in(path.parent().unwrap_or(&paths::temp_dir()))
             } else {
                 NamedTempFile::new()
@@ -393,11 +432,18 @@ impl Fs for RealFs {
         #[cfg(windows)]
         let inode = file_id(path).await?;
 
+        #[cfg(windows)]
+        let is_fifo = false;
+
+        #[cfg(unix)]
+        let is_fifo = metadata.file_type().is_fifo();
+
         Ok(Some(Metadata {
             inode,
             mtime: metadata.modified().unwrap(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
+            is_fifo,
         }))
     }
 
@@ -461,29 +507,29 @@ impl Fs for RealFs {
         let pending_paths: Arc<Mutex<Vec<PathBuf>>> = Default::default();
         let root_path = path.to_path_buf();
 
-        let file_watcher = notify::recommended_watcher({
+        watcher::global(|g| {
             let tx = tx.clone();
             let pending_paths = pending_paths.clone();
-            move |event: Result<notify::Event, _>| {
-                if let Some(event) = event.log_err() {
-                    let mut paths = event.paths;
-                    paths.retain(|path| path.starts_with(&root_path));
-                    if !paths.is_empty() {
-                        paths.sort();
-                        let mut pending_paths = pending_paths.lock();
-                        if pending_paths.is_empty() {
-                            tx.try_send(()).ok();
-                        }
-                        util::extend_sorted(&mut *pending_paths, paths, usize::MAX, PathBuf::cmp);
+            g.add(move |event: &notify::Event| {
+                let mut paths = event
+                    .paths
+                    .iter()
+                    .filter(|path| path.starts_with(&root_path))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !paths.is_empty() {
+                    paths.sort();
+                    let mut pending_paths = pending_paths.lock();
+                    if pending_paths.is_empty() {
+                        tx.try_send(()).ok();
                     }
+                    util::extend_sorted(&mut *pending_paths, paths, usize::MAX, PathBuf::cmp);
                 }
-            }
+            })
         })
-        .expect("Could not start file watcher");
+        .log_err();
 
-        let watcher = Arc::new(RealWatcher {
-            fs_watcher: parking_lot::Mutex::new(file_watcher),
-        });
+        let watcher = Arc::new(RealWatcher {});
 
         watcher.add(path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
 
@@ -594,11 +640,6 @@ impl Fs for RealFs {
         temp_dir.close()?;
         case_sensitive
     }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &FakeFs {
-        panic!("called `RealFs::as_fake`")
-    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -616,18 +657,16 @@ impl Watcher for RealWatcher {
 impl Watcher for RealWatcher {
     fn add(&self, path: &Path) -> Result<()> {
         use notify::Watcher;
-
-        self.fs_watcher
-            .lock()
-            .watch(path, notify::RecursiveMode::NonRecursive)?;
-        Ok(())
+        Ok(watcher::global(|w| {
+            w.inotify
+                .lock()
+                .watch(path, notify::RecursiveMode::NonRecursive)
+        })??)
     }
 
     fn remove(&self, path: &Path) -> Result<()> {
         use notify::Watcher;
-
-        self.fs_watcher.lock().unwatch(path)?;
-        Ok(())
+        Ok(watcher::global(|w| w.inotify.lock().unwatch(path))??)
     }
 }
 
@@ -776,9 +815,8 @@ impl FakeFsState {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-lazy_static::lazy_static! {
-    pub static ref FS_DOT_GIT: &'static OsStr = OsStr::new(".git");
-}
+pub static FS_DOT_GIT: std::sync::LazyLock<&'static OsStr> =
+    std::sync::LazyLock::new(|| OsStr::new(".git"));
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
@@ -801,6 +839,40 @@ impl FakeFs {
                 metadata_call_count: 0,
             }),
         })
+    }
+
+    pub fn set_next_mtime(&self, next_mtime: SystemTime) {
+        let mut state = self.state.lock();
+        state.next_mtime = next_mtime;
+    }
+
+    pub async fn touch_path(&self, path: impl AsRef<Path>) {
+        let mut state = self.state.lock();
+        let path = path.as_ref();
+        let new_mtime = state.next_mtime;
+        let new_inode = state.next_inode;
+        state.next_inode += 1;
+        state.next_mtime += Duration::from_nanos(1);
+        state
+            .write_path(path, move |entry| {
+                match entry {
+                    btree_map::Entry::Vacant(e) => {
+                        e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
+                            inode: new_inode,
+                            mtime: new_mtime,
+                            content: Vec::new(),
+                        })));
+                    }
+                    btree_map::Entry::Occupied(mut e) => match &mut *e.get_mut().lock() {
+                        FakeFsEntry::File { mtime, .. } => *mtime = new_mtime,
+                        FakeFsEntry::Dir { mtime, .. } => *mtime = new_mtime,
+                        FakeFsEntry::Symlink { .. } => {}
+                    },
+                }
+                Ok(())
+            })
+            .unwrap();
+        state.emit_event([path.to_path_buf()]);
     }
 
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
@@ -1433,6 +1505,10 @@ impl Fs for FakeFs {
         Ok(String::from_utf8(content.clone())?)
     }
 
+    async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
+        self.load_internal(path).await
+    }
+
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path.as_path());
@@ -1501,12 +1577,14 @@ impl Fs for FakeFs {
                     mtime: *mtime,
                     is_dir: false,
                     is_symlink,
+                    is_fifo: false,
                 },
                 FakeFsEntry::Dir { inode, mtime, .. } => Metadata {
                     inode: *inode,
                     mtime: *mtime,
                     is_dir: true,
                     is_symlink,
+                    is_fifo: false,
                 },
                 FakeFsEntry::Symlink { .. } => unreachable!(),
             }))
@@ -1783,5 +1861,51 @@ mod tests {
             fs.load("/root/dir2/link-to-dir3/d".as_ref()).await.unwrap(),
             "D",
         );
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub mod watcher {
+    use std::sync::OnceLock;
+
+    use parking_lot::Mutex;
+    use util::ResultExt;
+
+    pub struct GlobalWatcher {
+        // two mutexes because calling inotify.add triggers an inotify.event, which needs watchers.
+        pub(super) inotify: Mutex<notify::INotifyWatcher>,
+        pub(super) watchers: Mutex<Vec<Box<dyn Fn(&notify::Event) + Send + Sync>>>,
+    }
+
+    impl GlobalWatcher {
+        pub(super) fn add(&self, cb: impl Fn(&notify::Event) + Send + Sync + 'static) {
+            self.watchers.lock().push(Box::new(cb))
+        }
+    }
+
+    static INOTIFY_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error>> =
+        OnceLock::new();
+
+    fn handle_event(event: Result<notify::Event, notify::Error>) {
+        let Some(event) = event.log_err() else { return };
+        global::<()>(move |watcher| {
+            for f in watcher.watchers.lock().iter() {
+                f(&event)
+            }
+        })
+        .log_err();
+    }
+
+    pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
+        let result = INOTIFY_INSTANCE.get_or_init(|| {
+            notify::recommended_watcher(handle_event).map(|file_watcher| GlobalWatcher {
+                inotify: Mutex::new(file_watcher),
+                watchers: Default::default(),
+            })
+        });
+        match result {
+            Ok(g) => Ok(f(g)),
+            Err(e) => Err(anyhow::anyhow!("{}", e)),
+        }
     }
 }

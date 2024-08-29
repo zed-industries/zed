@@ -1207,7 +1207,7 @@ fn get_injections(
     language_registry: &Arc<LanguageRegistry>,
     depth: usize,
     changed_ranges: &[Range<usize>],
-    combined_injection_ranges: &mut HashMap<Arc<Language>, Vec<tree_sitter::Range>>,
+    combined_injection_ranges: &mut HashMap<LanguageId, (Arc<Language>, Vec<tree_sitter::Range>)>,
     queue: &mut BinaryHeap<ParseStep>,
 ) {
     let mut query_cursor = QueryCursorHandle::new();
@@ -1223,7 +1223,7 @@ fn get_injections(
                 .now_or_never()
                 .and_then(|language| language.ok())
             {
-                combined_injection_ranges.insert(language, Vec::new());
+                combined_injection_ranges.insert(language.id, (language, Vec::new()));
             }
         }
     }
@@ -1252,20 +1252,28 @@ fn get_injections(
             prev_match = Some((mat.pattern_index, content_range.clone()));
             let combined = config.patterns[mat.pattern_index].combined;
 
-            let mut language_name = None;
             let mut step_range = content_range.clone();
-            if let Some(name) = config.patterns[mat.pattern_index].language.as_ref() {
-                language_name = Some(Cow::Borrowed(name.as_ref()))
-            } else if let Some(language_node) = config
-                .language_capture_ix
-                .and_then(|ix| mat.nodes_for_capture_index(ix).next())
-            {
-                step_range.start = cmp::min(content_range.start, language_node.start_byte());
-                step_range.end = cmp::max(content_range.end, language_node.end_byte());
-                language_name = Some(Cow::Owned(
-                    text.text_for_range(language_node.byte_range()).collect(),
-                ))
-            };
+            let language_name =
+                if let Some(name) = config.patterns[mat.pattern_index].language.as_ref() {
+                    Some(Cow::Borrowed(name.as_ref()))
+                } else if let Some(language_node) = config
+                    .language_capture_ix
+                    .and_then(|ix| mat.nodes_for_capture_index(ix).next())
+                {
+                    step_range.start = cmp::min(content_range.start, language_node.start_byte());
+                    step_range.end = cmp::max(content_range.end, language_node.end_byte());
+                    let language_name: String =
+                        text.text_for_range(language_node.byte_range()).collect();
+
+                    // Enable paths ending in a language extension to represent a language name: e.g. "foo/bar/baz.rs"
+                    if let Some(last_dot_pos) = language_name.rfind('.') {
+                        Some(Cow::Owned(language_name[last_dot_pos + 1..].to_string()))
+                    } else {
+                        Some(Cow::Owned(language_name))
+                    }
+                } else {
+                    None
+                };
 
             if let Some(language_name) = language_name {
                 let language = language_registry
@@ -1276,8 +1284,9 @@ fn get_injections(
                 if let Some(language) = language {
                     if combined {
                         combined_injection_ranges
-                            .entry(language.clone())
-                            .or_default()
+                            .entry(language.id)
+                            .or_insert_with(|| (language.clone(), vec![]))
+                            .1
                             .extend(content_ranges);
                     } else {
                         queue.push(ParseStep {
@@ -1303,7 +1312,7 @@ fn get_injections(
         }
     }
 
-    for (language, mut included_ranges) in combined_injection_ranges.drain() {
+    for (_, (language, mut included_ranges)) in combined_injection_ranges.drain() {
         included_ranges.sort_unstable_by(|a, b| {
             Ord::cmp(&a.start_byte, &b.start_byte).then_with(|| Ord::cmp(&a.end_byte, &b.end_byte))
         });
@@ -1333,7 +1342,7 @@ pub(crate) fn splice_included_ranges(
     let mut removed_ranges = removed_ranges.iter().cloned().peekable();
     let mut new_ranges = new_ranges.into_iter().cloned().peekable();
     let mut ranges_ix = 0;
-    let mut changed_portion = usize::MAX..0;
+    let mut changed_portion: Option<Range<usize>> = None;
     loop {
         let next_new_range = new_ranges.peek();
         let next_removed_range = removed_ranges.peek();
@@ -1394,23 +1403,26 @@ pub(crate) fn splice_included_ranges(
                 break;
             }
         }
-
-        changed_portion.start = changed_portion.start.min(start_ix);
-        changed_portion.end = changed_portion.end.max(if insert.is_some() {
-            start_ix + 1
-        } else {
-            start_ix
-        });
+        let changed_start = changed_portion
+            .as_ref()
+            .map_or(usize::MAX, |range| range.start)
+            .min(start_ix);
+        let changed_end =
+            changed_portion
+                .as_ref()
+                .map_or(0, |range| range.end)
+                .max(if insert.is_some() {
+                    start_ix + 1
+                } else {
+                    start_ix
+                });
+        changed_portion = Some(changed_start..changed_end);
 
         ranges.splice(start_ix..end_ix, insert);
         ranges_ix = start_ix;
     }
 
-    if changed_portion.end < changed_portion.start {
-        changed_portion = 0..0;
-    }
-
-    (ranges, changed_portion)
+    (ranges, changed_portion.unwrap_or(0..0))
 }
 
 /// Ensure there are newline ranges in between content range that appear on

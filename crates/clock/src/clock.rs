@@ -1,5 +1,6 @@
 mod system_clock;
 
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -16,7 +17,7 @@ pub type Seq = u32;
 
 /// A [Lamport timestamp](https://en.wikipedia.org/wiki/Lamport_timestamp),
 /// used to determine the ordering of events in the editor.
-#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct Lamport {
     pub replica_id: ReplicaId,
     pub value: Seq,
@@ -159,6 +160,10 @@ impl Lamport {
             value: 1,
             replica_id,
         }
+    }
+
+    pub fn as_u64(self) -> u64 {
+        ((self.value as u64) << 32) | (self.replica_id as u64)
     }
 
     pub fn tick(&mut self) -> Self {

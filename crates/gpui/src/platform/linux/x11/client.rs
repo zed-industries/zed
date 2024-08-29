@@ -24,7 +24,7 @@ use x11rb::xcb_ffi::XCBConnection;
 use xim::{x11rb::X11rbClient, Client};
 use xim::{AttributeName, InputStyle};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
-use xkbcommon::xkb as xkbc;
+use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask};
 
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
@@ -94,6 +94,13 @@ impl From<xim::ClientError> for EventHandlerError {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+struct XKBStateNotiy {
+    depressed_layout: LayoutIndex,
+    latched_layout: LayoutIndex,
+    locked_layout: LayoutIndex,
+}
+
 pub struct X11ClientState {
     pub(crate) loop_handle: LoopHandle<'static, X11Client>,
     pub(crate) event_loop: Option<calloop::EventLoop<'static, X11Client>>,
@@ -104,14 +111,18 @@ pub struct X11ClientState {
 
     pub(crate) scale_factor: f32,
 
+    xkb_context: xkbc::Context,
     pub(crate) xcb_connection: Rc<XCBConnection>,
+    xkb_device_id: i32,
     client_side_decorations_supported: bool,
     pub(crate) x_root_index: usize,
     pub(crate) _resource_database: Database,
     pub(crate) atoms: XcbAtoms,
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
-    pub(crate) focused_window: Option<xproto::Window>,
+    pub(crate) mouse_focused_window: Option<xproto::Window>,
+    pub(crate) keyboard_focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
+    previous_xkb_state: XKBStateNotiy,
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
     pub modifiers: Modifiers,
@@ -137,19 +148,64 @@ pub struct X11ClientState {
 pub struct X11ClientStatePtr(pub Weak<RefCell<X11ClientState>>);
 
 impl X11ClientStatePtr {
+    fn get_client(&self) -> X11Client {
+        X11Client(self.0.upgrade().expect("client already dropped"))
+    }
+
     pub fn drop_window(&self, x_window: u32) {
-        let client = X11Client(self.0.upgrade().expect("client already dropped"));
+        let client = self.get_client();
         let mut state = client.0.borrow_mut();
 
         if let Some(window_ref) = state.windows.remove(&x_window) {
             state.loop_handle.remove(window_ref.refresh_event_token);
         }
-
+        if state.mouse_focused_window == Some(x_window) {
+            state.mouse_focused_window = None;
+        }
+        if state.keyboard_focused_window == Some(x_window) {
+            state.keyboard_focused_window = None;
+        }
         state.cursor_styles.remove(&x_window);
 
         if state.windows.is_empty() {
             state.common.signal.stop();
         }
+    }
+
+    pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        let client = self.get_client();
+        let mut state = client.0.borrow_mut();
+        if state.composing || state.ximc.is_none() {
+            return;
+        }
+
+        let mut ximc = state.ximc.take().unwrap();
+        let xim_handler = state.xim_handler.take().unwrap();
+        let ic_attributes = ximc
+            .build_ic_attributes()
+            .push(
+                xim::AttributeName::InputStyle,
+                xim::InputStyle::PREEDIT_CALLBACKS
+                    | xim::InputStyle::STATUS_NOTHING
+                    | xim::InputStyle::PREEDIT_POSITION,
+            )
+            .push(xim::AttributeName::ClientWindow, xim_handler.window)
+            .push(xim::AttributeName::FocusWindow, xim_handler.window)
+            .nested_list(xim::AttributeName::PreeditAttributes, |b| {
+                b.push(
+                    xim::AttributeName::SpotLocation,
+                    xim::Point {
+                        x: u32::from(bounds.origin.x + bounds.size.width) as i16,
+                        y: u32::from(bounds.origin.y + bounds.size.height) as i16,
+                    },
+                );
+            })
+            .build();
+        let _ = ximc
+            .set_ic_values(xim_handler.im_id, xim_handler.ic_id, ic_attributes)
+            .log_err();
+        state.ximc = Some(ximc);
+        state.xim_handler = Some(xim_handler);
     }
 }
 
@@ -239,7 +295,9 @@ impl X11Client {
             .reply()
             .unwrap();
 
-        let events = xkb::EventType::STATE_NOTIFY;
+        let events = xkb::EventType::STATE_NOTIFY
+            | xkb::EventType::MAP_NOTIFY
+            | xkb::EventType::NEW_KEYBOARD_NOTIFY;
         xcb_connection
             .xkb_select_events(
                 xkb::ID::USE_CORE_KBD.into(),
@@ -253,8 +311,8 @@ impl X11Client {
         assert!(xkb.supported);
 
         let xkb_context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
+        let xkb_device_id = xkbc::x11::get_core_keyboard_device_id(&xcb_connection);
         let xkb_state = {
-            let xkb_device_id = xkbc::x11::get_core_keyboard_device_id(&xcb_connection);
             let xkb_keymap = xkbc::x11::keymap_new_from_device(
                 &xkb_context,
                 &xcb_connection,
@@ -335,14 +393,18 @@ impl X11Client {
             current_count: 0,
             scale_factor,
 
+            xkb_context,
             xcb_connection,
+            xkb_device_id,
             client_side_decorations_supported,
             x_root_index,
             _resource_database: resource_database,
             atoms,
             windows: HashMap::default(),
-            focused_window: None,
+            mouse_focused_window: None,
+            keyboard_focused_window: None,
             xkb: xkb_state,
+            previous_xkb_state: XKBStateNotiy::default(),
             ximc,
             xim_handler,
 
@@ -502,7 +564,7 @@ impl X11Client {
             .push(AttributeName::ClientWindow, xim_handler.window)
             .push(AttributeName::FocusWindow, xim_handler.window);
 
-        let window_id = state.focused_window;
+        let window_id = state.keyboard_focused_window;
         drop(state);
         if let Some(window_id) = window_id {
             let window = self.get_window(window_id).unwrap();
@@ -586,17 +648,17 @@ impl X11Client {
             }
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
-                window.set_focused(true);
+                window.set_active(true);
                 let mut state = self.0.borrow_mut();
-                state.focused_window = Some(event.event);
+                state.keyboard_focused_window = Some(event.event);
                 drop(state);
                 self.enable_ime();
             }
             Event::FocusOut(event) => {
                 let window = self.get_window(event.event)?;
-                window.set_focused(false);
+                window.set_active(false);
                 let mut state = self.0.borrow_mut();
-                state.focused_window = None;
+                state.keyboard_focused_window = None;
                 if let Some(compose_state) = state.compose_state.as_mut() {
                     compose_state.reset();
                 }
@@ -604,6 +666,23 @@ impl X11Client {
                 drop(state);
                 self.disable_ime();
                 window.handle_ime_delete();
+            }
+            Event::XkbNewKeyboardNotify(_) | Event::MapNotify(_) => {
+                let mut state = self.0.borrow_mut();
+                let xkb_state = {
+                    let xkb_keymap = xkbc::x11::keymap_new_from_device(
+                        &state.xkb_context,
+                        &state.xcb_connection,
+                        state.xkb_device_id,
+                        xkbc::KEYMAP_COMPILE_NO_FLAGS,
+                    );
+                    xkbc::x11::state_new_from_device(
+                        &xkb_keymap,
+                        &state.xcb_connection,
+                        state.xkb_device_id,
+                    )
+                };
+                state.xkb = xkb_state;
             }
             Event::XkbStateNotify(event) => {
                 let mut state = self.0.borrow_mut();
@@ -615,12 +694,16 @@ impl X11Client {
                     event.latched_group as u32,
                     event.locked_group.into(),
                 );
-
+                state.previous_xkb_state = XKBStateNotiy {
+                    depressed_layout: event.base_group as u32,
+                    latched_layout: event.latched_group as u32,
+                    locked_layout: event.locked_group.into(),
+                };
                 let modifiers = Modifiers::from_xkb(&state.xkb);
                 if state.modifiers == modifiers {
                     drop(state);
                 } else {
-                    let focused_window_id = state.focused_window?;
+                    let focused_window_id = state.keyboard_focused_window?;
                     state.modifiers = modifiers;
                     drop(state);
 
@@ -637,11 +720,18 @@ impl X11Client {
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
                 state.pre_ime_key_down.take();
-
                 let keystroke = {
                     let code = event.detail.into();
+                    let xkb_state = state.previous_xkb_state.clone();
+                    state.xkb.update_mask(
+                        event.state.bits() as ModMask,
+                        0,
+                        0,
+                        xkb_state.depressed_layout,
+                        xkb_state.latched_layout,
+                        xkb_state.locked_layout,
+                    );
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
-                    state.xkb.update_key(code, xkbc::KeyDirection::Down);
                     let keysym = state.xkb.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
                         return Some(());
@@ -700,8 +790,16 @@ impl X11Client {
 
                 let keystroke = {
                     let code = event.detail.into();
+                    let xkb_state = state.previous_xkb_state.clone();
+                    state.xkb.update_mask(
+                        event.state.bits() as ModMask,
+                        0,
+                        0,
+                        xkb_state.depressed_layout,
+                        xkb_state.latched_layout,
+                        xkb_state.locked_layout,
+                    );
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
-                    state.xkb.update_key(code, xkbc::KeyDirection::Up);
                     let keysym = state.xkb.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
                         return Some(());
@@ -871,12 +969,18 @@ impl X11Client {
                     valuator_idx += 1;
                 }
             }
+            Event::XinputEnter(event) if event.mode == xinput::NotifyMode::NORMAL => {
+                let window = self.get_window(event.event)?;
+                window.set_hovered(true);
+                let mut state = self.0.borrow_mut();
+                state.mouse_focused_window = Some(event.event);
+            }
             Event::XinputLeave(event) if event.mode == xinput::NotifyMode::NORMAL => {
                 self.0.borrow_mut().scroll_x = None; // Set last scroll to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
                 self.0.borrow_mut().scroll_y = None;
 
-                let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
+                state.mouse_focused_window = None;
                 let pressed_button = pressed_button_from_mask(event.buttons[0]);
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
@@ -886,11 +990,13 @@ impl X11Client {
                 state.modifiers = modifiers;
                 drop(state);
 
+                let window = self.get_window(event.event)?;
                 window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
                     pressed_button,
                     position,
                     modifiers,
                 }));
+                window.set_hovered(false);
             }
             _ => {}
         };
@@ -947,32 +1053,29 @@ impl X11Client {
     fn xim_handle_commit(&self, window: xproto::Window, text: String) -> Option<()> {
         let window = self.get_window(window).unwrap();
         let mut state = self.0.borrow_mut();
-        if !state.composing {
-            if let Some(keystroke) = state.pre_ime_key_down.take() {
-                drop(state);
-                window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
-                    keystroke,
-                    is_held: false,
-                }));
-                return Some(());
-            }
-        }
+        let keystroke = state.pre_ime_key_down.take();
         state.composing = false;
         drop(state);
+        if let Some(mut keystroke) = keystroke {
+            keystroke.ime_key = Some(text.clone());
+            window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
+                keystroke,
+                is_held: false,
+            }));
+        }
 
-        window.handle_ime_commit(text);
         Some(())
     }
 
     fn xim_handle_preedit(&self, window: xproto::Window, text: String) -> Option<()> {
         let window = self.get_window(window).unwrap();
-        window.handle_ime_preedit(text);
 
         let mut state = self.0.borrow_mut();
         let mut ximc = state.ximc.take().unwrap();
         let mut xim_handler = state.xim_handler.take().unwrap();
-        state.composing = true;
+        state.composing = !text.is_empty();
         drop(state);
+        window.handle_ime_preedit(text);
 
         if let Some(area) = window.get_ime_area() {
             let ic_attributes = ximc
@@ -1140,7 +1243,7 @@ impl LinuxClient for X11Client {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         let mut state = self.0.borrow_mut();
-        let Some(focused_window) = state.focused_window else {
+        let Some(focused_window) = state.mouse_focused_window else {
             return;
         };
         let current_style = state
@@ -1154,10 +1257,13 @@ impl LinuxClient for X11Client {
         let cursor = match state.cursor_cache.get(&style) {
             Some(cursor) => *cursor,
             None => {
-                let cursor = state
+                let Some(cursor) = state
                     .cursor_handle
                     .load_cursor(&state.xcb_connection, &style.to_icon_name())
-                    .expect("failed to load cursor");
+                    .log_err()
+                else {
+                    return;
+                };
                 state.cursor_cache.insert(style, cursor);
                 cursor
             }
@@ -1193,7 +1299,7 @@ impl LinuxClient for X11Client {
             .store(
                 state.clipboard.setter.atoms.primary,
                 state.clipboard.setter.atoms.utf8_string,
-                item.text().as_bytes(),
+                item.text().unwrap_or_default().as_bytes(),
             )
             .ok();
     }
@@ -1205,7 +1311,7 @@ impl LinuxClient for X11Client {
             .store(
                 state.clipboard.setter.atoms.clipboard,
                 state.clipboard.setter.atoms.utf8_string,
-                item.text().as_bytes(),
+                item.text().unwrap_or_default().as_bytes(),
             )
             .ok();
         state.clipboard_item.replace(item);
@@ -1221,10 +1327,7 @@ impl LinuxClient for X11Client {
                 state.clipboard.getter.atoms.property,
                 Duration::from_secs(3),
             )
-            .map(|text| crate::ClipboardItem {
-                text: String::from_utf8(text).unwrap(),
-                metadata: None,
-            })
+            .map(|text| crate::ClipboardItem::new_string(String::from_utf8(text).unwrap()))
             .ok()
     }
 
@@ -1252,10 +1355,7 @@ impl LinuxClient for X11Client {
                 state.clipboard.getter.atoms.property,
                 Duration::from_secs(3),
             )
-            .map(|text| crate::ClipboardItem {
-                text: String::from_utf8(text).unwrap(),
-                metadata: None,
-            })
+            .map(|text| crate::ClipboardItem::new_string(String::from_utf8(text).unwrap()))
             .ok()
     }
 
@@ -1272,12 +1372,54 @@ impl LinuxClient for X11Client {
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let state = self.0.borrow();
-        state.focused_window.and_then(|focused_window| {
+        state.keyboard_focused_window.and_then(|focused_window| {
             state
                 .windows
                 .get(&focused_window)
                 .map(|window| window.handle())
         })
+    }
+
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        let state = self.0.borrow();
+        let root = state.xcb_connection.setup().roots[state.x_root_index].root;
+
+        let reply = state
+            .xcb_connection
+            .get_property(
+                false,
+                root,
+                state.atoms._NET_CLIENT_LIST_STACKING,
+                xproto::AtomEnum::WINDOW,
+                0,
+                u32::MAX,
+            )
+            .ok()?
+            .reply()
+            .ok()?;
+
+        let window_ids = reply
+            .value
+            .chunks_exact(4)
+            .map(|chunk| u32::from_ne_bytes(chunk.try_into().unwrap()))
+            .collect::<Vec<xproto::Window>>();
+
+        let mut handles = Vec::new();
+
+        // We need to reverse, since _NET_CLIENT_LIST_STACKING has
+        // a back-to-front order.
+        // See: https://specifications.freedesktop.org/wm-spec/1.3/ar01s03.html
+        for window_ref in window_ids
+            .iter()
+            .rev()
+            .filter_map(|&win| state.windows.get(&win))
+        {
+            if !window_ref.window.state.borrow().destroyed {
+                handles.push(window_ref.handle());
+            }
+        }
+
+        Some(handles)
     }
 }
 

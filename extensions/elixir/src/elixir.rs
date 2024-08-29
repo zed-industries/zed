@@ -47,10 +47,12 @@ impl zed::Extension for ElixirExtension {
             }
             Lexical::LANGUAGE_SERVER_ID => {
                 let lexical = self.lexical.get_or_insert_with(|| Lexical::new());
+                let lexical_binary =
+                    lexical.language_server_binary(language_server_id, worktree)?;
 
                 Ok(zed::Command {
-                    command: lexical.language_server_binary_path(language_server_id, worktree)?,
-                    args: vec![],
+                    command: lexical_binary.path,
+                    args: lexical_binary.args.unwrap_or_default(),
                     env: Default::default(),
                 })
             }

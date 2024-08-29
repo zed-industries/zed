@@ -23,7 +23,7 @@ jobs:
       - test
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
           fetch-depth: 0
@@ -33,6 +33,7 @@ jobs:
 
       - name: Run clippy
         run: ./script/clippy
+
   tests:
     timeout-minutes: 60
     name: Run tests
@@ -43,7 +44,7 @@ jobs:
     needs: style
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
 
@@ -66,14 +67,15 @@ jobs:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4
         with:
           node-version: "18"
 
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
 
@@ -93,9 +95,9 @@ jobs:
       - name: Upload Zed Nightly
         run: script/upload-nightly macos
 
-  bundle-deb:
+  bundle-linux-x86:
     timeout-minutes: 60
-    name: Create a Linux *.tar.gz bundle
+    name: Create a Linux *.tar.gz bundle for x86
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
@@ -105,9 +107,10 @@ jobs:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
         with:
           clean: false
 
@@ -121,8 +124,57 @@ jobs:
           echo "Publishing version: ${version} on release channel nightly"
           echo "nightly" > crates/zed/RELEASE_CHANNEL
 
-      - name: Generate license file
-        run: script/generate-licenses
+      - name: Create Linux .tar.gz bundle
+        run: script/bundle-linux
+
+      - name: Upload Zed Nightly
+        run: script/upload-nightly linux-targz
+
+  bundle-linux-arm:
+    timeout-minutes: 60
+    name: Create a Linux *.tar.gz bundle for ARM
+    if: github.repository_owner == 'zed-industries'
+    runs-on:
+      - hosted-linux-arm-1
+    needs: tests
+    env:
+      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        with:
+          clean: false
+
+      - name: "Setup jq"
+        uses: dcarbone/install-jq-action@8867ddb4788346d7c22b72ea2e2ffe4d514c7bcb # v2
+
+      - name: Set up Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-10 clang-10 build-essential cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libssl-dev libsqlite3-dev libzstd-dev libvulkan1 libgit2-dev
+          echo "/usr/lib/llvm-10/bin" >> $GITHUB_PATH
+
+      - uses: rui314/setup-mold@0bf4f07ef9048ec62a45f9dbf2f098afa49695f0 # v1
+        with:
+          mold-version: 2.32.0
+
+      - name: rustup
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Limit target directory size
+        run: script/clear-target-dir-if-larger-than 100
+
+      - name: Set release channel to nightly
+        run: |
+          set -euo pipefail
+          version=$(git rev-parse --short HEAD)
+          echo "Publishing version: ${version} on release channel nightly"
+          echo "nightly" > crates/zed/RELEASE_CHANNEL
 
       - name: Create Linux .tar.gz bundle
         run: script/bundle-linux

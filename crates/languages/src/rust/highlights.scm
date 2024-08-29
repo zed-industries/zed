@@ -134,6 +134,11 @@
 ] @comment
 
 [
+  (line_comment (doc_comment))
+  (block_comment (doc_comment))
+] @comment.doc
+
+[
   "!"
   "!="
   "%"
@@ -179,3 +184,8 @@
 ] @operator
 
 (lifetime) @lifetime
+
+(parameter (identifier) @variable.parameter)
+
+(attribute_item) @attribute
+(inner_attribute_item) @attribute

@@ -3,12 +3,13 @@
 
 use super::{BladeAtlas, PATH_TEXTURE_FORMAT};
 use crate::{
-    AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels, Hsla, MonochromeSprite, Path,
-    PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Underline,
+    AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels, GPUSpecs, Hsla,
+    MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Underline,
 };
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
+use futures::channel::oneshot;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
 #[cfg(target_os = "macos")]
@@ -18,7 +19,7 @@ use blade_graphics as gpu;
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use std::{mem, sync::Arc};
 
-const MAX_FRAME_TIME_MS: u32 = 1000;
+const MAX_FRAME_TIME_MS: u32 = 10000;
 
 #[cfg(target_os = "macos")]
 pub type Context = ();
@@ -412,7 +413,8 @@ impl BladeRenderer {
     fn wait_for_gpu(&mut self) {
         if let Some(last_sp) = self.last_sync_point.take() {
             if !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {
-                panic!("GPU hung");
+                log::error!("GPU hung");
+                while !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {}
             }
         }
     }
@@ -450,6 +452,18 @@ impl BladeRenderer {
         &self.atlas
     }
 
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    pub fn gpu_specs(&self) -> GPUSpecs {
+        let info = self.gpu.device_information();
+
+        GPUSpecs {
+            is_software_emulated: info.is_software_emulated,
+            device_name: info.device_name.clone(),
+            driver_name: info.driver_name.clone(),
+            driver_info: info.driver_info.clone(),
+        }
+    }
+
     #[cfg(target_os = "macos")]
     pub fn layer(&self) -> metal::MetalLayer {
         self.gpu.metal_layer().unwrap()
@@ -467,7 +481,11 @@ impl BladeRenderer {
         let mut vertices_by_texture_id = HashMap::default();
 
         for path in paths {
-            let clipped_bounds = path.bounds.intersect(&path.content_mask.bounds);
+            let clipped_bounds = path
+                .bounds
+                .intersect(&path.content_mask.bounds)
+                .map_origin(|origin| origin.floor())
+                .map_size(|size| size.ceil());
             let tile = self.atlas.allocate_for_rendering(
                 clipped_bounds.size.map(Into::into),
                 AtlasTextureKind::Path,
@@ -524,7 +542,12 @@ impl BladeRenderer {
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    pub fn draw(
+        &mut self,
+        scene: &Scene,
+        // Required to compile on macOS, but not currently supported.
+        _on_complete: Option<oneshot::Sender<()>>,
+    ) {
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
         self.rasterize_paths(scene.paths());
@@ -752,5 +775,11 @@ impl BladeRenderer {
 
         self.wait_for_gpu();
         self.last_sync_point = Some(sync_point);
+    }
+
+    /// Required to compile on macOS, but not currently supported.
+    #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
+    pub fn fps(&self) -> f32 {
+        0.0
     }
 }

@@ -12,23 +12,22 @@ workspace = true
 path = "src/terminal.rs"
 doctest = false
 
-
 [dependencies]
-alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "cacdb5bb3b72bad2c729227537979d95af75978f" }
+alacritty_terminal.workspace = true
 anyhow.workspace = true
 collections.workspace = true
 dirs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 libc.workspace = true
-task.workspace = true
+release_channel.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
-serde_json.workspace = true
 settings.workspace = true
 sysinfo.workspace = true
 smol.workspace = true
+task.workspace = true
 theme.workspace = true
 thiserror.workspace = true
 util.workspace = true

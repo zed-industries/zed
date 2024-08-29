@@ -663,6 +663,7 @@ impl Database {
                             is_ignored: db_entry.is_ignored,
                             is_external: db_entry.is_external,
                             git_status: db_entry.git_status.map(|status| status as i32),
+                            is_fifo: db_entry.is_fifo,
                         });
                     }
                 }

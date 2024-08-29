@@ -40,4 +40,4 @@ rpc = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-http = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }

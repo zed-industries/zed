@@ -10,11 +10,9 @@
   (TestDecl)
 ] @indent.begin
 
-[
-  "}"
-  "]"
-  ")"
-] @indent.branch
+(_ "[" "]" @end) @indent
+(_ "{" "}" @end) @indent
+(_ "(" ")" @end) @indent
 
 [
   (line_comment)

@@ -20,7 +20,8 @@ test-support = ["sqlite"]
 [dependencies]
 anthropic.workspace = true
 anyhow.workspace = true
-async-tungstenite = "0.16"
+async-stripe.workspace = true
+async-tungstenite.workspace = true
 aws-config = { version = "1.1.5" }
 aws-sdk-s3 = { version = "1.15.0" }
 axum = { version = "0.6", features = ["json", "headers", "ws"] }
@@ -30,12 +31,13 @@ chrono.workspace = true
 clock.workspace = true
 clickhouse.workspace = true
 collections.workspace = true
-dashmap = "5.4"
+dashmap.workspace = true
 envy = "0.4.2"
 futures.workspace = true
 google_ai.workspace = true
 hex.workspace = true
-http.workspace = true
+http_client.workspace = true
+jsonwebtoken.workspace = true
 live_kit_server.workspace = true
 log.workspace = true
 nanoid.workspace = true
@@ -47,19 +49,21 @@ prost.workspace = true
 rand.workspace = true
 reqwest = { version = "0.11", features = ["json"] }
 rpc.workspace = true
-scrypt = "0.7"
-sea-orm = { version = "0.12.x", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
+scrypt = "0.11"
+sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
 semantic_version.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
+strum.workspace = true
 subtle.workspace = true
 rustc-demangle.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
+thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 toml.workspace = true
@@ -71,6 +75,7 @@ util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+assistant = { workspace = true, features = ["test-support"] }
 async-trait.workspace = true
 audio.workspace = true
 call = { workspace = true, features = ["test-support"] }
@@ -86,8 +91,10 @@ fs = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
 git_hosting_providers.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+hyper.workspace = true
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
+language_model = { workspace = true, features = ["test-support"] }
 live_kit_client = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 menu.workspace = true
@@ -98,15 +105,21 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 recent_projects = { workspace = true }
 release_channel.workspace = true
+remote = { workspace = true, features = ["test-support"] }
+remote_server.workspace = true
 dev_server_projects.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
-sea-orm = { version = "0.12.x", features = ["sqlx-sqlite"] }
+sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-sqlite"] }
 serde_json.workspace = true
+session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
-sqlx = { version = "0.7", features = ["sqlite"] }
+sqlx = { version = "0.8", features = ["sqlite"] }
 theme.workspace = true
 unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 headless.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["async-stripe"]

@@ -1,6 +1,6 @@
 [package]
 name = "zed_terraform"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 publish = false
 license = "Apache-2.0"
@@ -13,4 +13,4 @@ path = "src/terraform.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = "0.0.6"
+zed_extension_api = "0.1.0"
