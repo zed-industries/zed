@@ -38,7 +38,7 @@ pub struct DefaultColors {
     disabled: Rgba,
     selected: Rgba,
     border: Rgba,
-    seperator: Rgba,
+    separator: Rgba,
     container: Rgba,
 }
 
@@ -52,7 +52,7 @@ impl DefaultColors {
             selected: rgb(0x2457CA),
             background: rgb(0x222222),
             border: rgb(0x000000),
-            seperator: rgb(0xD9D9D9),
+            separator: rgb(0xD9D9D9),
             container: rgb(0x262626),
         }
     }
@@ -66,7 +66,7 @@ impl DefaultColors {
             disabled: rgb(0xB0B0B0),
             selected: rgb(0x2A63D9),
             border: rgb(0xD9D9D9),
-            seperator: rgb(0xE6E6E6),
+            separator: rgb(0xE6E6E6),
             container: rgb(0xF4F5F5),
         }
     }
@@ -102,7 +102,7 @@ impl DefaultColor {
             DefaultColor::Disabled => colors.disabled,
             DefaultColor::Selected => colors.selected,
             DefaultColor::Border => colors.border,
-            DefaultColor::Seperator => colors.seperator,
+            DefaultColor::Seperator => colors.separator,
             DefaultColor::Container => colors.container,
         }
     }
