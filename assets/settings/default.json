@@ -28,7 +28,7 @@
   "buffer_font_family": "Zed Plex Mono",
   // Set the buffer text's font fallbacks, this will be merged with
   // the platform's default fallbacks.
-  "buffer_font_fallbacks": [],
+  "buffer_font_fallbacks": null,
   // The OpenType features to enable for text in the editor.
   "buffer_font_features": {
     // Disable ligatures:
@@ -54,7 +54,7 @@
   "ui_font_family": "Zed Plex Sans",
   // Set the UI's font fallbacks, this will be merged with the platform's
   // default font fallbacks.
-  "ui_font_fallbacks": [],
+  "ui_font_fallbacks": null,
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:
