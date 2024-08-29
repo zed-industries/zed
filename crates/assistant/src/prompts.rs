@@ -295,6 +295,6 @@ impl PromptBuilder {
     }
 
     pub fn generate_workflow_prompt(&self) -> Result<String, RenderError> {
-        self.handlebars.lock().render("edit_workflow_2", &())
+        self.handlebars.lock().render("edit_workflow", &())
     }
 }
