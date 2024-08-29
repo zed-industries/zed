@@ -85,6 +85,15 @@ impl Keystroke {
                         } else {
                             return Err(anyhow!("Invalid keystroke `{}`", source));
                         }
+                    } else if let Some(translated) = translate_capital_keystroke(component) {
+                        if shift {
+                            log::error!(
+                                "Error parsing keystroke `{}`, double shift detected.",
+                                source
+                            );
+                        }
+                        shift = true;
+                        key = Some(VirtualKeyCode::from_str(&translated));
                     } else {
                         key = Some(VirtualKeyCode::from_str(component));
                     }
@@ -437,6 +446,44 @@ impl Modifiers {
             && (other.shift || !self.shift)
             && (other.platform || !self.platform)
             && (other.function || !self.function)
+    }
+}
+
+fn translate_capital_keystroke(input: &str) -> Option<String> {
+    if input.len() != 1 {
+        return None;
+    }
+    let ch = input.chars().next().unwrap();
+    if ch.is_ascii_alphabetic() {
+        if ch.is_ascii_uppercase() {
+            return Some(input.to_lowercase());
+        } else {
+            return None;
+        }
+    }
+    match ch {
+        '~' => Some("`".to_string()),
+        '!' => Some("1".to_string()),
+        '@' => Some("2".to_string()),
+        '#' => Some("3".to_string()),
+        '$' => Some("4".to_string()),
+        '%' => Some("5".to_string()),
+        '^' => Some("6".to_string()),
+        '&' => Some("7".to_string()),
+        '*' => Some("8".to_string()),
+        '(' => Some("9".to_string()),
+        ')' => Some("0".to_string()),
+        '_' => Some("-".to_string()),
+        '+' => Some("=".to_string()),
+        '{' => Some("[".to_string()),
+        '}' => Some("]".to_string()),
+        '|' => Some("\\".to_string()),
+        ':' => Some(";".to_string()),
+        '"' => Some("'".to_string()),
+        '<' => Some(",".to_string()),
+        '>' => Some(".".to_string()),
+        '?' => Some("/".to_string()),
+        _ => None,
     }
 }
 
