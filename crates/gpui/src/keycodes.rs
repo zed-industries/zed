@@ -1,9 +1,10 @@
 use serde::Deserialize;
+use strum::EnumIter;
 
 /// TODO:
 /// https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
 /// https://source.chromium.org/chromium/chromium/src/+/main:ui/events/keycodes/keyboard_codes_win.h;drc=341564182474622e33c964e73a69ea8c1e004eb8;l=12
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Deserialize, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Deserialize, Hash, EnumIter)]
 #[serde(rename_all = "lowercase")]
 pub enum VirtualKeyCode {
     /// Un-recognized key
@@ -586,7 +587,7 @@ impl VirtualKeyCode {
             // VirtualKeyCode::Clear => "UnImplemented",
             "enter" => Self::Enter,
             "shift" => Self::Shift,
-            "control" => Self::Control,
+            "ctrl" => Self::Control,
             "alt" => Self::Alt,
             // VirtualKeyCode::Pause => "UnImplemented",
             "capslock" => Self::Capital,
@@ -841,12 +842,13 @@ impl VirtualKeyCode {
             VirtualKeyCode::LeftPlatform => "cmd",
             #[cfg(target_os = "linux")]
             VirtualKeyCode::LeftPlatform => "super", // TODO:
-            #[cfg(target_os = "windows")]
-            VirtualKeyCode::RightPlatform => "win",
-            #[cfg(target_os = "macos")]
-            VirtualKeyCode::RightPlatform => "cmd",
-            #[cfg(target_os = "linux")]
-            VirtualKeyCode::RightPlatform => "super", // TODO:
+            VirtualKeyCode::RightPlatform => "UnImplemented",
+            // #[cfg(target_os = "windows")]
+            // VirtualKeyCode::RightPlatform => "win",
+            // #[cfg(target_os = "macos")]
+            // VirtualKeyCode::RightPlatform => "cmd",
+            // #[cfg(target_os = "linux")]
+            // VirtualKeyCode::RightPlatform => "super", // TODO:
             VirtualKeyCode::App => "UnImplemented", // TODO: Chrome use this as Fn key
             VirtualKeyCode::Sleep => "UnImplemented",
             VirtualKeyCode::Numpad0 => "UnImplemented", // TODO: handle numpad key
@@ -891,12 +893,18 @@ impl VirtualKeyCode {
             VirtualKeyCode::F24 => "f24",
             VirtualKeyCode::NumLock => "UnImplemented",
             VirtualKeyCode::ScrollLock => "UnImplemented",
-            VirtualKeyCode::LeftShift => "shift",
-            VirtualKeyCode::RightShift => "shift",
-            VirtualKeyCode::LeftControl => "control",
-            VirtualKeyCode::RightControl => "control",
-            VirtualKeyCode::LeftAlt => "alt",
-            VirtualKeyCode::RightAlt => "alt",
+            VirtualKeyCode::LeftShift => "UnImplemented",
+            VirtualKeyCode::RightShift => "UnImplemented",
+            VirtualKeyCode::LeftControl => "UnImplemented",
+            VirtualKeyCode::RightControl => "UnImplemented",
+            VirtualKeyCode::LeftAlt => "UnImplemented",
+            VirtualKeyCode::RightAlt => "UnImplemented",
+            // VirtualKeyCode::LeftShift => "shift", // TODO:
+            // VirtualKeyCode::RightShift => "shift",
+            // VirtualKeyCode::LeftControl => "control",
+            // VirtualKeyCode::RightControl => "control",
+            // VirtualKeyCode::LeftAlt => "alt",
+            // VirtualKeyCode::RightAlt => "alt",
             VirtualKeyCode::BrowserBack => "UnImplemented",
             VirtualKeyCode::BrowserForward => "UnImplemented",
             VirtualKeyCode::BrowserRefresh => "UnImplemented",
@@ -940,5 +948,28 @@ impl VirtualKeyCode {
             VirtualKeyCode::OEMClear => "UnImplemented",
         }
         .to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use strum::IntoEnumIterator;
+
+    use crate::VirtualKeyCode;
+
+    #[test]
+    fn test_vkcode_parse_failure() {
+        assert!(VirtualKeyCode::from_str("{").is_err());
+        assert!(VirtualKeyCode::from_str("?").is_err());
+        assert!(VirtualKeyCode::from_str(">").is_err());
+    }
+
+    #[test]
+    fn test_vkcode_string() {
+        for key in VirtualKeyCode::iter() {
+            if let Ok(right) = VirtualKeyCode::from_str(&key.to_string()) {
+                assert_eq!(key, right);
+            }
+        }
     }
 }
