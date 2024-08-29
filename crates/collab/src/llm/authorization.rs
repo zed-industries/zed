@@ -85,7 +85,9 @@ fn authorize_access_for_country(
     if !is_country_supported_by_provider {
         Err(Error::http(
             StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS,
-            format!("access to {provider:?} models is not available in your region"),
+            format!(
+                "access to {provider:?} models is not available in your region ({country_code})"
+            ),
         ))?
     }
 
