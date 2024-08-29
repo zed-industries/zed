@@ -2076,20 +2076,10 @@ impl ContextEditor {
                         ..multibuffer.anchor_in_excerpt(excerpt_id, end).unwrap()
                 });
 
-                let mut edit_paths = Vec::<SharedString>::new();
-                for edit in step.edits.iter() {
-                    if let Ok(edit) = &edit {
-                        let path = edit.path.clone().into();
-                        if !edit_paths.contains(&path) {
-                            edit_paths.push(path);
-                        }
-                    }
-                }
-
                 let block_ids = editor.insert_blocks(
                     [BlockProperties {
                         position: header_range.start,
-                        height: 1 + edit_paths.len() as u32,
+                        height: 1,
                         style: BlockStyle::Flex,
                         render: Box::new({
                             let this = this.clone();
@@ -2101,7 +2091,6 @@ impl ContextEditor {
                                 this.update(&mut **cx, |this, cx| {
                                     this.render_workflow_step_header(
                                         range.clone(),
-                                        &edit_paths,
                                         max_width,
                                         gutter_width,
                                         block_id,
@@ -2158,7 +2147,7 @@ impl ContextEditor {
                     render: render_fold_icon_button(
                         cx.view().downgrade(),
                         IconName::Code,
-                        "Raw Edits".into(),
+                        "Edits".into(),
                     ),
                     constrain_width: false,
                     merge_adjacent: false,
@@ -3179,7 +3168,6 @@ impl ContextEditor {
     fn render_workflow_step_header(
         &self,
         range: Range<text::Anchor>,
-        edit_paths: &[SharedString],
         max_width: Pixels,
         gutter_width: Pixels,
         id: BlockId,
