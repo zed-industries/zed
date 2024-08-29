@@ -13,10 +13,11 @@ pub mod worktree_store;
 #[cfg(test)]
 mod project_tests;
 
+mod environment;
 pub mod search_history;
 mod yarn;
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
@@ -26,6 +27,7 @@ use client::{
 use clock::ReplicaId;
 use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
+use environment::ProjectEnvironment;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::{join_all, try_join_all, Shared},
@@ -74,7 +76,7 @@ use paths::{
 };
 use postage::watch;
 use prettier_support::{DefaultPrettier, PrettierInstance};
-use project_settings::{DirenvSettings, LspSettings, ProjectSettings};
+use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use remote::SshSession;
 use rpc::{
@@ -95,7 +97,6 @@ use std::{
     cell::RefCell,
     cmp::Ordering,
     convert::TryInto,
-    env,
     ffi::OsStr,
     hash::Hash,
     iter, mem,
@@ -116,8 +117,8 @@ use task::{
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
 use util::{
-    debug_panic, defer, maybe, merge_json_value_into, parse_env_output, paths::compare_paths,
-    post_inc, ResultExt, TryFutureExt as _,
+    debug_panic, defer, maybe, merge_json_value_into, paths::compare_paths, post_inc, ResultExt,
+    TryFutureExt as _,
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
@@ -208,7 +209,6 @@ pub struct Project {
     worktree_store: Model<WorktreeStore>,
     buffer_store: Model<BufferStore>,
     _subscriptions: Vec<gpui::Subscription>,
-    shared_buffers: HashMap<proto::PeerId, HashSet<BufferId>>,
     #[allow(clippy::type_complexity)]
     loading_worktrees:
         HashMap<Arc<Path>, Shared<Task<Result<Model<Worktree>, Arc<anyhow::Error>>>>>,
@@ -232,7 +232,7 @@ pub struct Project {
     search_history: SearchHistory,
     snippets: Model<SnippetProvider>,
     yarn: Model<YarnPathStore>,
-    cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
+    environment: Model<ProjectEnvironment>,
 }
 
 #[derive(Default)]
@@ -665,6 +665,14 @@ impl DirectoryLister {
         }
     }
 
+    pub fn resolve_tilde<'a>(&self, path: &'a String, cx: &AppContext) -> Cow<'a, str> {
+        if self.is_local(cx) {
+            shellexpand::tilde(path)
+        } else {
+            Cow::from(path)
+        }
+    }
+
     pub fn default_query(&self, cx: &mut AppContext) -> String {
         if let DirectoryLister::Project(project) = self {
             if let Some(worktree) = project.read(cx).visible_worktrees(cx).next() {
@@ -780,6 +788,7 @@ impl Project {
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        env: Option<HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx: &mut ModelContext<Self>| {
@@ -801,13 +810,13 @@ impl Project {
                 .detach();
 
             let yarn = YarnPathStore::new(fs.clone(), cx);
+            let environment = ProjectEnvironment::new(env, cx);
 
             Self {
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
                 worktree_store,
                 buffer_store,
-                shared_buffers: Default::default(),
                 loading_worktrees: Default::default(),
                 buffer_snapshots: Default::default(),
                 join_project_response_message_id: 0,
@@ -856,7 +865,7 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
-                cached_shell_environments: HashMap::default(),
+                environment,
                 remotely_created_buffers: Default::default(),
             }
         })
@@ -871,7 +880,7 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        let this = Self::local(client, node, user_store, languages, fs, cx);
+        let this = Self::local(client, node, user_store, languages, fs, None, cx);
         this.update(cx, |this, cx| {
             let buffer_store = this.buffer_store.downgrade();
 
@@ -979,7 +988,6 @@ impl Project {
                 buffer_ordered_messages_tx: tx,
                 buffer_store: buffer_store.clone(),
                 worktree_store,
-                shared_buffers: Default::default(),
                 loading_worktrees: Default::default(),
                 active_entry: None,
                 collaborators: Default::default(),
@@ -1052,7 +1060,7 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
-                cached_shell_environments: HashMap::default(),
+                environment: ProjectEnvironment::new(None, cx),
                 remotely_created_buffers: Arc::new(Mutex::new(RemotelyCreatedBuffers::default())),
             };
             this.set_role(role, cx);
@@ -1185,6 +1193,7 @@ impl Project {
                     user_store,
                     Arc::new(languages),
                     fs,
+                    None,
                     cx,
                 )
             })
@@ -1224,6 +1233,7 @@ impl Project {
                 user_store,
                 Arc::new(languages),
                 fs,
+                None,
                 cx,
             )
         });
@@ -1236,11 +1246,10 @@ impl Project {
                 .unwrap();
 
             project.update(cx, |project, cx| {
-                let tree_id = tree.read(cx).id();
                 // In tests we always populate the environment to be empty so we don't run the shell
-                project
-                    .cached_shell_environments
-                    .insert(tree_id, HashMap::default());
+                let tree_id = tree.read(cx).id();
+                project.environment =
+                    ProjectEnvironment::test(&[(tree_id, HashMap::default())], cx);
             });
 
             tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
@@ -1373,6 +1382,10 @@ impl Project {
 
     pub fn opened_buffers(&self, cx: &AppContext) -> Vec<Model<Buffer>> {
         self.buffer_store.read(cx).buffers().collect()
+    }
+
+    pub fn cli_environment(&self, cx: &AppContext) -> Option<HashMap<String, String>> {
+        self.environment.read(cx).get_cli_environment()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1729,7 +1742,8 @@ impl Project {
         message: proto::ResharedProject,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        self.shared_buffers.clear();
+        self.buffer_store
+            .update(cx, |buffer_store, _| buffer_store.forget_shared_buffers());
         self.set_collaborators_from_proto(message.collaborators, cx)?;
         self.metadata_changed(cx);
         cx.emit(Event::Reshared);
@@ -1799,13 +1813,14 @@ impl Project {
         if let ProjectClientState::Shared { remote_id, .. } = self.client_state {
             self.client_state = ProjectClientState::Local;
             self.collaborators.clear();
-            self.shared_buffers.clear();
             self.client_subscriptions.clear();
             self.worktree_store.update(cx, |store, cx| {
                 store.set_shared(false, cx);
             });
-            self.buffer_store
-                .update(cx, |buffer_store, cx| buffer_store.set_remote_id(None, cx));
+            self.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.forget_shared_buffers();
+                buffer_store.set_remote_id(None, cx)
+            });
             self.client
                 .send(proto::UnshareProject {
                     project_id: remote_id,
@@ -2421,6 +2436,16 @@ impl Project {
             BufferStoreEvent::MessageToReplicas(message) => {
                 self.client.send_dynamic(message.as_ref().clone()).log_err();
             }
+            BufferStoreEvent::BufferDropped(buffer_id) => {
+                if let Some(ref ssh_session) = self.ssh_session {
+                    ssh_session
+                        .send(proto::CloseBuffer {
+                            project_id: 0,
+                            buffer_id: buffer_id.to_proto(),
+                        })
+                        .log_err();
+                }
+            }
         }
     }
 
@@ -3027,12 +3052,14 @@ impl Project {
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let lsp_adapter_delegate = ProjectLspAdapterDelegate::new(self, worktree_handle, cx);
+        let cli_environment = self.environment.read(cx).get_cli_environment();
         let pending_server = match self.languages.create_pending_language_server(
             stderr_capture.clone(),
             language.clone(),
             adapter.clone(),
             Arc::clone(&worktree_path),
             lsp_adapter_delegate.clone(),
+            cli_environment,
             cx,
         ) {
             Some(pending_server) => pending_server,
@@ -5432,6 +5459,11 @@ impl Project {
         })?;
 
         let mut child = smol::process::Command::new(command);
+        #[cfg(target_os = "windows")]
+        {
+            use smol::process::windows::CommandExt;
+            child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+        }
 
         if let Some(working_dir_path) = working_dir_path {
             child.current_dir(working_dir_path);
@@ -7216,8 +7248,11 @@ impl Project {
     ) -> Receiver<SearchResult> {
         let (result_tx, result_rx) = smol::channel::unbounded();
 
-        let matching_buffers_rx =
-            self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx);
+        let matching_buffers_rx = if query.is_opened_only() {
+            self.sort_candidate_buffers(&query, cx)
+        } else {
+            self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx)
+        };
 
         cx.spawn(|_, cx| async move {
             let mut range_count = 0;
@@ -7295,6 +7330,48 @@ impl Project {
         }
     }
 
+    fn sort_candidate_buffers(
+        &mut self,
+        search_query: &SearchQuery,
+        cx: &mut ModelContext<Project>,
+    ) -> Receiver<Model<Buffer>> {
+        let worktree_store = self.worktree_store.read(cx);
+        let mut buffers = search_query
+            .buffers()
+            .into_iter()
+            .flatten()
+            .filter(|buffer| {
+                let b = buffer.read(cx);
+                if let Some(file) = b.file() {
+                    if !search_query.file_matches(file.path()) {
+                        return false;
+                    }
+                    if let Some(entry) = b
+                        .entry_id(cx)
+                        .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
+                    {
+                        if entry.is_ignored && !search_query.include_ignored() {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            })
+            .collect::<Vec<_>>();
+        let (tx, rx) = smol::channel::unbounded();
+        buffers.sort_by(|a, b| match (a.read(cx).file(), b.read(cx).file()) {
+            (None, None) => a.read(cx).remote_id().cmp(&b.read(cx).remote_id()),
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (Some(a), Some(b)) => compare_paths((a.path(), true), (b.path(), true)),
+        });
+        for buffer in buffers {
+            tx.send_blocking(buffer.clone()).unwrap()
+        }
+
+        rx
+    }
+
     fn search_for_candidate_buffers_remote(
         &mut self,
         query: &SearchQuery,
@@ -7317,7 +7394,7 @@ impl Project {
             query: Some(query.to_proto()),
             limit: limit as _,
         });
-        let guard = self.retain_remotely_created_buffers();
+        let guard = self.retain_remotely_created_buffers(cx);
 
         cx.spawn(move |this, mut cx| async move {
             let response = request.await?;
@@ -7851,7 +7928,9 @@ impl Project {
         }
         self.diagnostics.remove(&id_to_remove);
         self.diagnostic_summaries.remove(&id_to_remove);
-        self.cached_shell_environments.remove(&id_to_remove);
+        self.environment.update(cx, |environment, _| {
+            environment.remove_worktree_environment(id_to_remove);
+        });
 
         let mut servers_to_remove = HashMap::default();
         let mut servers_to_preserve = HashSet::default();
@@ -8543,7 +8622,9 @@ impl Project {
 
         let collaborator = Collaborator::from_proto(collaborator)?;
         this.update(&mut cx, |this, cx| {
-            this.shared_buffers.remove(&collaborator.peer_id);
+            this.buffer_store.update(cx, |buffer_store, _| {
+                buffer_store.forget_shared_buffers_for(&collaborator.peer_id);
+            });
             cx.emit(Event::CollaboratorJoined(collaborator.peer_id));
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);
@@ -8574,16 +8655,10 @@ impl Project {
             let is_host = collaborator.replica_id == 0;
             this.collaborators.insert(new_peer_id, collaborator);
 
-            let buffers = this.shared_buffers.remove(&old_peer_id);
-            log::info!(
-                "peer {} became {}. moving buffers {:?}",
-                old_peer_id,
-                new_peer_id,
-                &buffers
-            );
-            if let Some(buffers) = buffers {
-                this.shared_buffers.insert(new_peer_id, buffers);
-            }
+            log::info!("peer {} became {}", old_peer_id, new_peer_id,);
+            this.buffer_store.update(cx, |buffer_store, _| {
+                buffer_store.update_peer_id(&old_peer_id, new_peer_id)
+            });
 
             if is_host {
                 this.buffer_store
@@ -8618,11 +8693,11 @@ impl Project {
                 .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?
                 .replica_id;
             this.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.forget_shared_buffers_for(&peer_id);
                 for buffer in buffer_store.buffers() {
                     buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
                 }
             });
-            this.shared_buffers.remove(&peer_id);
 
             cx.emit(Event::CollaboratorLeft(peer_id));
             cx.notify();
@@ -8835,8 +8910,17 @@ impl Project {
         BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
     }
 
-    fn retain_remotely_created_buffers(&mut self) -> RemotelyCreatedBufferGuard {
-        self.remotely_created_buffers.lock().retain_count += 1;
+    fn retain_remotely_created_buffers(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+    ) -> RemotelyCreatedBufferGuard {
+        {
+            let mut remotely_created_buffers = self.remotely_created_buffers.lock();
+            if remotely_created_buffers.retain_count == 0 {
+                remotely_created_buffers.buffers = self.buffer_store.read(cx).buffers().collect();
+            }
+            remotely_created_buffers.retain_count += 1;
+        }
         RemotelyCreatedBufferGuard {
             remote_buffers: Arc::downgrade(&self.remotely_created_buffers),
         }
@@ -8888,86 +8972,11 @@ impl Project {
         envelope: TypedEnvelope<proto::SynchronizeBuffers>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::SynchronizeBuffersResponse> {
-        let project_id = envelope.payload.project_id;
-        let mut response = proto::SynchronizeBuffersResponse {
-            buffers: Default::default(),
-        };
-
-        this.update(&mut cx, |this, cx| {
-            let Some(guest_id) = envelope.original_sender_id else {
-                error!("missing original_sender_id on SynchronizeBuffers request");
-                bail!("missing original_sender_id on SynchronizeBuffers request");
-            };
-
-            this.shared_buffers.entry(guest_id).or_default().clear();
-            for buffer in envelope.payload.buffers {
-                let buffer_id = BufferId::new(buffer.id)?;
-                let remote_version = language::proto::deserialize_version(&buffer.version);
-                if let Some(buffer) = this.buffer_for_id(buffer_id, cx) {
-                    this.shared_buffers
-                        .entry(guest_id)
-                        .or_default()
-                        .insert(buffer_id);
-
-                    let buffer = buffer.read(cx);
-                    response.buffers.push(proto::BufferVersion {
-                        id: buffer_id.into(),
-                        version: language::proto::serialize_version(&buffer.version),
-                    });
-
-                    let operations = buffer.serialize_ops(Some(remote_version), cx);
-                    let client = this.client.clone();
-                    if let Some(file) = buffer.file() {
-                        client
-                            .send(proto::UpdateBufferFile {
-                                project_id,
-                                buffer_id: buffer_id.into(),
-                                file: Some(file.to_proto(cx)),
-                            })
-                            .log_err();
-                    }
-
-                    client
-                        .send(proto::UpdateDiffBase {
-                            project_id,
-                            buffer_id: buffer_id.into(),
-                            diff_base: buffer.diff_base().map(ToString::to_string),
-                        })
-                        .log_err();
-
-                    client
-                        .send(proto::BufferReloaded {
-                            project_id,
-                            buffer_id: buffer_id.into(),
-                            version: language::proto::serialize_version(buffer.saved_version()),
-                            mtime: buffer.saved_mtime().map(|time| time.into()),
-                            line_ending: language::proto::serialize_line_ending(
-                                buffer.line_ending(),
-                            ) as i32,
-                        })
-                        .log_err();
-
-                    cx.background_executor()
-                        .spawn(
-                            async move {
-                                let operations = operations.await;
-                                for chunk in split_operations(operations) {
-                                    client
-                                        .request(proto::UpdateBuffer {
-                                            project_id,
-                                            buffer_id: buffer_id.into(),
-                                            operations: chunk,
-                                        })
-                                        .await?;
-                                }
-                                anyhow::Ok(())
-                            }
-                            .log_err(),
-                        )
-                        .detach();
-                }
-            }
-            Ok(())
+        let response = this.update(&mut cx, |this, cx| {
+            let client = this.client.clone();
+            this.buffer_store.update(cx, |this, cx| {
+                this.handle_synchronize_buffers(envelope, cx, client)
+            })
         })??;
 
         Ok(response)
@@ -9795,35 +9804,20 @@ impl Project {
         peer_id: proto::PeerId,
         cx: &mut AppContext,
     ) -> BufferId {
-        let buffer_id = buffer.read(cx).remote_id();
-        if !self
-            .shared_buffers
-            .entry(peer_id)
-            .or_default()
-            .insert(buffer_id)
-        {
-            return buffer_id;
+        if let Some(project_id) = self.remote_id() {
+            self.buffer_store
+                .update(cx, |buffer_store, cx| {
+                    buffer_store.create_buffer_for_peer(
+                        buffer,
+                        peer_id,
+                        project_id,
+                        self.client.clone().into(),
+                        cx,
+                    )
+                })
+                .detach_and_log_err(cx);
         }
-        let ProjectClientState::Shared { remote_id } = self.client_state else {
-            return buffer_id;
-        };
-        let buffer_store = self.buffer_store.clone();
-        let client = self.client().clone();
-
-        cx.spawn(|mut cx| async move {
-            BufferStore::create_buffer_for_peer(
-                buffer_store,
-                peer_id,
-                buffer_id,
-                remote_id,
-                client.clone().into(),
-                &mut cx,
-            )
-            .await?;
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-        buffer_id
+        buffer.read(cx).remote_id()
     }
 
     fn wait_for_remote_buffer(
@@ -10299,16 +10293,16 @@ impl Project {
         cx: &mut ModelContext<'_, Project>,
     ) -> Task<Option<TaskContext>> {
         if self.is_local_or_ssh() {
-            let (worktree_id, cwd) = if let Some(worktree) = self.task_worktree(cx) {
+            let (worktree_id, worktree_abs_path) = if let Some(worktree) = self.task_worktree(cx) {
                 (
                     Some(worktree.read(cx).id()),
-                    Some(self.task_cwd(worktree, cx)),
+                    Some(worktree.read(cx).abs_path()),
                 )
             } else {
                 (None, None)
             };
 
-            cx.spawn(|project, cx| async move {
+            cx.spawn(|project, mut cx| async move {
                 let mut task_variables = cx
                     .update(|cx| {
                         combine_task_variables(
@@ -10324,17 +10318,19 @@ impl Project {
                 // Remove all custom entries starting with _, as they're not intended for use by the end user.
                 task_variables.sweep();
 
-                let mut project_env = None;
-                if let Some((worktree_id, cwd)) = worktree_id.zip(cwd.as_ref()) {
-                    let env = Self::get_worktree_shell_env(project, worktree_id, cwd, cx).await;
-                    if let Some(env) = env {
-                        project_env.replace(env);
-                    }
-                };
+                let project_env = project
+                    .update(&mut cx, |project, cx| {
+                        let worktree_abs_path = worktree_abs_path.clone();
+                        project.environment.update(cx, |environment, cx| {
+                            environment.get_environment(worktree_id, worktree_abs_path, cx)
+                        })
+                    })
+                    .ok()?
+                    .await;
 
                 Some(TaskContext {
                     project_env: project_env.unwrap_or_default(),
-                    cwd,
+                    cwd: worktree_abs_path.map(|p| p.to_path_buf()),
                     task_variables,
                 })
             })
@@ -10372,50 +10368,6 @@ impl Project {
             })
         } else {
             Task::ready(None)
-        }
-    }
-
-    async fn get_worktree_shell_env(
-        this: WeakModel<Self>,
-        worktree_id: WorktreeId,
-        cwd: &PathBuf,
-        mut cx: AsyncAppContext,
-    ) -> Option<HashMap<String, String>> {
-        let cached_env = this
-            .update(&mut cx, |project, _| {
-                project.cached_shell_environments.get(&worktree_id).cloned()
-            })
-            .ok()?;
-
-        if let Some(env) = cached_env {
-            Some(env)
-        } else {
-            let load_direnv = this
-                .update(&mut cx, |_, cx| {
-                    ProjectSettings::get_global(cx).load_direnv.clone()
-                })
-                .ok()?;
-
-            let shell_env = cx
-                .background_executor()
-                .spawn({
-                    let cwd = cwd.clone();
-                    async move {
-                        load_shell_environment(&cwd, &load_direnv)
-                            .await
-                            .unwrap_or_default()
-                    }
-                })
-                .await;
-
-            this.update(&mut cx, |project, _| {
-                project
-                    .cached_shell_environments
-                    .insert(worktree_id, shell_env.clone());
-            })
-            .ok()?;
-
-            Some(shell_env)
         }
     }
 
@@ -10566,10 +10518,6 @@ impl Project {
                 })
             }),
         }
-    }
-
-    fn task_cwd(&self, worktree: Model<Worktree>, cx: &AppContext) -> PathBuf {
-        worktree.read(cx).abs_path().to_path_buf()
     }
 }
 
@@ -10868,38 +10816,29 @@ pub struct ProjectLspAdapterDelegate {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
-    shell_env: Mutex<Option<HashMap<String, String>>>,
-    load_direnv: DirenvSettings,
+    load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
 }
 
 impl ProjectLspAdapterDelegate {
     pub fn new(
         project: &Project,
         worktree: &Model<Worktree>,
-        cx: &ModelContext<Project>,
+        cx: &mut ModelContext<Project>,
     ) -> Arc<Self> {
-        let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
+        let worktree_id = worktree.read(cx).id();
+        let worktree_abs_path = worktree.read(cx).abs_path();
+        let load_shell_env_task = project.environment.update(cx, |env, cx| {
+            env.get_environment(Some(worktree_id), Some(worktree_abs_path), cx)
+        });
+
         Arc::new(Self {
             project: cx.weak_model(),
             worktree: worktree.read(cx).snapshot(),
             fs: project.fs.clone(),
             http_client: project.client.http_client(),
             language_registry: project.languages.clone(),
-            shell_env: Default::default(),
-            load_direnv,
+            load_shell_env_task,
         })
-    }
-
-    async fn load_shell_env(&self) {
-        let worktree_abs_path = self.worktree.abs_path();
-        let shell_env = load_shell_environment(&worktree_abs_path, &self.load_direnv)
-            .await
-            .with_context(|| {
-                format!("failed to determine load login shell environment in {worktree_abs_path:?}")
-            })
-            .log_err()
-            .unwrap_or_default();
-        *self.shell_env.lock() = Some(shell_env);
     }
 }
 
@@ -10924,19 +10863,14 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {
-        self.load_shell_env().await;
-        self.shell_env.lock().as_ref().cloned().unwrap_or_default()
+        let task = self.load_shell_env_task.clone();
+        task.await.unwrap_or_default()
     }
 
     #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
-        self.load_shell_env().await;
-        let shell_path = self
-            .shell_env
-            .lock()
-            .as_ref()
-            .and_then(|shell_env| shell_env.get("PATH").cloned());
+        let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), &worktree_abs_path).ok()
     }
 
@@ -11098,115 +11032,6 @@ fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
             }
         },
     }
-}
-
-async fn load_direnv_environment(dir: &Path) -> Result<Option<HashMap<String, String>>> {
-    let Ok(direnv_path) = which::which("direnv") else {
-        return Ok(None);
-    };
-
-    let direnv_output = smol::process::Command::new(direnv_path)
-        .args(["export", "json"])
-        .current_dir(dir)
-        .output()
-        .await
-        .context("failed to spawn direnv to get local environment variables")?;
-
-    anyhow::ensure!(
-        direnv_output.status.success(),
-        "direnv exited with error {:?}",
-        direnv_output.status
-    );
-
-    let output = String::from_utf8_lossy(&direnv_output.stdout);
-    if output.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(
-        serde_json::from_str(&output).context("failed to parse direnv output")?,
-    ))
-}
-
-async fn load_shell_environment(
-    dir: &Path,
-    load_direnv: &DirenvSettings,
-) -> Result<HashMap<String, String>> {
-    let direnv_environment = match load_direnv {
-        DirenvSettings::ShellHook => None,
-        DirenvSettings::Direct => load_direnv_environment(dir).await?,
-    }
-    .unwrap_or(HashMap::default());
-
-    let marker = "ZED_SHELL_START";
-    let shell = env::var("SHELL").context(
-        "SHELL environment variable is not assigned so we can't source login environment variables",
-    )?;
-
-    // What we're doing here is to spawn a shell and then `cd` into
-    // the project directory to get the env in there as if the user
-    // `cd`'d into it. We do that because tools like direnv, asdf, ...
-    // hook into `cd` and only set up the env after that.
-    //
-    // If the user selects `Direct` for direnv, it would set an environment
-    // variable that later uses to know that it should not run the hook.
-    // We would include in `.envs` call so it is okay to run the hook
-    // even if direnv direct mode is enabled.
-    //
-    // In certain shells we need to execute additional_command in order to
-    // trigger the behavior of direnv, etc.
-    //
-    //
-    // The `exit 0` is the result of hours of debugging, trying to find out
-    // why running this command here, without `exit 0`, would mess
-    // up signal process for our process so that `ctrl-c` doesn't work
-    // anymore.
-    //
-    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
-    // do that, but it does, and `exit 0` helps.
-    let additional_command = PathBuf::from(&shell)
-        .file_name()
-        .and_then(|f| f.to_str())
-        .and_then(|shell| match shell {
-            "fish" => Some("emit fish_prompt;"),
-            _ => None,
-        });
-
-    let command = format!(
-        "cd '{}';{} printf '%s' {marker}; /usr/bin/env; exit 0;",
-        dir.display(),
-        additional_command.unwrap_or("")
-    );
-
-    let output = smol::process::Command::new(&shell)
-        .args(["-i", "-c", &command])
-        .envs(direnv_environment)
-        .output()
-        .await
-        .context("failed to spawn login shell to source login environment variables")?;
-
-    anyhow::ensure!(
-        output.status.success(),
-        "login shell exited with error {:?}",
-        output.status
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let env_output_start = stdout.find(marker).ok_or_else(|| {
-        anyhow!(
-            "failed to parse output of `env` command in login shell: {}",
-            stdout
-        )
-    })?;
-
-    let mut parsed_env = HashMap::default();
-    let env_output = &stdout[env_output_start + marker.len()..];
-
-    parse_env_output(env_output, |key, value| {
-        parsed_env.insert(key, value);
-    });
-
-    Ok(parsed_env)
 }
 
 fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {

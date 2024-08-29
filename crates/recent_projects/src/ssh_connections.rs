@@ -358,6 +358,7 @@ pub async fn open_ssh_project(
             app_state.user_store.clone(),
             app_state.languages.clone(),
             app_state.fs.clone(),
+            None,
             cx,
         );
         cx.new_view(|cx| Workspace::new(None, project, app_state.clone(), cx))

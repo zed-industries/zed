@@ -84,11 +84,15 @@ impl SlashCommand for ContextServerSlashCommand {
 
                 Ok(SlashCommandOutput {
                     sections: vec![SlashCommandOutputSection {
-                        range: 0..result.len(),
+                        range: 0..(result.prompt.len()),
                         icon: IconName::ZedAssistant,
-                        label: SharedString::from(format!("Result from {}", prompt_name)),
+                        label: SharedString::from(
+                            result
+                                .description
+                                .unwrap_or(format!("Result from {}", prompt_name)),
+                        ),
                     }],
-                    text: result,
+                    text: result.prompt,
                     run_commands_in_text: false,
                 })
             })

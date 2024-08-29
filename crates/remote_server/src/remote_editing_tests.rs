@@ -4,7 +4,7 @@ use clock::FakeSystemClock;
 use fs::{FakeFs, Fs};
 use gpui::{Context, Model, TestAppContext};
 use http_client::FakeHttpClient;
-use language::LanguageRegistry;
+use language::{Buffer, LanguageRegistry};
 use node_runtime::FakeNodeRuntime;
 use project::{
     search::{SearchQuery, SearchResult},
@@ -121,7 +121,7 @@ async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppCon
 
 #[gpui::test]
 async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let (project, _, _) = init_test(cx, server_cx).await;
+    let (project, headless, _) = init_test(cx, server_cx).await;
 
     project
         .update(cx, |project, cx| {
@@ -132,33 +132,56 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
 
     cx.run_until_parked();
 
-    let mut receiver = project.update(cx, |project, cx| {
-        project.search(
-            SearchQuery::text(
-                "project",
-                false,
-                true,
-                false,
-                Default::default(),
-                Default::default(),
+    async fn do_search(project: &Model<Project>, mut cx: TestAppContext) -> Model<Buffer> {
+        let mut receiver = project.update(&mut cx, |project, cx| {
+            project.search(
+                SearchQuery::text(
+                    "project",
+                    false,
+                    true,
+                    false,
+                    Default::default(),
+                    Default::default(),
+                    None,
+                )
+                .unwrap(),
+                cx,
             )
-            .unwrap(),
-            cx,
-        )
+        });
+
+        let first_response = receiver.next().await.unwrap();
+        let SearchResult::Buffer { buffer, .. } = first_response else {
+            panic!("incorrect result");
+        };
+        buffer.update(&mut cx, |buffer, cx| {
+            assert_eq!(
+                buffer.file().unwrap().full_path(cx).to_string_lossy(),
+                "project1/README.md"
+            )
+        });
+
+        assert!(receiver.next().await.is_none());
+        buffer
+    }
+
+    let buffer = do_search(&project, cx.clone()).await;
+
+    // test that the headless server is tracking which buffers we have open correctly.
+    cx.run_until_parked();
+    headless.update(server_cx, |headless, cx| {
+        assert!(!headless.buffer_store.read(cx).shared_buffers().is_empty())
+    });
+    do_search(&project, cx.clone()).await;
+
+    cx.update(|_| {
+        drop(buffer);
+    });
+    cx.run_until_parked();
+    headless.update(server_cx, |headless, cx| {
+        assert!(headless.buffer_store.read(cx).shared_buffers().is_empty())
     });
 
-    let first_response = receiver.next().await.unwrap();
-    let SearchResult::Buffer { buffer, .. } = first_response else {
-        panic!("incorrect result");
-    };
-    buffer.update(cx, |buffer, cx| {
-        assert_eq!(
-            buffer.file().unwrap().full_path(cx).to_string_lossy(),
-            "project1/README.md"
-        )
-    });
-
-    assert!(receiver.next().await.is_none());
+    do_search(&project, cx.clone()).await;
 }
 
 fn init_logger() {

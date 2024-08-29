@@ -19,7 +19,7 @@ To support automatically formatting your code, you can use [JohnnyMorganz/StyLua
 Install with:
 
 ```sh
-# MacOS via HomeBrew
+# macOS via Homebrew
 brew install stylua
 # Or via Cargo
 cargo install stylua --features lua52,lua53,lua54,luau
@@ -29,13 +29,13 @@ Then add the following to your Zed `settings.json`:
 
 ```json
   "languages": {
-		"Luau": {
-			"formatter": {
-				"external": {
-					"command": "stylua",
-					"arguments": ["-"]
-				}
-			}
-		}
-	}
+    "Luau": {
+      "formatter": {
+        "external": {
+          "command": "stylua",
+          "arguments": ["-"]
+        }
+      }
+    }
+  }
 ```

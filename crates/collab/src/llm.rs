@@ -237,10 +237,22 @@ async fn perform_completion(
             .await
             .map_err(|err| match err {
                 anthropic::AnthropicError::ApiError(ref api_error) => match api_error.code() {
-                    Some(anthropic::ApiErrorCode::RateLimitError) => Error::http(
-                        StatusCode::TOO_MANY_REQUESTS,
-                        "Upstream Anthropic rate limit exceeded.".to_string(),
-                    ),
+                    Some(anthropic::ApiErrorCode::RateLimitError) => {
+                        tracing::info!(
+                            target: "upstream rate limit exceeded",
+                            user_id = claims.user_id,
+                            login = claims.github_user_login,
+                            authn.jti = claims.jti,
+                            is_staff = claims.is_staff,
+                            provider = params.provider.to_string(),
+                            model = model
+                        );
+
+                        Error::http(
+                            StatusCode::TOO_MANY_REQUESTS,
+                            "Upstream Anthropic rate limit exceeded.".to_string(),
+                        )
+                    }
                     Some(anthropic::ApiErrorCode::InvalidRequestError) => {
                         Error::http(StatusCode::BAD_REQUEST, api_error.message.clone())
                     }

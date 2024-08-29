@@ -67,7 +67,7 @@ mod macos {
             .allowlist_function("dispatch_suspend")
             .allowlist_function("dispatch_source_cancel")
             .allowlist_function("dispatch_set_context")
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .layout_tests(false)
             .generate()
             .expect("unable to generate bindings");

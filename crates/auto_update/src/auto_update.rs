@@ -88,6 +88,34 @@ struct JsonRelease {
     url: String,
 }
 
+struct MacOsUnmounter {
+    mount_path: PathBuf,
+}
+
+impl Drop for MacOsUnmounter {
+    fn drop(&mut self) {
+        let unmount_output = std::process::Command::new("hdiutil")
+            .args(&["detach", "-force"])
+            .arg(&self.mount_path)
+            .output();
+
+        match unmount_output {
+            Ok(output) if output.status.success() => {
+                log::info!("Successfully unmounted the disk image");
+            }
+            Ok(output) => {
+                log::error!(
+                    "Failed to unmount disk image: {:?}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            Err(error) => {
+                log::error!("Error while trying to unmount disk image: {:?}", error);
+            }
+        }
+    }
+}
+
 struct AutoUpdateSetting(bool);
 
 /// Whether or not to automatically check for updates.
@@ -739,6 +767,11 @@ async fn install_release_macos(
         String::from_utf8_lossy(&output.stderr)
     );
 
+    // Create an MacOsUnmounter that will be dropped (and thus unmount the disk) when this function exits
+    let _unmounter = MacOsUnmounter {
+        mount_path: mount_path.clone(),
+    };
+
     let output = Command::new("rsync")
         .args(&["-av", "--delete"])
         .arg(&mounted_app_path)
@@ -749,18 +782,6 @@ async fn install_release_macos(
     anyhow::ensure!(
         output.status.success(),
         "failed to copy app: {:?}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let output = Command::new("hdiutil")
-        .args(&["detach"])
-        .arg(&mount_path)
-        .output()
-        .await?;
-
-    anyhow::ensure!(
-        output.status.success(),
-        "failed to unount: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
 

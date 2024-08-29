@@ -11,7 +11,7 @@ Report issues to: [https://github.com/d1y/bash.zed/issues](https://github.com/d1
 The bash-language-server support shellcheck. But you need to install it manually:
 
 ```sh
-# MacOS
+# macOS
 brew install shellcheck
 
 # Ubuntu/Debian
