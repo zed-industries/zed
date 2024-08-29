@@ -1256,7 +1256,7 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         };
         Some(Keystroke {
             modifiers,
-            key: VirtualKeyCode::from_str(&key),
+            key: VirtualKeyCode::from_str(&key).log_err()?,
             ime_key: Some(first_char.to_string()),
         })
     }

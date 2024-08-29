@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 use serde::Deserialize;
 use std::fmt::Write;
+use util::ResultExt;
 
 use crate::keycodes::VirtualKeyCode;
 
@@ -56,7 +57,6 @@ impl Keystroke {
     /// ime_key syntax is only used for generating test events,
     /// when matching a key with an ime_key set will be matched without it.
     pub fn parse(source: &str) -> anyhow::Result<Self> {
-        println!("-> Parsing: {}", source);
         let mut control = false;
         let mut alt = false;
         let mut shift = false;
@@ -76,11 +76,9 @@ impl Keystroke {
                 _ => {
                     if let Some(next) = components.peek() {
                         if next.is_empty() && source.ends_with('-') {
-                            // key = Some(String::from("-"));
                             key = Some(VirtualKeyCode::from_str("-"));
                             break;
                         } else if next.len() > 1 && next.starts_with('>') {
-                            // key = Some(String::from(component));
                             key = Some(VirtualKeyCode::from_str(component));
                             ime_key = Some(String::from(&next[1..]));
                             components.next();
@@ -88,45 +86,39 @@ impl Keystroke {
                             return Err(anyhow!("Invalid keystroke `{}`", source));
                         }
                     } else {
-                        // key = Some(String::from(component));
                         key = Some(VirtualKeyCode::from_str(component));
                     }
                 }
             }
         }
 
-        // TODO:
         //Allow for the user to specify a keystroke modifier as the key itself
         //This sets the `key` to the modifier, and disables the modifier
         if key.is_none() {
             if shift {
-                // key = Some("shift".to_string());
-                key = Some(VirtualKeyCode::Shift);
+                key = Some(Ok(VirtualKeyCode::Shift));
                 shift = false;
             } else if control {
-                // key = Some("control".to_string());
-                key = Some(VirtualKeyCode::Control);
+                key = Some(Ok(VirtualKeyCode::Control));
                 control = false;
             } else if alt {
-                // key = Some("alt".to_string());
-                key = Some(VirtualKeyCode::Alt);
+                key = Some(Ok(VirtualKeyCode::Alt));
                 alt = false;
             } else if platform {
-                // key = Some("platform".to_string());
-                key = Some(VirtualKeyCode::LeftPlatform);
+                key = Some(Ok(VirtualKeyCode::LeftPlatform));
                 platform = false;
             } else if function {
-                // key = Some("function".to_string());
-                key = Some(VirtualKeyCode::Function);
+                key = Some(Ok(VirtualKeyCode::Function));
                 function = false;
             }
         }
-        println!("      => key: {:?}", key);
 
-        let key = key.ok_or_else(|| anyhow!("Invalid keystroke `{}`", source))?;
-        if key == VirtualKeyCode::Unknown {
-            log::error!("Error parsing: {}->{:?}", source, key);
-        }
+        // TODO:
+        // Return Err here actually makes the app panicing.
+        let key = key
+            .ok_or_else(|| anyhow!("Invalid keystroke `{}`", source))?
+            .log_err()
+            .unwrap_or_default();
 
         let ret = Ok(Keystroke {
             modifiers: Modifiers {
