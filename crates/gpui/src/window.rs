@@ -1,19 +1,20 @@
 use crate::{
-    point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
-    AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow,
-    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
-    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, Flatten, FontId, GPUSpecs, Global, GlobalElementId, GlyphId, Hsla, InputHandler,
-    IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Model, ModelContext, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
+    keycodes::VirtualKeyCode, point, prelude::*, px, size, transparent_black, Action, AnyDrag,
+    AnyElement, AnyTooltip, AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace,
+    Bounds, BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, Flatten, FontId, GPUSpecs, Global, GlobalElementId,
+    GlyphId, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, ScaledPixels, Scene,
+    Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
+    UnderlineStyle, View, VisualContext, WeakView, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -3244,16 +3245,16 @@ impl<'a> WindowContext<'a> {
                 && !self.window.pending_modifier.saw_keystroke
             {
                 let key = match self.window.pending_modifier.modifiers {
-                    modifiers if modifiers.shift => Some("shift"),
-                    modifiers if modifiers.control => Some("control"),
-                    modifiers if modifiers.alt => Some("alt"),
-                    modifiers if modifiers.platform => Some("platform"),
-                    modifiers if modifiers.function => Some("function"),
+                    modifiers if modifiers.shift => Some(VirtualKeyCode::Shift),
+                    modifiers if modifiers.control => Some(VirtualKeyCode::Control),
+                    modifiers if modifiers.alt => Some(VirtualKeyCode::Alt),
+                    modifiers if modifiers.platform => Some(VirtualKeyCode::LeftPlatform),
+                    modifiers if modifiers.function => Some(VirtualKeyCode::Function),
                     _ => None,
                 };
                 if let Some(key) = key {
                     keystroke = Some(Keystroke {
-                        key: key.to_string(),
+                        key,
                         ime_key: None,
                         modifiers: Modifiers::default(),
                     });
