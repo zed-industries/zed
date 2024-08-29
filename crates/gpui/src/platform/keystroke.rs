@@ -120,7 +120,7 @@ impl Keystroke {
             .log_err()
             .unwrap_or_default();
 
-        let ret = Ok(Keystroke {
+        Ok(Keystroke {
             modifiers: Modifiers {
                 control,
                 alt,
@@ -130,9 +130,7 @@ impl Keystroke {
             },
             key,
             ime_key,
-        });
-        println!("--> Res: {:#?}", ret);
-        ret
+        })
     }
 
     // TODO: https://github.com/zed-industries/zed/pull/13185
@@ -444,55 +442,108 @@ impl Modifiers {
 
 #[cfg(test)]
 mod tests {
-    use crate::Keystroke;
+    use crate::{Keystroke, Modifiers, VirtualKeyCode};
 
-    ///   Code     Modifiers
-    /// ---------+---------------------------
-    ///    2     | Shift
-    ///    3     | Alt
-    ///    4     | Shift + Alt
-    ///    5     | Control
-    ///    6     | Shift + Control
-    ///    7     | Alt + Control
-    ///    8     | Shift + Alt + Control
-    /// ---------+---------------------------
-    /// from: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-PC-Style-Function-Keys
-    fn modifier_code(keystroke: &Keystroke) -> u32 {
-        let mut modifier_code = 0;
-        if keystroke.modifiers.shift {
-            modifier_code |= 1;
-        }
-        if keystroke.modifiers.alt {
-            modifier_code |= 1 << 1;
-        }
-        if keystroke.modifiers.control {
-            modifier_code |= 1 << 2;
-        }
-        modifier_code + 1
+    // TODO:
+    // Add tests for different keyboard layouts
+    #[test]
+    fn test_keystroke_parse() {
+        // | Keystrokes
+        // +---------------------------
+        // | shift
+        // | alt
+        // | shift-a
+        // | shift-,
+        // | alt-q
+        // | cmd-shift-[
+        // | ctrl-shift-\
+        // | a
+        // +---------------------------
+        assert_eq!(
+            Keystroke {
+                key: VirtualKeyCode::Shift,
+                ..Default::default()
+            },
+            Keystroke::parse("shift").unwrap()
+        );
+        assert_eq!(
+            Keystroke {
+                key: VirtualKeyCode::Alt,
+                ..Default::default()
+            },
+            Keystroke::parse("alt").unwrap()
+        );
+        assert_eq!(
+            Keystroke {
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Default::default()
+                },
+                key: VirtualKeyCode::A,
+                ..Default::default()
+            },
+            Keystroke::parse("shift-a").unwrap()
+        );
+        assert_eq!(
+            Keystroke {
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Default::default()
+                },
+                key: VirtualKeyCode::OEMComma,
+                ..Default::default()
+            },
+            Keystroke::parse("shift-,").unwrap()
+        );
+        assert_eq!(
+            Keystroke {
+                modifiers: Modifiers {
+                    alt: true,
+                    ..Default::default()
+                },
+                key: VirtualKeyCode::Q,
+                ..Default::default()
+            },
+            Keystroke::parse("alt-q").unwrap()
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            Keystroke {
+                modifiers: Modifiers {
+                    platform: true,
+                    shift: true,
+                    ..Default::default()
+                },
+                key: VirtualKeyCode::OEM4,
+                ..Default::default()
+            },
+            Keystroke::parse("cmd-shift-[").unwrap()
+        );
+        assert_eq!(
+            Keystroke {
+                modifiers: Modifiers {
+                    control: true,
+                    shift: true,
+                    ..Default::default()
+                },
+                key: VirtualKeyCode::OEM5,
+                ..Default::default()
+            },
+            Keystroke::parse("ctrl-shift-\\").unwrap()
+        );
+        assert_eq!(
+            Keystroke {
+                key: VirtualKeyCode::A,
+                ..Default::default()
+            },
+            Keystroke::parse("a").unwrap()
+        );
     }
 
     #[test]
-    fn test_modifier_code_calc() {
-        //   Code     Modifiers
-        // ---------+---------------------------
-        //    2     | Shift
-        //    3     | Alt
-        //    4     | Shift + Alt
-        //    5     | Control
-        //    6     | Shift + Control
-        //    7     | Alt + Control
-        //    8     | Shift + Alt + Control
-        // ---------+---------------------------
-        // from: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-PC-Style-Function-Keys
-        assert_eq!(2, modifier_code(&Keystroke::parse("shift-a").unwrap()));
-        assert_eq!(3, modifier_code(&Keystroke::parse("alt-a").unwrap()));
-        assert_eq!(4, modifier_code(&Keystroke::parse("shift-alt-a").unwrap()));
-        assert_eq!(5, modifier_code(&Keystroke::parse("ctrl-a").unwrap()));
-        assert_eq!(6, modifier_code(&Keystroke::parse("shift-ctrl-a").unwrap()));
-        assert_eq!(7, modifier_code(&Keystroke::parse("alt-ctrl-a").unwrap()));
-        assert_eq!(
-            8,
-            modifier_code(&Keystroke::parse("shift-ctrl-alt-a").unwrap())
-        );
+    fn test_vkcode_parse_failure() {
+        assert!(VirtualKeyCode::from_str("{").is_err());
+        assert!(VirtualKeyCode::from_str("?").is_err());
+        assert!(VirtualKeyCode::from_str(">").is_err());
     }
 }
