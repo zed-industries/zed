@@ -1061,6 +1061,7 @@ impl Workspace {
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
         requesting_window: Option<WindowHandle<Workspace>>,
+        env: Option<HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Task<
         anyhow::Result<(
@@ -1074,6 +1075,7 @@ impl Workspace {
             app_state.user_store.clone(),
             app_state.languages.clone(),
             app_state.fs.clone(),
+            env,
             cx,
         );
 
@@ -1579,7 +1581,8 @@ impl Workspace {
         if self.project.read(cx).is_local_or_ssh() {
             Task::Ready(Some(Ok(callback(self, cx))))
         } else {
-            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, cx);
+            // TODO: Read the env from the project and pass it on to this?
+            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, None, cx);
             cx.spawn(|_vh, mut cx| async move {
                 let (workspace, _) = task.await?;
                 workspace.update(&mut cx, callback)
@@ -5202,10 +5205,12 @@ pub fn join_channel(
         let mut active_window =
             requesting_window.or_else(|| activate_any_workspace_window(&mut cx));
         if active_window.is_none() {
+            // TODO: WE could use workspace.with_local_workspace here
+
             // no open workspaces, make one to show the error in (blergh)
             let (window_handle, _) = cx
                 .update(|cx| {
-                    Workspace::new_local(vec![], app_state.clone(), requesting_window, cx)
+                    Workspace::new_local(vec![], app_state.clone(), requesting_window, None, cx)
                 })?
                 .await?;
 
@@ -5263,7 +5268,7 @@ pub async fn get_any_active_workspace(
     // find an existing workspace to focus and show call controls
     let active_window = activate_any_workspace_window(&mut cx);
     if active_window.is_none() {
-        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, cx))?
+        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, cx))?
             .await?;
     }
     activate_any_workspace_window(&mut cx).context("could not open zed")
@@ -5308,6 +5313,7 @@ pub fn local_workspace_windows(cx: &AppContext) -> Vec<WindowHandle<Workspace>> 
 pub struct OpenOptions {
     pub open_new_workspace: Option<bool>,
     pub replace_window: Option<WindowHandle<Workspace>>,
+    pub env: Option<HashMap<String, String>>,
 }
 
 #[allow(clippy::type_complexity)]
@@ -5385,6 +5391,7 @@ pub fn open_paths(
                     abs_paths,
                     app_state.clone(),
                     open_options.replace_window,
+                    open_options.env,
                     cx,
                 )
             })?
@@ -5394,11 +5401,12 @@ pub fn open_paths(
 }
 
 pub fn open_new(
+    open_options: OpenOptions,
     app_state: Arc<AppState>,
     cx: &mut AppContext,
     init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static + Send,
 ) -> Task<anyhow::Result<()>> {
-    let task = Workspace::new_local(Vec::new(), app_state, None, cx);
+    let task = Workspace::new_local(Vec::new(), app_state, None, open_options.env, cx);
     cx.spawn(|mut cx| async move {
         let (workspace, opened_paths) = task.await?;
         workspace.update(&mut cx, |workspace, cx| {
