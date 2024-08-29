@@ -2020,9 +2020,10 @@ impl ContextEditor {
         let this = cx.view().downgrade();
         let mut removed_crease_ids = Vec::new();
         let mut removed_block_ids = HashSet::default();
+        let mut editors_to_close = Vec::new();
         for range in removed {
             if let Some(state) = self.workflow_steps.remove(range) {
-                self.reject_workflow_step(range.clone(), cx);
+                editors_to_close.extend(self.hide_workflow_step(range.clone(), cx));
                 removed_block_ids.insert(state.header_block_id);
                 removed_crease_ids.push(state.header_crease_id);
                 removed_block_ids.extend(state.footer_block_id);
@@ -2031,7 +2032,7 @@ impl ContextEditor {
         }
 
         for range in updated {
-            self.reject_workflow_step(range.clone(), cx);
+            editors_to_close.extend(self.hide_workflow_step(range.clone(), cx));
         }
 
         self.editor.update(cx, |editor, cx| {
@@ -2239,6 +2240,10 @@ impl ContextEditor {
             editor.remove_blocks(removed_block_ids, None, cx);
         });
 
+        for (editor, editor_was_open) in editors_to_close {
+            self.close_workflow_editor(cx, editor, editor_was_open);
+        }
+
         self.update_active_workflow_step(cx);
     }
 
@@ -2386,7 +2391,7 @@ impl ContextEditor {
                 if let Some(pane) = workspace.pane_for(&editor) {
                     pane.update(cx, |pane, cx| {
                         let item_id = editor.entity_id();
-                        if !editor_was_open && pane.is_active_preview_item(item_id) {
+                        if !editor_was_open && !editor.read(cx).is_focused(cx) {
                             pane.close_item_by_id(item_id, SaveIntent::Skip, cx)
                                 .detach_and_log_err(cx);
                         }
