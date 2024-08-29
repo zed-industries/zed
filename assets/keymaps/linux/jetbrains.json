@@ -8,8 +8,8 @@
   {
     "context": "Editor",
     "bindings": {
-      "ctrl->": "zed::IncreaseBufferFontSize",
-      "ctrl-<": "zed::DecreaseBufferFontSize",
+      "ctrl-shift-.": "zed::IncreaseBufferFontSize",
+      "ctrl-shift-,": "zed::DecreaseBufferFontSize",
       "ctrl-shift-j": "editor::JoinLines",
       "ctrl-d": "editor::DuplicateLineDown",
       "ctrl-y": "editor::DeleteLine",

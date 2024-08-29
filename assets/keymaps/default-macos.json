@@ -27,7 +27,7 @@
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
       "cmd-=": "zed::IncreaseBufferFontSize",
-      "cmd-+": "zed::IncreaseBufferFontSize",
+      "cmd-shift-=": "zed::IncreaseBufferFontSize",
       "cmd--": "zed::DecreaseBufferFontSize",
       "cmd-0": "zed::ResetBufferFontSize",
       "cmd-,": "zed::OpenSettings",
@@ -125,7 +125,7 @@
       "cmd-;": "editor::ToggleLineNumbers",
       "cmd-alt-z": "editor::RevertSelectedHunks",
       "cmd-'": "editor::ToggleHunkDiff",
-      "cmd-\"": "editor::ExpandAllHunkDiffs",
+      "cmd-shift-'": "editor::ExpandAllHunkDiffs",
       "cmd-alt-g b": "editor::ToggleGitBlame",
       "cmd-i": "editor::ShowSignatureHelp",
       "ctrl-f12": "editor::GoToDeclaration",
@@ -144,8 +144,8 @@
       "cmd-alt-f": ["buffer_search::Deploy", { "replace_enabled": true }],
       "cmd-alt-l": ["buffer_search::Deploy", { "selection_search_enabled": true }],
       "cmd-e": ["buffer_search::Deploy", { "focus": false }],
-      "cmd->": "assistant::QuoteSelection",
-      "cmd-<": "assistant::InsertIntoEditor",
+      "cmd-shift-.": "assistant::QuoteSelection",
+      "cmd-shift-,": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol"
     }
   },
@@ -200,8 +200,8 @@
     "bindings": {
       "cmd-enter": "assistant::Assist",
       "cmd-s": "workspace::Save",
-      "cmd->": "assistant::QuoteSelection",
-      "cmd-<": "assistant::InsertIntoEditor",
+      "cmd-shift-.": "assistant::QuoteSelection",
+      "cmd-shift-,": "assistant::InsertIntoEditor",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
@@ -281,8 +281,8 @@
   {
     "context": "Pane",
     "bindings": {
-      "cmd-{": "pane::ActivatePrevItem",
-      "cmd-}": "pane::ActivateNextItem",
+      "cmd-shift-[": "pane::ActivatePrevItem",
+      "cmd-shift-]": "pane::ActivateNextItem",
       "alt-cmd-left": "pane::ActivatePrevItem",
       "alt-cmd-right": "pane::ActivateNextItem",
       "cmd-w": "pane::CloseActiveItem",
@@ -387,7 +387,7 @@
       // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
       "alt-cmd-o": "projects::OpenRecent",
       "alt-cmd-b": "branches::OpenRecent",
-      "ctrl-~": "workspace::NewTerminal",
+      "ctrl-shift-`": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
       "cmd-shift-s": "workspace::SaveAs",
@@ -419,7 +419,7 @@
       "cmd-shift-m": "diagnostics::Deploy",
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-shift-b": "outline_panel::ToggleFocus",
-      "cmd-?": "assistant::ToggleFocus",
+      "cmd-shift-/": "assistant::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
       "cmd-k m": "language_selector::Toggle",
       "escape": "workspace::Unfollow",
@@ -509,7 +509,7 @@
       // TODO: Move this to a dock open action
       "cmd-shift-c": "collab_panel::ToggleFocus",
       "cmd-alt-i": "zed::DebugElements",
-      "ctrl-:": "editor::ToggleInlayHints"
+      "ctrl-shift-;": "editor::ToggleInlayHints"
     }
   },
   {
