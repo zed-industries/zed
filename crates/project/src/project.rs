@@ -1384,6 +1384,10 @@ impl Project {
         self.buffer_store.read(cx).buffers().collect()
     }
 
+    pub fn cli_environment(&self, cx: &AppContext) -> Option<HashMap<String, String>> {
+        self.environment.read(cx).get_cli_environment()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn has_open_buffer(&self, path: impl Into<ProjectPath>, cx: &AppContext) -> bool {
         self.buffer_store

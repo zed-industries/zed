@@ -199,9 +199,7 @@ fn main() -> Result<()> {
     if args.foreground {
         app.run_foreground(url)?;
     } else {
-        println!("app.launch");
         app.launch(url)?;
-        println!("sender.join");
         sender.join().unwrap()?;
         pipe_handle.join().unwrap()?;
     }

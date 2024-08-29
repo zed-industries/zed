@@ -292,7 +292,6 @@ pub async fn handle_cli_connection(
                     cx.update(|cx| {
                         match OpenRequest::parse(urls, cx) {
                             Ok(open_request) => {
-                                // TODO: We need to pass the env in here too
                                 handle_open_request(
                                     open_request,
                                     app_state.clone(),

@@ -1581,8 +1581,8 @@ impl Workspace {
         if self.project.read(cx).is_local_or_ssh() {
             Task::Ready(Some(Ok(callback(self, cx))))
         } else {
-            // TODO: Read the env from the project and pass it on to this?
-            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, None, cx);
+            let env = self.project.read(cx).cli_environment(cx);
+            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, cx);
             cx.spawn(|_vh, mut cx| async move {
                 let (workspace, _) = task.await?;
                 workspace.update(&mut cx, callback)
@@ -5205,8 +5205,6 @@ pub fn join_channel(
         let mut active_window =
             requesting_window.or_else(|| activate_any_workspace_window(&mut cx));
         if active_window.is_none() {
-            // TODO: WE could use workspace.with_local_workspace here
-
             // no open workspaces, make one to show the error in (blergh)
             let (window_handle, _) = cx
                 .update(|cx| {

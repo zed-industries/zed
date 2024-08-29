@@ -244,7 +244,7 @@ impl DevServer {
                 this.app_state.user_store.clone(),
                 this.app_state.languages.clone(),
                 this.app_state.fs.clone(),
-                None, // TODO: Is this right?
+                None,
                 cx,
             );
 
