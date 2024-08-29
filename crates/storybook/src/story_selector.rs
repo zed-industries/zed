@@ -20,6 +20,7 @@ pub enum ComponentStory {
     CollabNotification,
     ContextMenu,
     Cursor,
+    DefaultColors,
     Disclosure,
     Focus,
     Icon,
@@ -54,6 +55,7 @@ impl ComponentStory {
                 .into(),
             Self::ContextMenu => cx.new_view(|_| ui::ContextMenuStory).into(),
             Self::Cursor => cx.new_view(|_| crate::stories::CursorStory).into(),
+            Self::DefaultColors => DefaultColorsStory::view(cx).into(),
             Self::Disclosure => cx.new_view(|_| ui::DisclosureStory).into(),
             Self::Focus => FocusStory::view(cx).into(),
             Self::Icon => cx.new_view(|_| ui::IconStory).into(),
@@ -64,15 +66,15 @@ impl ComponentStory {
             Self::ListHeader => cx.new_view(|_| ui::ListHeaderStory).into(),
             Self::ListItem => cx.new_view(|_| ui::ListItemStory).into(),
             Self::OverflowScroll => cx.new_view(|_| crate::stories::OverflowScrollStory).into(),
+            Self::Picker => PickerStory::new(cx).into(),
             Self::Scroll => ScrollStory::view(cx).into(),
-            Self::Text => TextStory::view(cx).into(),
             Self::Tab => cx.new_view(|_| ui::TabStory).into(),
             Self::TabBar => cx.new_view(|_| ui::TabBarStory).into(),
+            Self::Text => TextStory::view(cx).into(),
             Self::ToggleButton => cx.new_view(|_| ui::ToggleButtonStory).into(),
             Self::ToolStrip => cx.new_view(|_| ui::ToolStripStory).into(),
             Self::ViewportUnits => cx.new_view(|_| crate::stories::ViewportUnitsStory).into(),
             Self::WithRemSize => cx.new_view(|_| crate::stories::WithRemSizeStory).into(),
-            Self::Picker => PickerStory::new(cx).into(),
         }
     }
 }
