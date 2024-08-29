@@ -140,8 +140,8 @@ Depending on your hardware or use-case you may wish to limit or increase the con
       "available_models": [
         {
           "provider": "ollama",
-          "name": "llama3.1:latest",
-          "max_tokens": 131072
+          "name": "mistral:latest",
+          "max_tokens": 32768
         }
       ]
     }
