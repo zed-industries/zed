@@ -8323,6 +8323,7 @@ dependencies = [
  "unindent",
  "util",
  "which 6.0.3",
+ "windows 0.58.0",
  "worktree",
 ]
 
