@@ -178,6 +178,7 @@ pub fn initialize_workspace(
                 will result in awful performance.
 
                 For troubleshooting see: https://zed.dev/docs/linux
+                Set ZED_ALLOW_EMULATED_GPU=1 env var to permanently override.
                 "#}, specs.device_name);
             let prompt = cx.prompt(PromptLevel::Critical, "Unsupported GPU", Some(&message),
                 &["Skip", "Troubleshoot and Quit"]);
