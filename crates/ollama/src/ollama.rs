@@ -95,7 +95,7 @@ fn get_max_tokens(name: &str) -> usize {
             "llama2" | "yi" | "llama2-chinese" | "vicuna" | "nous-hermes2"  // 4K
             | "stablelm2" => 4096,
             "phi" | "orca-mini" | "tinyllama" | "granite-code" => 2048,     // 2K
-            _ => DEFAULT_TOKENS,                                                      // 2K (default)
+            _ => DEFAULT_TOKENS,                                            // 2K (default)
         },
     }
     .clamp(1, MAXIMUM_TOKENS)

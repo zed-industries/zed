@@ -9,7 +9,7 @@ use ollama::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, Indicator};
 use util::ResultExt;
 
@@ -30,7 +30,7 @@ const PROVIDER_NAME: &str = "Ollama";
 pub struct OllamaSettings {
     pub api_url: String,
     pub low_speed_timeout: Option<Duration>,
-    pub available_models: Vec<ollama::Model>,
+    pub available_models: Vec<AvailableModel>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -136,10 +136,32 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
-        self.state
-            .read(cx)
+        let mut models: BTreeMap<String, ollama::Model> = BTreeMap::default();
+
+        // Add models from the Ollama API
+        for model in self.state.read(cx).available_models.iter() {
+            models.insert(model.name.clone(), model.clone());
+        }
+
+        // Override with available models from settings
+        for model in AllLanguageModelSettings::get_global(cx)
+            .ollama
             .available_models
             .iter()
+        {
+            models.insert(
+                model.name.clone(),
+                ollama::Model {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    keep_alive: None,
+                },
+            );
+        }
+
+        models
+            .into_values()
             .map(|model| {
                 Arc::new(OllamaLanguageModel {
                     id: LanguageModelId::from(model.name.clone()),

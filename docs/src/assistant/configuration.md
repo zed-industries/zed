@@ -130,13 +130,14 @@ Zed has pre-configured maximum context lengths (`max_tokens`) to match the capab
 
 Depending on your hardware or use-case you may wish to limit or increase the context length for a specific model via settings.json:
 
-```
+```json
 {
   "language_models": {
     "ollama": {
       "available_models": [
         {
-          "name": "llama3.1",
+          "provider": "ollama",
+          "name": "llama3.1:latest",
           "max_tokens": 131072
         }
       ]
@@ -145,7 +146,7 @@ Depending on your hardware or use-case you may wish to limit or increase the con
 }
 ```
 
-If you specify a context length that is too large for the model, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
+If you specify a context length that is too large for your hardware, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
 
 ### OpenAI {#openai}
 

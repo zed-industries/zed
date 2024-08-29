@@ -135,6 +135,7 @@ impl AssistantSettingsContent {
                                         Some(language_model::settings::OllamaSettingsContent {
                                             api_url,
                                             low_speed_timeout_in_seconds,
+                                            available_models: None,
                                         });
                                 }
                             },
