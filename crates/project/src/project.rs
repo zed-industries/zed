@@ -5449,6 +5449,11 @@ impl Project {
         })?;
 
         let mut child = smol::process::Command::new(command);
+        #[cfg(target_os = "windows")]
+        {
+            use smol::process::windows::CommandExt;
+            child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+        }
 
         if let Some(working_dir_path) = working_dir_path {
             child.current_dir(working_dir_path);
@@ -7233,8 +7238,11 @@ impl Project {
     ) -> Receiver<SearchResult> {
         let (result_tx, result_rx) = smol::channel::unbounded();
 
-        let matching_buffers_rx =
-            self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx);
+        let matching_buffers_rx = if query.is_opened_only() {
+            self.sort_candidate_buffers(&query, cx)
+        } else {
+            self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx)
+        };
 
         cx.spawn(|_, cx| async move {
             let mut range_count = 0;
@@ -7310,6 +7318,48 @@ impl Project {
         } else {
             self.search_for_candidate_buffers_remote(query, limit, cx)
         }
+    }
+
+    fn sort_candidate_buffers(
+        &mut self,
+        search_query: &SearchQuery,
+        cx: &mut ModelContext<Project>,
+    ) -> Receiver<Model<Buffer>> {
+        let worktree_store = self.worktree_store.read(cx);
+        let mut buffers = search_query
+            .buffers()
+            .into_iter()
+            .flatten()
+            .filter(|buffer| {
+                let b = buffer.read(cx);
+                if let Some(file) = b.file() {
+                    if !search_query.file_matches(file.path()) {
+                        return false;
+                    }
+                    if let Some(entry) = b
+                        .entry_id(cx)
+                        .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
+                    {
+                        if entry.is_ignored && !search_query.include_ignored() {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            })
+            .collect::<Vec<_>>();
+        let (tx, rx) = smol::channel::unbounded();
+        buffers.sort_by(|a, b| match (a.read(cx).file(), b.read(cx).file()) {
+            (None, None) => a.read(cx).remote_id().cmp(&b.read(cx).remote_id()),
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (Some(a), Some(b)) => compare_paths((a.path(), true), (b.path(), true)),
+        });
+        for buffer in buffers {
+            tx.send_blocking(buffer.clone()).unwrap()
+        }
+
+        rx
     }
 
     fn search_for_candidate_buffers_remote(

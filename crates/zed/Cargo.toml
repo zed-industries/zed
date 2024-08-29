@@ -67,7 +67,7 @@ log.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 mimalloc = { version = "0.1", optional = true }
-nix = {workspace = true, features = ["pthread", "signal"] }
+nix = { workspace = true, features = ["pthread", "signal"] }
 node_runtime.workspace = true
 notifications.workspace = true
 outline.workspace = true
@@ -99,7 +99,7 @@ tab_switcher.workspace = true
 supermaven.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
-time.workspace =  true
+time.workspace = true
 telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
@@ -113,6 +113,9 @@ vim.workspace = true
 welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"

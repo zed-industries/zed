@@ -2,9 +2,11 @@ mod app_menus;
 pub mod inline_completion_registry;
 #[cfg(target_os = "linux")]
 pub(crate) mod linux_prompts;
-#[cfg(not(target_os = "linux"))]
-pub(crate) mod only_instance;
+#[cfg(target_os = "macos")]
+pub(crate) mod mac_only_instance;
 mod open_listener;
+#[cfg(target_os = "windows")]
+pub(crate) mod windows_only_instance;
 
 pub use app_menus::*;
 use assistant::PromptBuilder;
@@ -176,6 +178,7 @@ pub fn initialize_workspace(
                 will result in awful performance.
 
                 For troubleshooting see: https://zed.dev/docs/linux
+                Set ZED_ALLOW_EMULATED_GPU=1 env var to permanently override.
                 "#}, specs.device_name);
             let prompt = cx.prompt(PromptLevel::Critical, "Unsupported GPU", Some(&message),
                 &["Skip", "Troubleshoot and Quit"]);

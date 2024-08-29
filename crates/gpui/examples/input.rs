@@ -225,8 +225,15 @@ impl ViewInputHandler for TextInput {
         Some(self.content[range].to_string())
     }
 
-    fn selected_text_range(&mut self, _cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
-        Some(self.range_to_utf16(&self.selected_range))
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _cx: &mut ViewContext<Self>,
+    ) -> Option<UTF16Selection> {
+        Some(UTF16Selection {
+            range: self.range_to_utf16(&self.selected_range),
+            reversed: self.selection_reversed,
+        })
     }
 
     fn marked_text_range(&self, _cx: &mut ViewContext<Self>) -> Option<Range<usize>> {

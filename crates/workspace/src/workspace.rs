@@ -2960,6 +2960,10 @@ impl Workspace {
                 self.remove_pane(pane, focus_on_pane.clone(), cx)
             }
             pane::Event::ActivateItem { local } => {
+                cx.on_next_frame(|_, cx| {
+                    cx.invalidate_character_coordinates();
+                });
+
                 pane.model.update(cx, |pane, _| {
                     pane.track_alternate_file_items();
                 });
@@ -2993,6 +2997,9 @@ impl Workspace {
                 }
             }
             pane::Event::Focus => {
+                cx.on_next_frame(|_, cx| {
+                    cx.invalidate_character_coordinates();
+                });
                 self.handle_pane_focused(pane.clone(), cx);
             }
             pane::Event::ZoomIn => {

@@ -92,7 +92,7 @@ impl WindowsWindowState {
         let input_handler = None;
         let system_key_handled = false;
         let click_state = ClickState::new();
-        let system_settings = WindowsSystemSettings::new();
+        let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
 
@@ -674,6 +674,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         Some(self.0.state.borrow().renderer.gpu_specs())
+    }
+
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+        // todo(windows)
     }
 
     fn fps(&self) -> Option<f32> {
