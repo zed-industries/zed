@@ -19,6 +19,7 @@ pub(crate) const CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
 pub(crate) const CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
+const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
 
 pub(crate) fn handle_msg(
     handle: HWND,
@@ -680,29 +681,43 @@ fn handle_calc_client_size(
         return None;
     }
 
-    let dpi = unsafe { GetDpiForWindow(handle) };
-
-    let frame_x = unsafe { GetSystemMetricsForDpi(SM_CXFRAME, dpi) };
-    let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, dpi) };
-    let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
-
+    let is_maximized = state_ptr.state.borrow().is_maximized();
+    let insets = get_client_area_insets(handle, is_maximized, state_ptr.windows_version);
     // wparam is TRUE so lparam points to an NCCALCSIZE_PARAMS structure
     let mut params = lparam.0 as *mut NCCALCSIZE_PARAMS;
     let mut requested_client_rect = unsafe { &mut ((*params).rgrc) };
 
-    requested_client_rect[0].right -= frame_x + padding;
-    requested_client_rect[0].left += frame_x + padding;
-    requested_client_rect[0].bottom -= frame_y + padding;
+    requested_client_rect[0].left += insets.left;
+    requested_client_rect[0].top += insets.top;
+    requested_client_rect[0].right -= insets.right;
+    requested_client_rect[0].bottom -= insets.bottom;
 
-    if state_ptr.state.borrow().is_maximized() {
-        requested_client_rect[0].top += frame_y + padding;
-    } else {
-        match state_ptr.windows_version {
-            WindowsVersion::Win10 => {}
-            WindowsVersion::Win11 => {
-                // Magic number that calculates the width of the border
-                let border = (dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32).round() as i32;
-                requested_client_rect[0].top += border;
+    // Fix auto hide taskbar not showing. This solution is based on the approach
+    // used by Chrome. However, it may result in one row of pixels being obscured
+    // in our client area. But as Chrome says, "there seems to be no better solution."
+    if is_maximized {
+        if let Some(ref taskbar_position) = state_ptr
+            .state
+            .borrow()
+            .system_settings
+            .auto_hide_taskbar_position
+        {
+            // Fot the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
+            // so the window isn't treated as a "fullscreen app", which would cause
+            // the taskbar to disappear.
+            match taskbar_position {
+                AutoHideTaskbarPosition::Left => {
+                    requested_client_rect[0].left += AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                AutoHideTaskbarPosition::Top => {
+                    requested_client_rect[0].top += AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                AutoHideTaskbarPosition::Right => {
+                    requested_client_rect[0].right -= AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
+                AutoHideTaskbarPosition::Bottom => {
+                    requested_client_rect[0].bottom -= AUTO_HIDE_TASKBAR_THICKNESS_PX
+                }
             }
         }
     }
@@ -742,28 +757,12 @@ fn handle_activate_msg(
 }
 
 fn handle_create_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut size_rect = RECT::default();
-    unsafe { GetWindowRect(handle, &mut size_rect).log_err() };
-
-    let width = size_rect.right - size_rect.left;
-    let height = size_rect.bottom - size_rect.top;
-
     if state_ptr.hide_title_bar {
-        unsafe {
-            SetWindowPos(
-                handle,
-                None,
-                size_rect.left,
-                size_rect.top,
-                width,
-                height,
-                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
-            )
-            .log_err()
-        };
+        notify_frame_changed(handle);
+        Some(0)
+    } else {
+        None
     }
-
-    Some(0)
 }
 
 fn handle_dpi_changed_msg(
@@ -1099,12 +1098,17 @@ fn handle_system_settings_changed(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    // mouse wheel
-    lock.system_settings.mouse_wheel_settings.update();
+    let display = lock.display;
+    // system settings
+    lock.system_settings.update(display);
     // mouse double click
     lock.click_state.system_update();
     // window border offset
     lock.border_offset.update(handle).log_err();
+    drop(lock);
+    // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
+    // taskbar correctly.
+    notify_frame_changed(handle);
     Some(0)
 }
 
@@ -1340,6 +1344,77 @@ pub(crate) fn current_modifiers() -> Modifiers {
         shift: is_virtual_key_pressed(VK_SHIFT),
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
+    }
+}
+
+fn get_client_area_insets(
+    handle: HWND,
+    is_maximized: bool,
+    windows_version: WindowsVersion,
+) -> RECT {
+    // For maximized windows, Windows outdents the window rect from the screen's client rect
+    // by `frame_thickness` on each edge, meaning `insets` must contain `frame_thickness`
+    // on all sides (including the top) to avoid the client area extending onto adjacent
+    // monitors.
+    //
+    // For non-maximized windows, things become complicated:
+    //
+    // - On Windows 10
+    // The top inset must be zero, since if there is any nonclient area, Windows will draw
+    // a full native titlebar outside the client area. (This doesn't occur in the maximized
+    // case.)
+    //
+    // - On Windows 11
+    // The top inset is calculated using an empirical formula that I derived through various
+    // tests. Without this, the top 1-2 rows of pixels in our window would be obscured.
+    let dpi = unsafe { GetDpiForWindow(handle) };
+    let frame_thickness = get_frame_thickness(dpi);
+    let top_insets = if is_maximized {
+        frame_thickness
+    } else {
+        match windows_version {
+            WindowsVersion::Win10 => 0,
+            WindowsVersion::Win11 => (dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32).round() as i32,
+        }
+    };
+    RECT {
+        left: frame_thickness,
+        top: top_insets,
+        right: frame_thickness,
+        bottom: frame_thickness,
+    }
+}
+
+// there is some additional non-visible space when talking about window
+// borders on Windows:
+// - SM_CXSIZEFRAME: The resize handle.
+// - SM_CXPADDEDBORDER: Additional border space that isn't part of the resize handle.
+fn get_frame_thickness(dpi: u32) -> i32 {
+    let resize_frame_thickness = unsafe { GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) };
+    let padding_thickness = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
+    resize_frame_thickness + padding_thickness
+}
+
+fn notify_frame_changed(handle: HWND) {
+    unsafe {
+        SetWindowPos(
+            handle,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED
+                | SWP_NOACTIVATE
+                | SWP_NOCOPYBITS
+                | SWP_NOMOVE
+                | SWP_NOOWNERZORDER
+                | SWP_NOREPOSITION
+                | SWP_NOSENDCHANGING
+                | SWP_NOSIZE
+                | SWP_NOZORDER,
+        )
+        .log_err();
     }
 }
 

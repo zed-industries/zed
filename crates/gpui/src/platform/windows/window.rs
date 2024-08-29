@@ -92,7 +92,7 @@ impl WindowsWindowState {
         let input_handler = None;
         let system_key_handled = false;
         let click_state = ClickState::new();
-        let system_settings = WindowsSystemSettings::new();
+        let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
 
