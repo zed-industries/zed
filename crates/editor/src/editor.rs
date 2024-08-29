@@ -9111,18 +9111,16 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Navigated>> {
         let definition = self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
-        let references = self.find_all_references(&FindAllReferences, cx);
-        cx.background_executor().spawn(async move {
+        cx.spawn(|editor, mut cx| async move {
             if definition.await? == Navigated::Yes {
                 return Ok(Navigated::Yes);
             }
-            if let Some(references) = references {
-                if references.await? == Navigated::Yes {
-                    return Ok(Navigated::Yes);
-                }
+            match editor.update(&mut cx, |editor, cx| {
+                editor.find_all_references(&FindAllReferences, cx)
+            })? {
+                Some(references) => references.await,
+                None => Ok(Navigated::No),
             }
-
-            Ok(Navigated::No)
         })
     }
 
