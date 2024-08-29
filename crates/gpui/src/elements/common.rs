@@ -4,7 +4,7 @@ use crate::{rgb, Hsla, Rgba, WindowAppearance};
 /// The appearance of the base gpui colors, used to style gpui elements
 ///
 /// Varries based on the system's current [WindowAppearance].
-pub enum DefaultThemeApperance {
+pub enum DefaultThemeAppearance {
     #[default]
     /// Use the set of colors for light appearances
     Light,
@@ -12,7 +12,7 @@ pub enum DefaultThemeApperance {
     Dark,
 }
 
-impl From<WindowAppearance> for DefaultThemeApperance {
+impl From<WindowAppearance> for DefaultThemeAppearance {
     fn from(appearance: WindowAppearance) -> Self {
         match appearance {
             WindowAppearance::Light | WindowAppearance::VibrantLight => Self::Light,
@@ -22,10 +22,10 @@ impl From<WindowAppearance> for DefaultThemeApperance {
 }
 
 /// Get the default colors for the given appearance
-pub fn colors(appearance: DefaultThemeApperance) -> DefaultColors {
+pub fn colors(appearance: DefaultThemeAppearance) -> DefaultColors {
     match appearance {
-        DefaultThemeApperance::Light => DefaultColors::light(),
-        DefaultThemeApperance::Dark => DefaultColors::dark(),
+        DefaultThemeAppearance::Light => DefaultColors::light(),
+        DefaultThemeAppearance::Dark => DefaultColors::dark(),
     }
 }
 

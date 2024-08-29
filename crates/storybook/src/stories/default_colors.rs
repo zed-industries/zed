@@ -1,5 +1,5 @@
 use gpui::{
-    colors, div, prelude::*, DefaultColor, DefaultThemeApperance, Hsla, Render, View, ViewContext,
+    colors, div, prelude::*, DefaultColor, DefaultThemeAppearance, Hsla, Render, View, ViewContext,
     WindowContext,
 };
 use story::Story;
@@ -16,7 +16,7 @@ impl DefaultColorsStory {
 
 impl Render for DefaultColorsStory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let appearances = [DefaultThemeApperance::Light, DefaultThemeApperance::Dark];
+        let appearances = [DefaultThemeAppearance::Light, DefaultThemeAppearance::Dark];
 
         Story::container()
             .child(Story::title("Default Colors"))
