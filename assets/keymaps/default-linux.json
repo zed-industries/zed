@@ -611,10 +611,10 @@
     "context": "Terminal",
     "bindings": {
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
-      "ctrl-shift-c": "terminal::Copy",
       "ctrl-insert": "terminal::Copy",
-      "ctrl-shift-v": "terminal::Paste",
+      "ctrl-shift-c": "terminal::Copy",
       "shift-insert": "terminal::Paste",
+      "ctrl-shift-v": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",
       // Overrides for conflicting keybindings
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
