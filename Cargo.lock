@@ -154,7 +154,7 @@ version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ab99eae5ee58501ab236beb6f20f6ca39be615267b014899c89b2f0bc18a459"
 dependencies = [
- "html5ever",
+ "html5ever 0.27.0",
  "maplit",
  "once_cell",
  "tendril",
@@ -5238,7 +5238,21 @@ checksum = "c13771afe0e6e846f1e67d038d4cb29998a6779f93c809212e4e9c32efd244d4"
 dependencies = [
  "log",
  "mac",
- "markup5ever",
+ "markup5ever 0.12.1",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.72",
+]
+
+[[package]]
+name = "html5ever"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ff6858c1f7e2a470c5403091866fa95b36fe0dbac5d771f932c15e5ff1ee501"
+dependencies = [
+ "log",
+ "mac",
+ "markup5ever 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.72",
@@ -5249,7 +5263,7 @@ name = "html_to_markdown"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "html5ever",
+ "html5ever 0.28.0",
  "indoc",
  "markup5ever_rcdom",
  "pretty_assertions",
@@ -5263,7 +5277,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e608e8dd0939bfb6b516d96a5919751b835297a02230aecb88d2fc84ebebaa8a"
 dependencies = [
  "anyhow",
- "html5ever",
+ "html5ever 0.27.0",
  "markup5ever_rcdom",
  "regex",
 ]
@@ -6603,13 +6617,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "markup5ever"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d581ff8be69d08a2efa23a959d81aa22b739073f749f067348bd4f4ba4b69195"
+dependencies = [
+ "log",
+ "phf",
+ "phf_codegen",
+ "string_cache",
+ "string_cache_codegen",
+ "tendril",
+]
+
+[[package]]
 name = "markup5ever_rcdom"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edaa21ab3701bfee5099ade5f7e1f84553fd19228cf332f13cd6e964bf59be18"
 dependencies = [
- "html5ever",
- "markup5ever",
+ "html5ever 0.27.0",
+ "markup5ever 0.12.1",
  "tendril",
  "xml5ever",
 ]
@@ -13999,7 +14027,7 @@ checksum = "9bbb26405d8e919bc1547a5aa9abc95cbfa438f04844f5fdd9dc7596b748bf69"
 dependencies = [
  "log",
  "mac",
- "markup5ever",
+ "markup5ever 0.12.1",
 ]
 
 [[package]]

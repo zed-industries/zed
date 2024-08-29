@@ -349,7 +349,7 @@ globset = "0.4"
 heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 hyper = "0.14"
-html5ever = "0.27.0"
+html5ever = "0.28.0"
 ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
