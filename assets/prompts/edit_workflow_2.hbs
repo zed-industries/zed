@@ -64,10 +64,591 @@ This tag contains a single-line description of the edit that should be made at t
 This tag indicates what type of change should be made, relative to the given location. It can be one of the following:
 - `update`: Rewrites the specified symbol entirely based on the given description.
 - `create`: Creates a new file with the given path based on the provided description.
-- `insert_sibling_before`: Inserts a new symbol based on the given description before the specified symbol.
-- `insert_sibling_after`: Inserts a new symbol based on the given description after the specified symbol.
+- `insert_sibling_before`: Inserts a new symbol based on the given description as a sibling before the specified symbol.
+- `insert_sibling_after`: Inserts a new symbol based on the given description as a sibling after the specified symbol.
 - `prepend_child`: Inserts a new symbol as a child of the specified symbol at the start.
 - `append_child`: Inserts a new symbol as a child of the specified symbol at the end.
 - `delete`: Deletes the specified symbol from the containing file.
+
+<guidelines>
+- There's no need to describe *what* to do, just *where* to do it.
+- Only reference locations that actually exist (unless you're creating a file).
+- If creating a file, assume any subsequent updates are included at the time of creation.
+- Don't create and then update a file. Always create new files in shot.
+- Prefer updating symbols lower in the syntax tree if possible.
+- Never include edits on a parent symbol and one of its children in the same edit block.
+- Never nest an edit with another edit. Never include CDATA. All suggestions are leaf nodes.
+- Descriptions are required for all edits except delete.
+- When generating multiple suggestions, ensure the descriptions are specific to each individual operation.
+- Avoid referring to the location in the description. Focus on the change to be made, not the location where it's made. That's implicit with the symbol you provide.
+- Don't generate multiple edits at the same location. Instead, combine them together in a single edit with a succinct combined description.
+- To add imports respond with a suggestion where the `"symbol"` key is set to `"#imports"`
+</guidelines>
+
+Here are some concrete examples.
+
+<example language="rust">
+
+<message role="user">
+```rs src/rectangle.rs
+struct Rectangle {
+    width: f64,
+    height: f64,
+}
+
+impl Rectangle {
+    fn new(width: f64, height: f64) -> Self {
+        Rectangle { width, height }
+    }
+}
+```
+
+We need to add methods to calculate the area and perimeter of the rectangle. Can you help with that?
+</message>
+
+<message role="assistant">
+<step>
+Add methods to calculate the area and perimeter of the rectangle
+
+```rust
+impl Rectangle {
+    // existing methods...
+
+    fn calculate_area(&self) -> f64 {
+        self.width * self.height
+    }
+
+    fn calculate_perimeter(&self) -> f64 {
+        2.0 * (self.width + self.height)
+    }
+}
+```
+
+<edit>
+  <path>src/rectangle.rs</path>
+  <operation>append_child</operation>
+  <symbol>impl Rectangle</symbol>
+  <description>Add calculate_area and calculate_perimeter methods</description>
+</edit>
+</step>
+
+<step>
+Implement the Display trait for the Rectangle struct
+
+```rust
+use std::fmt;
+
+impl fmt::Display for Rectangle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Rectangle: {}x{}", self.width, self.height)
+    }
+}
+```
+
+<edit>
+  <path>src/rectangle.rs</path>
+  <operation>insert_sibling_after</operation>
+  <symbol>impl Rectangle</symbol>
+  <description>Implement Display trait for Rectangle</description>
+</edit>
+
+<edit>
+  <path>src/rectangle.rs</path>
+  <operation>append_child</operation>
+  <symbol>#imports</symbol>
+  <description>Add use statement for fmt</description>
+</edit>
+</step>
+</message>
+
+</example>
+
+<example language="rust">
+
+<message role="user">
+```rs src/user.rs
+struct User {
+    pub name: String,
+    age: u32,
+    email: String,
+}
+
+impl User {
+    fn new(name: String, age: u32, email: String) -> Self {
+        User { name, age, email }
+    }
+
+    pub fn print_info(&self) {
+        todo!()
+    }
+}
+```
+
+Let's print all the user information and delete the email field.
+</message>
+
+<message role="assistant">
+<step>
+Update the 'print_info' method to print user information
+
+```rust
+impl User {
+    // ... other methods ...
+
+    pub fn print_info(&self) {
+        println!("Name: {name}, Age: {age}", name = self.name, age = self.age);
+    }
+}
+```
+
+<edit>
+  <path>src/user.rs</path>
+  <operation>update</operation>
+  <symbol>impl User pub fn print_info</symbol>
+  <description>Print all the user information</description>
+</edit>
+</step>
+
+<step>
+Remove the 'email' field from the User struct
+
+<edit>
+  <path>src/user.rs</path>
+  <operation>delete</operation>
+  <symbol>struct User email</symbol>
+</edit>
+
+<edit>
+  <path>src/user.rs</path>
+  <operation>update</operation>
+  <symbol>impl User fn new</symbol>
+  <description>Remove email parameter from new method</description>
+</edit>
+
+</step>
+</message>
+
+</example>
+
+<example language="rust">
+
+<message role="user">
+```rs src/vehicle.rs
+struct Vehicle {
+    make: String,
+    model: String,
+    year: u32,
+}
+
+impl Vehicle {
+    fn new(make: String, model: String, year: u32) -> Self {
+        Vehicle { make, model, year }
+    }
+
+    fn print_year(&self) {
+        println!("Year: {}", self.year);
+    }
+}
+```
+
+Let's add a `start_engine` method for the vehicle and print how long it takes to start it.
+</message>
+
+<message role="assistant">
+<step>
+Add a 'use std::time::Instant;' statement at the beginning of the file
+
+<edit>
+  <path>src/vehicle.rs</path>
+  <operation>prepend_child</operation>
+  <symbol>#imports</symbol>
+  <description>Add use statement for std::time::Instant</description>
+</edit>
+</step>
+
+<step>
+Add a new method 'start_engine' in the Vehicle impl block
+
+```rust
+impl Vehicle {
+    // ... existing methods ...
+
+    fn start_engine(&self) {
+        let t0 = Instant::now();
+        println!("Starting the engine of {} {} {}. Took: {:?}",
+                 self.year, self.make, self.model, t0.elapsed());
+    }
+}
+```
+
+<edit>
+  <path>src/vehicle.rs</path>
+  <operation>append_child</operation>
+  <symbol>impl Vehicle</symbol>
+  <description>Add start_engine method</description>
+</edit>
+</step>
+</message>
+
+</example>
+
+<example language="rust">
+
+<message role="user">
+```rs src/employee.rs
+struct Employee {
+    name: String,
+    position: String,
+    salary: u32,
+    department: String,
+}
+
+impl Employee {
+    fn new(name: String, position: String, salary: u32, department: String) -> Self {
+        Employee { name, position, salary, department }
+    }
+
+    fn print_details(&self) {
+        println!("Name: {}, Position: {}, Salary: {}, Department: {}",
+                  self.name, self.position, self.salary, self.department);
+    }
+
+    fn give_raise(&mut self, amount: u32) {
+        self.salary += amount;
+    }
+}
+```
+
+Let's turn the salary field into an f32. Also, let's delete the department field.
+</message>
+
+<message role="assistant">
+<step>
+Make salary an f32
+
+```rust
+struct Employee {
+    name: String,
+    position: String,
+    salary: f32,
+    department: String,
+}
+
+impl Employee {
+    fn new(name: String, position: String, salary: f32, department: String) -> Self {
+        Employee { name, position, salary, department }
+    }
+
+    // ... other methods ...
+
+    fn give_raise(&mut self, amount: f32) {
+        self.salary += amount;
+    }
+}
+```
+
+<edit>
+  <path>src/employee.rs</path>
+  <operation>update</operation>
+  <symbol>struct Employee salary</symbol>
+  <description>Change salary type to f32</description>
+</edit>
+
+<edit>
+  <path>src/employee.rs</path>
+  <operation>update</operation>
+  <symbol>impl Employee fn new</symbol>
+  <description>Update new method to use f32 for salary</description>
+</edit>
+
+<edit>
+  <path>src/employee.rs</path>
+  <operation>update</operation>
+  <symbol>impl Employee fn give_raise</symbol>
+  <description>Update give_raise method to use f32 for amount</description>
+</edit>
+</step>
+
+<step>
+Remove the 'department' field and update the 'print_details' method
+
+```rust
+struct Employee {
+    name: String,
+    position: String,
+    salary: f32,
+}
+
+impl Employee {
+    fn new(name: String, position: String, salary: f32) -> Self {
+        Employee { name, position, salary }
+    }
+
+    fn print_details(&self) {
+        println!("Name: {}, Position: {}, Salary: {}",
+                  self.name, self.position, self.salary);
+    }
+
+    // ... other methods ...
+}
+```
+
+<edit>
+  <path>src/employee.rs</path>
+  <operation>delete</operation>
+  <symbol>struct Employee department</symbol>
+</edit>
+
+<edit>
+  <path>src/employee.rs</path>
+  <operation>update</operation>
+  <symbol>impl Employee fn new</symbol>
+  <description>Remove department parameter from new method</description>
+</edit>
+
+<edit>
+  <path>src/employee.rs</path>
+  <operation>update</operation>
+  <symbol>impl Employee fn print_details</symbol>
+  <description>Remove department from print_details method</description>
+</edit>
+</step>
+</message>
+
+</example>
+
+<example language="rust">
+
+<message role="user">
+```rs src/game.rs
+struct Player {
+    name: String,
+    health: i32,
+    pub score: u32,
+}
+
+impl Player {
+    pub fn new(name: String) -> Self {
+        Player { name, health: 100, score: 0 }
+    }
+}
+
+struct Game {
+    players: Vec<Player>,
+}
+
+impl Game {
+    fn new() -> Self {
+        Game { players: Vec::new() }
+    }
+}
+```
+
+Introduce a level field.
+</message>
+
+<message role="assistant">
+<step>
+Add a 'level' field to Player and update the 'new' method
+
+```rust
+struct Player {
+    name: String,
+    health: i32,
+    pub score: u32,
+    level: u8,
+}
+
+impl Player {
+    pub fn new(name: String) -> Self {
+        Player { name, health: 100, score: 0, level: 1 }
+    }
+}
+```
+
+<edit>
+  <path>src/game.rs</path>
+  <operation>insert_sibling_after</operation>
+  <symbol>struct Player pub score</symbol>
+  <description>Add level field to Player struct</description>
+</edit>
+
+<edit>
+  <path>src/game.rs</path>
+  <operation>update</operation>
+  <symbol>impl Player pub fn new</symbol>
+  <description>Initialize level in new method</description>
+</edit>
+</step>
+</message>
+
+</example>
+
+<example language="rust">
+
+<message role="user">
+```rs src/config.rs
+use std::collections::HashMap;
+
+struct Config {
+    settings: HashMap<String, String>,
+}
+
+impl Config {
+    fn new() -> Self {
+        Config { settings: HashMap::new() }
+    }
+}
+```
+
+I want to load the configuration from a file.
+</message>
+
+<message role="assistant">
+<step>
+Add a 'load_from_file' method to Config and import necessary modules
+
+```rust
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, BufRead};
+use std::path::Path;
+
+struct Config {
+    settings: HashMap<String, String>,
+}
+
+impl Config {
+    fn new() -> Self {
+        Config { settings: HashMap::new() }
+    }
+
+    fn load_from_file<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
+        let file = File::open(path)?;
+        for line in io::BufReader::new(file).lines() {
+            let line = line?;
+            if let Some((key, value)) = line.split_once('=') {
+                self.settings.insert(key.trim().to_string(), value.trim().to_string());
+            }
+        }
+        Ok(())
+    }
+}
+```
+
+<edit>
+  <path>src/config.rs</path>
+  <operation>append_child</operation>
+  <symbol>#imports</symbol>
+  <description>Import necessary modules for file operations</description>
+</edit>
+
+<edit>
+  <path>src/config.rs</path>
+  <operation>append_child</operation>
+  <symbol>impl Config</symbol>
+  <description>Add load_from_file method</description>
+</edit>
+</step>
+</message>
+
+</example>
+
+<example language="rust">
+
+<message role="user">
+```rs src/database.rs
+pub(crate) struct Database {
+    connection: Connection,
+}
+
+impl Database {
+    fn new(url: &str) -> Result<Self, Error> {
+        let connection = Connection::connect(url)?;
+        Ok(Database { connection })
+    }
+
+    async fn query(&self, sql: &str) -> Result<Vec<Row>, Error> {
+        self.connection.query(sql, &[])
+    }
+}
+```
+
+I want to add error handling to this module.
+</message>
+
+<message role="assistant">
+<step>
+Add error handling to the 'query' method and create a custom error type
+
+```rust
+use std::fmt;
+use std::error::Error as StdError;
+
+#[derive(Debug)]
+pub enum DatabaseError {
+    ConnectionError(String),
+    QueryError(String),
+}
+
+impl fmt::Display for DatabaseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DatabaseError::ConnectionError(msg) => write!(f, "Connection error: {}", msg),
+            DatabaseError::QueryError(msg) => write!(f, "Query error: {}", msg),
+        }
+    }
+}
+
+impl StdError for DatabaseError {}
+
+// ...omitted code...
+
+impl Database {
+    fn new(url: &str) -> Result<Self, DatabaseError> {
+        let connection = Connection::connect(url)
+            .map_err(|e| DatabaseError::ConnectionError(e.to_string()))?;
+        Ok(Database { connection })
+    }
+
+    async fn query(&self, sql: &str) -> Result<Vec<Row>, DatabaseError> {
+        self.connection.query(sql, &[])
+            .await
+            .map_err(|e| DatabaseError::QueryError(e.to_string()))
+    }
+}
+```
+
+<edit>
+  <path>src/database.rs</path>
+  <operation>prepend_child</operation>
+  <symbol>#imports</symbol>
+  <description>Import necessary error handling modules</description>
+</edit>
+
+<edit>
+  <path>src/database.rs</path>
+  <operation>insert_sibling_before</operation>
+  <symbol>pub(crate) struct Database</symbol>
+  <description>Define custom DatabaseError enum</description>
+</edit>
+
+<edit>
+  <path>src/database.rs</path>
+  <operation>update</operation>
+  <symbol>impl Database fn new</symbol>
+  <description>Update new method to use DatabaseError</description>
+</edit>
+
+<edit>
+  <path>src/database.rs</path>
+  <operation>update</operation>
+  <symbol>impl Database async fn query</symbol>
+  <description>Update query method to use DatabaseError</description>
+</edit>
+</step>
+</message>
+
+</example>
 
 </task_description>
