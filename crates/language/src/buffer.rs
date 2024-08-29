@@ -1018,7 +1018,7 @@ impl Buffer {
         let offset = position.to_offset(self);
         self.syntax_map
             .lock()
-            .layers_for_range(offset..offset, &self.text)
+            .layers_for_range(offset..offset, &self.text, false)
             .last()
             .map(|info| info.language.clone())
             .or_else(|| self.language.clone())
@@ -2625,13 +2625,14 @@ impl BufferSnapshot {
 
     /// Iterates over every [`SyntaxLayer`] in the buffer.
     pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayer> + '_ {
-        self.syntax.layers_for_range(0..self.len(), &self.text)
+        self.syntax
+            .layers_for_range(0..self.len(), &self.text, true)
     }
 
     pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer> {
         let offset = position.to_offset(self);
         self.syntax
-            .layers_for_range(offset..offset, &self.text)
+            .layers_for_range(offset..offset, &self.text, false)
             .filter(|l| l.node().end_byte() > offset)
             .last()
     }
@@ -2664,7 +2665,10 @@ impl BufferSnapshot {
         let mut smallest_range: Option<Range<usize>> = None;
 
         // Use the layer that has the smallest node intersecting the given point.
-        for layer in self.syntax.layers_for_range(offset..offset, &self.text) {
+        for layer in self
+            .syntax
+            .layers_for_range(offset..offset, &self.text, false)
+        {
             let mut cursor = layer.node().walk();
 
             let mut range = None;
@@ -2740,7 +2744,10 @@ impl BufferSnapshot {
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<Range<usize>> = None;
-        'outer: for layer in self.syntax.layers_for_range(range.clone(), &self.text) {
+        'outer: for layer in self
+            .syntax
+            .layers_for_range(range.clone(), &self.text, true)
+        {
             let mut cursor = layer.node().walk();
 
             // Descend to the first leaf that touches the start of the range,

@@ -782,7 +782,7 @@ impl SyntaxSnapshot {
         SyntaxMapCaptures::new(
             range.clone(),
             buffer.as_rope(),
-            self.layers_for_range(range, buffer),
+            self.layers_for_range(range, buffer, true),
             query,
         )
     }
@@ -796,20 +796,22 @@ impl SyntaxSnapshot {
         SyntaxMapMatches::new(
             range.clone(),
             buffer.as_rope(),
-            self.layers_for_range(range, buffer),
+            self.layers_for_range(range, buffer, true),
             query,
         )
     }
 
     #[cfg(test)]
     pub fn layers<'a>(&'a self, buffer: &'a BufferSnapshot) -> Vec<SyntaxLayer> {
-        self.layers_for_range(0..buffer.len(), buffer).collect()
+        self.layers_for_range(0..buffer.len(), buffer, true)
+            .collect()
     }
 
     pub fn layers_for_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
         buffer: &'a BufferSnapshot,
+        include_hidden: bool,
     ) -> impl 'a + Iterator<Item = SyntaxLayer> {
         let start_offset = range.start.to_offset(buffer);
         let end_offset = range.end.to_offset(buffer);
@@ -833,13 +835,14 @@ impl SyntaxSnapshot {
                 if let SyntaxLayerContent::Parsed { tree, language } = &layer.content {
                     let layer_start_offset = layer.range.start.to_offset(buffer);
                     let layer_start_point = layer.range.start.to_point(buffer).to_ts_point();
-
-                    info = Some(SyntaxLayer {
-                        tree,
-                        language,
-                        depth: layer.depth,
-                        offset: (layer_start_offset, layer_start_point),
-                    });
+                    if include_hidden || !language.config.hidden {
+                        info = Some(SyntaxLayer {
+                            tree,
+                            language,
+                            depth: layer.depth,
+                            offset: (layer_start_offset, layer_start_point),
+                        });
+                    }
                 }
                 cursor.next(buffer);
                 if info.is_some() {

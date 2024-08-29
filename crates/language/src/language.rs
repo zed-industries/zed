@@ -17,7 +17,7 @@ mod syntax_map;
 mod task_context;
 
 #[cfg(test)]
-mod buffer_tests;
+pub mod buffer_tests;
 pub mod markdown;
 
 use crate::language_settings::SoftWrap;
@@ -627,6 +627,10 @@ pub struct LanguageConfig {
     /// If there's a parser name in the language settings, that will be used instead.
     #[serde(default)]
     pub prettier_parser_name: Option<String>,
+    /// If true, this language is only for syntax highlighting via an injection into other
+    /// languages, but should not appear to the user as a distinct language.
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -713,6 +717,7 @@ impl Default for LanguageConfig {
             tab_size: None,
             soft_wrap: None,
             prettier_parser_name: None,
+            hidden: false,
         }
     }
 }
@@ -1414,6 +1419,10 @@ impl Language {
 }
 
 impl LanguageScope {
+    pub fn language_name(&self) -> Arc<str> {
+        self.language.config.name.clone()
+    }
+
     pub fn collapsed_placeholder(&self) -> &str {
         self.language.config.collapsed_placeholder.as_ref()
     }
