@@ -35,6 +35,16 @@ impl ProjectEnvironment {
         self.cached_shell_environments.remove(&worktree_id);
     }
 
+    /// Returns the inherited CLI environment, if this project was opened from the Zed CLI.
+    pub(crate) fn get_cli_environment(&self) -> Option<HashMap<String, String>> {
+        if let Some(mut env) = self.cli_environment.clone() {
+            set_origin_marker(&mut env, EnvironmentOrigin::Cli);
+            Some(env)
+        } else {
+            None
+        }
+    }
+
     /// Returns the project environment, if possible.
     /// If the project was opened from the CLI, then the inherited CLI environment is returned.
     /// If it wasn't opened from the CLI, and a worktree is given, then a shell is spawned in
@@ -64,34 +74,16 @@ impl ProjectEnvironment {
         worktree_abs_path: Option<Arc<Path>>,
         cx: &ModelContext<Self>,
     ) -> Task<Option<HashMap<String, String>>> {
-        let cli_environment = self.cli_environment.clone();
         let worktree = worktree_id.zip(worktree_abs_path);
 
-        cx.spawn(|this, mut cx| async move {
-            if let Some(mut env) = cli_environment {
-                env.insert(
-                    ZED_ENVIRONMENT_ORIGIN_MARKER.to_string(),
-                    EnvironmentOrigin::Cli.into(),
-                );
-                Some(env)
-            } else if let Some((worktree_id, worktree_abs_path)) = worktree {
-                let mut env = this
-                    .update(&mut cx, |this, cx| {
-                        this.get_worktree_env(worktree_id, worktree_abs_path, cx)
-                    })
-                    .ok()?
-                    .await;
-
-                env.insert(
-                    ZED_ENVIRONMENT_ORIGIN_MARKER.to_string(),
-                    EnvironmentOrigin::Worktree.into(),
-                );
-
-                Some(env)
-            } else {
-                None
-            }
-        })
+        let cli_environment = self.get_cli_environment();
+        if cli_environment.is_some() {
+            Task::ready(cli_environment)
+        } else if let Some((worktree_id, worktree_abs_path)) = worktree {
+            self.get_worktree_env(worktree_id, worktree_abs_path, cx)
+        } else {
+            Task::ready(None)
+        }
     }
 
     fn get_worktree_env(
@@ -99,49 +91,55 @@ impl ProjectEnvironment {
         worktree_id: WorktreeId,
         worktree_abs_path: Arc<Path>,
         cx: &ModelContext<Self>,
-    ) -> Task<HashMap<String, String>> {
+    ) -> Task<Option<HashMap<String, String>>> {
         let cached_env = self.cached_shell_environments.get(&worktree_id).cloned();
         if let Some(env) = cached_env {
-            Task::ready(env)
+            Task::ready(Some(env))
         } else {
             let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
 
             cx.spawn(|this, mut cx| async move {
-                let shell_env = cx
+                let mut shell_env = cx
                     .background_executor()
                     .spawn({
                         let cwd = worktree_abs_path.clone();
-                        async move {
-                            load_shell_environment(&cwd, &load_direnv)
-                                .await
-                                .unwrap_or_default()
-                        }
+                        async move { load_shell_environment(&cwd, &load_direnv).await }
                     })
-                    .await;
+                    .await
+                    .ok();
 
-                this.update(&mut cx, |this, _| {
-                    this.cached_shell_environments
-                        .insert(worktree_id, shell_env.clone())
-                })
-                .log_err();
+                if let Some(shell_env) = shell_env.as_mut() {
+                    this.update(&mut cx, |this, _| {
+                        this.cached_shell_environments
+                            .insert(worktree_id, shell_env.clone())
+                    })
+                    .log_err();
+
+                    set_origin_marker(shell_env, EnvironmentOrigin::WorktreeShell);
+                }
+
                 shell_env
             })
         }
     }
 }
 
+fn set_origin_marker(env: &mut HashMap<String, String>, origin: EnvironmentOrigin) {
+    env.insert(ZED_ENVIRONMENT_ORIGIN_MARKER.to_string(), origin.into());
+}
+
 const ZED_ENVIRONMENT_ORIGIN_MARKER: &str = "ZED_ENVIRONMENT";
 
 enum EnvironmentOrigin {
     Cli,
-    Worktree,
+    WorktreeShell,
 }
 
 impl Into<String> for EnvironmentOrigin {
     fn into(self) -> String {
         match self {
             EnvironmentOrigin::Cli => "cli".into(),
-            EnvironmentOrigin::Worktree => "worktree".into(),
+            EnvironmentOrigin::WorktreeShell => "worktree-shell".into(),
         }
     }
 }
