@@ -3,17 +3,14 @@ use std::rc::Rc;
 use ::util::ResultExt;
 use anyhow::Context;
 use keycodes::VirtualKeyCode;
-use windows::{
-    System::VirtualKey,
-    Win32::{
-        Foundation::*,
-        Graphics::Gdi::*,
-        System::SystemServices::*,
-        UI::{
-            HiDpi::*,
-            Input::{Ime::*, KeyboardAndMouse::*},
-            WindowsAndMessaging::*,
-        },
+use windows::Win32::{
+    Foundation::*,
+    Graphics::Gdi::*,
+    System::SystemServices::*,
+    UI::{
+        HiDpi::*,
+        Input::{Ime::*, KeyboardAndMouse::*},
+        WindowsAndMessaging::*,
     },
 };
 
@@ -1151,30 +1148,30 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         return None;
     }
 
-    let vk_code = wparam.loword();
+    let vk_code = VIRTUAL_KEY(wparam.loword());
 
-    let key = match VIRTUAL_KEY(vk_code) {
-        VK_BACK => "backspace",
-        VK_RETURN => "enter",
-        VK_TAB => "tab",
-        VK_UP => "up",
-        VK_DOWN => "down",
-        VK_RIGHT => "right",
-        VK_LEFT => "left",
-        VK_HOME => "home",
-        VK_END => "end",
-        VK_PRIOR => "pageup",
-        VK_NEXT => "pagedown",
-        VK_ESCAPE => "escape",
-        VK_INSERT => "insert",
-        VK_DELETE => "delete",
-        _ => return basic_vkcode_to_string(vk_code, modifiers),
-    }
-    .to_owned();
+    // let key = match VIRTUAL_KEY(vk_code) {
+    //     VK_BACK => "backspace",
+    //     VK_RETURN => "enter",
+    //     VK_TAB => "tab",
+    //     VK_UP => "up",
+    //     VK_DOWN => "down",
+    //     VK_RIGHT => "right",
+    //     VK_LEFT => "left",
+    //     VK_HOME => "home",
+    //     VK_END => "end",
+    //     VK_PRIOR => "pageup",
+    //     VK_NEXT => "pagedown",
+    //     VK_ESCAPE => "escape",
+    //     VK_INSERT => "insert",
+    //     VK_DELETE => "delete",
+    //     _ => return basic_vkcode_to_string(vk_code, modifiers),
+    // }
+    // .to_owned();
 
     Some(Keystroke {
         modifiers,
-        key,
+        key: vk_code.into(),
         ime_key: None,
     })
 }
@@ -1186,53 +1183,54 @@ enum KeystrokeOrModifier {
 }
 
 fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
-    let vk_code = wparam.loword();
-    println!("  vk code: {}", vk_code);
+    let vk_code = VIRTUAL_KEY(wparam.loword());
+    println!("  vk code: {:?}", vk_code);
     let modifiers = current_modifiers();
 
-    let key = match VIRTUAL_KEY(vk_code) {
-        VK_BACK => "backspace",
-        VK_RETURN => "enter",
-        VK_TAB => "tab",
-        VK_UP => "up",
-        VK_DOWN => "down",
-        VK_RIGHT => "right",
-        VK_LEFT => "left",
-        VK_HOME => "home",
-        VK_END => "end",
-        VK_PRIOR => "pageup",
-        VK_NEXT => "pagedown",
-        VK_ESCAPE => "escape",
-        VK_INSERT => "insert",
-        VK_DELETE => "delete",
-        _ => {
-            if is_modifier(VIRTUAL_KEY(vk_code)) {
-                return Some(KeystrokeOrModifier::Modifier(modifiers));
-            }
+    // let key = match VIRTUAL_KEY(vk_code) {
+    //     VK_BACK => "backspace",
+    //     VK_RETURN => "enter",
+    //     VK_TAB => "tab",
+    //     VK_UP => "up",
+    //     VK_DOWN => "down",
+    //     VK_RIGHT => "right",
+    //     VK_LEFT => "left",
+    //     VK_HOME => "home",
+    //     VK_END => "end",
+    //     VK_PRIOR => "pageup",
+    //     VK_NEXT => "pagedown",
+    //     VK_ESCAPE => "escape",
+    //     VK_INSERT => "insert",
+    //     VK_DELETE => "delete",
+    //     _ => {
+    //         if is_modifier(VIRTUAL_KEY(vk_code)) {
+    //             return Some(KeystrokeOrModifier::Modifier(modifiers));
+    //         }
 
-            if modifiers.control || modifiers.alt {
-                let basic_key = basic_vkcode_to_string(vk_code, modifiers);
-                if let Some(basic_key) = basic_key {
-                    return Some(KeystrokeOrModifier::Keystroke(basic_key));
-                }
-            }
+    //         if modifiers.control || modifiers.alt {
+    //             let basic_key = basic_vkcode_to_string(vk_code, modifiers);
+    //             if let Some(basic_key) = basic_key {
+    //                 return Some(KeystrokeOrModifier::Keystroke(basic_key));
+    //             }
+    //         }
 
-            if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
-                let offset = vk_code - VK_F1.0;
-                return Some(KeystrokeOrModifier::Keystroke(Keystroke {
-                    modifiers,
-                    key: format!("f{}", offset + 1),
-                    ime_key: None,
-                }));
-            };
-            // return None;
-            if let Some(basic_key) = basic_vkcode_to_string(vk_code, modifiers) {
-                return Some(KeystrokeOrModifier::Keystroke(basic_key));
-            }
-            return None;
-        }
-    }
-    .to_owned();
+    //         if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
+    //             let offset = vk_code - VK_F1.0;
+    //             return Some(KeystrokeOrModifier::Keystroke(Keystroke {
+    //                 modifiers,
+    //                 key: format!("f{}", offset + 1),
+    //                 ime_key: None,
+    //             }));
+    //         };
+    //         // return None;
+    //         if let Some(basic_key) = basic_vkcode_to_string(vk_code, modifiers) {
+    //             return Some(KeystrokeOrModifier::Keystroke(basic_key));
+    //         }
+    //         return None;
+    //     }
+    // }
+    // .to_owned();
+    let key = vk_code.into();
 
     Some(KeystrokeOrModifier::Keystroke(Keystroke {
         modifiers,
@@ -1258,7 +1256,7 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         };
         Some(Keystroke {
             modifiers,
-            key,
+            key: VirtualKeyCode::from_str(&key),
             ime_key: Some(first_char.to_string()),
         })
     }
@@ -1315,20 +1313,21 @@ fn parse_ime_compostion_result(ctx: HIMC) -> Option<String> {
     }
 }
 
-fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> {
-    let mapped_code = unsafe { MapVirtualKeyW(code as u32, MAPVK_VK_TO_CHAR) };
+fn basic_vkcode_to_string(code: VIRTUAL_KEY, modifiers: Modifiers) -> Option<Keystroke> {
+    // let mapped_code = unsafe { MapVirtualKeyW(code as u32, MAPVK_VK_TO_CHAR) };
 
-    let key = match mapped_code {
-        0 => None,
-        raw_code => char::from_u32(raw_code),
-    }?
-    .to_ascii_lowercase();
+    // let key = match mapped_code {
+    //     0 => None,
+    //     raw_code => char::from_u32(raw_code),
+    // }?
+    // .to_ascii_lowercase();
 
-    let key = if matches!(code as u32, 112..=135) {
-        format!("f{key}")
-    } else {
-        key.to_string()
-    };
+    // let key = if matches!(code as u32, 112..=135) {
+    //     format!("f{key}")
+    // } else {
+    //     key.to_string()
+    // };
+    let key = code.into();
 
     Some(Keystroke {
         modifiers,
@@ -1457,12 +1456,275 @@ where
     result
 }
 
-fn map_virtual_key(key: VirtualKey) -> VirtualKeyCode {
-    key.into()
+fn get_client_area_insets(
+    handle: HWND,
+    is_maximized: bool,
+    windows_version: WindowsVersion,
+) -> RECT {
+    // For maximized windows, Windows outdents the window rect from the screen's client rect
+    // by `frame_thickness` on each edge, meaning `insets` must contain `frame_thickness`
+    // on all sides (including the top) to avoid the client area extending onto adjacent
+    // monitors.
+    //
+    // For non-maximized windows, things become complicated:
+    //
+    // - On Windows 10
+    // The top inset must be zero, since if there is any nonclient area, Windows will draw
+    // a full native titlebar outside the client area. (This doesn't occur in the maximized
+    // case.)
+    //
+    // - On Windows 11
+    // The top inset is calculated using an empirical formula that I derived through various
+    // tests. Without this, the top 1-2 rows of pixels in our window would be obscured.
+    let dpi = unsafe { GetDpiForWindow(handle) };
+    let frame_thickness = get_frame_thickness(dpi);
+    let top_insets = if is_maximized {
+        frame_thickness
+    } else {
+        match windows_version {
+            WindowsVersion::Win10 => 0,
+            WindowsVersion::Win11 => (dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32).round() as i32,
+        }
+    };
+    RECT {
+        left: frame_thickness,
+        top: top_insets,
+        right: frame_thickness,
+        bottom: frame_thickness,
+    }
 }
 
-impl From<VirtualKey> for VirtualKeyCode {
-    fn from(value: VirtualKey) -> Self {
-        todo!()
+// there is some additional non-visible space when talking about window
+// borders on Windows:
+// - SM_CXSIZEFRAME: The resize handle.
+// - SM_CXPADDEDBORDER: Additional border space that isn't part of the resize handle.
+fn get_frame_thickness(dpi: u32) -> i32 {
+    let resize_frame_thickness = unsafe { GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) };
+    let padding_thickness = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
+    resize_frame_thickness + padding_thickness
+}
+
+fn notify_frame_changed(handle: HWND) {
+    unsafe {
+        SetWindowPos(
+            handle,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED
+                | SWP_NOACTIVATE
+                | SWP_NOCOPYBITS
+                | SWP_NOMOVE
+                | SWP_NOOWNERZORDER
+                | SWP_NOREPOSITION
+                | SWP_NOSENDCHANGING
+                | SWP_NOSIZE
+                | SWP_NOZORDER,
+        )
+        .log_err();
+    }
+}
+
+fn with_input_handler<F, R>(state_ptr: &Rc<WindowsWindowStatePtr>, f: F) -> Option<R>
+where
+    F: FnOnce(&mut PlatformInputHandler) -> R,
+{
+    let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
+    let result = f(&mut input_handler);
+    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+    Some(result)
+}
+
+fn with_input_handler_and_scale_factor<F, R>(
+    state_ptr: &Rc<WindowsWindowStatePtr>,
+    f: F,
+) -> Option<R>
+where
+    F: FnOnce(&mut PlatformInputHandler, f32) -> Option<R>,
+{
+    let mut lock = state_ptr.state.borrow_mut();
+    let mut input_handler = lock.input_handler.take()?;
+    let scale_factor = lock.scale_factor;
+    drop(lock);
+    let result = f(&mut input_handler, scale_factor);
+    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
+    result
+}
+
+impl From<VIRTUAL_KEY> for VirtualKeyCode {
+    fn from(value: VIRTUAL_KEY) -> Self {
+        match value {
+            // VirtualKeyCode::Unknown => todo!(),
+            // VirtualKeyCode::Function => todo!(),
+            VK_CANCEL => VirtualKeyCode::Cancel,
+            VK_BACK => VirtualKeyCode::Backspace,
+            VK_TAB => VirtualKeyCode::Tab,
+            VK_CLEAR => VirtualKeyCode::Clear,
+            VK_RETURN => VirtualKeyCode::Enter,
+            VK_SHIFT => VirtualKeyCode::Shift,
+            VK_CONTROL => VirtualKeyCode::Control,
+            VK_MENU => VirtualKeyCode::Alt,
+            VK_PAUSE => VirtualKeyCode::Pause,
+            VK_CAPITAL => VirtualKeyCode::Capital,
+            VK_KANA => VirtualKeyCode::Kana,
+            // VK_HANGUL => VirtualKeyCode::Hangul,
+            VK_JUNJA => VirtualKeyCode::Junja,
+            VK_FINAL => VirtualKeyCode::Final,
+            VK_HANJA => VirtualKeyCode::Hanja,
+            // VK_KANJI => VirtualKeyCode::Kanji,
+            VK_ESCAPE => VirtualKeyCode::Escape,
+            VK_CONVERT => VirtualKeyCode::Convert,
+            VK_NONCONVERT => VirtualKeyCode::Nonconvert,
+            VK_ACCEPT => VirtualKeyCode::Accept,
+            VK_MODECHANGE => VirtualKeyCode::ModeChange,
+            VK_SPACE => VirtualKeyCode::Space,
+            VK_PRIOR => VirtualKeyCode::PageUp,
+            VK_NEXT => VirtualKeyCode::PageDown,
+            VK_END => VirtualKeyCode::End,
+            VK_HOME => VirtualKeyCode::Home,
+            VK_LEFT => VirtualKeyCode::Left,
+            VK_UP => VirtualKeyCode::Up,
+            VK_RIGHT => VirtualKeyCode::Right,
+            VK_DOWN => VirtualKeyCode::Down,
+            VK_SELECT => VirtualKeyCode::Select,
+            VK_PRINT => VirtualKeyCode::Print,
+            VK_EXECUTE => VirtualKeyCode::Execute,
+            VK_SNAPSHOT => VirtualKeyCode::PrintScreen,
+            VK_INSERT => VirtualKeyCode::Insert,
+            VK_DELETE => VirtualKeyCode::Delete,
+            VK_HELP => VirtualKeyCode::Help,
+            VK_0 => VirtualKeyCode::Digital0,
+            VK_1 => VirtualKeyCode::Digital1,
+            VK_2 => VirtualKeyCode::Digital2,
+            VK_3 => VirtualKeyCode::Digital3,
+            VK_4 => VirtualKeyCode::Digital4,
+            VK_5 => VirtualKeyCode::Digital5,
+            VK_6 => VirtualKeyCode::Digital6,
+            VK_7 => VirtualKeyCode::Digital7,
+            VK_8 => VirtualKeyCode::Digital8,
+            VK_9 => VirtualKeyCode::Digital9,
+            VK_A => VirtualKeyCode::A,
+            VK_B => VirtualKeyCode::B,
+            VK_C => VirtualKeyCode::C,
+            VK_D => VirtualKeyCode::D,
+            VK_E => VirtualKeyCode::E,
+            VIRTUAL_KEY(70u16) => VirtualKeyCode::F,
+            VK_G => VirtualKeyCode::G,
+            VK_H => VirtualKeyCode::H,
+            VK_I => VirtualKeyCode::I,
+            VK_J => VirtualKeyCode::J,
+            VK_K => VirtualKeyCode::K,
+            VK_L => VirtualKeyCode::L,
+            VK_M => VirtualKeyCode::M,
+            VK_N => VirtualKeyCode::N,
+            VK_O => VirtualKeyCode::O,
+            VK_P => VirtualKeyCode::P,
+            VK_Q => VirtualKeyCode::Q,
+            VK_R => VirtualKeyCode::R,
+            VK_S => VirtualKeyCode::S,
+            VK_T => VirtualKeyCode::T,
+            VK_U => VirtualKeyCode::U,
+            VK_V => VirtualKeyCode::V,
+            VK_W => VirtualKeyCode::W,
+            VK_X => VirtualKeyCode::X,
+            VK_Y => VirtualKeyCode::Y,
+            VK_Z => VirtualKeyCode::Z,
+            VK_LWIN => VirtualKeyCode::LeftPlatform,
+            VK_RWIN => VirtualKeyCode::RightPlatform,
+            VK_APPS => VirtualKeyCode::App,
+            VK_SLEEP => VirtualKeyCode::Sleep,
+            VK_NUMPAD0 => VirtualKeyCode::Numpad0,
+            VK_NUMPAD1 => VirtualKeyCode::Numpad1,
+            VK_NUMPAD2 => VirtualKeyCode::Numpad2,
+            VK_NUMPAD3 => VirtualKeyCode::Numpad3,
+            VK_NUMPAD4 => VirtualKeyCode::Numpad4,
+            VK_NUMPAD5 => VirtualKeyCode::Numpad5,
+            VK_NUMPAD6 => VirtualKeyCode::Numpad6,
+            VK_NUMPAD7 => VirtualKeyCode::Numpad7,
+            VK_NUMPAD8 => VirtualKeyCode::Numpad8,
+            VK_NUMPAD9 => VirtualKeyCode::Numpad9,
+            VK_MULTIPLY => VirtualKeyCode::Multiply,
+            VK_ADD => VirtualKeyCode::Add,
+            VK_SEPARATOR => VirtualKeyCode::Separator,
+            VK_SUBTRACT => VirtualKeyCode::Subtract,
+            VK_DECIMAL => VirtualKeyCode::Decimal,
+            VK_DIVIDE => VirtualKeyCode::Divide,
+            VK_F1 => VirtualKeyCode::F1,
+            VK_F2 => VirtualKeyCode::F2,
+            VK_F3 => VirtualKeyCode::F3,
+            VK_F4 => VirtualKeyCode::F4,
+            VK_F5 => VirtualKeyCode::F5,
+            VK_F6 => VirtualKeyCode::F6,
+            VK_F7 => VirtualKeyCode::F7,
+            VK_F8 => VirtualKeyCode::F8,
+            VK_F9 => VirtualKeyCode::F9,
+            VK_F10 => VirtualKeyCode::F10,
+            VK_F11 => VirtualKeyCode::F11,
+            VK_F12 => VirtualKeyCode::F12,
+            VK_F13 => VirtualKeyCode::F13,
+            VK_F14 => VirtualKeyCode::F14,
+            VK_F15 => VirtualKeyCode::F15,
+            VK_F16 => VirtualKeyCode::F16,
+            VK_F17 => VirtualKeyCode::F17,
+            VK_F18 => VirtualKeyCode::F18,
+            VK_F19 => VirtualKeyCode::F19,
+            VK_F20 => VirtualKeyCode::F20,
+            VK_F21 => VirtualKeyCode::F21,
+            VK_F22 => VirtualKeyCode::F22,
+            VK_F23 => VirtualKeyCode::F23,
+            VK_F24 => VirtualKeyCode::F24,
+            VK_NUMLOCK => VirtualKeyCode::NumLock,
+            VK_SCROLL => VirtualKeyCode::ScrollLock,
+            VK_LSHIFT => VirtualKeyCode::LeftShift,
+            VK_RSHIFT => VirtualKeyCode::RightShift,
+            VK_LCONTROL => VirtualKeyCode::LeftControl,
+            VK_RCONTROL => VirtualKeyCode::RightControl,
+            VK_LMENU => VirtualKeyCode::LeftAlt,
+            VK_RMENU => VirtualKeyCode::RightAlt,
+            VK_BROWSER_BACK => VirtualKeyCode::BrowserBack,
+            VK_BROWSER_FORWARD => VirtualKeyCode::BrowserForward,
+            VK_BROWSER_REFRESH => VirtualKeyCode::BrowserRefresh,
+            VK_BROWSER_STOP => VirtualKeyCode::BrowserStop,
+            VK_BROWSER_SEARCH => VirtualKeyCode::BrowserSearch,
+            VK_BROWSER_FAVORITES => VirtualKeyCode::BrowserFavorites,
+            VK_BROWSER_HOME => VirtualKeyCode::BrowserHome,
+            VK_VOLUME_MUTE => VirtualKeyCode::VolumeMute,
+            VK_VOLUME_DOWN => VirtualKeyCode::VolumeDown,
+            VK_VOLUME_UP => VirtualKeyCode::VolumeUp,
+            VK_MEDIA_NEXT_TRACK => VirtualKeyCode::MediaNextTrack,
+            VK_MEDIA_PREV_TRACK => VirtualKeyCode::MediaPrevTrack,
+            VK_MEDIA_STOP => VirtualKeyCode::MediaStop,
+            VK_MEDIA_PLAY_PAUSE => VirtualKeyCode::MediaPlayPause,
+            VK_LAUNCH_MAIL => VirtualKeyCode::LaunchMail,
+            VK_LAUNCH_MEDIA_SELECT => VirtualKeyCode::LaunchMediaSelect,
+            VK_LAUNCH_APP1 => VirtualKeyCode::LaunchApp1,
+            VK_LAUNCH_APP2 => VirtualKeyCode::LaunchApp2,
+            VK_OEM_1 => VirtualKeyCode::OEM1,
+            VK_OEM_PLUS => VirtualKeyCode::OEMPlus,
+            VK_OEM_COMMA => VirtualKeyCode::OEMComma,
+            VK_OEM_MINUS => VirtualKeyCode::OEMMinus,
+            VK_OEM_PERIOD => VirtualKeyCode::OEMPeriod,
+            VK_OEM_2 => VirtualKeyCode::OEM2,
+            VK_OEM_3 => VirtualKeyCode::OEM3,
+            VK_OEM_4 => VirtualKeyCode::OEM4,
+            VK_OEM_5 => VirtualKeyCode::OEM5,
+            VK_OEM_6 => VirtualKeyCode::OEM6,
+            VK_OEM_7 => VirtualKeyCode::OEM7,
+            VK_OEM_8 => VirtualKeyCode::OEM8,
+            VK_OEM_102 => VirtualKeyCode::OEM102,
+            VK_PROCESSKEY => VirtualKeyCode::ProcessKey,
+            VK_PACKET => VirtualKeyCode::Packet,
+            VK_ATTN => VirtualKeyCode::Attn,
+            VK_CRSEL => VirtualKeyCode::CrSel,
+            VK_EXSEL => VirtualKeyCode::ExSel,
+            VK_EREOF => VirtualKeyCode::EraseEOF,
+            VK_PLAY => VirtualKeyCode::Play,
+            VK_ZOOM => VirtualKeyCode::Zoom,
+            VK_PA1 => VirtualKeyCode::PA1,
+            VK_OEM_CLEAR => VirtualKeyCode::OEMClear,
+            _ => VirtualKeyCode::Unknown,
+        }
     }
 }

@@ -74,11 +74,11 @@ impl Keystroke {
                     if let Some(next) = components.peek() {
                         if next.is_empty() && source.ends_with('-') {
                             // key = Some(String::from("-"));
-                            key = VirtualKeyCode::from("-");
+                            key = Some(VirtualKeyCode::from_str("-"));
                             break;
                         } else if next.len() > 1 && next.starts_with('>') {
                             // key = Some(String::from(component));
-                            key = VirtualKeyCode::from(component);
+                            key = Some(VirtualKeyCode::from_str(component));
                             ime_key = Some(String::from(&next[1..]));
                             components.next();
                         } else {
@@ -86,12 +86,13 @@ impl Keystroke {
                         }
                     } else {
                         // key = Some(String::from(component));
-                        key = VirtualKeyCode::from(component);
+                        key = Some(VirtualKeyCode::from_str(component));
                     }
                 }
             }
         }
 
+        // TODO:
         //Allow for the user to specify a keystroke modifier as the key itself
         //This sets the `key` to the modifier, and disables the modifier
         if key.is_none() {
