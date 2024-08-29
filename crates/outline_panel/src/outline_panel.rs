@@ -2861,7 +2861,7 @@ impl OutlinePanel {
                     match outline_panel.mode {
                         ItemsDisplayMode::Search => {
                             if is_singleton || query.is_some() || (should_add && is_expanded) {
-                                let entries_added = outline_panel.add_search_entries(
+                                outline_panel.add_search_entries(
                                     entry,
                                     depth,
                                     track_matches,
@@ -2870,17 +2870,6 @@ impl OutlinePanel {
                                     &mut match_candidates,
                                     cx,
                                 );
-
-                                if !is_singleton
-                                    && !entries_added
-                                    && matches!(
-                                        entry,
-                                        FsEntry::File(..) | FsEntry::ExternalFile(..)
-                                    )
-                                {
-                                    entries.pop();
-                                    // TODO kb need to clean up empty directories now
-                                }
                             }
                         }
                         ItemsDisplayMode::Outline => {
@@ -2955,6 +2944,18 @@ impl OutlinePanel {
             }) else {
                 return Vec::new();
             };
+
+            outline_panel
+                .update(&mut cx, |outline_panel, _| {
+                    if outline_panel.search.is_some() {
+                        cleanup_fs_entries_without_search_children(
+                            &outline_panel.collapsed_entries,
+                            &mut entries,
+                            &mut match_candidates,
+                        );
+                    }
+                })
+                .ok();
 
             let Some(query) = query else {
                 return entries;
@@ -3245,9 +3246,9 @@ impl OutlinePanel {
         entries: &mut Vec<CachedEntry>,
         match_candidates: &mut Vec<StringMatchCandidate>,
         cx: &mut ViewContext<Self>,
-    ) -> bool {
+    ) {
         let related_excerpts = match entry {
-            FsEntry::Directory(_, _) => return false,
+            FsEntry::Directory(_, _) => return,
             FsEntry::ExternalFile(_, excerpts) => excerpts,
             FsEntry::File(_, _, _, excerpts) => excerpts,
         }
@@ -3255,13 +3256,12 @@ impl OutlinePanel {
         .copied()
         .collect::<HashSet<_>>();
         if related_excerpts.is_empty() || self.search_matches.is_empty() {
-            return false;
+            return;
         }
         let Some(kind) = self.search.as_ref().map(|&(kind, _)| kind) else {
-            return false;
+            return;
         };
 
-        let mut entries_added = false;
         for match_range in &self.search_matches {
             if related_excerpts.contains(&match_range.start.excerpt_id)
                 || related_excerpts.contains(&match_range.end.excerpt_id)
@@ -3289,12 +3289,9 @@ impl OutlinePanel {
                         depth,
                         cx,
                     );
-                    entries_added = true;
                 }
             }
         }
-
-        entries_added
     }
 
     fn active_editor(&self) -> Option<View<Editor>> {
@@ -3399,6 +3396,122 @@ impl OutlinePanel {
         self.autoscroll(cx);
         cx.notify();
     }
+}
+
+fn cleanup_fs_entries_without_search_children(
+    collapsed_entries: &HashSet<CollapsedEntry>,
+    entries: &mut Vec<CachedEntry>,
+    string_match_candidates: &mut Vec<StringMatchCandidate>,
+) {
+    let mut match_ids_to_remove = BTreeSet::new();
+    let mut previous_entry = None::<&PanelEntry>;
+    for (id, entry) in entries.iter().enumerate().rev() {
+        let has_search_items = match (previous_entry, &entry.entry) {
+            (Some(PanelEntry::Outline(_)), _) => unreachable!(),
+            (_, PanelEntry::Outline(_)) => false,
+            (_, PanelEntry::Search(_)) => true,
+            (None, PanelEntry::FoldedDirs(_, _) | PanelEntry::Fs(_)) => false,
+            (
+                Some(PanelEntry::Search(_)),
+                PanelEntry::FoldedDirs(_, _) | PanelEntry::Fs(FsEntry::Directory(..)),
+            ) => false,
+            (Some(PanelEntry::FoldedDirs(..)), PanelEntry::FoldedDirs(..)) => false,
+            (
+                Some(PanelEntry::Search(_)),
+                PanelEntry::Fs(FsEntry::File(..) | FsEntry::ExternalFile(..)),
+            ) => true,
+            (
+                Some(PanelEntry::Fs(previous_fs)),
+                PanelEntry::FoldedDirs(folded_worktree, folded_dirs),
+            ) => {
+                let expected_parent = folded_dirs.last().map(|dir_entry| dir_entry.path.as_ref());
+                match previous_fs {
+                    FsEntry::ExternalFile(..) => false,
+                    FsEntry::File(file_worktree, file_entry, ..) => {
+                        file_worktree == folded_worktree
+                            && file_entry.path.parent() == expected_parent
+                    }
+                    FsEntry::Directory(directory_wortree, directory_entry) => {
+                        directory_wortree == folded_worktree
+                            && directory_entry.path.parent() == expected_parent
+                    }
+                }
+            }
+            (
+                Some(PanelEntry::FoldedDirs(folded_worktree, folded_dirs)),
+                PanelEntry::Fs(fs_entry),
+            ) => match fs_entry {
+                FsEntry::File(..) | FsEntry::ExternalFile(..) => false,
+                FsEntry::Directory(directory_wortree, maybe_parent_directory) => {
+                    directory_wortree == folded_worktree
+                        && Some(maybe_parent_directory.path.as_ref())
+                            == folded_dirs
+                                .first()
+                                .and_then(|dir_entry| dir_entry.path.parent())
+                }
+            },
+            (Some(PanelEntry::Fs(previous_entry)), PanelEntry::Fs(maybe_parent_entry)) => {
+                match (previous_entry, maybe_parent_entry) {
+                    (FsEntry::ExternalFile(..), _) | (_, FsEntry::ExternalFile(..)) => false,
+                    (FsEntry::Directory(..) | FsEntry::File(..), FsEntry::File(..)) => false,
+                    (
+                        FsEntry::Directory(previous_worktree, previous_directory),
+                        FsEntry::Directory(new_worktree, maybe_parent_directory),
+                    ) => {
+                        previous_worktree == new_worktree
+                            && previous_directory.path.parent()
+                                == Some(maybe_parent_directory.path.as_ref())
+                    }
+                    (
+                        FsEntry::File(previous_worktree, previous_file, ..),
+                        FsEntry::Directory(new_worktree, maybe_parent_directory),
+                    ) => {
+                        previous_worktree == new_worktree
+                            && previous_file.path.parent()
+                                == Some(maybe_parent_directory.path.as_ref())
+                    }
+                }
+            }
+        };
+
+        let collapsed_entry_to_check = match &entry.entry {
+            PanelEntry::FoldedDirs(worktree_id, entries) => entries
+                .last()
+                .map(|entry| CollapsedEntry::Dir(*worktree_id, entry.id)),
+            PanelEntry::Fs(FsEntry::Directory(worktree_id, entry)) => {
+                Some(CollapsedEntry::Dir(*worktree_id, entry.id))
+            }
+            PanelEntry::Fs(FsEntry::ExternalFile(buffer_id, _)) => {
+                Some(CollapsedEntry::ExternalFile(*buffer_id))
+            }
+            PanelEntry::Fs(FsEntry::File(worktree_id, _, buffer_id, _)) => {
+                Some(CollapsedEntry::File(*worktree_id, *buffer_id))
+            }
+            PanelEntry::Search(_) | PanelEntry::Outline(_) => None,
+        };
+
+        if has_search_items {
+            previous_entry = Some(&entry.entry);
+        } else {
+            if let Some(collapsed_entry_to_check) = collapsed_entry_to_check {
+                if collapsed_entries.contains(&collapsed_entry_to_check) {
+                    previous_entry = Some(&entry.entry);
+                    continue;
+                }
+            }
+            match_ids_to_remove.insert(id);
+            previous_entry = None;
+        }
+    }
+
+    if match_ids_to_remove.is_empty() {
+        return;
+    }
+
+    string_match_candidates.retain(|candidate| !match_ids_to_remove.contains(&candidate.id));
+    match_ids_to_remove.into_iter().rev().for_each(|id| {
+        entries.remove(id);
+    });
 }
 
 fn workspace_active_editor(
