@@ -867,32 +867,73 @@ impl AssistantPanel {
     }
 
     fn new_context(&mut self, cx: &mut ViewContext<Self>) -> Option<View<ContextEditor>> {
-        let new_context = self.context_store.update(cx, |store, cx| store.create(cx));
-        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx).log_err();
+        if self.project.read(cx).is_via_collab() {
+            let task = self
+                .context_store
+                .update(cx, |store, cx| store.create_remote_context(cx));
 
-        let assistant_panel = cx.view().downgrade();
-        let editor = cx.new_view(|cx| {
-            let mut editor = ContextEditor::for_context(
-                new_context,
-                self.fs.clone(),
-                self.workspace.clone(),
-                self.project.clone(),
-                lsp_adapter_delegate,
-                assistant_panel,
-                cx,
-            );
-            editor.insert_default_prompt(cx);
-            editor
-        });
+            cx.spawn(|this, mut cx| async move {
+                let context = task.await?;
 
-        self.show_context(editor.clone(), cx);
-        self.pane.update(cx, |pane, cx| {
-            let items: Vec<_> = pane.items().collect();
-            if !items.is_empty() {
-                pane.activate_item(items.len() - 1, true, true, cx);
-            }
-        });
-        Some(editor)
+                this.update(&mut cx, |this, cx| {
+                    let workspace = this.workspace.clone();
+                    let project = this.project.clone();
+                    let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err();
+
+                    let fs = this.fs.clone();
+                    let project = this.project.clone();
+                    let weak_assistant_panel = cx.view().downgrade();
+
+                    let editor = cx.new_view(|cx| {
+                        ContextEditor::for_context(
+                            context,
+                            fs,
+                            workspace,
+                            project,
+                            lsp_adapter_delegate,
+                            weak_assistant_panel,
+                            cx,
+                        )
+                    });
+
+                    this.show_context(editor, cx);
+
+                    anyhow::Ok(())
+                })??;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+            None
+        } else {
+            let context = self.context_store.update(cx, |store, cx| store.create(cx));
+            let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx).log_err();
+
+            let assistant_panel = cx.view().downgrade();
+            let editor = cx.new_view(|cx| {
+                let mut editor = ContextEditor::for_context(
+                    context,
+                    self.fs.clone(),
+                    self.workspace.clone(),
+                    self.project.clone(),
+                    lsp_adapter_delegate,
+                    assistant_panel,
+                    cx,
+                );
+                editor.insert_default_prompt(cx);
+                editor
+            });
+
+            self.show_context(editor.clone(), cx);
+            self.pane.update(cx, |pane, cx| {
+                let items: Vec<_> = pane.items().collect();
+                if !items.is_empty() {
+                    pane.activate_item(items.len() - 1, true, true, cx);
+                }
+            });
+            Some(editor)
+        }
     }
 
     fn show_context(&mut self, context_editor: View<ContextEditor>, cx: &mut ViewContext<Self>) {
