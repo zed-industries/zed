@@ -4957,7 +4957,7 @@ dependencies = [
  "collections",
  "core-foundation 0.9.4",
  "core-foundation-sys",
- "core-graphics 0.23.2",
+ "core-graphics 0.24.0",
  "core-text",
  "cosmic-text",
  "ctor",
