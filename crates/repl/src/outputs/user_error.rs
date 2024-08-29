@@ -1,4 +1,4 @@
-use gpui::{AnyElement, FontWeight, WindowContext};
+use gpui::{AnyElement, FontWeight, View, WindowContext};
 use ui::{h_flex, prelude::*, v_flex, Label};
 
 use crate::outputs::plain::TerminalOutput;
@@ -7,7 +7,7 @@ use crate::outputs::plain::TerminalOutput;
 pub struct ErrorView {
     pub ename: String,
     pub evalue: String,
-    pub traceback: TerminalOutput,
+    pub traceback: View<TerminalOutput>,
 }
 
 impl ErrorView {
@@ -41,7 +41,7 @@ impl ErrorView {
                         .py(padding)
                         .border_l_1()
                         .border_color(theme.status().error_border)
-                        .child(self.traceback.render(cx)),
+                        .child(self.traceback.clone()),
                 )
                 .into_any_element(),
         )

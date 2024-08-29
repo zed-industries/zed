@@ -1,6 +1,7 @@
 mod anchored;
 mod animation;
 mod canvas;
+mod common;
 mod deferred;
 mod div;
 mod img;
@@ -13,6 +14,7 @@ mod uniform_list;
 pub use anchored::*;
 pub use animation::*;
 pub use canvas::*;
+pub use common::*;
 pub use deferred::*;
 pub use div::*;
 pub use img::*;
