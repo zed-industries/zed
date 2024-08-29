@@ -696,6 +696,14 @@ impl OutlinePanel {
         };
 
         if let Some((offset, anchor)) = scroll_target {
+            self.workspace
+                .update(cx, |workspace, cx| match self.active_item() {
+                    Some(active_item) => {
+                        workspace.activate_item(active_item.as_ref(), true, change_selection, cx)
+                    }
+                    None => workspace.activate_item(&active_editor, true, change_selection, cx),
+                });
+
             self.select_entry(entry.clone(), true, cx);
             if change_selection {
                 active_editor.update(cx, |editor, cx| {
@@ -711,28 +719,6 @@ impl OutlinePanel {
                     editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, cx);
                 });
                 self.focus_handle.focus(cx);
-            }
-
-            if let PanelEntry::Search(_) = entry {
-                if let Some(active_project_search) = self
-                    .active_item()
-                    .and_then(|item| item.downcast::<ProjectSearchView>())
-                {
-                    self.workspace.update(cx, |workspace, cx| {
-                        workspace.activate_item(&active_project_search, true, change_selection, cx)
-                    });
-                }
-            } else {
-                self.workspace
-                    .update(cx, |workspace, cx| match self.active_item() {
-                        Some(active_item) => workspace.activate_item(
-                            active_item.as_ref(),
-                            true,
-                            change_selection,
-                            cx,
-                        ),
-                        None => workspace.activate_item(&active_editor, true, change_selection, cx),
-                    });
             }
         }
     }
@@ -3873,6 +3859,7 @@ mod tests {
                 });
         });
 
+        // TODO kb has to be ide/src
         let all_matches = r#"/
   crates/
     ide/
