@@ -1,10 +1,10 @@
 use gpui::{
-    colors, div, prelude::*, rgb, DefaultColor, DefaultColors, DefaultThemeApperance, Hsla, Render,
-    Rgba, View, ViewContext, WindowContext,
+    colors, div, prelude::*, DefaultColor, DefaultThemeApperance, Hsla, Render, View, ViewContext,
+    WindowContext,
 };
 use story::Story;
 use strum::IntoEnumIterator;
-use ui::ActiveTheme;
+use ui::{h_flex, ActiveTheme};
 
 pub struct DefaultColorsStory;
 
@@ -25,7 +25,7 @@ impl Render for DefaultColorsStory {
                 let color_types = DefaultColor::iter()
                     .map(|color| {
                         let name = format!("{:?}", color);
-                        let rgba = colors.color(color);
+                        let rgba = color.hsla(&colors);
                         (name, rgba)
                     })
                     .collect::<Vec<_>>();
@@ -53,6 +53,14 @@ impl Render for DefaultColorsStory {
                             )
                             .child(Story::label(format!("{}: {:?}", name, color)))
                     }))
+                    .child(
+                        h_flex()
+                            .bg(DefaultColor::Background.hsla(&colors))
+                            .h_8()
+                            .w_24()
+                            .justify_center()
+                            .child("Text on background"),
+                    )
             }))
     }
 }
