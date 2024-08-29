@@ -35,7 +35,7 @@
 
 use std::time::Duration;
 
-use editor::Editor;
+use editor::{Editor, MultiBuffer};
 use gpui::{
     percentage, Animation, AnimationExt, AnyElement, ClipboardItem, Model, Render, Transformation,
     View, WeakView,
@@ -176,7 +176,18 @@ impl Output {
                                 if let Some(buffer_content) = buffer_content.as_ref() {
                                     let buffer = buffer_content.clone();
                                     let editor = Box::new(cx.new_view(|cx| {
-                                        Editor::for_buffer(buffer.clone(), None, cx)
+                                        let multibuffer = cx.new_model(|cx| {
+                                            let mut multi_buffer =
+                                                MultiBuffer::singleton(buffer.clone(), cx);
+
+                                            multi_buffer.set_title("REPL Output".to_string(), cx);
+                                            multi_buffer
+                                        });
+
+                                        let editor =
+                                            Editor::for_multibuffer(multibuffer, None, false, cx);
+
+                                        editor
                                     }));
                                     workspace
                                         .update(cx, |workspace, cx| {
@@ -195,6 +206,7 @@ impl Output {
 
     fn render(
         &self,
+
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<ExecutionView>,
     ) -> impl IntoElement {

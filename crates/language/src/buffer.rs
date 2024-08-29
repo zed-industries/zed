@@ -1591,12 +1591,13 @@ impl Buffer {
 
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
-        self.has_conflict
-            || self.has_unsaved_edits()
-            || self
-                .file
-                .as_ref()
-                .map_or(false, |file| file.is_deleted() || !file.is_created())
+        self.capability != Capability::ReadOnly
+            && (self.has_conflict
+                || self.has_unsaved_edits()
+                || self
+                    .file
+                    .as_ref()
+                    .map_or(false, |file| file.is_deleted() || !file.is_created()))
     }
 
     /// Checks if the buffer and its file have both changed since the buffer

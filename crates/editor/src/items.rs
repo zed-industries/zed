@@ -844,7 +844,13 @@ impl Item for Editor {
                         .unwrap_or_default(),
                 )
                 .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_else(|| "untitled".to_string())
+                .unwrap_or_else(|| {
+                    if multibuffer.is_singleton() {
+                        multibuffer.title(cx).to_string()
+                    } else {
+                        "untitled".to_string()
+                    }
+                })
         });
 
         let settings = ThemeSettings::get_global(cx);
