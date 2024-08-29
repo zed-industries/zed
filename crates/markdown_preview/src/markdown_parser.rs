@@ -314,15 +314,8 @@ impl<'a> MarkdownParser<'a> {
                             Image::Path {
                                 display_path,
                                 path: _,
-                            } => display_path.is_file(),
-                            Image::Web { url } => match isahc::get(url) {
-                                Ok(response) => match response.status().as_u16() {
-                                    200 => true,
-                                    404 => false,
-                                    _ => false,
-                                },
-                                Err(_) => false,
-                            },
+                            } => gpui::ImageSource::try_from(display_path).is_ok(),
+                            Image::Web { url } => gpui::ImageSource::try_from(url).is_ok(),
                         };
 
                         if is_valid_image {
@@ -900,7 +893,6 @@ mod tests {
         } else {
             panic!("Expected a paragraph");
         };
-        println!("{:?}", paragraph);
         assert_eq!(
             paragraph.highlights,
             vec![(
