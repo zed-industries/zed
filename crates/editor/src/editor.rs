@@ -1749,7 +1749,6 @@ impl Editor {
                     .into_any()
             }),
             merge_adjacent: true,
-            text: None,
         };
         let file_header_size = if show_excerpt_controls { 3 } else { 2 };
         let display_map = cx.new_model(|cx| {

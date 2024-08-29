@@ -25,8 +25,8 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CustomBlockId, RenderBlock,
-        ToDisplayPoint,
+        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CustomBlockId, FoldId,
+        RenderBlock, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
     Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowExt, ToOffset as _, ToPoint,
@@ -1890,7 +1890,6 @@ impl ContextEditor {
                                 render: Arc::new(move |_, _, _| Empty.into_any()),
                                 constrain_width: false,
                                 merge_adjacent: false,
-                                text: None,
                             };
                             let render_toggle = {
                                 let confirm_command = confirm_command.clone();
@@ -2149,12 +2148,15 @@ impl ContextEditor {
                     render: Arc::new(move |_, _crease_range, _cx| Empty.into_any()),
                     constrain_width: false,
                     merge_adjacent: false,
-                    text: None,
                 };
                 let footer_placeholder = FoldPlaceholder {
+                    render: render_fold_icon_button(
+                        cx.view().downgrade(),
+                        IconName::Code,
+                        "Raw Edits".into(),
+                    ),
                     constrain_width: false,
                     merge_adjacent: false,
-                    ..editor.default_fold_placeholder(cx)
                 };
 
                 let new_crease_ids = editor.insert_creases(
@@ -2169,7 +2171,13 @@ impl ContextEditor {
                         Crease::new(
                             footer_range,
                             footer_placeholder.clone(),
-                            fold_toggle("step-footer"),
+                            |row, is_folded, fold, cx| {
+                                if is_folded {
+                                    Empty.into_any_element()
+                                } else {
+                                    fold_toggle("step-footer")(row, is_folded, fold, cx)
+                                }
+                            },
                             |_, _, _| Empty.into_any_element(),
                         )
                     })),
@@ -2251,34 +2259,13 @@ impl ContextEditor {
                 creases.push(Crease::new(
                     start..end,
                     FoldPlaceholder {
-                        render: Arc::new({
-                            let editor = cx.view().downgrade();
-                            let icon = section.icon;
-                            let label = section.label.clone();
-                            move |fold_id, fold_range, _cx| {
-                                let editor = editor.clone();
-                                ButtonLike::new(fold_id)
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::ElevatedSurface)
-                                    .child(Icon::new(icon))
-                                    .child(Label::new(label.clone()).single_line())
-                                    .on_click(move |_, cx| {
-                                        editor
-                                            .update(cx, |editor, cx| {
-                                                let buffer_start = fold_range
-                                                    .start
-                                                    .to_point(&editor.buffer().read(cx).read(cx));
-                                                let buffer_row = MultiBufferRow(buffer_start.row);
-                                                editor.unfold_at(&UnfoldAt { buffer_row }, cx);
-                                            })
-                                            .ok();
-                                    })
-                                    .into_any_element()
-                            }
-                        }),
+                        render: render_fold_icon_button(
+                            cx.view().downgrade(),
+                            section.icon,
+                            section.label.clone(),
+                        ),
                         constrain_width: false,
                         merge_adjacent: false,
-                        text: None,
                     },
                     render_slash_command_output_toggle,
                     |_, _, _| Empty.into_any_element(),
@@ -3296,6 +3283,7 @@ impl ContextEditor {
         Some(
             v_flex()
                 .w(max_width)
+                .pt_1()
                 .pl(gutter_width)
                 .child(h_flex().h(px(1.)).bg(border_color))
                 .into_any(),
@@ -3712,6 +3700,33 @@ impl ContextEditor {
                 focus_handle.dispatch_action(&Assist, cx);
             })
     }
+}
+
+fn render_fold_icon_button(
+    editor: WeakView<Editor>,
+    icon: IconName,
+    label: SharedString,
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut WindowContext) -> AnyElement> {
+    Arc::new(move |fold_id, fold_range, _cx| {
+        let editor = editor.clone();
+        ButtonLike::new(fold_id)
+            .style(ButtonStyle::Filled)
+            .layer(ElevationIndex::ElevatedSurface)
+            .child(Icon::new(icon))
+            .child(Label::new(label.clone()).single_line())
+            .on_click(move |_, cx| {
+                editor
+                    .update(cx, |editor, cx| {
+                        let buffer_start = fold_range
+                            .start
+                            .to_point(&editor.buffer().read(cx).read(cx));
+                        let buffer_row = MultiBufferRow(buffer_start.row);
+                        editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                    })
+                    .ok();
+            })
+            .into_any_element()
+    })
 }
 
 impl EventEmitter<EditorEvent> for ContextEditor {}
@@ -4717,7 +4732,6 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> 
         }),
         constrain_width: false,
         merge_adjacent: false,
-        text: None,
     }
 }
 
