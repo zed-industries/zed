@@ -1977,7 +1977,6 @@ impl Context {
                                 );
                             });
 
-                            // Use `inclusive = false` as edits might occur at the end of a parsed step.
                             cx.emit(ContextEvent::StreamedCompletion);
 
                             Some(())
