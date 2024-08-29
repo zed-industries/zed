@@ -330,7 +330,7 @@ cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = "0.12.0"
-cocoa = "0.25"
+cocoa = "0.26"
 core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
 ctor = "0.2.6"
