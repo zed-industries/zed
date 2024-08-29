@@ -2055,11 +2055,19 @@ impl ContextEditor {
                         .anchor_in_excerpt(excerpt_id, header_end)
                         .unwrap();
                 let footer_range = step.trailing_tag_start.map(|start| {
-                    let end = if buffer.contains_str_at(step.range.end, "\n") {
-                        buffer.anchor_before(step.range.end.to_offset(&buffer) + 1)
-                    } else {
-                        step.range.end
-                    };
+                    let mut step_range_end = step.range.end.to_offset(&buffer);
+                    if buffer.contains_str_at(step_range_end, "\n") {
+                        // Only include the newline if it belongs to the same message.
+                        let messages = self
+                            .context
+                            .read(cx)
+                            .messages_for_offsets([step_range_end, step_range_end + 1], cx);
+                        if messages.len() == 1 {
+                            step_range_end += 1;
+                        }
+                    }
+
+                    let end = buffer.anchor_before(step_range_end);
                     multibuffer.anchor_in_excerpt(excerpt_id, start).unwrap()
                         ..multibuffer.anchor_in_excerpt(excerpt_id, end).unwrap()
                 });
