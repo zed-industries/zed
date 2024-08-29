@@ -28,7 +28,7 @@ $ zed .
 
 the environment variable `MY_ENV_VAR` is now available inside Zed. For example, in the built-in terminal.
 
-Starting with Zed 0.152.0, the CLI `zed` will *always* pass along its environment to Zed, regardless of whether a Zed instance was previously running or not. Prior to Zed 0.152.0 this was not the case and only the first Zed instance would inherit the environment variables.
+Starting with Zed 0.152.0, the CLI `zed` will _always_ pass along its environment to Zed, regardless of whether a Zed instance was previously running or not. Prior to Zed 0.152.0 this was not the case and only the first Zed instance would inherit the environment variables.
 
 ### Launched via window manager, Dock, or launcher
 
