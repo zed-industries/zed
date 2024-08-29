@@ -33,35 +33,41 @@ pub fn colors(appearance: DefaultThemeApperance) -> DefaultColors {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DefaultColors {
     text: Rgba,
+    selected_text: Rgba,
     background: Rgba,
     disabled: Rgba,
     selected: Rgba,
     border: Rgba,
     seperator: Rgba,
+    container: Rgba,
 }
 
 impl DefaultColors {
     /// Get the default light colors
-    pub fn light() -> Self {
+    pub fn dark() -> Self {
         Self {
-            text: rgb(0xEAEAEA),
+            text: rgb(0xFFFFFF),
+            selected_text: rgb(0xFFFFFF),
             disabled: rgb(0x565656),
             selected: rgb(0x2457CA),
             background: rgb(0x222222),
             border: rgb(0x000000),
             seperator: rgb(0xD9D9D9),
+            container: rgb(0x262626),
         }
     }
 
     /// Get the default dark colors
-    pub fn dark() -> Self {
+    pub fn light() -> Self {
         Self {
-            text: rgb(0x272727),
+            text: rgb(0x252525),
+            selected_text: rgb(0xFFFFFF),
             background: rgb(0xFFFFFF),
             disabled: rgb(0xB0B0B0),
             selected: rgb(0x2A63D9),
             border: rgb(0xD9D9D9),
             seperator: rgb(0xE6E6E6),
+            container: rgb(0xF4F5F5),
         }
     }
 }
@@ -71,6 +77,8 @@ impl DefaultColors {
 pub enum DefaultColor {
     /// Text color
     Text,
+    /// Selected text color
+    SelectedText,
     /// Background color
     Background,
     /// Disabled color
@@ -81,17 +89,21 @@ pub enum DefaultColor {
     Border,
     /// Seperator color
     Seperator,
+    /// Container color
+    Container,
 }
 impl DefaultColor {
     /// Get the Rgb color for the given color type
     pub fn color(&self, colors: &DefaultColors) -> Rgba {
         match self {
             DefaultColor::Text => colors.text,
+            DefaultColor::SelectedText => colors.selected_text,
             DefaultColor::Background => colors.background,
             DefaultColor::Disabled => colors.disabled,
             DefaultColor::Selected => colors.selected,
             DefaultColor::Border => colors.border,
             DefaultColor::Seperator => colors.seperator,
+            DefaultColor::Container => colors.container,
         }
     }
 

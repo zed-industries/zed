@@ -55,11 +55,34 @@ impl Render for DefaultColorsStory {
                     }))
                     .child(
                         h_flex()
-                            .bg(DefaultColor::Background.hsla(&colors))
-                            .h_8()
-                            .w_24()
-                            .justify_center()
-                            .child("Text on background"),
+                            .gap_1()
+                            .child(
+                                h_flex()
+                                    .bg(DefaultColor::Background.hsla(&colors))
+                                    .h_8()
+                                    .p_2()
+                                    .text_sm()
+                                    .text_color(DefaultColor::Text.hsla(&colors))
+                                    .child("Default Text"),
+                            )
+                            .child(
+                                h_flex()
+                                    .bg(DefaultColor::Container.hsla(&colors))
+                                    .h_8()
+                                    .p_2()
+                                    .text_sm()
+                                    .text_color(DefaultColor::Text.hsla(&colors))
+                                    .child("Text on Container"),
+                            )
+                            .child(
+                                h_flex()
+                                    .bg(DefaultColor::Selected.hsla(&colors))
+                                    .h_8()
+                                    .p_2()
+                                    .text_sm()
+                                    .text_color(DefaultColor::SelectedText.hsla(&colors))
+                                    .child("Selected Text"),
+                            ),
                     )
             }))
     }
