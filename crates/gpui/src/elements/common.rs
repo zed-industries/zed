@@ -87,8 +87,8 @@ pub enum DefaultColor {
     Selected,
     /// Border color
     Border,
-    /// Seperator color
-    Seperator,
+    /// Separator color
+    Separator,
     /// Container color
     Container,
 }
@@ -102,7 +102,7 @@ impl DefaultColor {
             DefaultColor::Disabled => colors.disabled,
             DefaultColor::Selected => colors.selected,
             DefaultColor::Border => colors.border,
-            DefaultColor::Seperator => colors.separator,
+            DefaultColor::Separator => colors.separator,
             DefaultColor::Container => colors.container,
         }
     }
