@@ -197,7 +197,7 @@ mod tests {
                 .to_vec();
             assert_eq!(
                 String::from_utf8(response_body).unwrap(),
-                format!("access to {provider:?} models is not available in your region (AF)")
+                format!("access to {provider:?} models is not available in your region ({country_code})")
             );
         }
     }
