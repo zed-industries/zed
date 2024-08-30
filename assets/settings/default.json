@@ -227,6 +227,8 @@
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true
   },
+  // Enable middle-click paste on Linux.
+  "middle_click_paste": true,
   // What to do when multibuffer is double clicked in some of its excerpts
   // (parts of singleton buffers).
   // May take 2 values:

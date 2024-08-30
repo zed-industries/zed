@@ -9015,7 +9015,6 @@ dependencies = [
  "shellexpand 2.1.2",
  "smol",
  "toml 0.8.19",
- "util",
  "worktree",
 ]
 
@@ -14442,7 +14441,7 @@ dependencies = [
 
 [[package]]
 name = "zed_ruby"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

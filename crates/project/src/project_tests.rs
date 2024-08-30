@@ -5,19 +5,20 @@ use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
-    tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
-    LanguageMatcher, LineEnding, OffsetRangeExt, Point, ToPoint,
+    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, FakeLspAdapter,
+    LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
-use lsp::NumberOrString;
+use lsp::{DiagnosticSeverity, NumberOrString};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
-use std::task::Poll;
+
+use std::{mem, ops::Range, task::Poll};
 use task::{ResolvedTask, TaskContext, TaskTemplate, TaskTemplates};
 use unindent::Unindent as _;
-use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
+use util::{assert_set_eq, paths::PathMatcher, test::temp_tree, TryFutureExt as _};
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
@@ -923,7 +924,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 5)),
-                        severity: Some(lsp::DiagnosticSeverity::WARNING),
+                        severity: Some(DiagnosticSeverity::WARNING),
                         message: "error 2".to_string(),
                         ..Default::default()
                     }],
@@ -1284,10 +1285,10 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             language_server_id: LanguageServerId(1)
         }
     );
-    project.update(cx, |project, _| {
+    project.update(cx, |project, cx| {
         assert_eq!(
             project
-                .language_servers_running_disk_based_diagnostics()
+                .language_servers_running_disk_based_diagnostics(cx)
                 .collect::<Vec<_>>(),
             [LanguageServerId(1)]
         );
@@ -1302,10 +1303,10 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             language_server_id: LanguageServerId(1)
         }
     );
-    project.update(cx, |project, _| {
+    project.update(cx, |project, cx| {
         assert_eq!(
             project
-                .language_servers_running_disk_based_diagnostics()
+                .language_servers_running_disk_based_diagnostics(cx)
                 .collect::<Vec<_>>(),
             [] as [language::LanguageServerId; 0]
         );
@@ -1908,32 +1909,36 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     project.update(cx, |project, cx| {
-        project
-            .update_buffer_diagnostics(
-                &buffer,
-                LanguageServerId(0),
-                None,
-                vec![
-                    DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(0, 10))..Unclipped(PointUtf16::new(0, 10)),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "syntax error 1".to_string(),
-                            ..Default::default()
+        project.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_buffer_diagnostics(
+                    &buffer,
+                    LanguageServerId(0),
+                    None,
+                    vec![
+                        DiagnosticEntry {
+                            range: Unclipped(PointUtf16::new(0, 10))
+                                ..Unclipped(PointUtf16::new(0, 10)),
+                            diagnostic: Diagnostic {
+                                severity: DiagnosticSeverity::ERROR,
+                                message: "syntax error 1".to_string(),
+                                ..Default::default()
+                            },
                         },
-                    },
-                    DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(1, 10))..Unclipped(PointUtf16::new(1, 10)),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "syntax error 2".to_string(),
-                            ..Default::default()
+                        DiagnosticEntry {
+                            range: Unclipped(PointUtf16::new(1, 10))
+                                ..Unclipped(PointUtf16::new(1, 10)),
+                            diagnostic: Diagnostic {
+                                severity: DiagnosticSeverity::ERROR,
+                                message: "syntax error 2".to_string(),
+                                ..Default::default()
+                            },
                         },
-                    },
-                ],
-                cx,
-            )
-            .unwrap();
+                    ],
+                    cx,
+                )
+                .unwrap();
+        })
     });
 
     // An empty range is extended forward to include the following character.
@@ -2040,6 +2045,7 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -2104,9 +2110,9 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    let edits = project
-        .update(cx, |project, cx| {
-            project.edits_from_lsp(
+    let edits = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.edits_from_lsp(
                 &buffer,
                 vec![
                     // replace body of first function
@@ -2191,6 +2197,7 @@ async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAp
     .await;
 
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
         .await
@@ -2198,9 +2205,9 @@ async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAp
 
     // Simulate the language server sending us a small edit in the form of a very large diff.
     // Rust-analyzer does this when performing a merge-imports code action.
-    let edits = project
-        .update(cx, |project, cx| {
-            project.edits_from_lsp(
+    let edits = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.edits_from_lsp(
                 &buffer,
                 [
                     // Replace the first use statement without editing the semicolon.
@@ -2299,6 +2306,7 @@ async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
         .await
@@ -2306,9 +2314,9 @@ async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
 
     // Simulate the language server sending us edits in a non-ordered fashion,
     // with ranges sometimes being inverted or pointing to invalid locations.
-    let edits = project
-        .update(cx, |project, cx| {
-            project.edits_from_lsp(
+    let edits = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.edits_from_lsp(
                 &buffer,
                 [
                     lsp::TextEdit {
@@ -4186,10 +4194,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 false,
                 Default::default(),
-
-                    PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
-                    None,
-
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                None,
             ).unwrap(),
             cx
         )
@@ -4597,14 +4603,6 @@ async fn test_search_ordering(cx: &mut gpui::TestAppContext) {
     assert!(search.next().await.is_none())
 }
 
-#[test]
-fn test_glob_literal_prefix() {
-    assert_eq!(glob_literal_prefix("**/*.js"), "");
-    assert_eq!(glob_literal_prefix("node_modules/**/*.js"), "node_modules");
-    assert_eq!(glob_literal_prefix("foo/{bar,baz}.js"), "foo");
-    assert_eq!(glob_literal_prefix("foo/bar/baz.js"), "foo/bar/baz.js");
-}
-
 #[gpui::test]
 async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -4628,8 +4626,8 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
             let id = project.worktrees(cx).next().unwrap().read(cx).id();
             project.create_entry((id, "b.."), true, cx)
         })
-        .unwrap()
         .await
+        .unwrap()
         .to_included()
         .unwrap();
 

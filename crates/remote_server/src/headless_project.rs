@@ -2,10 +2,8 @@ use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
 use project::{
-    buffer_store::{BufferStore, BufferStoreEvent},
-    search::SearchQuery,
-    worktree_store::WorktreeStore,
-    ProjectPath, WorktreeId, WorktreeSettings,
+    buffer_store::BufferStore, search::SearchQuery, worktree_store::WorktreeStore, ProjectPath,
+    WorktreeId, WorktreeSettings,
 };
 use remote::SshSession;
 use rpc::{
@@ -18,7 +16,6 @@ use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
-use util::ResultExt as _;
 use worktree::Worktree;
 
 const PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
@@ -41,11 +38,12 @@ impl HeadlessProject {
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         let this = cx.weak_model();
 
-        let worktree_store = cx.new_model(|_| WorktreeStore::new(true));
-        let buffer_store =
-            cx.new_model(|cx| BufferStore::new(worktree_store.clone(), Some(PROJECT_ID), cx));
-        cx.subscribe(&buffer_store, Self::on_buffer_store_event)
-            .detach();
+        let worktree_store = cx.new_model(|_| WorktreeStore::new(true, fs.clone()));
+        let buffer_store = cx.new_model(|cx| {
+            let mut buffer_store = BufferStore::new(worktree_store.clone(), Some(PROJECT_ID), cx);
+            buffer_store.shared(PROJECT_ID, session.clone().into(), cx);
+            buffer_store
+        });
 
         session.add_request_handler(this.clone(), Self::handle_list_remote_directory);
         session.add_request_handler(this.clone(), Self::handle_add_worktree);
@@ -128,7 +126,7 @@ impl HeadlessProject {
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferResponse> {
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
-        let (buffer_store, buffer, session) = this.update(&mut cx, |this, cx| {
+        let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
             let buffer_store = this.buffer_store.clone();
             let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.open_buffer(
@@ -139,14 +137,14 @@ impl HeadlessProject {
                     cx,
                 )
             });
-            anyhow::Ok((buffer_store, buffer, this.session.clone()))
+            anyhow::Ok((buffer_store, buffer))
         })??;
 
         let buffer = buffer.await?;
         let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
         buffer_store.update(&mut cx, |buffer_store, cx| {
             buffer_store
-                .create_buffer_for_peer(&buffer, PEER_ID, PROJECT_ID, session, cx)
+                .create_buffer_for_peer(&buffer, PEER_ID, cx)
                 .detach_and_log_err(cx);
         })?;
 
@@ -176,22 +174,14 @@ impl HeadlessProject {
             buffer_ids: Vec::new(),
         };
 
-        let (buffer_store, client) = this.update(&mut cx, |this, _| {
-            (this.buffer_store.clone(), this.session.clone())
-        })?;
+        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
 
         while let Some(buffer) = results.next().await {
             let buffer_id = buffer.update(&mut cx, |this, _| this.remote_id())?;
             response.buffer_ids.push(buffer_id.to_proto());
             buffer_store
                 .update(&mut cx, |buffer_store, cx| {
-                    buffer_store.create_buffer_for_peer(
-                        &buffer,
-                        PEER_ID,
-                        PROJECT_ID,
-                        client.clone(),
-                        cx,
-                    )
+                    buffer_store.create_buffer_for_peer(&buffer, PEER_ID, cx)
                 })?
                 .await?;
         }
@@ -215,21 +205,5 @@ impl HeadlessProject {
             }
         }
         Ok(proto::ListRemoteDirectoryResponse { entries })
-    }
-
-    pub fn on_buffer_store_event(
-        &mut self,
-        _: Model<BufferStore>,
-        event: &BufferStoreEvent,
-        _: &mut ModelContext<Self>,
-    ) {
-        match event {
-            BufferStoreEvent::MessageToReplicas(message) => {
-                self.session
-                    .send_dynamic(message.as_ref().clone())
-                    .log_err();
-            }
-            _ => {}
-        }
     }
 }

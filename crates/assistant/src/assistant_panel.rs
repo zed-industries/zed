@@ -4841,7 +4841,10 @@ fn make_lsp_adapter_delegate(
             .worktrees(cx)
             .next()
             .ok_or_else(|| anyhow!("no worktrees when constructing ProjectLspAdapterDelegate"))?;
-        Ok(ProjectLspAdapterDelegate::new(project, &worktree, cx) as Arc<dyn LspAdapterDelegate>)
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            Ok(ProjectLspAdapterDelegate::new(lsp_store, &worktree, cx)
+                as Arc<dyn LspAdapterDelegate>)
+        })
     })
 }
 

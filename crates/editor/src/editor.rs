@@ -89,13 +89,12 @@ pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
-    char_kind,
     language_settings::{self, all_language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
 };
-use language::{point_to_lsp, BufferRow, Runnable, RunnableRange};
+use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
@@ -556,6 +555,9 @@ pub struct Editor {
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
     active_inline_completion: Option<(Inlay, Option<Range<Anchor>>)>,
+    // enable_inline_completions is a switch that Vim can use to disable
+    // inline completions based on its mode.
+    enable_inline_completions: bool,
     show_inline_completions_override: Option<bool>,
     inlay_hint_cache: InlayHintCache,
     expanded_hunks: ExpandedHunks,
@@ -1913,6 +1915,7 @@ impl Editor {
             next_editor_action_id: EditorActionId::default(),
             editor_actions: Rc::default(),
             show_inline_completions_override: None,
+            enable_inline_completions: true,
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
@@ -2277,6 +2280,10 @@ impl Editor {
         self.input_enabled = input_enabled;
     }
 
+    pub fn set_inline_completions_enabled(&mut self, enabled: bool) {
+        self.enable_inline_completions = enabled;
+    }
+
     pub fn set_autoindent(&mut self, autoindent: bool) {
         if autoindent {
             self.autoindent_mode = Some(AutoindentMode::EachLine);
@@ -2435,7 +2442,8 @@ impl Editor {
 
             if let Some(completion_menu) = completion_menu {
                 let cursor_position = new_cursor_position.to_offset(buffer);
-                let (word_range, kind) = buffer.surrounding_word(completion_menu.initial_position);
+                let (word_range, kind) =
+                    buffer.surrounding_word(completion_menu.initial_position, true);
                 if kind == Some(CharKind::Word)
                     && word_range.to_inclusive().contains(&cursor_position)
                 {
@@ -3281,10 +3289,8 @@ impl Editor {
                 let start_anchor = snapshot.anchor_before(selection.start);
 
                 let is_word_char = text.chars().next().map_or(true, |char| {
-                    let scope = snapshot.language_scope_at(start_anchor.to_offset(&snapshot));
-                    let kind = char_kind(&scope, char);
-
-                    kind == CharKind::Word
+                    let classifier = snapshot.char_classifier_at(start_anchor.to_offset(&snapshot));
+                    classifier.is_word(char)
                 });
 
                 if is_word_char {
@@ -3915,7 +3921,7 @@ impl Editor {
 
     fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
         let offset = position.to_offset(buffer);
-        let (word_range, kind) = buffer.surrounding_word(offset);
+        let (word_range, kind) = buffer.surrounding_word(offset, true);
         if offset > word_range.start && kind == Some(CharKind::Word) {
             Some(
                 buffer
@@ -4977,6 +4983,7 @@ impl Editor {
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         if !user_requested
+            && self.enable_inline_completions
             && !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
         {
             self.discard_inline_completion(false, cx);
@@ -4997,7 +5004,9 @@ impl Editor {
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-        if !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx) {
+        if !self.enable_inline_completions
+            || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
+        {
             return None;
         }
 
@@ -12291,10 +12300,11 @@ fn snippet_completions(
     };
 
     let scope = language.map(|language| language.default_scope());
+    let classifier = CharClassifier::new(scope).for_completion(true);
     let mut last_word = line_at
         .chars()
         .rev()
-        .take_while(|c| char_kind(&scope, *c) == CharKind::Word)
+        .take_while(|c| classifier.is_word(*c))
         .collect::<String>();
     last_word = last_word.chars().rev().collect();
     let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
@@ -12425,8 +12435,11 @@ impl CompletionProvider for Model<Project> {
         }
 
         let buffer = buffer.read(cx);
-        let scope = buffer.snapshot().language_scope_at(position);
-        if trigger_in_words && char_kind(&scope, char) == CharKind::Word {
+        let classifier = buffer
+            .snapshot()
+            .char_classifier_at(position)
+            .for_completion(true);
+        if trigger_in_words && classifier.is_word(char) {
             return true;
         }
 

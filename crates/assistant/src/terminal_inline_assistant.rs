@@ -282,6 +282,7 @@ impl TerminalInlineAssistant {
 
         Ok(LanguageModelRequest {
             messages,
+            tools: Vec::new(),
             stop: Vec::new(),
             temperature: 1.0,
         })

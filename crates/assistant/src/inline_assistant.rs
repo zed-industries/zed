@@ -2413,6 +2413,7 @@ impl Codegen {
 
         Ok(LanguageModelRequest {
             messages,
+            tools: Vec::new(),
             stop: vec!["|END|>".to_string()],
             temperature,
         })

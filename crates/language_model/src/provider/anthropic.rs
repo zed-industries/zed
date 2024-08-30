@@ -370,7 +370,7 @@ impl LanguageModel for AnthropicModel {
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await.map_err(|err| anyhow!(err))?;
-            Ok(anthropic::extract_text_from_events(response))
+            Ok(anthropic::extract_content_from_events(response))
         });
         async move {
             Ok(future
@@ -538,13 +538,13 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        const ANTHROPIC_CONSOLE_URL: &str = "https://console.anthropic.com/settings/keys";
         const INSTRUCTIONS: [&str; 4] = [
             "To use the assistant panel or inline assistant, you need to add your Anthropic API key.",
-            "You can create an API key at: https://console.anthropic.com/settings/keys",
+            "You can create an API key at:",
             "",
             "Paste your Anthropic API key below and hit enter to use the assistant:",
         ];
-
         let env_var_set = self.state.read(cx).api_key_from_env;
 
         if self.load_credentials_task.is_some() {
@@ -553,9 +553,18 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .children(
-                    INSTRUCTIONS.map(|instruction| Label::new(instruction)),
+                .child(Label::new(INSTRUCTIONS[0]))
+                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
+                    Button::new("anthropic_console", ANTHROPIC_CONSOLE_URL)
+                        .style(ButtonStyle::Subtle)
+                        .icon(IconName::ExternalLink)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .on_click(move |_, cx| cx.open_url(ANTHROPIC_CONSOLE_URL))
+                    )
                 )
+                .child(Label::new(INSTRUCTIONS[2]))
+                .child(Label::new(INSTRUCTIONS[3]))
                 .child(
                     h_flex()
                         .w_full()

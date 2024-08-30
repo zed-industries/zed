@@ -496,6 +496,9 @@ impl Server {
                 forward_read_only_project_request::<proto::InlayHints>,
             ))
             .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::ResolveInlayHint>,
+            ))
+            .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::OpenBufferByPath>,
             ))
             .add_request_handler(user_handler(

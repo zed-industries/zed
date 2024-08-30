@@ -86,7 +86,7 @@ impl UserBackfiller {
                             &user.github_login,
                             github_user.id,
                             user.email_address.as_deref(),
-                            Some(github_user.created_at),
+                            github_user.created_at,
                             initial_channel_id,
                         )
                         .await?;
