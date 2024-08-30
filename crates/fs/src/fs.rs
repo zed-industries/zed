@@ -623,7 +623,21 @@ impl Fs for RealFs {
             let tx = tx.clone();
             move |event: Result<notify::Event, _>| {
                 if let Some(event) = event.log_err() {
-                    tx.try_send(event.paths).ok();
+                    let kind = match event.kind {
+                        EventKind::Create(_) => Some(PathEventKind::Created),
+                        EventKind::Modify(_) => Some(PathEventKind::Changed),
+                        EventKind::Remove(_) => Some(PathEventKind::Removed),
+                        _ => None,
+                    };
+
+                    tx.try_send(
+                        event
+                            .paths
+                            .into_iter()
+                            .map(|path| PathEvent { path, kind })
+                            .collect::<Vec<_>>(),
+                    )
+                    .ok();
                 }
             }
         })
