@@ -1,6 +1,33 @@
-use std::time::Duration;
+use std::{fs, path::PathBuf, time::Duration};
 
 use gpui::*;
+
+struct Assets {
+    base: PathBuf,
+}
+
+impl AssetSource for Assets {
+    fn load(&self, path: &str) -> Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        fs::read(self.base.join(path))
+            .map(|data| Some(std::borrow::Cow::Owned(data)))
+            .map_err(|e| e.into())
+    }
+
+    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
+        fs::read_dir(self.base.join(path))
+            .map(|entries| {
+                entries
+                    .filter_map(|entry| {
+                        entry
+                            .ok()
+                            .and_then(|entry| entry.file_name().into_string().ok())
+                            .map(SharedString::from)
+                    })
+                    .collect()
+            })
+            .map_err(|e| e.into())
+    }
+}
 
 struct HelloWorld {
     _task: Option<Task<()>>,
@@ -97,6 +124,7 @@ impl Render for HelloWorld {
                                 spread_radius: px(5.0),
                                 offset: point(px(10.0), px(10.0)),
                             }])
+                            .child(img("image/app-icon.png").size_8())
                             .child("Opacity Panel (Click to test)")
                             .child(
                                 div()
@@ -111,22 +139,34 @@ impl Render for HelloWorld {
                                     .text_decoration_wavy()
                                     .text_decoration_color(gpui::red())
                                     .child(format!("opacity: {:.1}", self.opacity)),
-                            ),
+                            )
+                            .child(
+                                svg()
+                                    .path("image/arrow_circle.svg")
+                                    .text_color(gpui::black())
+                                    .text_2xl()
+                                    .size_8(),
+                            )
+                            .child(img("image/black-cat-typing.gif").size_12()),
                     ),
             )
     }
 }
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
-        let bounds = Bounds::centered(None, size(px(500.0), px(500.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |cx| cx.new_view(HelloWorld::new),
-        )
-        .unwrap();
-    });
+    App::new()
+        .with_assets(Assets {
+            base: PathBuf::from("crates/gpui/examples"),
+        })
+        .run(|cx: &mut AppContext| {
+            let bounds = Bounds::centered(None, size(px(500.0), px(500.0)), cx);
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |cx| cx.new_view(HelloWorld::new),
+            )
+            .unwrap();
+        });
 }
