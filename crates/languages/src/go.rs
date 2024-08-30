@@ -516,7 +516,7 @@ impl ContextProvider for GoContextProvider {
                     "cd {} && go test -run {}",
                     GO_PACKAGE_TASK_VARIABLE.template_value(),
                     VariableName::Symbol.template_value(),
-                    ),
+                ),
                 tags: vec!["go-test".to_owned()],
                 ..TaskTemplate::default()
             },
