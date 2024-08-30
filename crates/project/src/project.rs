@@ -592,11 +592,10 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_request_handler(Self::handle_task_context_for_location);
         client.add_model_request_handler(Self::handle_task_templates);
+        client.add_model_message_handler(Self::handle_create_buffer_for_peer);
 
         WorktreeStore::init(client);
-
         BufferStore::init(client);
-
         LspStore::init(client);
     }
 
@@ -744,6 +743,8 @@ impl Project {
         let subscriptions = (
             client.subscribe_to_entity::<Self>(remote_id)?,
             client.subscribe_to_entity::<BufferStore>(remote_id)?,
+            client.subscribe_to_entity::<WorktreeStore>(remote_id)?,
+            client.subscribe_to_entity::<LspStore>(remote_id)?,
         );
         let response = client
             .request_envelope(proto::JoinProject {
@@ -767,6 +768,8 @@ impl Project {
         subscription: (
             PendingEntitySubscription<Project>,
             PendingEntitySubscription<BufferStore>,
+            PendingEntitySubscription<WorktreeStore>,
+            PendingEntitySubscription<LspStore>,
         ),
         client: Arc<Client>,
         user_store: Model<UserStore>,
@@ -828,8 +831,8 @@ impl Project {
             let mut this = Self {
                 buffer_ordered_messages_tx: tx,
                 buffer_store: buffer_store.clone(),
-                worktree_store,
-                lsp_store,
+                worktree_store: worktree_store.clone(),
+                lsp_store: lsp_store.clone(),
                 current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 active_entry: None,
                 collaborators: Default::default(),
@@ -881,6 +884,8 @@ impl Project {
         let subscriptions = [
             subscription.0.set_model(&this, &mut cx),
             subscription.1.set_model(&buffer_store, &mut cx),
+            subscription.2.set_model(&worktree_store, &mut cx),
+            subscription.3.set_model(&lsp_store, &mut cx),
         ];
 
         let user_ids = response
@@ -915,6 +920,8 @@ impl Project {
         let subscriptions = (
             client.subscribe_to_entity::<Self>(remote_id.0)?,
             client.subscribe_to_entity::<BufferStore>(remote_id.0)?,
+            client.subscribe_to_entity::<WorktreeStore>(remote_id.0)?,
+            client.subscribe_to_entity::<LspStore>(remote_id.0)?,
         );
         let response = client
             .request_envelope(proto::JoinHostedProject {
@@ -1250,6 +1257,7 @@ impl Project {
 
     fn metadata_changed(&mut self, cx: &mut ModelContext<Self>) {
         cx.notify();
+
         let ProjectClientState::Shared { remote_id } = self.client_state else {
             return;
         };
@@ -1262,8 +1270,23 @@ impl Project {
         cx.spawn(|this, mut cx| async move {
             update_project.await?;
             this.update(&mut cx, |this, cx| {
-                this.lsp_store
-                    .update(cx, |lsp_store, cx| lsp_store.send_diagnostic_summaries(cx))
+                let client = this.client.clone();
+                let worktrees = this.worktree_store.read(cx).worktrees().collect::<Vec<_>>();
+
+                for worktree in worktrees {
+                    worktree.update(cx, |worktree, cx| {
+                        let client = client.clone();
+                        worktree.observe_updates(project_id, cx, {
+                            move |update| client.request(update).map(|result| result.is_ok())
+                        });
+
+                        this.lsp_store.update(cx, |lsp_store, _| {
+                            lsp_store.send_diagnostic_summaries(worktree)
+                        })
+                    })?;
+                }
+
+                anyhow::Ok(())
             })
         })
         .detach_and_log_err(cx);
@@ -1466,6 +1489,9 @@ impl Project {
             self.client
                 .subscribe_to_entity(project_id)?
                 .set_model(&self.buffer_store, &mut cx.to_async()),
+            self.client
+                .subscribe_to_entity(project_id)?
+                .set_model(&self.lsp_store, &mut cx.to_async()),
         ]);
 
         self.buffer_store.update(cx, |buffer_store, cx| {

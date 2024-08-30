@@ -4,7 +4,7 @@ use crate::{
     lsp_command::{self, *},
     lsp_ext_command,
     project_settings::ProjectSettings,
-    resolve_path,
+    relativize_path, resolve_path,
     worktree_store::WorktreeStore,
     yarn::YarnPathStore,
     CodeAction, Completion, CoreCompletion, Hover, InlayHint, Item as _, ProjectPath,
@@ -40,7 +40,7 @@ use lsp::{
     CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     Edit, FileSystemWatcher, InsertTextFormat, LanguageServer, LanguageServerBinary,
     LanguageServerId, LspRequestFuture, MessageActionItem, MessageType, OneOf, ServerHealthStatus,
-    ServerStatus, TextEdit, WorkDoneProgressCancelParams,
+    ServerStatus, SymbolKind, TextEdit, WorkDoneProgressCancelParams,
 };
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -65,7 +65,9 @@ use std::{
     time::{Duration, Instant},
 };
 use text::{Anchor, BufferId, LineEnding};
-use util::{debug_panic, defer, maybe, merge_json_value_into, post_inc, ResultExt};
+use util::{
+    debug_panic, defer, maybe, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _,
+};
 
 pub use fs::*;
 pub use language::Location;
@@ -274,35 +276,24 @@ impl LspStore {
         }
     }
 
-    pub(crate) fn send_diagnostic_summaries(&self, cx: &mut ModelContext<Self>) -> Result<()> {
-        if self.upstream_client.is_some() {
-            return Ok(());
-        }
-        let worktrees = self.worktree_store.read(cx).worktrees().collect::<Vec<_>>();
-        for worktree in worktrees {
-            worktree.update(cx, |worktree, cx| {
-                if let Some(client) = self.downstream_client.clone() {
-                    if let Some(summaries) = self.diagnostic_summaries.get(&worktree.id()) {
-                        for (path, summaries) in summaries {
-                            for (&server_id, summary) in summaries {
-                                client.send(proto::UpdateDiagnosticSummary {
-                                    project_id: self.project_id,
-                                    worktree_id: worktree.id().to_proto(),
-                                    summary: Some(summary.to_proto(server_id, path)),
-                                })?;
-                            }
-                        }
+    pub(crate) fn send_diagnostic_summaries(
+        &self,
+        worktree: &mut Worktree,
+    ) -> Result<(), anyhow::Error> {
+        if let Some(client) = self.downstream_client.clone() {
+            if let Some(summaries) = self.diagnostic_summaries.get(&worktree.id()) {
+                for (path, summaries) in summaries {
+                    for (&server_id, summary) in summaries {
+                        client.send(proto::UpdateDiagnosticSummary {
+                            project_id: self.project_id,
+                            worktree_id: worktree.id().to_proto(),
+                            summary: Some(summary.to_proto(server_id, path)),
+                        })?;
                     }
-
-                    worktree.observe_updates(self.project_id, cx, {
-                        move |update| client.request(update).map(|result| result.is_ok())
-                    });
                 }
-
-                anyhow::Ok(())
-            })?;
+            }
         }
-        anyhow::Ok(())
+        Ok(())
     }
 
     fn send_lsp_proto_request<R: LspCommand>(
@@ -1585,7 +1576,142 @@ impl LspStore {
                 Ok(symbols)
             })
         } else {
-            Task::ready(Ok(Default::default()))
+            struct WorkspaceSymbolsResult {
+                lsp_adapter: Arc<CachedLspAdapter>,
+                language: Arc<Language>,
+                worktree: WeakModel<Worktree>,
+                worktree_abs_path: Arc<Path>,
+                lsp_symbols: Vec<(String, SymbolKind, lsp::Location)>,
+            }
+
+            let mut requests = Vec::new();
+            for ((worktree_id, _), server_id) in self.language_server_ids.iter() {
+                let Some(worktree_handle) = self
+                    .worktree_store
+                    .read(cx)
+                    .worktree_for_id(*worktree_id, cx)
+                else {
+                    continue;
+                };
+                let worktree = worktree_handle.read(cx);
+                if !worktree.is_visible() {
+                    continue;
+                }
+                let worktree_abs_path = worktree.abs_path().clone();
+
+                let (lsp_adapter, language, server) = match self.language_servers.get(server_id) {
+                    Some(LanguageServerState::Running {
+                        adapter,
+                        language,
+                        server,
+                        ..
+                    }) => (adapter.clone(), language.clone(), server),
+
+                    _ => continue,
+                };
+
+                requests.push(
+                    server
+                        .request::<lsp::request::WorkspaceSymbolRequest>(
+                            lsp::WorkspaceSymbolParams {
+                                query: query.to_string(),
+                                ..Default::default()
+                            },
+                        )
+                        .log_err()
+                        .map(move |response| {
+                            let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
+                                lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
+                                    flat_responses.into_iter().map(|lsp_symbol| {
+                                        (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
+                                    }).collect::<Vec<_>>()
+                                }
+                                lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
+                                    nested_responses.into_iter().filter_map(|lsp_symbol| {
+                                        let location = match lsp_symbol.location {
+                                            OneOf::Left(location) => location,
+                                            OneOf::Right(_) => {
+                                                log::error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
+                                                return None
+                                            }
+                                        };
+                                        Some((lsp_symbol.name, lsp_symbol.kind, location))
+                                    }).collect::<Vec<_>>()
+                                }
+                            }).unwrap_or_default();
+
+                            WorkspaceSymbolsResult {
+                                lsp_adapter,
+                                language,
+                                worktree: worktree_handle.downgrade(),
+                                worktree_abs_path,
+                                lsp_symbols,
+                            }
+                        }),
+                );
+            }
+
+            cx.spawn(move |this, mut cx| async move {
+                let responses = futures::future::join_all(requests).await;
+                let this = match this.upgrade() {
+                    Some(this) => this,
+                    None => return Ok(Vec::new()),
+                };
+
+                let mut symbols = Vec::new();
+                for result in responses {
+                    let core_symbols = this.update(&mut cx, |this, cx| {
+                        result
+                            .lsp_symbols
+                            .into_iter()
+                            .filter_map(|(symbol_name, symbol_kind, symbol_location)| {
+                                let abs_path = symbol_location.uri.to_file_path().ok()?;
+                                let source_worktree = result.worktree.upgrade()?;
+                                let source_worktree_id = source_worktree.read(cx).id();
+
+                                let path;
+                                let worktree;
+                                if let Some((tree, rel_path)) =
+                                    this.worktree_store.read(cx).find_worktree(&abs_path, cx)
+                                {
+                                    worktree = tree;
+                                    path = rel_path;
+                                } else {
+                                    worktree = source_worktree.clone();
+                                    path = relativize_path(&result.worktree_abs_path, &abs_path);
+                                }
+
+                                let worktree_id = worktree.read(cx).id();
+                                let project_path = ProjectPath {
+                                    worktree_id,
+                                    path: path.into(),
+                                };
+                                let signature = this.symbol_signature(&project_path);
+                                Some(CoreSymbol {
+                                    language_server_name: result.lsp_adapter.name.clone(),
+                                    source_worktree_id,
+                                    path: project_path,
+                                    kind: symbol_kind,
+                                    name: symbol_name,
+                                    range: range_from_lsp(symbol_location.range),
+                                    signature,
+                                })
+                            })
+                            .collect()
+                    })?;
+
+                    populate_labels_for_symbols(
+                        core_symbols,
+                        &language_registry,
+                        Some(result.language),
+                        Some(result.lsp_adapter),
+                        &mut symbols,
+                    )
+                    .await;
+                }
+
+                Ok(symbols)
+            })
         }
     }
 
