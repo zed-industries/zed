@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{
     keyboard_layouts::KeyboardLayoutMapping, platform::mac::NSStringExt, point, px, KeyDownEvent,
     KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
@@ -13,39 +15,39 @@ use cocoa::{
     },
     base::{id, YES},
 };
-use core_graphics::{
-    event::{CGEvent, CGEventFlags, CGKeyCode},
-    event_source::{CGEventSource, CGEventSourceStateID},
-};
-use metal::foreign_types::ForeignType as _;
-use objc::{class, msg_send, sel, sel_impl};
-use std::{borrow::Cow, mem, ptr, sync::Once};
+// use core_graphics::{
+//     event::{CGEvent, CGEventFlags, CGKeyCode},
+//     event_source::{CGEventSource, CGEventSourceStateID},
+// };
+// use metal::foreign_types::ForeignType as _;
+// use objc::{class, msg_send, sel, sel_impl};
+// use std::{borrow::Cow, mem, ptr, sync::Once};
 
 const BACKSPACE_KEY: u16 = 0x7f;
 const SPACE_KEY: u16 = b' ' as u16;
-const ENTER_KEY: u16 = 0x0d;
-const NUMPAD_ENTER_KEY: u16 = 0x03;
-const ESCAPE_KEY: u16 = 0x1b;
-const TAB_KEY: u16 = 0x09;
-const SHIFT_TAB_KEY: u16 = 0x19;
+// const ENTER_KEY: u16 = 0x0d;
+// const NUMPAD_ENTER_KEY: u16 = 0x03;
+// const ESCAPE_KEY: u16 = 0x1b;
+// const TAB_KEY: u16 = 0x09;
+// const SHIFT_TAB_KEY: u16 = 0x19;
 
-fn synthesize_keyboard_event(code: CGKeyCode) -> CGEvent {
-    static mut EVENT_SOURCE: core_graphics::sys::CGEventSourceRef = ptr::null_mut();
-    static INIT_EVENT_SOURCE: Once = Once::new();
+// fn synthesize_keyboard_event(code: CGKeyCode) -> CGEvent {
+//     static mut EVENT_SOURCE: core_graphics::sys::CGEventSourceRef = ptr::null_mut();
+//     static INIT_EVENT_SOURCE: Once = Once::new();
 
-    INIT_EVENT_SOURCE.call_once(|| {
-        let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
-        unsafe {
-            EVENT_SOURCE = source.as_ptr();
-        };
-        mem::forget(source);
-    });
+//     INIT_EVENT_SOURCE.call_once(|| {
+//         let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
+//         unsafe {
+//             EVENT_SOURCE = source.as_ptr();
+//         };
+//         mem::forget(source);
+//     });
 
-    let source = unsafe { core_graphics::event_source::CGEventSource::from_ptr(EVENT_SOURCE) };
-    let event = CGEvent::new_keyboard_event(source.clone(), code, true).unwrap();
-    mem::forget(source);
-    event
-}
+//     let source = unsafe { core_graphics::event_source::CGEventSource::from_ptr(EVENT_SOURCE) };
+//     let event = CGEvent::new_keyboard_event(source.clone(), code, true).unwrap();
+//     mem::forget(source);
+//     event
+// }
 
 // TODO:
 pub fn key_to_native(key: &VirtualKeyCode) -> Cow<str> {
@@ -367,27 +369,27 @@ unsafe fn parse_keystroke(
     result
 }
 
-fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
-    // Ideally, we would use `[NSEvent charactersByApplyingModifiers]` but that
-    // always returns an empty string with certain keyboards, e.g. Japanese. Synthesizing
-    // an event with the given flags instead lets us access `characters`, which always
-    // returns a valid string.
-    let event = synthesize_keyboard_event(code);
+// fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
+//     // Ideally, we would use `[NSEvent charactersByApplyingModifiers]` but that
+//     // always returns an empty string with certain keyboards, e.g. Japanese. Synthesizing
+//     // an event with the given flags instead lets us access `characters`, which always
+//     // returns a valid string.
+//     let event = synthesize_keyboard_event(code);
 
-    let mut flags = CGEventFlags::empty();
-    if cmd {
-        flags |= CGEventFlags::CGEventFlagCommand;
-    }
-    if shift {
-        flags |= CGEventFlags::CGEventFlagShift;
-    }
-    event.set_flags(flags);
+//     let mut flags = CGEventFlags::empty();
+//     if cmd {
+//         flags |= CGEventFlags::CGEventFlagCommand;
+//     }
+//     if shift {
+//         flags |= CGEventFlags::CGEventFlagShift;
+//     }
+//     event.set_flags(flags);
 
-    unsafe {
-        let event: id = msg_send![class!(NSEvent), eventWithCGEvent: &*event];
-        event.characters().to_str().to_string()
-    }
-}
+//     unsafe {
+//         let event: id = msg_send![class!(NSEvent), eventWithCGEvent: &*event];
+//         event.characters().to_str().to_string()
+//     }
+// }
 
 /// TODO:
 fn keyboard_event_to_virtual_keycodes(
@@ -445,6 +447,7 @@ fn is_keypad_or_numeric_key_event(native_event: id) -> bool {
     }
 }
 
+#[allow(non_upper_case_globals)]
 fn virtual_keycode_from_char(ch: char) -> Option<VirtualKeyCode> {
     match ch {
         'a' | 'A' => Some(VirtualKeyCode::A),

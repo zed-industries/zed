@@ -406,175 +406,43 @@ impl VirtualKeyCode {
         //     _ => true,
         // }
         match self {
-            // VirtualKeyCode::Unknown => todo!(),
-            // VirtualKeyCode::Function => todo!(),
-            // VirtualKeyCode::Cancel => todo!(),
-            // VirtualKeyCode::Backspace => todo!(),
-            VirtualKeyCode::Tab
-            | VirtualKeyCode::Enter
-            | VirtualKeyCode::Space
+            VirtualKeyCode::Backspace
+            | VirtualKeyCode::Delete
             | VirtualKeyCode::Left
             | VirtualKeyCode::Up
             | VirtualKeyCode::Right
             | VirtualKeyCode::Down
-            | VirtualKeyCode::Digital0
-            | VirtualKeyCode::Digital1
-            | VirtualKeyCode::Digital2
-            | VirtualKeyCode::Digital3
-            | VirtualKeyCode::Digital4
-            | VirtualKeyCode::Digital5
-            | VirtualKeyCode::Digital6
-            | VirtualKeyCode::Digital7
-            | VirtualKeyCode::Digital8
-            | VirtualKeyCode::Digital9
-            | VirtualKeyCode::A
-            | VirtualKeyCode::B
-            | VirtualKeyCode::C
-            | VirtualKeyCode::D
-            | VirtualKeyCode::E
-            | VirtualKeyCode::F
-            | VirtualKeyCode::G
-            | VirtualKeyCode::H
-            | VirtualKeyCode::I
-            | VirtualKeyCode::J
-            | VirtualKeyCode::K
-            | VirtualKeyCode::L
-            | VirtualKeyCode::M
-            | VirtualKeyCode::N
-            | VirtualKeyCode::O
-            | VirtualKeyCode::P
-            | VirtualKeyCode::Q
-            | VirtualKeyCode::R
-            | VirtualKeyCode::S
-            | VirtualKeyCode::T
-            | VirtualKeyCode::U
-            | VirtualKeyCode::V
-            | VirtualKeyCode::W
-            | VirtualKeyCode::X
-            | VirtualKeyCode::Y
-            | VirtualKeyCode::Z
-            | VirtualKeyCode::OEM1
-            | VirtualKeyCode::OEMPlus
-            | VirtualKeyCode::OEMComma
-            | VirtualKeyCode::OEMMinus
-            | VirtualKeyCode::OEMPeriod
-            | VirtualKeyCode::OEM2
-            | VirtualKeyCode::OEM3
-            | VirtualKeyCode::OEM4
-            | VirtualKeyCode::OEM5
-            | VirtualKeyCode::OEM6
-            | VirtualKeyCode::OEM7 => true,
-            // VirtualKeyCode::Clear => todo!(),
-            // VirtualKeyCode::Shift => todo!(),
-            // VirtualKeyCode::Control => todo!(),
-            // VirtualKeyCode::Alt => todo!(),
-            // VirtualKeyCode::Pause => todo!(),
-            // VirtualKeyCode::Capital => todo!(),
-            // VirtualKeyCode::Kana => todo!(),
-            // VirtualKeyCode::Hangul => todo!(),
-            // VirtualKeyCode::Junja => todo!(),
-            // VirtualKeyCode::Final => todo!(),
-            // VirtualKeyCode::Hanja => todo!(),
-            // VirtualKeyCode::Kanji => todo!(),
-            // VirtualKeyCode::Escape => todo!(),
-            // VirtualKeyCode::Convert => todo!(),
-            // VirtualKeyCode::Nonconvert => todo!(),
-            // VirtualKeyCode::Accept => todo!(),
-            // VirtualKeyCode::ModeChange => todo!(),
-            // VirtualKeyCode::PageUp => todo!(),
-            // VirtualKeyCode::PageDown => todo!(),
-            // VirtualKeyCode::End => todo!(),
-            // VirtualKeyCode::Home => todo!(),
-            // VirtualKeyCode::Select => todo!(),
-            // VirtualKeyCode::Print => todo!(),
-            // VirtualKeyCode::Execute => todo!(),
-            // VirtualKeyCode::PrintScreen => todo!(),
-            // VirtualKeyCode::Insert => todo!(),
-            // VirtualKeyCode::Delete => todo!(),
-            // VirtualKeyCode::Help => todo!(),
-            // VirtualKeyCode::LeftPlatform => todo!(),
-            // VirtualKeyCode::RightPlatform => todo!(),
-            // VirtualKeyCode::App => todo!(),
-            // VirtualKeyCode::Sleep => todo!(),
-            // VirtualKeyCode::Numpad0 => todo!(),
-            // VirtualKeyCode::Numpad1 => todo!(),
-            // VirtualKeyCode::Numpad2 => todo!(),
-            // VirtualKeyCode::Numpad3 => todo!(),
-            // VirtualKeyCode::Numpad4 => todo!(),
-            // VirtualKeyCode::Numpad5 => todo!(),
-            // VirtualKeyCode::Numpad6 => todo!(),
-            // VirtualKeyCode::Numpad7 => todo!(),
-            // VirtualKeyCode::Numpad8 => todo!(),
-            // VirtualKeyCode::Numpad9 => todo!(),
-            // VirtualKeyCode::Multiply => todo!(),
-            // VirtualKeyCode::Add => todo!(),
-            // VirtualKeyCode::Separator => todo!(),
-            // VirtualKeyCode::Subtract => todo!(),
-            // VirtualKeyCode::Decimal => todo!(),
-            // VirtualKeyCode::Divide => todo!(),
-            // VirtualKeyCode::F1 => todo!(),
-            // VirtualKeyCode::F2 => todo!(),
-            // VirtualKeyCode::F3 => todo!(),
-            // VirtualKeyCode::F4 => todo!(),
-            // VirtualKeyCode::F5 => todo!(),
-            // VirtualKeyCode::F6 => todo!(),
-            // VirtualKeyCode::F7 => todo!(),
-            // VirtualKeyCode::F8 => todo!(),
-            // VirtualKeyCode::F9 => todo!(),
-            // VirtualKeyCode::F10 => todo!(),
-            // VirtualKeyCode::F11 => todo!(),
-            // VirtualKeyCode::F12 => todo!(),
-            // VirtualKeyCode::F13 => todo!(),
-            // VirtualKeyCode::F14 => todo!(),
-            // VirtualKeyCode::F15 => todo!(),
-            // VirtualKeyCode::F16 => todo!(),
-            // VirtualKeyCode::F17 => todo!(),
-            // VirtualKeyCode::F18 => todo!(),
-            // VirtualKeyCode::F19 => todo!(),
-            // VirtualKeyCode::F20 => todo!(),
-            // VirtualKeyCode::F21 => todo!(),
-            // VirtualKeyCode::F22 => todo!(),
-            // VirtualKeyCode::F23 => todo!(),
-            // VirtualKeyCode::F24 => todo!(),
-            // VirtualKeyCode::NumLock => todo!(),
-            // VirtualKeyCode::ScrollLock => todo!(),
-            // VirtualKeyCode::LeftShift => todo!(),
-            // VirtualKeyCode::RightShift => todo!(),
-            // VirtualKeyCode::LeftControl => todo!(),
-            // VirtualKeyCode::RightControl => todo!(),
-            // VirtualKeyCode::LeftAlt => todo!(),
-            // VirtualKeyCode::RightAlt => todo!(),
-            // VirtualKeyCode::BrowserBack => todo!(),
-            // VirtualKeyCode::BrowserForward => todo!(),
-            // VirtualKeyCode::BrowserRefresh => todo!(),
-            // VirtualKeyCode::BrowserStop => todo!(),
-            // VirtualKeyCode::BrowserSearch => todo!(),
-            // VirtualKeyCode::BrowserFavorites => todo!(),
-            // VirtualKeyCode::BrowserHome => todo!(),
-            // VirtualKeyCode::VolumeMute => todo!(),
-            // VirtualKeyCode::VolumeDown => todo!(),
-            // VirtualKeyCode::VolumeUp => todo!(),
-            // VirtualKeyCode::MediaNextTrack => todo!(),
-            // VirtualKeyCode::MediaPrevTrack => todo!(),
-            // VirtualKeyCode::MediaStop => todo!(),
-            // VirtualKeyCode::MediaPlayPause => todo!(),
-            // VirtualKeyCode::LaunchMail => todo!(),
-            // VirtualKeyCode::LaunchMediaSelect => todo!(),
-            // VirtualKeyCode::LaunchApp1 => todo!(),
-            // VirtualKeyCode::LaunchApp2 => todo!(),
-            // VirtualKeyCode::OEM8 => todo!(),
-            // VirtualKeyCode::OEM102 => todo!(),
-            // VirtualKeyCode::ProcessKey => todo!(),
-            // VirtualKeyCode::Packet => todo!(),
-            // VirtualKeyCode::Attn => todo!(),
-            // VirtualKeyCode::CrSel => todo!(),
-            // VirtualKeyCode::ExSel => todo!(),
-            // VirtualKeyCode::EraseEOF => todo!(),
-            // VirtualKeyCode::Play => todo!(),
-            // VirtualKeyCode::Zoom => todo!(),
-            // VirtualKeyCode::PA1 => todo!(),
-            // VirtualKeyCode::OEMClear => todo!(),
-            _ => false,
+            | VirtualKeyCode::PageUp
+            | VirtualKeyCode::PageDown
+            | VirtualKeyCode::Insert
+            | VirtualKeyCode::Home
+            | VirtualKeyCode::End
+            | VirtualKeyCode::Escape
+            | VirtualKeyCode::F1
+            | VirtualKeyCode::F2
+            | VirtualKeyCode::F3
+            | VirtualKeyCode::F4
+            | VirtualKeyCode::F5
+            | VirtualKeyCode::F6
+            | VirtualKeyCode::F7
+            | VirtualKeyCode::F8
+            | VirtualKeyCode::F9
+            | VirtualKeyCode::F10
+            | VirtualKeyCode::F11
+            | VirtualKeyCode::F12
+            | VirtualKeyCode::F13
+            | VirtualKeyCode::F14
+            | VirtualKeyCode::F15
+            | VirtualKeyCode::F16
+            | VirtualKeyCode::F17
+            | VirtualKeyCode::F18
+            | VirtualKeyCode::F19
+            | VirtualKeyCode::F20
+            | VirtualKeyCode::F21
+            | VirtualKeyCode::F22
+            | VirtualKeyCode::F23
+            | VirtualKeyCode::F24 => false,
+            _ => true,
         }
     }
 
