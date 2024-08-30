@@ -221,10 +221,10 @@ impl HttpClient for HttpClientWithUrl {
 
 pub fn client(user_agent: Option<String>, proxy: Option<Uri>) -> Arc<dyn HttpClient> {
     let mut builder = isahc::HttpClient::builder()
-        // Some requests to Qwen2 models on Runpod can take 10+ seconds, especially if there's a cold boot involved.
+        // Some requests to Qwen2 models on Runpod can take 32+ seconds, especially if there's a cold boot involved.
         // If these timeout numbers are too high for the general case, we could have those models build a different client.
-        .connect_timeout(Duration::from_secs(20))
-        .low_speed_timeout(100, Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(50))
+        .low_speed_timeout(100, Duration::from_secs(60)) // This isn't much longer because the slowness is from the model, not the amount of data
         .proxy(proxy.clone());
     if let Some(user_agent) = user_agent {
         builder = builder.default_header("User-Agent", user_agent);
