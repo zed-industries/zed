@@ -835,7 +835,7 @@ fn new_update_task(
 
         let query_range_failed =
             |range: &Range<language::Anchor>, e: anyhow::Error, cx: &mut AsyncWindowContext| {
-                log::error!("inlay hint update task for range {range:?} failed: {e:#}");
+                log::error!("inlay hint update task for range failed: {e:#?}");
                 editor
                     .update(cx, |editor, cx| {
                         if let Some(task_ranges) = editor
