@@ -9,7 +9,7 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     actions::{Tab, TabPrev},
-    DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle,
+    DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle, SearchMode
 };
 use futures::channel::oneshot;
 use gpui::{
@@ -504,6 +504,11 @@ impl BufferSearchBar {
         let replacement_editor = cx.new_view(|cx| Editor::single_line(cx));
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
+        let search_options = if EditorSettings::get_global(cx).search_mode == SearchMode::Regex {
+            SearchOptions::REGEX
+        } else {
+            SearchOptions::NONE
+        };
 
         Self {
             query_editor,
@@ -514,8 +519,8 @@ impl BufferSearchBar {
             active_searchable_item_subscription: None,
             active_match_index: None,
             searchable_items_with_matches: Default::default(),
-            default_options: SearchOptions::NONE,
-            search_options: SearchOptions::NONE,
+            default_options: search_options,
+            search_options: search_options,
             pending_search: None,
             query_contains_error: false,
             dismissed: true,
