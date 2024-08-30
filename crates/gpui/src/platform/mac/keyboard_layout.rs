@@ -14,7 +14,8 @@ pub(crate) fn retrieve_current_keboard_layout() -> KeyboardLayout {
     let name = name.trim_start_matches("com.apple.keylayout.");
     match name {
         "ABC" => KeyboardLayout::ABC,
-        "Czech-QWERTY" | "Czech" => KeyboardLayout::CzechQwerty,
+        "Czech" => KeyboardLayout::Czech,
+        "Czech-QWERTY" => KeyboardLayout::CzechQwerty,
         "German" | "German-DIN-2137" => KeyboardLayout::German,
         "Russian" | "RussianWin" => KeyboardLayout::Russian,
         _ => {
