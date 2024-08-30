@@ -1,3 +1,5 @@
+mod keyboard_layouts;
+
 use serde::Deserialize;
 use strum::EnumIter;
 
