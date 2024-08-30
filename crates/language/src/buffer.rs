@@ -2659,6 +2659,10 @@ impl BufferSnapshot {
         language_settings(self.language_at(position), self.file.as_ref(), cx)
     }
 
+    pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {
+        CharClassifier::new(self.language_scope_at(point))
+    }
+
     /// Returns the [LanguageScope] at the given location.
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
@@ -2715,15 +2719,14 @@ impl BufferSnapshot {
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
 
-        let scope = self.language_scope_at(start);
-        let kind = |c| char_kind(&scope, c);
+        let classifier = self.char_classifier_at(start);
         let word_kind = cmp::max(
-            prev_chars.peek().copied().map(kind),
-            next_chars.peek().copied().map(kind),
+            prev_chars.peek().copied().map(|c| classifier.kind(c)),
+            next_chars.peek().copied().map(|c| classifier.kind(c)),
         );
 
         for ch in prev_chars {
-            if Some(kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
                 start -= ch.len_utf8();
             } else {
                 break;
@@ -2731,7 +2734,7 @@ impl BufferSnapshot {
         }
 
         for ch in next_chars {
-            if Some(kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
                 end += ch.len_utf8();
             } else {
                 break;
@@ -4215,25 +4218,72 @@ pub(crate) fn contiguous_ranges(
     })
 }
 
-/// Returns the [CharKind] for the given character. When a scope is provided,
-/// the function checks if the character is considered a word character
-/// based on the language scope's word character settings.
-pub fn char_kind(scope: &Option<LanguageScope>, c: char) -> CharKind {
-    if c.is_whitespace() {
-        return CharKind::Whitespace;
-    } else if c.is_alphanumeric() || c == '_' {
-        return CharKind::Word;
-    }
+#[derive(Default, Debug)]
+pub struct CharClassifier {
+    scope: Option<LanguageScope>,
+    for_completion: bool,
+    ignore_punctuation: bool,
+}
 
-    if let Some(scope) = scope {
-        if let Some(characters) = scope.word_characters() {
-            if characters.contains(&c) {
-                return CharKind::Word;
-            }
+impl CharClassifier {
+    pub fn new(scope: Option<LanguageScope>) -> Self {
+        Self {
+            scope,
+            for_completion: false,
+            ignore_punctuation: false,
         }
     }
 
-    CharKind::Punctuation
+    pub fn for_completion(self, for_completion: bool) -> Self {
+        Self {
+            for_completion,
+            ..self
+        }
+    }
+
+    pub fn ignore_punctuation(self, ignore_punctuation: bool) -> Self {
+        Self {
+            ignore_punctuation,
+            ..self
+        }
+    }
+
+    pub fn is_whitespace(&self, c: char) -> bool {
+        self.kind(c) == CharKind::Whitespace
+    }
+
+    pub fn is_word(&self, c: char) -> bool {
+        self.kind(c) == CharKind::Word
+    }
+
+    pub fn is_punctuation(&self, c: char) -> bool {
+        self.kind(c) == CharKind::Punctuation
+    }
+
+    pub fn kind(&self, c: char) -> CharKind {
+        if c.is_whitespace() {
+            return CharKind::Whitespace;
+        } else if c.is_alphanumeric() || c == '_' {
+            return CharKind::Word;
+        }
+
+        if let Some(scope) = &self.scope {
+            if let Some(characters) = scope.word_characters() {
+                if characters.contains(&c) {
+                    if c == '-' && !self.for_completion && !self.ignore_punctuation {
+                        return CharKind::Punctuation;
+                    }
+                    return CharKind::Word;
+                }
+            }
+        }
+
+        if self.ignore_punctuation {
+            CharKind::Word
+        } else {
+            CharKind::Punctuation
+        }
+    }
 }
 
 /// Find all of the ranges of whitespace that occur at the ends of lines
