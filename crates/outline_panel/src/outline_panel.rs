@@ -145,7 +145,7 @@ impl SearchState {
         cx: &mut ViewContext<'_, OutlinePanel>,
     ) -> Self {
         let (highlight_search_match_tx, highlight_search_match_rx) = channel::unbounded();
-        let (notity_tx, mut notity_rx) = async_watch::channel(());
+        let (notify_tx, mut notify_rx) = async_watch::channel(());
         Self {
             kind,
             query,
@@ -209,7 +209,7 @@ impl SearchState {
                         range.end = range.end.saturating_sub(left_whitespaces_count);
                     });
                     if highlight_data.set(highlight_ranges).ok().is_some() {
-                        notity_tx.send(()).ok();
+                        notify_tx.send(()).ok();
                     }
 
                     let trimmed_text = context_text[left_whitespaces_count..].to_owned();
@@ -220,7 +220,7 @@ impl SearchState {
                 }
             }),
             _search_match_notify: cx.spawn(|outline_panel, mut cx| async move {
-                while let Some(()) = notity_rx.recv().await.ok() {
+                while let Some(()) = notify_rx.recv().await.ok() {
                     let update_result = outline_panel.update(&mut cx, |outline_panel, cx| {
                         outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), cx);
                     });
@@ -1839,6 +1839,7 @@ impl OutlinePanel {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_search_match(
         &mut self,
         multi_buffer_snapshot: Option<&MultiBufferSnapshot>,
@@ -3175,6 +3176,7 @@ impl OutlinePanel {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn push_entry(
         &self,
         entries: &mut Vec<CachedEntry>,
@@ -4401,41 +4403,38 @@ mod tests {
             for _ in 0..entry.depth {
                 display_string += "  ";
             }
-            display_string += &format!(
-                "{}",
-                match &entry.entry {
-                    PanelEntry::Fs(entry) => match entry {
-                        FsEntry::ExternalFile(_, _) =>
-                            panic!("Did not cover external files with tests"),
-                        FsEntry::Directory(_, dir_entry) => format!(
-                            "{}/",
-                            dir_entry
-                                .path
-                                .file_name()
-                                .map(|name| name.to_string_lossy().to_string())
-                                .unwrap_or_default()
-                        ),
-                        FsEntry::File(_, file_entry, ..) => file_entry
+            display_string += &match &entry.entry {
+                PanelEntry::Fs(entry) => match entry {
+                    FsEntry::ExternalFile(_, _) => {
+                        panic!("Did not cover external files with tests")
+                    }
+                    FsEntry::Directory(_, dir_entry) => format!(
+                        "{}/",
+                        dir_entry
                             .path
                             .file_name()
                             .map(|name| name.to_string_lossy().to_string())
-                            .unwrap_or_default(),
-                    },
-                    PanelEntry::FoldedDirs(_, dirs) => dirs
-                        .iter()
-                        .filter_map(|dir| dir.path.file_name())
-                        .map(|name| name.to_string_lossy().to_string() + "/")
-                        .collect(),
-                    PanelEntry::Outline(outline_entry) => match outline_entry {
-                        OutlineEntry::Excerpt(_, _, _) => continue,
-                        OutlineEntry::Outline(_, _, outline) =>
-                            format!("outline: {}", outline.text),
-                    },
-                    PanelEntry::Search(SearchEntry { render_data, .. }) => {
-                        format!("search: {}", render_data.context_text)
-                    }
+                            .unwrap_or_default()
+                    ),
+                    FsEntry::File(_, file_entry, ..) => file_entry
+                        .path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                },
+                PanelEntry::FoldedDirs(_, dirs) => dirs
+                    .iter()
+                    .filter_map(|dir| dir.path.file_name())
+                    .map(|name| name.to_string_lossy().to_string() + "/")
+                    .collect(),
+                PanelEntry::Outline(outline_entry) => match outline_entry {
+                    OutlineEntry::Excerpt(_, _, _) => continue,
+                    OutlineEntry::Outline(_, _, outline) => format!("outline: {}", outline.text),
+                },
+                PanelEntry::Search(SearchEntry { render_data, .. }) => {
+                    format!("search: {}", render_data.context_text)
                 }
-            );
+            };
 
             if Some(&entry.entry) == selected_entry {
                 display_string += SELECTED_MARKER;
