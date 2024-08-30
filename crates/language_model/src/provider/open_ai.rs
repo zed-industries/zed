@@ -370,11 +370,7 @@ pub fn count_open_ai_tokens(
                 })
                 .collect::<Vec<_>>();
 
-            if let open_ai::Model::Custom { .. } = model {
-                tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
-            } else {
-                tiktoken_rs::num_tokens_from_messages(model.id(), &messages)
-            }
+            tiktoken_rs::num_tokens_from_messages(model.id(), &messages)
         })
         .boxed()
 }
