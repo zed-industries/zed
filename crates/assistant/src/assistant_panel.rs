@@ -68,6 +68,7 @@ use ui::{
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use util::ResultExt;
+use workspace::searchable::SearchableItemHandle;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::{self, FollowableItem, Item, ItemHandle},
@@ -76,7 +77,6 @@ use workspace::{
     Pane, Save, ShowConfiguration, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
 };
-use workspace::{searchable::SearchableItemHandle, NewFile};
 use zed_actions::InlineAssist;
 
 pub fn init(cx: &mut AppContext) {
@@ -338,7 +338,7 @@ impl AssistantPanel {
                 workspace.project().clone(),
                 Default::default(),
                 None,
-                NewFile.boxed_clone(),
+                NewContext.boxed_clone(),
                 cx,
             );
             pane.set_can_split(false, cx);
@@ -1211,7 +1211,7 @@ impl Render for AssistantPanel {
         v_flex()
             .key_context("AssistantPanel")
             .size_full()
-            .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
+            .on_action(cx.listener(|this, _: &NewContext, cx| {
                 this.new_context(cx);
             }))
             .on_action(
