@@ -15,6 +15,20 @@ impl Render for HelloWorld {
             .bg(gpui::white())
             .child(
                 div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .child(div().flex().text_ellipsis().debug().child("A short text"))
+                    .child(
+                        div()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .debug()
+                            .child("A short text"),
+                    ),
+            )
+            .child(
+                div()
                     .text_xl()
                     .overflow_hidden()
                     .text_ellipsis()
