@@ -556,6 +556,9 @@ pub struct Editor {
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
     active_inline_completion: Option<(Inlay, Option<Range<Anchor>>)>,
+    // enable_inline_completions is a switch that Vim can use to disable
+    // inline completions based on its mode.
+    enable_inline_completions: bool,
     show_inline_completions_override: Option<bool>,
     inlay_hint_cache: InlayHintCache,
     expanded_hunks: ExpandedHunks,
@@ -1913,6 +1916,7 @@ impl Editor {
             next_editor_action_id: EditorActionId::default(),
             editor_actions: Rc::default(),
             show_inline_completions_override: None,
+            enable_inline_completions: true,
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
@@ -2275,6 +2279,10 @@ impl Editor {
 
     pub fn set_input_enabled(&mut self, input_enabled: bool) {
         self.input_enabled = input_enabled;
+    }
+
+    pub fn set_inline_completions_enabled(&mut self, enabled: bool) {
+        self.enable_inline_completions = enabled;
     }
 
     pub fn set_autoindent(&mut self, autoindent: bool) {
@@ -4977,6 +4985,7 @@ impl Editor {
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         if !user_requested
+            && self.enable_inline_completions
             && !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
         {
             self.discard_inline_completion(false, cx);
@@ -4997,7 +5006,9 @@ impl Editor {
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-        if !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx) {
+        if !self.enable_inline_completions
+            || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
+        {
             return None;
         }
 
