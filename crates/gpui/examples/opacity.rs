@@ -147,6 +147,7 @@ impl Render for HelloWorld {
                                     .text_2xl()
                                     .size_8(),
                             )
+                            .child("🎊✈️🎉🎈🎁🎂")
                             .child(img("image/black-cat-typing.gif").size_12()),
                     ),
             )
