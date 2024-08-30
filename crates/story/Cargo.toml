@@ -5,6 +5,10 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lib]
+name = "story"
+path = "src/story.rs"
+
 [lints]
 workspace = true
 
