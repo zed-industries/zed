@@ -485,7 +485,7 @@ impl ProtoClient for SshSession {
         self.request_dynamic(envelope, request_type).boxed()
     }
 
-    fn send(&self, envelope: proto::Envelope) -> Result<()> {
+    fn send(&self, envelope: proto::Envelope, _message_type: &'static str) -> Result<()> {
         self.send_dynamic(envelope)
     }
 }

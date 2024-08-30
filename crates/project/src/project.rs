@@ -792,7 +792,7 @@ impl Project {
             cx.new_model(|cx| BufferStore::new(worktree_store.clone(), Some(remote_id), cx))?;
 
         let lsp_store = cx.new_model(|cx| {
-            LspStore::new(
+            let mut lsp_store = LspStore::new(
                 buffer_store.clone(),
                 worktree_store.clone(),
                 None,
@@ -803,7 +803,9 @@ impl Project {
                 Some(client.clone().into()),
                 Some(remote_id),
                 cx,
-            )
+            );
+            lsp_store.set_language_server_statuses_from_proto(response.payload.language_servers);
+            lsp_store
         })?;
 
         let this = cx.new_model(|cx| {
@@ -1562,7 +1564,7 @@ impl Project {
         self.set_worktrees_from_proto(message.worktrees, cx)?;
         self.set_collaborators_from_proto(message.collaborators, cx)?;
         self.lsp_store.update(cx, |lsp_store, _| {
-            lsp_store.rejoined(message.language_servers)
+            lsp_store.set_language_server_statuses_from_proto(message.language_servers)
         });
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
             .unwrap();
@@ -2040,7 +2042,10 @@ impl Project {
                 self.register_buffer_with_language_servers(&buffer, cx);
             }
             BufferStoreEvent::MessageToReplicas(message) => {
-                self.client.send_dynamic(message.as_ref().clone()).log_err();
+                // TODO - remove this event, give buffer store a downstream client instead
+                self.client
+                    .send_dynamic(message.as_ref().clone(), "")
+                    .log_err();
             }
             BufferStoreEvent::BufferDropped(buffer_id) => {
                 if let Some(ref ssh_session) = self.ssh_session {
@@ -2101,12 +2106,15 @@ impl Project {
                     language_server_id: *language_server_id,
                 });
                 if self.is_local_or_ssh() {
-                    self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
-                        language_server_id: *language_server_id,
-                        message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
-                            Default::default(),
-                        ),
-                    })
+                    self.enqueue_buffer_ordered_message(
+                        BufferOrderedMessage::LanguageServerUpdate {
+                            language_server_id: *language_server_id,
+                            message:
+                                proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                                    Default::default(),
+                                ),
+                        },
+                    )
                     .ok();
                 }
             }

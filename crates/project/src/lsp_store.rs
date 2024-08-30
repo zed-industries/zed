@@ -2068,7 +2068,10 @@ impl LspStore {
         self.downstream_client.take();
     }
 
-    pub(crate) fn rejoined(&mut self, language_servers: Vec<proto::LanguageServer>) {
+    pub(crate) fn set_language_server_statuses_from_proto(
+        &mut self,
+        language_servers: Vec<proto::LanguageServer>,
+    ) {
         self.language_server_statuses = language_servers
             .into_iter()
             .map(|server| {
