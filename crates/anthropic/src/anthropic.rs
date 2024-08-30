@@ -331,9 +331,10 @@ pub async fn stream_completion_with_rate_limit_info(
 }
 
 pub fn extract_content_from_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>, // response: impl Stream<Item = Result<Event, AnthropicError>>,
+    events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
 ) -> impl Stream<Item = Result<String, AnthropicError>> {
     struct State {
+        events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
         current_tool_use_index: Option<usize>,
     }
 
@@ -341,14 +342,12 @@ pub fn extract_content_from_events(
     const NEWLINE: char = '\n';
 
     futures::stream::unfold(
-        (
+        State {
             events,
-            State {
-                current_tool_use_index: None,
-            },
-        ),
-        |(mut stream, mut state)| async move {
-            while let Some(event) = stream.next().await {
+            current_tool_use_index: None,
+        },
+        |mut state| async move {
+            while let Some(event) = state.events.next().await {
                 match event {
                     Ok(event) => match event {
                         Event::ContentBlockStart {
@@ -356,7 +355,7 @@ pub fn extract_content_from_events(
                             content_block,
                         } => match content_block {
                             ResponseContent::Text { text } => {
-                                return Some((Ok(text), (stream, state)));
+                                return Some((Ok(text), state));
                             }
                             ResponseContent::ToolUse { id, name, .. } => {
                                 state.current_tool_use_index = Some(index);
@@ -382,36 +381,36 @@ pub fn extract_content_from_events(
                                 text.push_str(INDENT);
                                 text.push_str("<input>");
 
-                                return Some((Ok(text), (stream, state)));
+                                return Some((Ok(text), state));
                             }
                         },
                         Event::ContentBlockDelta { index, delta } => match delta {
                             ContentDelta::TextDelta { text } => {
-                                return Some((Ok(text), (stream, state)));
+                                return Some((Ok(text), state));
                             }
                             ContentDelta::InputJsonDelta { partial_json } => {
                                 if Some(index) == state.current_tool_use_index {
-                                    return Some((Ok(partial_json), (stream, state)));
+                                    return Some((Ok(partial_json), state));
                                 }
                             }
                         },
                         Event::ContentBlockStop { index } => {
-                            if Some(index) == state.current_tool_use_index {
+                            if Some(index) == state.current_tool_use_index.take() {
                                 let mut text = String::new();
                                 text.push_str("</input>");
                                 text.push(NEWLINE);
                                 text.push_str("</tool_use>");
 
-                                return Some((Ok(text), (stream, state)));
+                                return Some((Ok(text), state));
                             }
                         }
                         Event::Error { error } => {
-                            return Some((Err(AnthropicError::ApiError(error)), (stream, state)));
+                            return Some((Err(AnthropicError::ApiError(error)), state));
                         }
                         _ => {}
                     },
                     Err(err) => {
-                        return Some((Err(err), (stream, state)));
+                        return Some((Err(err), state));
                     }
                 }
             }
