@@ -304,17 +304,17 @@ impl LanguageModelRequest {
                     } else {
                         None
                     };
-                    let anthropic_message_content: Vec<anthropic::Content> = message
+                    let anthropic_message_content: Vec<anthropic::RequestContent> = message
                         .content
                         .into_iter()
                         .filter_map(|content| match content {
                             MessageContent::Text(t) if !t.is_empty() => {
-                                Some(anthropic::Content::Text {
+                                Some(anthropic::RequestContent::Text {
                                     text: t,
                                     cache_control,
                                 })
                             }
-                            MessageContent::Image(i) => Some(anthropic::Content::Image {
+                            MessageContent::Image(i) => Some(anthropic::RequestContent::Image {
                                 source: anthropic::ImageSource {
                                     source_type: "base64".to_string(),
                                     media_type: "image/png".to_string(),
