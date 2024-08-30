@@ -924,12 +924,15 @@ impl AssistantPanel {
             });
 
             self.show_context(editor.clone(), cx);
-            self.pane.update(cx, |pane, cx| {
-                let items: Vec<_> = pane.items().collect();
-                if !items.is_empty() {
-                    pane.activate_item(items.len() - 1, true, true, cx);
-                }
-            });
+            let workspace = self.workspace.clone();
+            cx.spawn(move |_, mut cx| async move {
+                workspace
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.focus_panel::<AssistantPanel>(cx);
+                    })
+                    .ok();
+            })
+            .detach();
             Some(editor)
         }
     }
