@@ -618,7 +618,7 @@ impl Fs for RealFs {
         Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
         Arc<dyn Watcher>,
     ) {
-        use notify::Watcher;
+        use notify::{EventKind, Watcher};
 
         let (tx, rx) = smol::channel::unbounded();
 
