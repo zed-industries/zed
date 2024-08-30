@@ -505,6 +505,12 @@ impl ContextProvider for GoContextProvider {
         _: Option<Arc<dyn language::File>>,
         _: &AppContext,
     ) -> Option<TaskTemplates> {
+        let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
+            None
+        } else {
+            Some("$ZED_DIRNAME".to_string())
+        };
+
         Some(TaskTemplates(vec![
             TaskTemplate {
                 label: format!(
@@ -512,26 +518,23 @@ impl ContextProvider for GoContextProvider {
                     GO_PACKAGE_TASK_VARIABLE.template_value(),
                     VariableName::Symbol.template_value(),
                 ),
-                command: "go".into(),
-                args: vec![
-                    "test".into(),
-                    GO_PACKAGE_TASK_VARIABLE.template_value(),
-                    "-run".into(),
-                    format!("^{}\\$", VariableName::Symbol.template_value(),),
-                ],
+                command: format!("go test -run {}", VariableName::Symbol.template_value(),),
                 tags: vec!["go-test".to_owned()],
+                cwd: package_cwd.clone(),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: format!("go test {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
                 command: "go".into(),
                 args: vec!["test".into(), GO_PACKAGE_TASK_VARIABLE.template_value()],
+                cwd: package_cwd.clone(),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: "go test ./...".into(),
                 command: "go".into(),
                 args: vec!["test".into(), "./...".into()],
+                cwd: package_cwd.clone(),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -544,7 +547,6 @@ impl ContextProvider for GoContextProvider {
                 command: "go".into(),
                 args: vec![
                     "test".into(),
-                    GO_PACKAGE_TASK_VARIABLE.template_value(),
                     "-v".into(),
                     "-run".into(),
                     format!(
@@ -553,6 +555,7 @@ impl ContextProvider for GoContextProvider {
                         GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
                     ),
                 ],
+                cwd: package_cwd.clone(),
                 tags: vec!["go-subtest".to_owned()],
                 ..TaskTemplate::default()
             },
@@ -571,13 +574,15 @@ impl ContextProvider for GoContextProvider {
                     "-bench".into(),
                     format!("^{}\\$", VariableName::Symbol.template_value()),
                 ],
+                cwd: package_cwd.clone(),
                 tags: vec!["go-benchmark".to_owned()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: format!("go run {}", GO_PACKAGE_TASK_VARIABLE.template_value(),),
                 command: "go".into(),
-                args: vec!["run".into(), GO_PACKAGE_TASK_VARIABLE.template_value()],
+                args: vec!["run".into(), ".".into()],
+                cwd: package_cwd.clone(),
                 tags: vec!["go-main".to_owned()],
                 ..TaskTemplate::default()
             },
