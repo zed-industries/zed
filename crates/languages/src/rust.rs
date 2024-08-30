@@ -263,19 +263,18 @@ impl LspAdapter for RustLspAdapter {
                 });
                 // fn keyword should be followed by opening parenthesis.
                 if let Some((prefix, suffix)) = fn_keyword {
+                    let mut text = REGEX.replace(&completion.label, suffix).to_string();
+                    let source = Rope::from(format!("{prefix} {} {{}}", text).as_str());
+                    let run_start = prefix.len() + 1;
+                    let runs = language.highlight_text(&source, run_start..run_start + text.len());
                     if detail.starts_with(" (") {
-                        let mut text = REGEX.replace(&completion.label, suffix).to_string();
-                        let source = Rope::from(format!("{prefix} {} {{}}", text).as_str());
-                        let run_start = prefix.len() + 1;
-                        let runs =
-                            language.highlight_text(&source, run_start..run_start + text.len());
                         text.push_str(&detail);
-                        return Some(CodeLabel {
-                            filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
-                            text,
-                            runs,
-                        });
                     }
+                    return Some(CodeLabel {
+                        filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
+                        text,
+                        runs,
+                    });
                 }
             }
             Some(kind) => {
