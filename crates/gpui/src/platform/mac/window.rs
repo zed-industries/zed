@@ -9,7 +9,7 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
+        NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
         NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
@@ -20,7 +20,7 @@ use cocoa::{
         NSSize, NSString, NSUInteger,
     },
 };
-use core_graphics::display::{CGDirectDisplayID, CGRect};
+use core_graphics::display::{CGDirectDisplayID, CGPoint, CGRect};
 use ctor::ctor;
 use futures::channel::oneshot;
 use objc::{
@@ -54,7 +54,7 @@ static mut VIEW_CLASS: *const Class = ptr::null();
 
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
-    unsafe { NSWindowStyleMask::from_bits_unchecked(1 << 7) };
+    NSWindowStyleMask::from_bits_retain(1 << 7);
 #[allow(non_upper_case_globals)]
 const NSNormalWindowLevel: NSInteger = 0;
 #[allow(non_upper_case_globals)]
@@ -233,7 +233,7 @@ unsafe fn build_classes() {
 pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -> Point<Pixels> {
     point(
         px(position.x as f32),
-        // MacOS screen coordinates are relative to bottom left
+        // macOS screen coordinates are relative to bottom left
         window_height - px(position.y as f32),
     )
 }
@@ -1120,6 +1120,13 @@ impl PlatformWindow for MacWindow {
         None
     }
 
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+        unsafe {
+            let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
+            let _: () = msg_send![input_context, invalidateCharacterCoordinates];
+        }
+    }
+
     fn fps(&self) -> Option<f32> {
         Some(self.0.lock().renderer.fps())
     }
@@ -1307,11 +1314,11 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
             if !handled && is_held {
                 if let Some(text) = previous_keydown_inserted_text {
-                    // MacOS IME is a bit funky, and even when you've told it there's nothing to
+                    // macOS IME is a bit funky, and even when you've told it there's nothing to
                     // enter it will still swallow certain keys (e.g. 'f', 'j') and not others
                     // (e.g. 'n'). This is a problem for certain kinds of views, like the terminal.
                     with_input_handler(this, |input_handler| {
-                        if input_handler.selected_text_range().is_none() {
+                        if input_handler.selected_text_range(false).is_none() {
                             handled = true;
                             input_handler.replace_text_in_range(None, &text)
                         }
@@ -1683,10 +1690,12 @@ extern "C" fn marked_range(this: &Object, _: Sel) -> NSRange {
 }
 
 extern "C" fn selected_range(this: &Object, _: Sel) -> NSRange {
-    let selected_range_result =
-        with_input_handler(this, |input_handler| input_handler.selected_text_range()).flatten();
+    let selected_range_result = with_input_handler(this, |input_handler| {
+        input_handler.selected_text_range(false)
+    })
+    .flatten();
 
-    selected_range_result.map_or(NSRange::invalid(), |range| range.into())
+    selected_range_result.map_or(NSRange::invalid(), |selection| selection.range.into())
 }
 
 extern "C" fn first_rect_for_character_range(

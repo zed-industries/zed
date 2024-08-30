@@ -306,6 +306,25 @@ async fn test_word_characters(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_kebab_case(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(cx).await;
+    cx.set_state(
+        indoc! { r#"
+            <div><a class="bg-rˇed"></a></div>
+            "#},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("v i w");
+    cx.assert_state(
+        indoc! { r#"
+        <div><a class="bg-«redˇ»"></a></div>
+        "#
+        },
+        Mode::Visual,
+    )
+}
+
+#[gpui::test]
 async fn test_join_lines(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 

@@ -1,6 +1,4 @@
-use crate::{
-    slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssist, InlineAssistant,
-};
+use crate::{slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssistant};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
@@ -25,6 +23,7 @@ use language_model::{
 };
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
+use release_channel::ReleaseChannel;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -44,6 +43,7 @@ use ui::{
 use util::{ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::Workspace;
+use zed_actions::InlineAssist;
 
 actions!(
     prompt_library,
@@ -95,14 +95,16 @@ pub fn open_prompt_library(
         cx.spawn(|cx| async move {
             let store = store.await?;
             cx.update(|cx| {
+                let app_id = ReleaseChannel::global(cx).app_id();
                 let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
                 cx.open_window(
                     WindowOptions {
                         titlebar: Some(TitlebarOptions {
                             title: Some("Prompt Library".into()),
-                            appears_transparent: !cfg!(windows),
+                            appears_transparent: cfg!(target_os = "macos"),
                             traffic_light_position: Some(point(px(9.0), px(9.0))),
                         }),
+                        app_id: Some(app_id.to_owned()),
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
                         ..Default::default()
                     },
@@ -496,7 +498,7 @@ impl PromptLibrary {
                             editor.set_text(prompt_metadata.title.unwrap_or_default(), cx);
                             if prompt_id.is_built_in() {
                                 editor.set_read_only(true);
-                                editor.set_show_inline_completions(false);
+                                editor.set_show_inline_completions(Some(false), cx);
                             }
                             editor
                         });
@@ -511,7 +513,7 @@ impl PromptLibrary {
                             let mut editor = Editor::for_buffer(buffer, None, cx);
                             if prompt_id.is_built_in() {
                                 editor.set_read_only(true);
-                                editor.set_show_inline_completions(false);
+                                editor.set_show_inline_completions(Some(false), cx);
                             }
                             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
                             editor.set_show_gutter(false, cx);
@@ -792,6 +794,7 @@ impl PromptLibrary {
                                         content: vec![body.to_string().into()],
                                         cache: false,
                                     }],
+                                    tools: Vec::new(),
                                     stop: Vec::new(),
                                     temperature: 1.,
                                 },

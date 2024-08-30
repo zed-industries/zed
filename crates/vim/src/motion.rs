@@ -7,7 +7,7 @@ use editor::{
     Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset,
 };
 use gpui::{actions, impl_actions, px, ViewContext};
-use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
+use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 use std::ops::Range;
@@ -1131,12 +1131,15 @@ pub(crate) fn next_word_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut crossed_newline = false;
         let new_point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+            let left_kind = classifier.kind(left);
+            let right_kind = classifier.kind(right);
             let at_newline = right == '\n';
 
             let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
@@ -1161,7 +1164,10 @@ pub(crate) fn next_word_end(
     times: usize,
     allow_cross_newline: bool,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let new_point = next_char(map, point, allow_cross_newline);
         let mut need_next_char = false;
@@ -1170,8 +1176,8 @@ pub(crate) fn next_word_end(
             new_point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
                 if !allow_cross_newline && at_newline {
@@ -1202,7 +1208,10 @@ fn previous_word_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         // This works even though find_preceding_boundary is called for every character in the line containing
         // cursor because the newline is checked only once.
@@ -1211,8 +1220,8 @@ fn previous_word_start(
             point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
 
                 (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
             },
@@ -1231,7 +1240,10 @@ fn previous_word_end(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
     if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
@@ -1243,8 +1255,8 @@ fn previous_word_end(
             point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
                 match (left_kind, right_kind) {
                     (CharKind::Punctuation, CharKind::Whitespace)
                     | (CharKind::Punctuation, CharKind::Word)
@@ -1269,12 +1281,15 @@ fn next_subword_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut crossed_newline = false;
         let new_point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+            let left_kind = classifier.kind(left);
+            let right_kind = classifier.kind(right);
             let at_newline = right == '\n';
 
             let is_word_start = (left_kind != right_kind) && !left.is_alphanumeric();
@@ -1303,7 +1318,10 @@ pub(crate) fn next_subword_end(
     times: usize,
     allow_cross_newline: bool,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let new_point = next_char(map, point, allow_cross_newline);
 
@@ -1311,8 +1329,8 @@ pub(crate) fn next_subword_end(
         let mut need_backtrack = false;
         let new_point =
             movement::find_boundary(map, new_point, FindRange::MultiLine, |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
                 if !allow_cross_newline && at_newline {
@@ -1350,7 +1368,10 @@ fn previous_subword_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut crossed_newline = false;
         // This works even though find_preceding_boundary is called for every character in the line containing
@@ -1360,8 +1381,8 @@ fn previous_subword_start(
             point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
                 let is_word_start = (left_kind != right_kind) && !left.is_alphanumeric();
@@ -1391,7 +1412,10 @@ fn previous_subword_end(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
     if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
@@ -1403,8 +1427,8 @@ fn previous_subword_end(
             point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
 
                 let is_subword_end =
                     left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
@@ -1435,7 +1459,7 @@ pub(crate) fn first_non_whitespace(
     from: DisplayPoint,
 ) -> DisplayPoint {
     let mut start_offset = start_of_line(map, display_lines, from).to_offset(map, Bias::Left);
-    let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
+    let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
     for (ch, offset) in map.buffer_chars_at(start_offset) {
         if ch == '\n' {
             return from;
@@ -1443,7 +1467,7 @@ pub(crate) fn first_non_whitespace(
 
         start_offset = offset;
 
-        if char_kind(&scope, ch) != CharKind::Whitespace {
+        if classifier.kind(ch) != CharKind::Whitespace {
             break;
         }
     }
@@ -1457,11 +1481,11 @@ pub(crate) fn last_non_whitespace(
     count: usize,
 ) -> DisplayPoint {
     let mut end_of_line = end_of_line(map, false, from, count).to_offset(map, Bias::Left);
-    let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
+    let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
 
     // NOTE: depending on clip_at_line_end we may already be one char back from the end.
     if let Some((ch, _)) = map.buffer_chars_at(end_of_line).next() {
-        if char_kind(&scope, ch) != CharKind::Whitespace {
+        if classifier.kind(ch) != CharKind::Whitespace {
             return end_of_line.to_display_point(map);
         }
     }
@@ -1471,7 +1495,7 @@ pub(crate) fn last_non_whitespace(
             break;
         }
         end_of_line = offset;
-        if char_kind(&scope, ch) != CharKind::Whitespace || ch == '\n' {
+        if classifier.kind(ch) != CharKind::Whitespace || ch == '\n' {
             break;
         }
     }
@@ -1784,14 +1808,6 @@ fn window_bottom(
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
     } else {
         (point, SelectionGoal::None)
-    }
-}
-
-pub fn coerce_punctuation(kind: CharKind, treat_punctuation_as_word: bool) -> CharKind {
-    if treat_punctuation_as_word && kind == CharKind::Punctuation {
-        CharKind::Word
-    } else {
-        kind
     }
 }
 

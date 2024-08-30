@@ -1,8 +1,9 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
+    search::SearchQuery,
     worktree_store::WorktreeStore,
     ProjectPath, WorktreeId, WorktreeSettings,
 };
@@ -49,10 +50,12 @@ impl HeadlessProject {
         session.add_request_handler(this.clone(), Self::handle_list_remote_directory);
         session.add_request_handler(this.clone(), Self::handle_add_worktree);
         session.add_request_handler(this.clone(), Self::handle_open_buffer_by_path);
+        session.add_request_handler(this.clone(), Self::handle_find_search_candidates);
 
         session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_blame_buffer);
         session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_update_buffer);
         session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_save_buffer);
+        session.add_message_handler(buffer_store.downgrade(), BufferStore::handle_close_buffer);
 
         session.add_request_handler(
             worktree_store.downgrade(),
@@ -141,23 +144,59 @@ impl HeadlessProject {
 
         let buffer = buffer.await?;
         let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
-
-        cx.spawn(|mut cx| async move {
-            BufferStore::create_buffer_for_peer(
-                buffer_store,
-                PEER_ID,
-                buffer_id,
-                PROJECT_ID,
-                session,
-                &mut cx,
-            )
-            .await
-        })
-        .detach();
+        buffer_store.update(&mut cx, |buffer_store, cx| {
+            buffer_store
+                .create_buffer_for_peer(&buffer, PEER_ID, PROJECT_ID, session, cx)
+                .detach_and_log_err(cx);
+        })?;
 
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
         })
+    }
+
+    pub async fn handle_find_search_candidates(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::FindSearchCandidates>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::FindSearchCandidatesResponse> {
+        let message = envelope.payload;
+        let query = SearchQuery::from_proto(
+            message
+                .query
+                .ok_or_else(|| anyhow!("missing query field"))?,
+        )?;
+        let mut results = this.update(&mut cx, |this, cx| {
+            this.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
+            })
+        })?;
+
+        let mut response = proto::FindSearchCandidatesResponse {
+            buffer_ids: Vec::new(),
+        };
+
+        let (buffer_store, client) = this.update(&mut cx, |this, _| {
+            (this.buffer_store.clone(), this.session.clone())
+        })?;
+
+        while let Some(buffer) = results.next().await {
+            let buffer_id = buffer.update(&mut cx, |this, _| this.remote_id())?;
+            response.buffer_ids.push(buffer_id.to_proto());
+            buffer_store
+                .update(&mut cx, |buffer_store, cx| {
+                    buffer_store.create_buffer_for_peer(
+                        &buffer,
+                        PEER_ID,
+                        PROJECT_ID,
+                        client.clone(),
+                        cx,
+                    )
+                })?
+                .await?;
+        }
+
+        Ok(response)
     }
 
     pub async fn handle_list_remote_directory(

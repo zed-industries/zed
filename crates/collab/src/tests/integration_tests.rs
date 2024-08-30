@@ -28,8 +28,8 @@ use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use project::{
-    search::SearchQuery, DiagnosticSummary, FormatTrigger, HoverBlockKind, Project, ProjectPath,
-    SearchResult,
+    search::SearchQuery, search::SearchResult, DiagnosticSummary, FormatTrigger, HoverBlockKind,
+    Project, ProjectPath,
 };
 use rand::prelude::*;
 use serde_json::json;
@@ -3178,7 +3178,7 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project.copy_entry(entry.id, Path::new("f.txt"), cx)
+            project.copy_entry(entry.id, None, Path::new("f.txt"), cx)
         })
         .await
         .unwrap()
@@ -4920,6 +4920,7 @@ async fn test_project_search(
                 false,
                 Default::default(),
                 Default::default(),
+                None,
             )
             .unwrap(),
             cx,

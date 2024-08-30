@@ -2217,6 +2217,45 @@ fn test_language_scope_at_with_combined_injections(cx: &mut AppContext) {
 }
 
 #[gpui::test]
+fn test_language_at_with_hidden_languages(cx: &mut AppContext) {
+    init_settings(cx, |_| {});
+
+    cx.new_model(|cx| {
+        let text = r#"
+            this is an *emphasized* word.
+        "#
+        .unindent();
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(Arc::new(markdown_lang()));
+        language_registry.add(Arc::new(markdown_inline_lang()));
+
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry.clone());
+        buffer.set_language(
+            language_registry
+                .language_for_name("Markdown")
+                .now_or_never()
+                .unwrap()
+                .ok(),
+            cx,
+        );
+
+        let snapshot = buffer.snapshot();
+
+        for point in [Point::new(0, 4), Point::new(0, 16)] {
+            let config = snapshot.language_scope_at(point).unwrap();
+            assert_eq!(config.language_name().as_ref(), "Markdown");
+
+            let language = snapshot.language_at(point).unwrap();
+            assert_eq!(language.name().as_ref(), "Markdown");
+        }
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_serialization(cx: &mut gpui::AppContext) {
     let mut now = Instant::now();
 
@@ -2865,6 +2904,45 @@ fn javascript_lang() -> Language {
         (object "}" @end) @indent
         "#,
     )
+    .unwrap()
+}
+
+pub fn markdown_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["md".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_md::language()),
+    )
+    .with_injection_query(
+        r#"
+            (fenced_code_block
+                (info_string
+                    (language) @language)
+                (code_fence_content) @content)
+
+            ((inline) @content
+                (#set! "language" "markdown-inline"))
+        "#,
+    )
+    .unwrap()
+}
+
+pub fn markdown_inline_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Markdown-Inline".into(),
+            hidden: true,
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_md::inline_language()),
+    )
+    .with_highlights_query("(emphasis) @emphasis")
     .unwrap()
 }
 

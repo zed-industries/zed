@@ -1,9 +1,9 @@
 use crate::components::KernelListItem;
+use crate::KernelStatus;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
 };
-use crate::{stdio, KernelStatus};
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -60,7 +60,16 @@ impl EditorBlock {
         on_close: CloseBlockFn,
         cx: &mut ViewContext<Session>,
     ) -> anyhow::Result<Self> {
-        let execution_view = cx.new_view(|cx| ExecutionView::new(status, cx));
+        let editor = editor
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("editor is not open"))?;
+        let workspace = editor
+            .read(cx)
+            .workspace()
+            .ok_or_else(|| anyhow::anyhow!("workspace dropped"))?;
+
+        let execution_view =
+            cx.new_view(|cx| ExecutionView::new(status, workspace.downgrade(), cx));
 
         let (block_id, invalidation_anchor) = editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().clone();
@@ -93,7 +102,7 @@ impl EditorBlock {
 
             let block_id = editor.insert_blocks([block], None, cx)[0];
             (block_id, invalidation_anchor)
-        })?;
+        });
 
         anyhow::Ok(Self {
             code_range,
@@ -115,7 +124,7 @@ impl EditorBlock {
     ) -> RenderBlock {
         let render = move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
-            let text_style = stdio::text_style(cx);
+            let text_style = crate::outputs::plain::text_style(cx);
 
             let gutter = cx.gutter_dimensions;
 

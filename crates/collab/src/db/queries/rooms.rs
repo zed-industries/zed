@@ -668,6 +668,7 @@ impl Database {
                             // based on total number of backlogged bytes - instead, we'd go
                             // on number of files only. That shouldn't be a huge deal in practice.
                             size: None,
+                            is_fifo: db_entry.is_fifo,
                         });
                     }
                 }

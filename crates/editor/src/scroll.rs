@@ -505,7 +505,7 @@ impl Editor {
         }
 
         if let Some(visible_lines) = self.visible_line_count() {
-            if newest_head.row() < DisplayRow(screen_top.row().0 + visible_lines as u32) {
+            if newest_head.row() <= DisplayRow(screen_top.row().0 + visible_lines as u32) {
                 return Ordering::Equal;
             }
         }

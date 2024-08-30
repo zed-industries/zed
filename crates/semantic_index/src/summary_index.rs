@@ -565,6 +565,7 @@ impl SummaryIndex {
                 content: vec![prompt.into()],
                 cache: use_cache,
             }],
+            tools: Vec::new(),
             stop: Vec::new(),
             temperature: 1.0,
         };

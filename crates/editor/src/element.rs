@@ -41,8 +41,12 @@ use gpui::{
     ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use language::language_settings::{
-    IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings, ShowWhitespaceSetting,
+use language::{
+    language_settings::{
+        IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
+        ShowWhitespaceSetting,
+    },
+    ChunkRendererContext,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow};
@@ -344,8 +348,10 @@ impl EditorElement {
         register_action(view, cx, Editor::toggle_soft_wrap);
         register_action(view, cx, Editor::toggle_tab_bar);
         register_action(view, cx, Editor::toggle_line_numbers);
+        register_action(view, cx, Editor::toggle_relative_line_numbers);
         register_action(view, cx, Editor::toggle_indent_guides);
         register_action(view, cx, Editor::toggle_inlay_hints);
+        register_action(view, cx, Editor::toggle_inline_completions);
         register_action(view, cx, hover_popover::hover);
         register_action(view, cx, Editor::reveal_in_finder);
         register_action(view, cx, Editor::copy_path);
@@ -353,6 +359,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_highlight_json);
         register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, Editor::open_permalink_to_line);
+        register_action(view, cx, Editor::copy_file_location);
         register_action(view, cx, Editor::toggle_git_blame);
         register_action(view, cx, Editor::toggle_git_blame_inline);
         register_action(view, cx, Editor::toggle_hunk_diff);
@@ -651,22 +658,24 @@ impl EditorElement {
             }
 
             #[cfg(target_os = "linux")]
-            if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
-                let point_for_position =
-                    position_map.point_for_position(text_hitbox.bounds, event.position);
-                let position = point_for_position.previous_valid;
+            if EditorSettings::get_global(cx).middle_click_paste {
+                if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
+                    let point_for_position =
+                        position_map.point_for_position(text_hitbox.bounds, event.position);
+                    let position = point_for_position.previous_valid;
 
-                editor.select(
-                    SelectPhase::Begin {
-                        position,
-                        add: false,
-                        click_count: 1,
-                    },
-                    cx,
-                );
-                editor.insert(&text, cx);
+                    editor.select(
+                        SelectPhase::Begin {
+                            position,
+                            add: false,
+                            click_count: 1,
+                        },
+                        cx,
+                    );
+                    editor.insert(&text, cx);
+                }
+                cx.stop_propagation()
             }
-            cx.stop_propagation()
         }
     }
 
@@ -1769,7 +1778,7 @@ impl EditorElement {
         });
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
 
-        let is_relative = EditorSettings::get_global(cx).relative_line_numbers;
+        let is_relative = editor.should_use_relative_line_numbers(cx);
         let relative_to = if is_relative {
             Some(newest_selection_head.row())
         } else {
@@ -1869,6 +1878,7 @@ impl EditorElement {
         line_number_layouts: &[Option<ShapedLine>],
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
+        editor_width: Pixels,
         cx: &mut WindowContext,
     ) -> Vec<LineWithInvisibles> {
         if rows.start >= rows.end {
@@ -1919,6 +1929,7 @@ impl EditorElement {
                 rows.len(),
                 line_number_layouts,
                 snapshot.mode,
+                editor_width,
                 cx,
             )
         }
@@ -1963,6 +1974,7 @@ impl EditorElement {
         line_height: Pixels,
         em_width: Pixels,
         text_hitbox: &Hitbox,
+        editor_width: Pixels,
         scroll_width: &mut Pixels,
         resized_blocks: &mut HashMap<CustomBlockId, u32>,
         cx: &mut WindowContext,
@@ -1978,7 +1990,7 @@ impl EditorElement {
                         line_layouts[align_to.row().minus(rows.start) as usize]
                             .x_for_index(align_to.column() as usize)
                     } else {
-                        layout_line(align_to.row(), snapshot, &self.style, cx)
+                        layout_line(align_to.row(), snapshot, &self.style, editor_width, cx)
                             .x_for_index(align_to.column() as usize)
                     };
 
@@ -2415,6 +2427,7 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         hitbox: &Hitbox,
         text_hitbox: &Hitbox,
+        editor_width: Pixels,
         scroll_width: &mut Pixels,
         gutter_dimensions: &GutterDimensions,
         em_width: Pixels,
@@ -2454,6 +2467,7 @@ impl EditorElement {
                 line_height,
                 em_width,
                 text_hitbox,
+                editor_width,
                 scroll_width,
                 &mut resized_blocks,
                 cx,
@@ -2497,6 +2511,7 @@ impl EditorElement {
                 line_height,
                 em_width,
                 text_hitbox,
+                editor_width,
                 scroll_width,
                 &mut resized_blocks,
                 cx,
@@ -2541,6 +2556,7 @@ impl EditorElement {
                             line_height,
                             em_width,
                             text_hitbox,
+                            editor_width,
                             scroll_width,
                             &mut resized_blocks,
                             cx,
@@ -4350,6 +4366,7 @@ impl fmt::Debug for LineFragment {
 }
 
 impl LineWithInvisibles {
+    #[allow(clippy::too_many_arguments)]
     fn from_chunks<'a>(
         chunks: impl Iterator<Item = HighlightedChunk<'a>>,
         text_style: &TextStyle,
@@ -4357,6 +4374,7 @@ impl LineWithInvisibles {
         max_line_count: usize,
         line_number_layouts: &[Option<ShapedLine>],
         editor_mode: EditorMode,
+        text_width: Pixels,
         cx: &mut WindowContext,
     ) -> Vec<Self> {
         let mut layouts = Vec::with_capacity(max_line_count);
@@ -4411,7 +4429,10 @@ impl LineWithInvisibles {
                     AvailableSpace::MinContent
                 };
 
-                let mut element = (renderer.render)(cx);
+                let mut element = (renderer.render)(&mut ChunkRendererContext {
+                    context: cx,
+                    max_width: text_width,
+                });
                 let line_height = text_style.line_height_in_pixels(cx.rem_size());
                 let size = element.layout_as_root(
                     size(available_width, AvailableSpace::Definite(line_height)),
@@ -4868,6 +4889,7 @@ impl Element for EditorElement {
                                     &[],
                                     &editor_snapshot,
                                     &style,
+                                    px(f32::MAX),
                                     cx,
                                 )
                                 .pop()
@@ -4980,6 +5002,9 @@ impl Element for EditorElement {
                     };
                     let overscroll = size(em_width + right_margin, px(0.));
 
+                    let editor_width =
+                        text_width - gutter_dimensions.margin - overscroll.width - em_width;
+
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
                         editor.gutter_dimensions = gutter_dimensions;
@@ -4988,8 +5013,6 @@ impl Element for EditorElement {
                         if matches!(editor.mode, EditorMode::AutoHeight { .. }) {
                             snapshot
                         } else {
-                            let editor_width =
-                                text_width - gutter_dimensions.margin - overscroll.width - em_width;
                             let wrap_width = match editor.soft_wrap_mode(cx) {
                                 SoftWrap::None => None,
                                 SoftWrap::PreferLine => {
@@ -5159,6 +5182,7 @@ impl Element for EditorElement {
                         &line_numbers,
                         &snapshot,
                         &self.style,
+                        editor_width,
                         cx,
                     );
                     for line_with_invisibles in &line_layouts {
@@ -5168,7 +5192,8 @@ impl Element for EditorElement {
                     }
 
                     let longest_line_width =
-                        layout_line(snapshot.longest_row(), &snapshot, &style, cx).width;
+                        layout_line(snapshot.longest_row(), &snapshot, &style, editor_width, cx)
+                            .width;
                     let mut scroll_width =
                         longest_line_width.max(max_visible_line_width) + overscroll.width;
 
@@ -5178,6 +5203,7 @@ impl Element for EditorElement {
                             &snapshot,
                             &hitbox,
                             &text_hitbox,
+                            editor_width,
                             &mut scroll_width,
                             &gutter_dimensions,
                             em_width,
@@ -5949,12 +5975,22 @@ fn layout_line(
     row: DisplayRow,
     snapshot: &EditorSnapshot,
     style: &EditorStyle,
+    text_width: Pixels,
     cx: &mut WindowContext,
 ) -> LineWithInvisibles {
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
-    LineWithInvisibles::from_chunks(chunks, &style.text, MAX_LINE_LEN, 1, &[], snapshot.mode, cx)
-        .pop()
-        .unwrap()
+    LineWithInvisibles::from_chunks(
+        chunks,
+        &style.text,
+        MAX_LINE_LEN,
+        1,
+        &[],
+        snapshot.mode,
+        text_width,
+        cx,
+    )
+    .pop()
+    .unwrap()
 }
 
 #[derive(Debug)]

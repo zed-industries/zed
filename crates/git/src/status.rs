@@ -15,13 +15,9 @@ impl GitStatus {
     pub(crate) fn new(
         git_binary: &Path,
         working_directory: &Path,
-        mut path_prefix: &Path,
+        path_prefixes: &[PathBuf],
     ) -> Result<Self> {
         let mut child = Command::new(git_binary);
-
-        if path_prefix == Path::new("") {
-            path_prefix = Path::new(".");
-        }
 
         child
             .current_dir(working_directory)
@@ -32,7 +28,13 @@ impl GitStatus {
                 "--untracked-files=all",
                 "-z",
             ])
-            .arg(path_prefix)
+            .args(path_prefixes.iter().map(|path_prefix| {
+                if *path_prefix == Path::new("") {
+                    Path::new(".")
+                } else {
+                    path_prefix
+                }
+            }))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

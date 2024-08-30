@@ -210,6 +210,7 @@ async fn commands_for_summaries(
             // Nothing in here will benefit from caching
             cache: false,
         }],
+        tools: Vec::new(),
         stop: Vec::new(),
         temperature: 1.0,
     };

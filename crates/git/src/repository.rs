@@ -36,11 +36,7 @@ pub trait GitRepository: Send + Sync {
     /// Returns the SHA of the current HEAD.
     fn head_sha(&self) -> Option<String>;
 
-    fn statuses(&self, path_prefix: &Path) -> Result<GitStatus>;
-
-    fn status(&self, path: &Path) -> Option<GitFileStatus> {
-        Some(self.statuses(path).ok()?.entries.first()?.1)
-    }
+    fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus>;
 
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
@@ -126,14 +122,14 @@ impl GitRepository for RealGitRepository {
         Some(self.repository.lock().head().ok()?.target()?.to_string())
     }
 
-    fn statuses(&self, path_prefix: &Path) -> Result<GitStatus> {
+    fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus> {
         let working_directory = self
             .repository
             .lock()
             .workdir()
             .context("failed to read git work directory")?
             .to_path_buf();
-        GitStatus::new(&self.git_binary_path, &working_directory, path_prefix)
+        GitStatus::new(&self.git_binary_path, &working_directory, path_prefixes)
     }
 
     fn branches(&self) -> Result<Vec<Branch>> {
@@ -245,13 +241,16 @@ impl GitRepository for FakeGitRepository {
         None
     }
 
-    fn statuses(&self, path_prefix: &Path) -> Result<GitStatus> {
+    fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus> {
         let state = self.state.lock();
         let mut entries = state
             .worktree_statuses
             .iter()
             .filter_map(|(repo_path, status)| {
-                if repo_path.0.starts_with(path_prefix) {
+                if path_prefixes
+                    .iter()
+                    .any(|path_prefix| repo_path.0.starts_with(path_prefix))
+                {
                     Some((repo_path.to_owned(), *status))
                 } else {
                     None

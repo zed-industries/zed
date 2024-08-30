@@ -42,7 +42,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
             false,
             NewUserParams {
                 github_login: "user_c".into(),
-                github_user_id: 102,
+                github_user_id: 103,
             },
         )
         .await

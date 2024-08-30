@@ -190,15 +190,15 @@ impl PickerDelegate for ModelPickerDelegate {
                                         })
                                     }
                                 }),
-                        )
-                        .child(div().when(model_info.is_selected, |this| {
-                            this.child(
-                                Icon::new(IconName::Check)
-                                    .color(Color::Accent)
-                                    .size(IconSize::Small),
-                            )
-                        })),
-                ),
+                        ),
+                )
+                .end_slot(div().when(model_info.is_selected, |this| {
+                    this.child(
+                        Icon::new(IconName::Check)
+                            .color(Color::Accent)
+                            .size(IconSize::Small),
+                    )
+                })),
         )
     }
 

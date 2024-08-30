@@ -383,6 +383,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn gpu_specs(&self) -> Option<GPUSpecs>;
     fn fps(&self) -> Option<f32>;
 
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
@@ -412,7 +414,6 @@ pub trait PlatformDispatcher: Send + Sync {
 pub(crate) trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
     fn all_font_names(&self) -> Vec<String>;
-    fn all_font_families(&self) -> Vec<String>;
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
@@ -527,9 +528,9 @@ impl PlatformInputHandler {
         Self { cx, handler }
     }
 
-    fn selected_text_range(&mut self) -> Option<Range<usize>> {
+    fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
         self.cx
-            .update(|cx| self.handler.selected_text_range(cx))
+            .update(|cx| self.handler.selected_text_range(ignore_disabled_input, cx))
             .ok()
             .flatten()
     }
@@ -590,6 +591,31 @@ impl PlatformInputHandler {
     pub(crate) fn dispatch_input(&mut self, input: &str, cx: &mut WindowContext) {
         self.handler.replace_text_in_range(None, input, cx);
     }
+
+    pub fn selected_bounds(&mut self, cx: &mut WindowContext) -> Option<Bounds<Pixels>> {
+        let Some(selection) = self.handler.selected_text_range(true, cx) else {
+            return None;
+        };
+        self.handler.bounds_for_range(
+            if selection.reversed {
+                selection.range.start..selection.range.start
+            } else {
+                selection.range.end..selection.range.end
+            },
+            cx,
+        )
+    }
+}
+
+/// A struct representing a selection in a text buffer, in UTF16 characters.
+/// This is different from a range because the head may be before the tail.
+pub struct UTF16Selection {
+    /// The range of text in the document this selection corresponds to
+    /// in UTF16 characters.
+    pub range: Range<usize>,
+    /// Whether the head of this selection is at the start (true), or end (false)
+    /// of the range
+    pub reversed: bool,
 }
 
 /// Zed's interface for handling text input from the platform's IME system
@@ -601,7 +627,11 @@ pub trait InputHandler: 'static {
     /// Corresponds to [selectedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438242-selectedrange)
     ///
     /// Return value is in terms of UTF-16 characters, from 0 to the length of the document
-    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>>;
+    fn selected_text_range(
+        &mut self,
+        ignore_disabled_input: bool,
+        cx: &mut WindowContext,
+    ) -> Option<UTF16Selection>;
 
     /// Get the range of the currently marked text, if any
     /// Corresponds to [markedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438250-markedrange)
@@ -785,7 +815,8 @@ pub struct TitlebarOptions {
     /// The initial title of the window
     pub title: Option<SharedString>,
 
-    /// Whether the titlebar should appear transparent (macOS only)
+    /// Should the default system titlebar be hidden to allow for a custom-drawn titlebar? (macOS and Windows only)
+    /// Refer to [`WindowOptions::window_decorations`] on Linux
     pub appears_transparent: bool,
 
     /// The position of the macOS traffic light buttons
@@ -1016,6 +1047,13 @@ impl ClipboardItem {
         }
     }
 
+    /// Create a new ClipboardItem::Image with the given image with no associated metadata
+    pub fn new_image(image: &Image) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::Image(image.clone())],
+        }
+    }
+
     /// Concatenates together all the ClipboardString entries in the item.
     /// Returns None if there were no ClipboardString entries.
     pub fn text(&self) -> Option<String> {
@@ -1084,10 +1122,11 @@ pub enum ImageFormat {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Image {
     /// The image format the bytes represent (e.g. PNG)
-    format: ImageFormat,
+    pub format: ImageFormat,
     /// The raw image bytes
-    bytes: Vec<u8>,
-    id: u64,
+    pub bytes: Vec<u8>,
+    /// The unique ID for the image
+    pub id: u64,
 }
 
 impl Hash for Image {

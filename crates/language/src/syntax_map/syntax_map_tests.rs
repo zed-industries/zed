@@ -1,5 +1,8 @@
 use super::*;
-use crate::{LanguageConfig, LanguageMatcher};
+use crate::{
+    buffer_tests::{markdown_inline_lang, markdown_lang},
+    LanguageConfig, LanguageMatcher,
+};
 use gpui::AppContext;
 use rand::rngs::StdRng;
 use std::{env, ops::Range, sync::Arc};
@@ -214,9 +217,9 @@ fn test_dynamic_language_injection(cx: &mut AppContext) {
             ],
         );
 
-    // Replace Rust with Ruby in code block.
+    // Replace `rs` with a path to ending in `.rb` in code block.
     let macro_name_range = range_for_text(&buffer, "rs");
-    buffer.edit([(macro_name_range, "ruby")]);
+    buffer.edit([(macro_name_range, "foo/bar/baz.rb")]);
     syntax_map.interpolate(&buffer);
     syntax_map.reparse(markdown.clone(), &buffer);
     syntax_map.reparse(markdown_inline.clone(), &buffer);
@@ -232,7 +235,7 @@ fn test_dynamic_language_injection(cx: &mut AppContext) {
         );
 
     // Replace Ruby with a language that hasn't been loaded yet.
-    let macro_name_range = range_for_text(&buffer, "ruby");
+    let macro_name_range = range_for_text(&buffer, "foo/bar/baz.rb");
     buffer.edit([(macro_name_range, "html")]);
     syntax_map.interpolate(&buffer);
     syntax_map.reparse(markdown.clone(), &buffer);
@@ -779,8 +782,13 @@ fn test_empty_combined_injections_inside_injections(cx: &mut AppContext) {
         &buffer,
         Point::new(0, 0)..Point::new(5, 0),
         &[
+            // Markdown document
             "(document (section (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter)) (paragraph (inline))))",
+            // ERB template in the code block
             "(template...",
+            // Markdown inline content
+            "(inline)",
+            // HTML within the ERB
             "(document (text))",
             // The ruby syntax tree should be empty, since there are
             // no interpolations in the ERB template.
@@ -1229,39 +1237,6 @@ fn rust_lang() -> Language {
     .unwrap()
 }
 
-fn markdown_lang() -> Language {
-    Language::new(
-        LanguageConfig {
-            name: "Markdown".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["md".into()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_md::language()),
-    )
-    .with_injection_query(
-        r#"
-            (fenced_code_block
-                (info_string
-                    (language) @language)
-                (code_fence_content) @content)
-        "#,
-    )
-    .unwrap()
-}
-
-fn markdown_inline_lang() -> Language {
-    Language::new(
-        LanguageConfig {
-            name: "Markdown-Inline".into(),
-            ..LanguageConfig::default()
-        },
-        Some(tree_sitter_md::inline_language()),
-    )
-}
-
 fn elixir_lang() -> Language {
     Language::new(
         LanguageConfig {
@@ -1327,7 +1302,7 @@ fn assert_layers_for_range(
     expected_layers: &[&str],
 ) {
     let layers = syntax_map
-        .layers_for_range(range, &buffer)
+        .layers_for_range(range, &buffer, true)
         .collect::<Vec<_>>();
     assert_eq!(
         layers.len(),

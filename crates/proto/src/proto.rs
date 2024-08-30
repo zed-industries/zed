@@ -410,6 +410,9 @@ messages!(
     (LspExtSwitchSourceHeaderResponse, Background),
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
+    (FindSearchCandidates, Background),
+    (FindSearchCandidatesResponse, Background),
+    (CloseBuffer, Foreground)
 );
 
 request_messages!(
@@ -498,6 +501,7 @@ request_messages!(
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
     (SearchProject, SearchProjectResponse),
+    (FindSearchCandidates, FindSearchCandidatesResponse),
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
     (SetChannelVisibility, Ack),
@@ -547,6 +551,7 @@ entity_messages!(
     CreateProjectEntry,
     DeleteProjectEntry,
     ExpandProjectEntry,
+    FindSearchCandidates,
     FormatBuffers,
     GetCodeActions,
     GetCompletions,

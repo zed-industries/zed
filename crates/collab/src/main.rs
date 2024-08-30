@@ -1,10 +1,12 @@
 use anyhow::anyhow;
+use axum::headers::HeaderMapExt;
 use axum::{
     extract::MatchedPath,
     http::{Request, Response},
     routing::get,
     Extension, Router,
 };
+use collab::api::CloudflareIpCountryHeader;
 use collab::llm::{db::LlmDatabase, log_usage_periodically};
 use collab::migrations::run_database_migrations;
 use collab::user_backfiller::spawn_user_backfiller;
@@ -150,10 +152,16 @@ async fn main() -> Result<()> {
                             .get::<MatchedPath>()
                             .map(MatchedPath::as_str);
 
+                        let geoip_country_code = request
+                            .headers()
+                            .typed_get::<CloudflareIpCountryHeader>()
+                            .map(|header| header.to_string());
+
                         tracing::info_span!(
                             "http_request",
                             method = ?request.method(),
                             matched_path,
+                            geoip_country_code,
                             user_id = tracing::field::Empty,
                             login = tracing::field::Empty,
                             authn.jti = tracing::field::Empty,

@@ -319,6 +319,7 @@ impl Database {
                         git_status: ActiveValue::set(entry.git_status.map(|status| status as i64)),
                         is_deleted: ActiveValue::set(false),
                         scan_id: ActiveValue::set(update.scan_id as i64),
+                        is_fifo: ActiveValue::set(entry.is_fifo),
                     }
                 }))
                 .on_conflict(
@@ -732,6 +733,7 @@ impl Database {
                         // based on total number of backlogged bytes - instead, we'd go
                         // on number of files only. That shouldn't be a huge deal in practice.
                         size: None,
+                        is_fifo: db_entry.is_fifo,
                     });
                 }
             }

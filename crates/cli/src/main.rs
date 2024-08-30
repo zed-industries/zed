@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
+use collections::HashMap;
 use parking_lot::Mutex;
 use std::{
     env, fs, io,
@@ -11,6 +12,7 @@ use std::{
     sync::Arc,
     thread::{self, JoinHandle},
 };
+use tempfile::NamedTempFile;
 use util::paths::PathWithPosition;
 
 struct Detect;
@@ -22,7 +24,11 @@ trait InstalledApp {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "zed", disable_version_flag = true)]
+#[command(
+    name = "zed",
+    disable_version_flag = true,
+    after_help = "To read from stdin, append '-' (e.g. 'ps axf | zed -')"
+)]
 struct Args {
     /// Wait for all of the given paths to be opened/closed before exiting.
     #[arg(short, long)]
@@ -117,9 +123,11 @@ fn main() -> Result<()> {
         None
     };
 
+    let env = Some(std::env::vars().collect::<HashMap<_, _>>());
     let exit_status = Arc::new(Mutex::new(None));
     let mut paths = vec![];
     let mut urls = vec![];
+    let mut stdin_tmp_file: Option<fs::File> = None;
     for path in args.paths_with_position.iter() {
         if path.starts_with("zed://")
             || path.starts_with("http://")
@@ -128,6 +136,11 @@ fn main() -> Result<()> {
             || path.starts_with("ssh://")
         {
             urls.push(path.to_string());
+        } else if path == "-" && args.paths_with_position.len() == 1 {
+            let file = NamedTempFile::new()?;
+            paths.push(file.path().to_string_lossy().to_string());
+            let (file, _) = file.keep()?;
+            stdin_tmp_file = Some(file);
         } else {
             paths.push(parse_path_with_position(path)?)
         }
@@ -138,12 +151,14 @@ fn main() -> Result<()> {
         move || {
             let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
             let (tx, rx) = (handshake.requests, handshake.responses);
+
             tx.send(CliRequest::Open {
                 paths,
                 urls,
                 wait: args.wait,
                 open_new_workspace,
                 dev_server_token: args.dev_server_token,
+                env,
             })?;
 
             while let Ok(response) = rx.recv() {
@@ -162,11 +177,31 @@ fn main() -> Result<()> {
         }
     });
 
+    let pipe_handle: JoinHandle<anyhow::Result<()>> = thread::spawn(move || {
+        if let Some(mut tmp_file) = stdin_tmp_file {
+            let mut stdin = std::io::stdin().lock();
+            if io::IsTerminal::is_terminal(&stdin) {
+                return Ok(());
+            }
+            let mut buffer = [0; 8 * 1024];
+            loop {
+                let bytes_read = io::Read::read(&mut stdin, &mut buffer)?;
+                if bytes_read == 0 {
+                    break;
+                }
+                io::Write::write(&mut tmp_file, &buffer[..bytes_read])?;
+            }
+            io::Write::flush(&mut tmp_file)?;
+        }
+        Ok(())
+    });
+
     if args.foreground {
         app.run_foreground(url)?;
     } else {
         app.launch(url)?;
         sender.join().unwrap()?;
+        pipe_handle.join().unwrap()?;
     }
 
     if let Some(exit_status) = exit_status.lock().take() {

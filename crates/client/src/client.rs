@@ -1,10 +1,11 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+mod socks;
 pub mod telemetry;
 pub mod user;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
     client::IntoClientRequest,
@@ -31,6 +32,7 @@ use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, Requ
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use socks::connect_socks_proxy_stream;
 use std::fmt;
 use std::pin::Pin;
 use std::{
@@ -1177,6 +1179,7 @@ impl Client {
             .unwrap_or_default();
 
         let http = self.http.clone();
+        let proxy = http.proxy().cloned();
         let credentials = credentials.clone();
         let rpc_url = self.rpc_url(http, release_channel);
         cx.background_executor().spawn(async move {
@@ -1198,7 +1201,7 @@ impl Client {
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
                 .ok_or_else(|| anyhow!("missing host in rpc url"))?;
-            let stream = smol::net::TcpStream::connect(rpc_host).await?;
+            let stream = connect_socks_proxy_stream(proxy.as_ref(), rpc_host).await?;
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
@@ -1392,11 +1395,64 @@ impl Client {
             id: u64,
         }
 
+        let github_user = {
+            #[derive(Deserialize)]
+            struct GithubUser {
+                id: i32,
+                login: String,
+            }
+
+            let request = {
+                let mut request_builder =
+                    Request::get(&format!("https://api.github.com/users/{login}"));
+                if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
+                    request_builder =
+                        request_builder.header("Authorization", format!("Bearer {}", github_token));
+                }
+
+                request_builder.body(AsyncBody::empty())?
+            };
+
+            let mut response = http
+                .send(request)
+                .await
+                .context("error fetching GitHub user")?;
+
+            let mut body = Vec::new();
+            response
+                .body_mut()
+                .read_to_end(&mut body)
+                .await
+                .context("error reading GitHub user")?;
+
+            if !response.status().is_success() {
+                let text = String::from_utf8_lossy(body.as_slice());
+                bail!(
+                    "status error {}, response: {text:?}",
+                    response.status().as_u16()
+                );
+            }
+
+            let user = serde_json::from_slice::<GithubUser>(body.as_slice()).map_err(|err| {
+                log::error!("Error deserializing: {:?}", err);
+                log::error!(
+                    "GitHub API response text: {:?}",
+                    String::from_utf8_lossy(body.as_slice())
+                );
+                anyhow!("error deserializing GitHub user")
+            })?;
+
+            user
+        };
+
         // Use the collab server's admin API to retrieve the id
         // of the impersonated user.
         let mut url = self.rpc_url(http.clone(), None).await?;
         url.set_path("/user");
-        url.set_query(Some(&format!("github_login={login}")));
+        url.set_query(Some(&format!(
+            "github_login={}&github_user_id={}",
+            github_user.login, github_user.id
+        )));
         let request: http_client::Request<AsyncBody> = Request::get(url.as_str())
             .header("Authorization", format!("token {api_token}"))
             .body("".into())?;

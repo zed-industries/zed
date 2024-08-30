@@ -8,7 +8,7 @@ JSON support is available natively in Zed.
 ## JSONC
 
 Zed also supports a super-set of JSON called JSONC, which allows single line comments (`//`) in JSON files.
-While editing these files you can use `cmd-/` (MacOS) or `ctrl-/` (Linux) to toggle comments on the current line or selection.
+While editing these files you can use `cmd-/` (macOS) or `ctrl-/` (Linux) to toggle comments on the current line or selection.
 
 <!--
 TBD: JSONC Example for how to use `file_types`
