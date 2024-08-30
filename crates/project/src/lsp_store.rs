@@ -244,6 +244,7 @@ impl LspStore {
         self.buffer_store.clone()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn set_environment(&mut self, environment: Model<ProjectEnvironment>) {
         self.environment = Some(environment);
     }
