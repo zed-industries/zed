@@ -401,7 +401,6 @@ impl CloudLanguageModel {
             } else {
                 let mut body = String::new();
                 response.body_mut().read_to_string(&mut body).await?;
-                let todo = (); // TODO if there's an error in summarization specifically, repopulate the backlog!
                 break Err(anyhow!(
                     "cloud language model completion failed with status {}: {body}",
                     response.status()
