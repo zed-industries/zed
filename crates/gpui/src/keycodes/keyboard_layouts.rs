@@ -30,7 +30,8 @@ impl KeyboardLayout {
     pub(crate) fn layout_data(&self) -> Option<KeyboardLayoutMapping> {
         match self {
             KeyboardLayout::ABC => None,
-            KeyboardLayout::CzechQwerty | KeyboardLayout::Czech => Some(&CZECH_QWERTY_ANSI),
+            KeyboardLayout::Czech => Some(&CZECH_LAYOUT_ANSI),
+            KeyboardLayout::CzechQwerty => Some(&CZECH_QWERTY_ANSI),
             KeyboardLayout::German => Some(&GERMAN_LAYOUT_ANSI),
             KeyboardLayout::Russian => Some(&RUSSIAN_LAYOUT_ANSI),
         }
