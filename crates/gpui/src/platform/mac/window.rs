@@ -1,9 +1,10 @@
 use super::{ns_string, renderer, MacDisplay, NSRange, NSStringExt};
 use crate::{
-    platform::PlatformInputHandler, point, px, size, AnyWindowHandle, Bounds, DisplayLink,
-    ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer,
+    keyboard_layouts::KeyboardLayoutMapping, platform::PlatformInputHandler, point, px,
+    retrieve_current_keboard_layout, size, AnyWindowHandle, Bounds, DisplayLink, ExternalPaths,
+    FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
@@ -345,6 +346,7 @@ struct MacWindowState {
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
     ime_composing: bool,
+    keyboard_mapping_data: Option<KeyboardLayoutMapping>,
 }
 
 impl MacWindowState {
@@ -589,6 +591,10 @@ impl MacWindow {
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
+            let keyboard_layout = retrieve_current_keboard_layout();
+            // let keyboard_layout = KeyboardLayout::ABC;
+            println!("-> Current layout: {:?}", keyboard_layout);
+            let keyboard_mapping_data = keyboard_layout.layout_data();
 
             let mut window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
@@ -624,6 +630,7 @@ impl MacWindow {
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
                 ime_composing: false,
+                keyboard_mapping_data,
             })));
 
             (*native_window).set_ivar(
@@ -1237,7 +1244,13 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     let mut lock = window_state.as_ref().lock();
 
     let window_height = lock.content_size().height;
-    let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
+    let event = unsafe {
+        PlatformInput::from_native(
+            native_event,
+            Some(window_height),
+            &lock.keyboard_mapping_data,
+        )
+    };
 
     if let Some(PlatformInput::KeyDown(mut event)) = event {
         // For certain keystrokes, macOS will first dispatch a "key equivalent" event.
@@ -1336,7 +1349,13 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let weak_window_state = Arc::downgrade(&window_state);
     let mut lock = window_state.as_ref().lock();
     let window_height = lock.content_size().height;
-    let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
+    let event = unsafe {
+        PlatformInput::from_native(
+            native_event,
+            Some(window_height),
+            &lock.keyboard_mapping_data,
+        )
+    };
 
     if let Some(mut event) = event {
         match &mut event {

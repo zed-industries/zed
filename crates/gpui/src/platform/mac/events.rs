@@ -1,8 +1,8 @@
 use crate::{
-    platform::mac::NSStringExt, point, px, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformInput, ScrollDelta, ScrollWheelEvent,
-    TouchPhase, VirtualKeyCode,
+    keyboard_layouts::KeyboardLayoutMapping, platform::mac::NSStringExt, point, px, KeyDownEvent,
+    KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformInput,
+    ScrollDelta, ScrollWheelEvent, TouchPhase, VirtualKeyCode,
 };
 use cocoa::{
     appkit::{
@@ -108,6 +108,7 @@ impl PlatformInput {
     pub(crate) unsafe fn from_native(
         native_event: id,
         window_height: Option<Pixels>,
+        layout_mapping: &Option<KeyboardLayoutMapping>,
     ) -> Option<Self> {
         let event_type = native_event.eventType();
 
@@ -125,11 +126,11 @@ impl PlatformInput {
                 modifiers: read_modifiers(native_event),
             })),
             NSEventType::NSKeyDown => Some(Self::KeyDown(KeyDownEvent {
-                keystroke: parse_keystroke(native_event),
+                keystroke: parse_keystroke(native_event, layout_mapping),
                 is_held: native_event.isARepeat() == YES,
             })),
             NSEventType::NSKeyUp => Some(Self::KeyUp(KeyUpEvent {
-                keystroke: parse_keystroke(native_event),
+                keystroke: parse_keystroke(native_event, layout_mapping),
             })),
             NSEventType::NSLeftMouseDown
             | NSEventType::NSRightMouseDown
@@ -262,7 +263,10 @@ impl PlatformInput {
     }
 }
 
-unsafe fn parse_keystroke(native_event: id) -> Keystroke {
+unsafe fn parse_keystroke(
+    native_event: id,
+    layout_mapping: &Option<KeyboardLayoutMapping>,
+) -> Keystroke {
     use cocoa::appkit::*;
 
     let mut chars_ignoring_modifiers = native_event
@@ -347,7 +351,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     //         }
     //     }
     // };
-    let key = keyboard_event_to_virtual_keycodes(native_event).unwrap_or_default();
+    let key = keyboard_event_to_virtual_keycodes(native_event, layout_mapping).unwrap_or_default();
     let result = Keystroke {
         modifiers: Modifiers {
             control,
@@ -386,9 +390,28 @@ fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
 }
 
 /// TODO:
-fn keyboard_event_to_virtual_keycodes(native_event: id) -> Option<VirtualKeyCode> {
+fn keyboard_event_to_virtual_keycodes(
+    native_event: id,
+    layout_mapping: &Option<KeyboardLayoutMapping>,
+) -> Option<VirtualKeyCode> {
+    let x = unsafe { native_event.characters().to_str().to_string() };
+    let y = unsafe {
+        native_event
+            .charactersIgnoringModifiers()
+            .to_str()
+            .to_string()
+    };
+    println!("  ==> {}, {}, 0x{:02X}", x, y, unsafe {
+        native_event.keyCode()
+    });
+    let keycode = unsafe { native_event.keyCode() };
     // numeric keys 0-9 should always return VKCode 0-9
     if !is_keypad_or_numeric_key_event(native_event) {
+        if let Some(mapping) = layout_mapping {
+            if let Some(virtual_key) = mapping.get(&keycode) {
+                return Some(*virtual_key);
+            }
+        }
         // Handle Dvorak-QWERTY cmd case
         let chars = unsafe { native_event.characters().to_str().to_string() };
         if let Some(ch) = chars.chars().next() {

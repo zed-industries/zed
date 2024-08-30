@@ -17,6 +17,7 @@ use metal_renderer as renderer;
 use crate::platform::blade as renderer;
 
 mod attributed_string;
+mod keyboard_layout;
 mod open_type;
 mod platform;
 mod text_system;
@@ -38,6 +39,7 @@ use std::{
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use display_link::*;
+pub(crate) use keyboard_layout::*;
 pub(crate) use platform::*;
 pub(crate) use text_system::*;
 pub(crate) use window::*;

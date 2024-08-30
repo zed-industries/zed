@@ -1,4 +1,4 @@
-mod keyboard_layouts;
+pub(crate) mod keyboard_layouts;
 
 use serde::Deserialize;
 use strum::EnumIter;

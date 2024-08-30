@@ -1,10 +1,12 @@
-use std::{collections::HashMap, sync::LazyLock};
+use std::sync::LazyLock;
+
+use collections::FxHashMap;
 
 use crate::VirtualKeyCode;
 
-pub(crate) static RUSSIAN_LAYOUT_ANSI: LazyLock<HashMap<u16, VirtualKeyCode>> =
+pub(crate) static RUSSIAN_LAYOUT_ANSI: LazyLock<FxHashMap<u16, VirtualKeyCode>> =
     LazyLock::new(|| {
-        let mut map = HashMap::new();
+        let mut map = FxHashMap::default();
         map.insert(0x32, VirtualKeyCode::OEM3);
         map.insert(0x21, VirtualKeyCode::OEM4);
         map.insert(0x1E, VirtualKeyCode::OEM6);
@@ -15,9 +17,9 @@ pub(crate) static RUSSIAN_LAYOUT_ANSI: LazyLock<HashMap<u16, VirtualKeyCode>> =
         map
     });
 
-pub(crate) static RUSSIAN_LAYOUT_ISO: LazyLock<HashMap<u16, VirtualKeyCode>> =
+pub(crate) static RUSSIAN_LAYOUT_ISO: LazyLock<FxHashMap<u16, VirtualKeyCode>> =
     LazyLock::new(|| {
-        let mut map = HashMap::new();
+        let mut map = FxHashMap::default();
         map.insert(0x0A, VirtualKeyCode::OEM3);
         map.insert(0x21, VirtualKeyCode::OEM4);
         map.insert(0x1E, VirtualKeyCode::OEM6);
