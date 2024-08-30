@@ -79,6 +79,11 @@ pub enum WorkflowSuggestion {
         symbol_path: SymbolPath,
         range: Range<language::Anchor>,
     },
+    FindReplace {
+        replacement: String,
+        range: Range<language::Anchor>,
+        description: String,
+    },
 }
 
 impl WorkflowStep {
@@ -279,6 +284,7 @@ impl WorkflowSuggestion {
             | Self::PrependChild { position, .. }
             | Self::AppendChild { position, .. } => *position..*position,
             Self::Delete { range, .. } => range.clone(),
+            Self::FindReplace { range, .. } => range.clone(),
         }
     }
 
@@ -290,6 +296,7 @@ impl WorkflowSuggestion {
             | Self::InsertSiblingAfter { description, .. }
             | Self::PrependChild { description, .. }
             | Self::AppendChild { description, .. } => Some(description),
+            Self::FindReplace { .. } => None,
             Self::Delete { .. } => None,
         }
     }
@@ -302,6 +309,7 @@ impl WorkflowSuggestion {
             | Self::InsertSiblingAfter { description, .. }
             | Self::PrependChild { description, .. }
             | Self::AppendChild { description, .. } => Some(description),
+            Self::FindReplace { .. } => None,
             Self::Delete { .. } => None,
         }
     }
@@ -314,6 +322,7 @@ impl WorkflowSuggestion {
             Self::PrependChild { symbol_path, .. } => symbol_path.as_ref(),
             Self::AppendChild { symbol_path, .. } => symbol_path.as_ref(),
             Self::Delete { symbol_path, .. } => Some(symbol_path),
+            Self::FindReplace { .. } => None,
             Self::CreateFile { .. } => None,
         }
     }
@@ -327,6 +336,7 @@ impl WorkflowSuggestion {
             Self::PrependChild { .. } => "PrependChild",
             Self::AppendChild { .. } => "AppendChild",
             Self::Delete { .. } => "Delete",
+            Self::FindReplace { .. } => "FindReplace",
         }
     }
 
@@ -446,6 +456,15 @@ impl WorkflowSuggestion {
             }
             Self::Delete { range, .. } => {
                 initial_prompt = "Delete".to_string();
+                suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
+                    ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
+            }
+            Self::FindReplace {
+                range,
+                replacement,
+                description,
+            } => {
+                initial_prompt = description.clone();
                 suggestion_range = snapshot.anchor_in_excerpt(excerpt_id, range.start)?
                     ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?;
             }
@@ -678,9 +697,37 @@ pub mod tool {
                     let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
                     WorkflowSuggestion::Delete { range, symbol_path }
                 }
+                WorkflowSuggestionToolKind::FindReplace {
+                    target,
+                    replacement,
+                    description,
+                } => {
+                    let range = Self::find_target_range(&snapshot, &target)?;
+                    WorkflowSuggestion::FindReplace {
+                        replacement,
+                        range,
+                        description,
+                    }
+                }
             };
 
             Ok((buffer, suggestion))
+        }
+
+        fn find_target_range(
+            snapshot: &BufferSnapshot,
+            target: &str,
+        ) -> Result<Range<language::Anchor>> {
+            let text = snapshot.text();
+            let start_offset = text
+                .find(target)
+                .ok_or_else(|| anyhow!("Target text not found in file"))?;
+            let end_offset = start_offset + target.len();
+
+            let start = snapshot.anchor_at(start_offset, language::Bias::Left);
+            let end = snapshot.anchor_at(end_offset, language::Bias::Right);
+
+            Ok(start..end)
         }
 
         fn resolve_symbol(
@@ -748,6 +795,16 @@ pub mod tool {
             /// The path should uniquely identify the symbol within the containing file.
             symbol: String,
             /// A brief description of the transformation to apply to the symbol.
+            description: String,
+        },
+        /// Finds and replaces a specified code block with a new one.
+        /// This operation replaces an entire block of code with new content.
+        FindReplace {
+            /// A string representing the full code block to be replaced.
+            target: String,
+            /// A string representing the new code block that will replace the target.
+            replacement: String,
+            /// A brief description of the find and replace operation.
             description: String,
         },
         /// Creates a new file with the given path based on the provided description.
