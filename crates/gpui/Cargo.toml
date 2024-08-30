@@ -73,6 +73,7 @@ time.workspace = true
 util.workspace = true
 uuid.workspace = true
 waker-fn = "1.2.0"
+wry = "0.39.0"
 
 [dev-dependencies]
 backtrace = "0.3"

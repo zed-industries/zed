@@ -6,7 +6,7 @@ use anyhow::Result;
 use base64::prelude::*;
 use gpui::{
     img, percentage, Animation, AnimationExt, AnyElement, FontWeight, Render, RenderImage, Task,
-    TextRun, Transformation, View,
+    TextRun, Transformation, View, WebView,
 };
 use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
@@ -289,6 +289,67 @@ impl ErrorView {
     }
 }
 
+pub struct HtmlView {
+    views: Arc<WryWebView>,
+}
+
+impl HtmlView {
+    fn new(handle: &dyn HasWindowHandle) -> Self {
+        Self {
+            views: Arc::new(
+                wry::WebViewBuilder::new_as_child(&handle)
+                    .with_html(format!(
+                        "<html><body>Hello, world! I'm webview default</body></html>"
+                    ))
+                    .build()
+                    .unwrap(),
+            ),
+        }
+    }
+
+    fn from(num_views: usize, handle: &dyn HasWindowHandle, document: &str) -> Self {
+        let views = (0..num_views)
+            .map(|i| {
+                Arc::new(
+                    wry::WebViewBuilder::new_as_child(&handle)
+                        .with_html(document)
+                        .build()
+                        .unwrap(),
+                )
+            })
+            .collect();
+
+        Self { views }
+    }
+}
+
+impl Render for HtmlView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let mut parent = div()
+            .id("parent")
+            .block()
+            .overflow_y_scroll()
+            .size_full()
+            .bg(rgb(0xff0000))
+            .justify_center()
+            .items_center();
+
+        for (i, view) in self.views.iter().enumerate() {
+            parent = parent.child(
+                div()
+                    .size(Length::Definite(DefiniteLength::Absolute(
+                        AbsoluteLength::Pixels(Pixels(100.0)),
+                    )))
+                    .bg(rgb(0x00ff00))
+                    .child(format!("This is webview {}:", i)),
+            );
+            parent = parent.child(WebView { view: view.clone() });
+        }
+
+        parent
+    }
+}
+
 pub struct MarkdownView {
     contents: Option<ParsedMarkdown>,
     parsing_markdown_task: Option<Task<Result<()>>>,
@@ -363,7 +424,7 @@ impl Output {
 }
 
 pub enum OutputContent {
-    Html(String),
+    Html(View<HtmlView>),
     Plain(TerminalOutput),
     Stream(TerminalOutput),
     Image(ImageView),
@@ -379,7 +440,7 @@ impl OutputContent {
         let el = match self {
             // Note: in typical frontends we would show the execute_result.execution_count
             // Here we can just handle either
-            Self::Html(_document) => Some(div().child("child").into_any_element()),
+            Self::Html(document) => Some(document.clone().into_any_element()),
             Self::Plain(stdio) => Some(stdio.render(cx)),
             Self::Markdown(markdown) => Some(markdown.clone().into_any_element()),
             Self::Stream(stdio) => Some(stdio.render(cx)),

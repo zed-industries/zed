@@ -23,6 +23,7 @@ use futures::FutureExt;
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
+use raw_window_handle::HasWindowHandle;
 use refineable::Refineable;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -887,6 +888,11 @@ impl<'a> WindowContext<'a> {
     /// Obtain a handle to the window that belongs to this context.
     pub fn window_handle(&self) -> AnyWindowHandle {
         self.window.handle
+    }
+
+    /// Returns a reference to window's raw_window_handle::HasWindowHandle type
+    pub fn raw_window_handle(&self) -> &dyn HasWindowHandle {
+        &self.window.platform_window
     }
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
