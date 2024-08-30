@@ -450,18 +450,12 @@ pub enum RequestContent {
 #[serde(tag = "type")]
 pub enum ResponseContent {
     #[serde(rename = "text")]
-    Text {
-        text: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cache_control: Option<CacheControl>,
-    },
+    Text { text: String },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,
         name: String,
         input: serde_json::Value,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cache_control: Option<CacheControl>,
     },
 }
 
