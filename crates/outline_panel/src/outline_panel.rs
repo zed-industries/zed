@@ -2807,6 +2807,7 @@ impl OutlinePanel {
         cx.spawn(|outline_panel, mut cx| async move {
             let mut entries = Vec::new();
             let mut match_candidates = Vec::new();
+            let mut added_contexts = HashSet::default();
 
             let Ok(()) = outline_panel.update(&mut cx, |outline_panel, cx| {
                 let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
@@ -2930,6 +2931,7 @@ impl OutlinePanel {
                                             outline_panel.push_entry(
                                                 &mut entries,
                                                 &mut match_candidates,
+                                                &mut added_contexts,
                                                 track_matches,
                                                 new_folded_dirs,
                                                 folded_depth,
@@ -2968,6 +2970,7 @@ impl OutlinePanel {
                                     outline_panel.push_entry(
                                         &mut entries,
                                         &mut match_candidates,
+                                        &mut added_contexts,
                                         track_matches,
                                         PanelEntry::FoldedDirs(worktree_id, folded_dirs),
                                         folded_depth,
@@ -2993,6 +2996,7 @@ impl OutlinePanel {
                                     outline_panel.push_entry(
                                         &mut entries,
                                         &mut match_candidates,
+                                        &mut added_contexts,
                                         track_matches,
                                         PanelEntry::FoldedDirs(worktree_id, folded_dirs),
                                         folded_depth,
@@ -3029,6 +3033,7 @@ impl OutlinePanel {
                         outline_panel.push_entry(
                             &mut entries,
                             &mut match_candidates,
+                            &mut added_contexts,
                             track_matches,
                             PanelEntry::Fs(entry.clone()),
                             depth,
@@ -3043,6 +3048,7 @@ impl OutlinePanel {
                                     &mut prerender_search_entries,
                                     &mut entries,
                                     &mut match_candidates,
+                                    &mut added_contexts,
                                     entry.clone(),
                                     depth,
                                     query.clone(),
@@ -3076,6 +3082,7 @@ impl OutlinePanel {
                                     query.as_deref(),
                                     &mut entries,
                                     &mut match_candidates,
+                                    &mut added_contexts,
                                     cx,
                                 );
                             }
@@ -3091,6 +3098,7 @@ impl OutlinePanel {
                         outline_panel.push_entry(
                             &mut entries,
                             &mut match_candidates,
+                            &mut added_contexts,
                             track_matches,
                             PanelEntry::Fs(entry.clone()),
                             0,
@@ -3109,6 +3117,7 @@ impl OutlinePanel {
                         outline_panel.push_entry(
                             &mut entries,
                             &mut match_candidates,
+                            &mut added_contexts,
                             track_matches,
                             PanelEntry::FoldedDirs(worktree_id, folded_dirs),
                             folded_depth,
@@ -3127,6 +3136,7 @@ impl OutlinePanel {
                             &outline_panel.collapsed_entries,
                             &mut entries,
                             &mut match_candidates,
+                            &mut added_contexts,
                         );
                     }
                 })
@@ -3169,6 +3179,7 @@ impl OutlinePanel {
         &self,
         entries: &mut Vec<CachedEntry>,
         match_candidates: &mut Vec<StringMatchCandidate>,
+        added_contexts: &mut HashSet<String>,
         track_matches: bool,
         entry: PanelEntry,
         depth: usize,
@@ -3194,39 +3205,47 @@ impl OutlinePanel {
                     if let Some(file_name) =
                         self.relative_path(fs_entry, cx).as_deref().map(file_name)
                     {
-                        match_candidates.push(StringMatchCandidate {
-                            id,
-                            string: file_name.to_string(),
-                            char_bag: file_name.chars().collect(),
-                        });
+                        if added_contexts.insert(file_name.clone()) {
+                            match_candidates.push(StringMatchCandidate {
+                                id,
+                                string: file_name.to_string(),
+                                char_bag: file_name.chars().collect(),
+                            });
+                        }
                     }
                 }
                 PanelEntry::FoldedDirs(worktree_id, entries) => {
                     let dir_names = self.dir_names_string(entries, *worktree_id, cx);
                     {
-                        match_candidates.push(StringMatchCandidate {
-                            id,
-                            string: dir_names.to_string(),
-                            char_bag: dir_names.chars().collect(),
-                        });
+                        if added_contexts.insert(dir_names.clone()) {
+                            match_candidates.push(StringMatchCandidate {
+                                id,
+                                string: dir_names.clone(),
+                                char_bag: dir_names.chars().collect(),
+                            });
+                        }
                     }
                 }
                 PanelEntry::Outline(outline_entry) => match outline_entry {
                     OutlineEntry::Outline(_, _, outline) => {
-                        match_candidates.push(StringMatchCandidate {
-                            id,
-                            string: outline.text.clone(),
-                            char_bag: outline.text.chars().collect(),
-                        });
+                        if added_contexts.insert(outline.text.clone()) {
+                            match_candidates.push(StringMatchCandidate {
+                                id,
+                                string: outline.text.clone(),
+                                char_bag: outline.text.chars().collect(),
+                            });
+                        }
                     }
                     OutlineEntry::Excerpt(..) => {}
                 },
                 PanelEntry::Search(new_search_entry) => {
-                    match_candidates.push(StringMatchCandidate {
-                        id,
-                        char_bag: new_search_entry.render_data.context_text.chars().collect(),
-                        string: new_search_entry.render_data.context_text.clone(),
-                    });
+                    if added_contexts.insert(new_search_entry.render_data.context_text.clone()) {
+                        match_candidates.push(StringMatchCandidate {
+                            id,
+                            char_bag: new_search_entry.render_data.context_text.chars().collect(),
+                            string: new_search_entry.render_data.context_text.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -3369,6 +3388,7 @@ impl OutlinePanel {
         query: Option<&str>,
         entries: &mut Vec<CachedEntry>,
         match_candidates: &mut Vec<StringMatchCandidate>,
+        added_contexts: &mut HashSet<String>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(excerpts) = self.excerpts.get(&buffer_id) {
@@ -3380,6 +3400,7 @@ impl OutlinePanel {
                 self.push_entry(
                     entries,
                     match_candidates,
+                    added_contexts,
                     track_matches,
                     PanelEntry::Outline(OutlineEntry::Excerpt(
                         buffer_id,
@@ -3407,6 +3428,7 @@ impl OutlinePanel {
                     self.push_entry(
                         entries,
                         match_candidates,
+                        added_contexts,
                         track_matches,
                         PanelEntry::Outline(OutlineEntry::Outline(
                             buffer_id,
@@ -3427,6 +3449,7 @@ impl OutlinePanel {
         prerender_search_entries: &mut usize,
         entries: &mut Vec<CachedEntry>,
         match_candidates: &mut Vec<StringMatchCandidate>,
+        added_contexts: &mut HashSet<String>,
         parent_entry: FsEntry,
         parent_depth: usize,
         filter_query: Option<String>,
@@ -3526,6 +3549,7 @@ impl OutlinePanel {
             self.push_entry(
                 entries,
                 match_candidates,
+                added_contexts,
                 filter_query.is_some(),
                 PanelEntry::Search(new_search_entry),
                 depth,
@@ -3589,6 +3613,7 @@ fn cleanup_fs_entries_without_search_children(
     collapsed_entries: &HashSet<CollapsedEntry>,
     entries: &mut Vec<CachedEntry>,
     string_match_candidates: &mut Vec<StringMatchCandidate>,
+    added_contexts: &mut HashSet<String>,
 ) {
     let mut match_ids_to_remove = BTreeSet::new();
     let mut previous_entry = None::<&PanelEntry>;
@@ -3695,7 +3720,13 @@ fn cleanup_fs_entries_without_search_children(
         return;
     }
 
-    string_match_candidates.retain(|candidate| !match_ids_to_remove.contains(&candidate.id));
+    string_match_candidates.retain(|candidate| {
+        let retain = !match_ids_to_remove.contains(&candidate.id);
+        if !retain {
+            added_contexts.remove(&candidate.string);
+        }
+        retain
+    });
     match_ids_to_remove.into_iter().rev().for_each(|id| {
         entries.remove(id);
     });
