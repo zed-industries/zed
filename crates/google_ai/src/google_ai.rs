@@ -325,7 +325,9 @@ impl Model {
         match self {
             Model::Gemini15Pro => "Gemini 1.5 Pro",
             Model::Gemini15Flash => "Gemini 1.5 Flash",
-            Model::Custom { name, .. } => name,
+            Self::Custom {
+                name, display_name, ..
+            } => display_name.as_ref().unwrap_or(name),
         }
     }
 
