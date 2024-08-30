@@ -71,9 +71,6 @@ pub struct Model {
     pub keep_alive: Option<KeepAlive>,
 }
 
-// This could be dynamically retrieved via the API (1 call per model)
-// curl -s http://localhost:11434/api/show9 -d '{"model": "llama3.1:latest"}'
-// under ."model_info"."*.context_length"
 fn get_max_tokens(name: &str) -> usize {
     /// Default context length for unknown models.
     const DEFAULT_TOKENS: usize = 2048;
