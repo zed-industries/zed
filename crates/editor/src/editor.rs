@@ -470,9 +470,6 @@ struct BufferOffset(usize);
 // Addons allow storing per-editor state in other crates (e.g. Vim)
 pub trait Addon: 'static {
     fn extend_key_context(&self, _: &mut KeyContext, _: &AppContext) {}
-    fn should_show_inline_completions(&self, _: &AppContext) -> bool {
-        true
-    }
 
     fn to_any(&self) -> &dyn std::any::Any;
 }
@@ -2343,11 +2340,6 @@ impl Editor {
         cx: &AppContext,
     ) -> bool {
         if let Some(provider) = self.inline_completion_provider() {
-            for addon in self.addons.values() {
-                if !addon.should_show_inline_completions(cx) {
-                    return false;
-                }
-            }
             if let Some(show_inline_completions) = self.show_inline_completions_override {
                 show_inline_completions
             } else {
