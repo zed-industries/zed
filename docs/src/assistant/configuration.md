@@ -124,7 +124,7 @@ Download and install Ollama from [ollama.com/download](https://ollama.com/downlo
 
 4. (Optional) Specify a [custom api_url](#custom-endpoint) or [custom `low_speed_timeout_in_seconds`](#provider-timeout) if required.
 
-#### Ollama Context Length {#ollama-context}}
+#### Ollama Context Length {#ollama-context}
 
 Zed has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models. Zed API requests to Ollama include this as `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of ram are able to use most models out of the box. See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete set of defaults.
 
