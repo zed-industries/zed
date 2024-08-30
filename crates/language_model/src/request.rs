@@ -231,7 +231,6 @@ pub struct LanguageModelRequestTool {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct LanguageModelRequest {
     pub messages: Vec<LanguageModelRequestMessage>,
-    // pub tool_choice: TODO
     pub tools: Vec<LanguageModelRequestTool>,
     pub stop: Vec<String>,
     pub temperature: f32,
