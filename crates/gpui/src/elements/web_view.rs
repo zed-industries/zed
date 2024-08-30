@@ -2,7 +2,7 @@
  * This WebView Element was demonstrated in a proof of concept by @vultix in this comment:
  * https://github.com/zed-industries/zed/issues/9778#issuecomment-2075713935
  */
-use crate::{Bounds, Pixels, WindowContext, Element};
+use crate::{Bounds, Element, Pixels, Style, WindowContext};
 
 use std::sync::Arc;
 
@@ -21,8 +21,8 @@ impl IntoElement for WebView {
 }
 
 impl Element for WebView {
-    type B BeforeLayout = ();
-    type AfterLayout = ();
+    type RequestLayoutState = Style;
+    type PrepaintState = ();
 
     fn before_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::BeforeLayout) {
         let mut style = Style::default();
