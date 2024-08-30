@@ -43,23 +43,18 @@ use gpui::{
 use itertools::Itertools;
 use language::{
     language_settings::{
-        language_settings, AllLanguageSettings, FormatOnSave, Formatter, InlayHintKind,
-        LanguageSettings, SelectedFormatter,
+        language_settings, FormatOnSave, Formatter, InlayHintKind, LanguageSettings,
+        SelectedFormatter,
     },
-    markdown, point_to_lsp,
     proto::{
         deserialize_anchor, serialize_anchor, serialize_line_ending, serialize_version,
         split_operations,
     },
-    Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel, ContextProvider,
-    DiagnosticEntry, Diff, Documentation, Event as BufferEvent, File as _, Language,
-    LanguageRegistry, LanguageServerName, LocalFile, PointUtf16, ToOffset, ToPointUtf16,
-    Transaction, Unclipped,
+    Buffer, CachedLspAdapter, Capability, CodeLabel, ContextProvider, DiagnosticEntry, Diff,
+    Documentation, Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName,
+    LocalFile, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
-use lsp::{
-    CompletionContext, DocumentHighlightKind, InsertTextFormat, LanguageServer, LanguageServerId,
-    OneOf,
-};
+use lsp::{CompletionContext, DocumentHighlightKind, LanguageServer, LanguageServerId};
 use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
@@ -69,33 +64,29 @@ use paths::{
 };
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
-use rand::prelude::*;
 use remote::SshSession;
 use rpc::{proto::AnyProtoClient, ErrorCode};
 use search::{SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
-use sha2::{Digest, Sha256};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
-    convert::TryInto,
-    hash::Hash,
     ops::Range,
     path::{Component, Path, PathBuf},
     str,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use task::{
     static_source::{StaticSource, TrackedFile},
     HideStrategy, RevealStrategy, Shell, TaskContext, TaskTemplate, TaskVariables, VariableName,
 };
 use terminals::Terminals;
-use text::{Anchor, BufferId, LineEnding};
-use util::{defer, maybe, paths::compare_paths, ResultExt as _};
+use text::{Anchor, BufferId};
+use util::{defer, paths::compare_paths, ResultExt as _};
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
@@ -167,7 +158,6 @@ pub struct Project {
     buffers_needing_diff: HashSet<WeakModel<Buffer>>,
     git_diff_debouncer: DebouncedDelay<Self>,
     remotely_created_buffers: Arc<Mutex<RemotelyCreatedBuffers>>,
-    nonce: u128,
     _maintain_buffer_languages: Task<()>,
     terminals: Terminals,
     node: Option<Arc<dyn NodeRuntime>>,
@@ -373,7 +363,7 @@ impl std::fmt::Debug for Completion {
 
 /// A completion provided by a language server
 #[derive(Clone, Debug)]
-struct CoreCompletion {
+pub(crate) struct CoreCompletion {
     old_range: Range<Anchor>,
     new_text: String,
     server_id: LanguageServerId,
@@ -589,62 +579,25 @@ impl Project {
         client.add_model_message_handler(Self::handle_remove_collaborator);
         client.add_model_message_handler(Self::handle_update_project);
         client.add_model_message_handler(Self::handle_unshare_project);
-        client.add_model_message_handler(Self::handle_create_buffer_for_peer);
         client.add_model_request_handler(Self::handle_update_buffer);
         client.add_model_message_handler(Self::handle_update_worktree);
         client.add_model_message_handler(Self::handle_update_worktree_settings);
-        client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
-        client.add_model_request_handler(Self::handle_on_type_formatting);
-        client.add_model_request_handler(Self::handle_refresh_inlay_hints);
         client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_synchronize_buffers);
         client.add_model_request_handler(Self::handle_format_buffers);
         client.add_model_request_handler(Self::handle_search_project);
         client.add_model_request_handler(Self::handle_search_candidate_buffers);
-        client.add_model_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_model_request_handler(Self::handle_open_buffer_by_id);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_request_handler(Self::handle_task_context_for_location);
         client.add_model_request_handler(Self::handle_task_templates);
 
-        client.add_model_request_handler(WorktreeStore::handle_create_project_entry);
-        client.add_model_request_handler(WorktreeStore::handle_rename_project_entry);
-        client.add_model_request_handler(WorktreeStore::handle_copy_project_entry);
-        client.add_model_request_handler(WorktreeStore::handle_delete_project_entry);
-        client.add_model_request_handler(WorktreeStore::handle_expand_project_entry);
+        WorktreeStore::init(client);
 
-        client.add_model_message_handler(BufferStore::handle_buffer_reloaded);
-        client.add_model_message_handler(BufferStore::handle_buffer_saved);
-        client.add_model_message_handler(BufferStore::handle_update_buffer_file);
-        client.add_model_message_handler(BufferStore::handle_update_diff_base);
-        client.add_model_request_handler(BufferStore::handle_save_buffer);
-        client.add_model_request_handler(BufferStore::handle_blame_buffer);
+        BufferStore::init(client);
 
-        client.add_model_request_handler(LspStore::handle_multi_lsp_query);
-        client.add_model_request_handler(LspStore::handle_restart_language_servers);
-        client.add_model_message_handler(LspStore::handle_start_language_server);
-        client.add_model_message_handler(LspStore::handle_update_language_server);
-        client.add_model_message_handler(LspStore::handle_update_diagnostic_summary);
-        client.add_model_request_handler(LspStore::handle_resolve_completion_documentation);
-        client.add_model_request_handler(LspStore::handle_apply_code_action);
-        client.add_model_request_handler(LspStore::handle_inlay_hints);
-        client.add_model_request_handler(LspStore::handle_get_project_symbols);
-        client.add_model_request_handler(LspStore::handle_resolve_inlay_hint);
-        client.add_model_request_handler(LspStore::handle_lsp_command::<GetCodeActions>);
-        client.add_model_request_handler(LspStore::handle_lsp_command::<GetCompletions>);
-        client.add_model_request_handler(LspStore::handle_lsp_command::<GetHover>);
-        client.add_model_request_handler(LspStore::handle_lsp_command::<GetDefinition>);
-        client.add_model_request_handler(LspStore::handle_lsp_command::<GetDeclaration>);
-        client.add_model_request_handler(LspStore::handle_lsp_command::<GetTypeDefinition>);
-        client.add_model_request_handler(LspStore::handle_lsp_command::<GetDocumentHighlights>);
-        client.add_model_request_handler(LspStore::handle_lsp_command::<GetReferences>);
-        client.add_model_request_handler(LspStore::handle_lsp_command::<PrepareRename>);
-        client.add_model_request_handler(LspStore::handle_lsp_command::<PerformRename>);
-        client.add_model_request_handler(
-            LspStore::handle_lsp_command::<lsp_ext_command::ExpandMacro>,
-        );
-        client.add_model_request_handler(LspStore::handle_lsp_command::<LinkedEditingRange>);
+        LspStore::init(client);
     }
 
     pub fn local(
@@ -715,7 +668,6 @@ impl Project {
                 ssh_session: None,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
-                nonce: StdRng::from_entropy().gen(),
                 terminals: Terminals {
                     local_handles: Vec::new(),
                 },
@@ -900,7 +852,6 @@ impl Project {
                 },
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
-                nonce: StdRng::from_entropy().gen(),
                 terminals: Terminals {
                     local_handles: Vec::new(),
                 },
@@ -2157,6 +2108,12 @@ impl Project {
                     cx.emit(Event::SnippetEdit(*buffer_id, edits.clone()))
                 }
             }
+            LspStoreEvent::StartFormattingLocalBuffer(buffer_id) => {
+                self.buffers_being_formatted.insert(*buffer_id);
+            }
+            LspStoreEvent::FinishFormattingLocalBuffer(buffer_id) => {
+                self.buffers_being_formatted.remove(buffer_id);
+            }
         }
     }
 
@@ -3131,9 +3088,11 @@ impl Project {
                     } else {
                         language_server
                     };
+
+                    let lsp_store = project.update(cx, |p, _| p.lsp_store.downgrade())?;
                     Some(FormatOperation::Lsp(
-                        Self::format_via_lsp(
-                            &project,
+                        LspStore::format_via_lsp(
+                            &lsp_store,
                             buffer,
                             buffer_abs_path,
                             language_server,
@@ -3189,56 +3148,6 @@ impl Project {
             }
         };
         anyhow::Ok(result)
-    }
-
-    async fn format_via_lsp(
-        this: &WeakModel<Self>,
-        buffer: &Model<Buffer>,
-        abs_path: &Path,
-        language_server: &Arc<LanguageServer>,
-        settings: &LanguageSettings,
-        cx: &mut AsyncAppContext,
-    ) -> Result<Vec<(Range<Anchor>, String)>> {
-        let uri = lsp::Url::from_file_path(abs_path)
-            .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
-        let text_document = lsp::TextDocumentIdentifier::new(uri);
-        let capabilities = &language_server.capabilities();
-
-        let formatting_provider = capabilities.document_formatting_provider.as_ref();
-        let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
-
-        let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
-            language_server
-                .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
-                    text_document,
-                    options: lsp_command::lsp_formatting_options(settings),
-                    work_done_progress_params: Default::default(),
-                })
-                .await?
-        } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
-            let buffer_start = lsp::Position::new(0, 0);
-            let buffer_end = buffer.update(cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
-
-            language_server
-                .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
-                    text_document,
-                    range: lsp::Range::new(buffer_start, buffer_end),
-                    options: lsp_command::lsp_formatting_options(settings),
-                    work_done_progress_params: Default::default(),
-                })
-                .await?
-        } else {
-            None
-        };
-
-        if let Some(lsp_edits) = lsp_edits {
-            this.update(cx, |this, cx| {
-                this.edits_from_lsp(buffer, lsp_edits, language_server.server_id(), None, cx)
-            })?
-            .await
-        } else {
-            Ok(Vec::new())
-        }
     }
 
     async fn format_via_external_command(
@@ -3490,63 +3399,15 @@ impl Project {
             .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx))
     }
 
-    fn linked_edit_impl(
-        &self,
-        buffer: &Model<Buffer>,
-        position: Anchor,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Range<Anchor>>>> {
-        let snapshot = buffer.read(cx).snapshot();
-        let scope = snapshot.language_scope_at(position);
-        let Some(server_id) = self
-            .language_servers_for_buffer(buffer.read(cx), cx)
-            .filter(|(_, server)| {
-                server
-                    .capabilities()
-                    .linked_editing_range_provider
-                    .is_some()
-            })
-            .filter(|(adapter, _)| {
-                scope
-                    .as_ref()
-                    .map(|scope| scope.language_allowed(&adapter.name))
-                    .unwrap_or(true)
-            })
-            .map(|(_, server)| LanguageServerToQuery::Other(server.server_id()))
-            .next()
-            .or_else(|| {
-                self.is_via_collab()
-                    .then_some(LanguageServerToQuery::Primary)
-            })
-            .filter(|_| {
-                maybe!({
-                    let language_name = buffer.read(cx).language_at(position)?.name();
-                    Some(
-                        AllLanguageSettings::get_global(cx)
-                            .language(Some(&language_name))
-                            .linked_edits,
-                    )
-                }) == Some(true)
-            })
-        else {
-            return Task::ready(Ok(vec![]));
-        };
-
-        self.request_lsp(
-            buffer.clone(),
-            server_id,
-            LinkedEditingRange { position },
-            cx,
-        )
-    }
-
     pub fn linked_edit(
         &self,
         buffer: &Model<Buffer>,
         position: Anchor,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Range<Anchor>>>> {
-        self.linked_edit_impl(buffer, position, cx)
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.linked_edit(buffer, position, cx)
+        })
     }
 
     pub fn completions<T: ToOffset + ToPointUtf16>(
@@ -3569,210 +3430,9 @@ impl Project {
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<bool>> {
-        let client = self.client();
-        let language_registry = self.languages().clone();
-
-        let is_remote = self.is_via_collab();
-        let project_id = self.remote_id();
-
-        let buffer_id = buffer.read(cx).remote_id();
-        let buffer_snapshot = buffer.read(cx).snapshot();
-
-        cx.spawn(move |this, mut cx| async move {
-            let mut did_resolve = false;
-            if is_remote {
-                let project_id =
-                    project_id.ok_or_else(|| anyhow!("Remote project without remote_id"))?;
-
-                for completion_index in completion_indices {
-                    let (server_id, completion) = {
-                        let completions_guard = completions.read();
-                        let completion = &completions_guard[completion_index];
-                        if completion.documentation.is_some() {
-                            continue;
-                        }
-
-                        did_resolve = true;
-                        let server_id = completion.server_id;
-                        let completion = completion.lsp_completion.clone();
-
-                        (server_id, completion)
-                    };
-
-                    Self::resolve_completion_remote(
-                        project_id,
-                        server_id,
-                        buffer_id,
-                        completions.clone(),
-                        completion_index,
-                        completion,
-                        client.clone(),
-                        language_registry.clone(),
-                    )
-                    .await;
-                }
-            } else {
-                for completion_index in completion_indices {
-                    let (server_id, completion) = {
-                        let completions_guard = completions.read();
-                        let completion = &completions_guard[completion_index];
-                        if completion.documentation.is_some() {
-                            continue;
-                        }
-
-                        let server_id = completion.server_id;
-                        let completion = completion.lsp_completion.clone();
-
-                        (server_id, completion)
-                    };
-
-                    let server = this
-                        .read_with(&mut cx, |project, cx| {
-                            project.language_server_for_id(server_id, cx)
-                        })
-                        .ok()
-                        .flatten();
-                    let Some(server) = server else {
-                        continue;
-                    };
-
-                    did_resolve = true;
-                    Self::resolve_completion_local(
-                        server,
-                        &buffer_snapshot,
-                        completions.clone(),
-                        completion_index,
-                        completion,
-                        language_registry.clone(),
-                    )
-                    .await;
-                }
-            }
-
-            Ok(did_resolve)
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.resolve_completions(buffer, completion_indices, completions, cx)
         })
-    }
-
-    async fn resolve_completion_local(
-        server: Arc<lsp::LanguageServer>,
-        snapshot: &BufferSnapshot,
-        completions: Arc<RwLock<Box<[Completion]>>>,
-        completion_index: usize,
-        completion: lsp::CompletionItem,
-        language_registry: Arc<LanguageRegistry>,
-    ) {
-        let can_resolve = server
-            .capabilities()
-            .completion_provider
-            .as_ref()
-            .and_then(|options| options.resolve_provider)
-            .unwrap_or(false);
-        if !can_resolve {
-            return;
-        }
-
-        let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
-        let Some(completion_item) = request.await.log_err() else {
-            return;
-        };
-
-        if let Some(lsp_documentation) = completion_item.documentation.as_ref() {
-            let documentation = language::prepare_completion_documentation(
-                lsp_documentation,
-                &language_registry,
-                None, // TODO: Try to reasonably work out which language the completion is for
-            )
-            .await;
-
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(documentation);
-        } else {
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
-        }
-
-        if let Some(text_edit) = completion_item.text_edit.as_ref() {
-            // Technically we don't have to parse the whole `text_edit`, since the only
-            // language server we currently use that does update `text_edit` in `completionItem/resolve`
-            // is `typescript-language-server` and they only update `text_edit.new_text`.
-            // But we should not rely on that.
-            let edit = parse_completion_text_edit(text_edit, snapshot);
-
-            if let Some((old_range, mut new_text)) = edit {
-                LineEnding::normalize(&mut new_text);
-
-                let mut completions = completions.write();
-                let completion = &mut completions[completion_index];
-
-                completion.new_text = new_text;
-                completion.old_range = old_range;
-            }
-        }
-        if completion_item.insert_text_format == Some(InsertTextFormat::SNIPPET) {
-            // vtsls might change the type of completion after resolution.
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            if completion_item.insert_text_format != completion.lsp_completion.insert_text_format {
-                completion.lsp_completion.insert_text_format = completion_item.insert_text_format;
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn resolve_completion_remote(
-        project_id: u64,
-        server_id: LanguageServerId,
-        buffer_id: BufferId,
-        completions: Arc<RwLock<Box<[Completion]>>>,
-        completion_index: usize,
-        completion: lsp::CompletionItem,
-        client: Arc<Client>,
-        language_registry: Arc<LanguageRegistry>,
-    ) {
-        let request = proto::ResolveCompletionDocumentation {
-            project_id,
-            language_server_id: server_id.0 as u64,
-            lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
-            buffer_id: buffer_id.into(),
-        };
-
-        let Some(response) = client
-            .request(request)
-            .await
-            .context("completion documentation resolve proto request")
-            .log_err()
-        else {
-            return;
-        };
-
-        let documentation = if response.documentation.is_empty() {
-            Documentation::Undocumented
-        } else if response.documentation_is_markdown {
-            Documentation::MultiLineMarkdown(
-                markdown::parse_markdown(&response.documentation, &language_registry, None).await,
-            )
-        } else if response.documentation.lines().count() <= 1 {
-            Documentation::SingleLine(response.documentation)
-        } else {
-            Documentation::MultiLinePlainText(response.documentation)
-        };
-
-        let mut completions = completions.write();
-        let completion = &mut completions[completion_index];
-        completion.documentation = Some(documentation);
-
-        let old_range = response
-            .old_start
-            .and_then(deserialize_anchor)
-            .zip(response.old_end.and_then(deserialize_anchor));
-        if let Some((old_start, old_end)) = old_range {
-            if !response.new_text.is_empty() {
-                completion.new_text = response.new_text;
-                completion.old_range = old_start..old_end;
-            }
-        }
     }
 
     pub fn apply_additional_edits_for_completion(
@@ -3782,113 +3442,14 @@ impl Project {
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
-        let buffer = buffer_handle.read(cx);
-        let buffer_id = buffer.remote_id();
-
-        if self.is_local_or_ssh() {
-            let server_id = completion.server_id;
-            let lang_server = match self.language_server_for_buffer(buffer, server_id, cx) {
-                Some((_, server)) => server.clone(),
-                _ => return Task::ready(Ok(Default::default())),
-            };
-
-            cx.spawn(move |this, mut cx| async move {
-                let can_resolve = lang_server
-                    .capabilities()
-                    .completion_provider
-                    .as_ref()
-                    .and_then(|options| options.resolve_provider)
-                    .unwrap_or(false);
-                let additional_text_edits = if can_resolve {
-                    lang_server
-                        .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
-                        .await?
-                        .additional_text_edits
-                } else {
-                    completion.lsp_completion.additional_text_edits
-                };
-                if let Some(edits) = additional_text_edits {
-                    let edits = this
-                        .update(&mut cx, |this, cx| {
-                            this.edits_from_lsp(
-                                &buffer_handle,
-                                edits,
-                                lang_server.server_id(),
-                                None,
-                                cx,
-                            )
-                        })?
-                        .await?;
-
-                    buffer_handle.update(&mut cx, |buffer, cx| {
-                        buffer.finalize_last_transaction();
-                        buffer.start_transaction();
-
-                        for (range, text) in edits {
-                            let primary = &completion.old_range;
-                            let start_within = primary.start.cmp(&range.start, buffer).is_le()
-                                && primary.end.cmp(&range.start, buffer).is_ge();
-                            let end_within = range.start.cmp(&primary.end, buffer).is_le()
-                                && range.end.cmp(&primary.end, buffer).is_ge();
-
-                            //Skip additional edits which overlap with the primary completion edit
-                            //https://github.com/zed-industries/zed/pull/1871
-                            if !start_within && !end_within {
-                                buffer.edit([(range, text)], None, cx);
-                            }
-                        }
-
-                        let transaction = if buffer.end_transaction(cx).is_some() {
-                            let transaction = buffer.finalize_last_transaction().unwrap().clone();
-                            if !push_to_history {
-                                buffer.forget_transaction(transaction.id);
-                            }
-                            Some(transaction)
-                        } else {
-                            None
-                        };
-                        Ok(transaction)
-                    })?
-                } else {
-                    Ok(None)
-                }
-            })
-        } else if let Some(project_id) = self.remote_id() {
-            let client = self.client.clone();
-            cx.spawn(move |_, mut cx| async move {
-                let response = client
-                    .request(proto::ApplyCompletionAdditionalEdits {
-                        project_id,
-                        buffer_id: buffer_id.into(),
-                        completion: Some(Self::serialize_completion(&CoreCompletion {
-                            old_range: completion.old_range,
-                            new_text: completion.new_text,
-                            server_id: completion.server_id,
-                            lsp_completion: completion.lsp_completion,
-                        })),
-                    })
-                    .await?;
-
-                if let Some(transaction) = response.transaction {
-                    let transaction = language::proto::deserialize_transaction(transaction)?;
-                    buffer_handle
-                        .update(&mut cx, |buffer, _| {
-                            buffer.wait_for_edits(transaction.edit_ids.iter().copied())
-                        })?
-                        .await?;
-                    if push_to_history {
-                        buffer_handle.update(&mut cx, |buffer, _| {
-                            buffer.push_transaction(transaction.clone(), Instant::now());
-                        })?;
-                    }
-                    Ok(Some(transaction))
-                } else {
-                    Ok(None)
-                }
-            })
-        } else {
-            Task::ready(Err(anyhow!("project does not have a remote id")))
-        }
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.apply_additional_edits_for_completion(
+                buffer_handle,
+                completion,
+                push_to_history,
+                cx,
+            )
+        })
     }
 
     pub fn code_actions<T: Clone + ToOffset>(
@@ -3914,68 +3475,6 @@ impl Project {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.apply_code_action(buffer_handle, action, push_to_history, cx)
         })
-    }
-
-    fn apply_on_type_formatting(
-        &self,
-        buffer: Model<Buffer>,
-        position: Anchor,
-        trigger: String,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Transaction>>> {
-        if self.is_local_or_ssh() {
-            cx.spawn(move |this, mut cx| async move {
-                // Do not allow multiple concurrent formatting requests for the
-                // same buffer.
-                this.update(&mut cx, |this, cx| {
-                    this.buffers_being_formatted
-                        .insert(buffer.read(cx).remote_id())
-                })?;
-
-                let _cleanup = defer({
-                    let this = this.clone();
-                    let mut cx = cx.clone();
-                    let closure_buffer = buffer.clone();
-                    move || {
-                        this.update(&mut cx, |this, cx| {
-                            this.buffers_being_formatted
-                                .remove(&closure_buffer.read(cx).remote_id());
-                        })
-                        .ok();
-                    }
-                });
-
-                buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_edits(Some(position.timestamp))
-                    })?
-                    .await?;
-                this.update(&mut cx, |this, cx| {
-                    let position = position.to_point_utf16(buffer.read(cx));
-                    this.on_type_format(buffer, position, trigger, false, cx)
-                })?
-                .await
-            })
-        } else if let Some(project_id) = self.remote_id() {
-            let client = self.client.clone();
-            let request = proto::OnTypeFormatting {
-                project_id,
-                buffer_id: buffer.read(cx).remote_id().into(),
-                position: Some(serialize_anchor(&position)),
-                trigger,
-                version: serialize_version(&buffer.read(cx).version()),
-            };
-            cx.spawn(move |_, _| async move {
-                client
-                    .request(request)
-                    .await?
-                    .transaction
-                    .map(language::proto::deserialize_transaction)
-                    .transpose()
-            })
-        } else {
-            Task::ready(Err(anyhow!("project does not have a remote id")))
-        }
     }
 
     fn prepare_rename_impl(
@@ -4033,34 +3532,6 @@ impl Project {
         self.perform_rename_impl(buffer, position, new_name, push_to_history, cx)
     }
 
-    pub fn on_type_format_impl(
-        &mut self,
-        buffer: Model<Buffer>,
-        position: PointUtf16,
-        trigger: String,
-        push_to_history: bool,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Transaction>>> {
-        let options = buffer.update(cx, |buffer, cx| {
-            lsp_command::lsp_formatting_options(language_settings(
-                buffer.language_at(position).as_ref(),
-                buffer.file(),
-                cx,
-            ))
-        });
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::Primary,
-            OnTypeFormatting {
-                position,
-                trigger,
-                options,
-                push_to_history,
-            },
-            cx,
-        )
-    }
-
     pub fn on_type_format<T: ToPointUtf16>(
         &mut self,
         buffer: Model<Buffer>,
@@ -4069,8 +3540,9 @@ impl Project {
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
-        let position = position.to_point_utf16(buffer.read(cx));
-        self.on_type_format_impl(buffer, position, trigger, push_to_history, cx)
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.on_type_format(buffer, position, trigger, push_to_history, cx)
+        })
     }
 
     pub fn inlay_hints<T: ToOffset>(
@@ -5044,80 +4516,6 @@ impl Project {
         })
     }
 
-    async fn handle_apply_additional_edits_for_completion(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::ApplyCompletionAdditionalEditsResponse> {
-        let (buffer, completion) = this.update(&mut cx, |this, cx| {
-            let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-            let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
-            let completion = Self::deserialize_completion(
-                envelope
-                    .payload
-                    .completion
-                    .ok_or_else(|| anyhow!("invalid completion"))?,
-            )?;
-            anyhow::Ok((buffer, completion))
-        })??;
-
-        let apply_additional_edits = this.update(&mut cx, |this, cx| {
-            this.apply_additional_edits_for_completion(
-                buffer,
-                Completion {
-                    old_range: completion.old_range,
-                    new_text: completion.new_text,
-                    lsp_completion: completion.lsp_completion,
-                    server_id: completion.server_id,
-                    documentation: None,
-                    label: CodeLabel {
-                        text: Default::default(),
-                        runs: Default::default(),
-                        filter_range: Default::default(),
-                    },
-                    confirm: None,
-                },
-                false,
-                cx,
-            )
-        })?;
-
-        Ok(proto::ApplyCompletionAdditionalEditsResponse {
-            transaction: apply_additional_edits
-                .await?
-                .as_ref()
-                .map(language::proto::serialize_transaction),
-        })
-    }
-
-    async fn handle_on_type_formatting(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::OnTypeFormatting>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::OnTypeFormattingResponse> {
-        let on_type_formatting = this.update(&mut cx, |this, cx| {
-            let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-            let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
-            let position = envelope
-                .payload
-                .position
-                .and_then(deserialize_anchor)
-                .ok_or_else(|| anyhow!("invalid position"))?;
-            Ok::<_, anyhow::Error>(this.apply_on_type_formatting(
-                buffer,
-                position,
-                envelope.payload.trigger.clone(),
-                cx,
-            ))
-        })??;
-
-        let transaction = on_type_formatting
-            .await?
-            .as_ref()
-            .map(language::proto::serialize_transaction);
-        Ok(proto::OnTypeFormattingResponse { transaction })
-    }
-
     async fn handle_task_context_for_location(
         project: Model<Self>,
         envelope: TypedEnvelope<proto::TaskContextForLocation>,
@@ -5249,17 +4647,6 @@ impl Project {
         Ok(proto::TaskTemplatesResponse { templates })
     }
 
-    async fn handle_refresh_inlay_hints(
-        this: Model<Self>,
-        _: TypedEnvelope<proto::RefreshInlayHints>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::Ack> {
-        this.update(&mut cx, |_, cx| {
-            cx.emit(Event::RefreshInlayHints);
-        })?;
-        Ok(proto::Ack {})
-    }
-
     async fn handle_search_project(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::SearchProject>,
@@ -5328,71 +4715,6 @@ impl Project {
         }
 
         Ok(response)
-    }
-
-    async fn handle_open_buffer_for_symbol(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::OpenBufferForSymbol>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::OpenBufferForSymbolResponse> {
-        let peer_id = envelope.original_sender_id()?;
-        let symbol = envelope
-            .payload
-            .symbol
-            .ok_or_else(|| anyhow!("invalid symbol"))?;
-        let symbol = LspStore::deserialize_symbol(symbol)?;
-        let symbol = this.update(&mut cx, |this, _| {
-            let signature = this.symbol_signature(&symbol.path);
-            if signature == symbol.signature {
-                Ok(symbol)
-            } else {
-                Err(anyhow!("invalid symbol signature"))
-            }
-        })??;
-        let buffer = this
-            .update(&mut cx, |this, cx| {
-                this.open_buffer_for_symbol(
-                    &Symbol {
-                        language_server_name: symbol.language_server_name,
-                        source_worktree_id: symbol.source_worktree_id,
-                        path: symbol.path,
-                        name: symbol.name,
-                        kind: symbol.kind,
-                        range: symbol.range,
-                        signature: symbol.signature,
-                        label: CodeLabel {
-                            text: Default::default(),
-                            runs: Default::default(),
-                            filter_range: Default::default(),
-                        },
-                    },
-                    cx,
-                )
-            })?
-            .await?;
-
-        this.update(&mut cx, |this, cx| {
-            let is_private = buffer
-                .read(cx)
-                .file()
-                .map(|f| f.is_private())
-                .unwrap_or_default();
-            if is_private {
-                Err(anyhow!(ErrorCode::UnsharedItem))
-            } else {
-                Ok(proto::OpenBufferForSymbolResponse {
-                    buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
-                })
-            }
-        })?
-    }
-
-    fn symbol_signature(&self, project_path: &ProjectPath) -> [u8; 32] {
-        let mut hasher = Sha256::new();
-        hasher.update(project_path.worktree_id.to_proto().to_be_bytes());
-        hasher.update(project_path.path.to_string_lossy().as_bytes());
-        hasher.update(self.nonce.to_be_bytes());
-        hasher.finalize().as_slice().try_into().unwrap()
     }
 
     async fn handle_open_buffer_by_id(
@@ -5468,8 +4790,8 @@ impl Project {
         peer_id: proto::PeerId,
         cx: &mut AppContext,
     ) -> proto::ProjectTransaction {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.serialize_project_transaction_for_peer(project_transaction, peer_id, cx)
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.serialize_project_transaction_for_peer(project_transaction, peer_id, cx)
         })
     }
 
@@ -5633,49 +4955,6 @@ impl Project {
         }
         self.collaborators = collaborators;
         Ok(())
-    }
-
-    fn serialize_completion(completion: &CoreCompletion) -> proto::Completion {
-        proto::Completion {
-            old_start: Some(serialize_anchor(&completion.old_range.start)),
-            old_end: Some(serialize_anchor(&completion.old_range.end)),
-            new_text: completion.new_text.clone(),
-            server_id: completion.server_id.0 as u64,
-            lsp_completion: serde_json::to_vec(&completion.lsp_completion).unwrap(),
-        }
-    }
-
-    fn deserialize_completion(completion: proto::Completion) -> Result<CoreCompletion> {
-        let old_start = completion
-            .old_start
-            .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid old start"))?;
-        let old_end = completion
-            .old_end
-            .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid old end"))?;
-        let lsp_completion = serde_json::from_slice(&completion.lsp_completion)?;
-
-        Ok(CoreCompletion {
-            old_range: old_start..old_end,
-            new_text: completion.new_text,
-            server_id: LanguageServerId(completion.server_id as usize),
-            lsp_completion,
-        })
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn edits_from_lsp(
-        &mut self,
-        buffer: &Model<Buffer>,
-        lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,
-        server_id: LanguageServerId,
-        version: Option<i32>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.edits_from_lsp(buffer, lsp_edits, server_id, version, cx)
-        })
     }
 
     pub fn language_servers<'a>(

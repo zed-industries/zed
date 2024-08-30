@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context as _, Result};
-use client::DevServerProjectId;
+use client::{Client, DevServerProjectId};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::{
@@ -58,6 +58,14 @@ pub enum WorktreeStoreEvent {
 impl EventEmitter<WorktreeStoreEvent> for WorktreeStore {}
 
 impl WorktreeStore {
+    pub fn init(client: &Arc<Client>) {
+        client.add_model_request_handler(WorktreeStore::handle_create_project_entry);
+        client.add_model_request_handler(WorktreeStore::handle_rename_project_entry);
+        client.add_model_request_handler(WorktreeStore::handle_copy_project_entry);
+        client.add_model_request_handler(WorktreeStore::handle_delete_project_entry);
+        client.add_model_request_handler(WorktreeStore::handle_expand_project_entry);
+    }
+
     pub fn new(retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {
         Self {
             next_entry_id: Default::default(),

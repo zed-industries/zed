@@ -3,7 +3,7 @@ mod signature_help;
 use crate::{
     buffer_store::BufferStore, lsp_store::LspStore, CodeAction, CoreCompletion, DocumentHighlight,
     Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart,
-    InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, MarkupContent, Project,
+    InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, MarkupContent,
     ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
@@ -396,7 +396,9 @@ impl LspCommand for PerformRename {
         _: &clock::Global,
         cx: &mut AppContext,
     ) -> proto::PerformRenameResponse {
-        let transaction = lsp_store.serialize_project_transaction_for_peer(response, peer_id, cx);
+        let transaction = lsp_store.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.serialize_project_transaction_for_peer(response, peer_id, cx)
+        });
         proto::PerformRenameResponse {
             transaction: Some(transaction),
         }
@@ -1929,7 +1931,7 @@ impl LspCommand for GetCompletions {
         proto::GetCompletionsResponse {
             completions: completions
                 .iter()
-                .map(Project::serialize_completion)
+                .map(LspStore::serialize_completion)
                 .collect(),
             version: serialize_version(buffer_version),
         }
@@ -1951,7 +1953,7 @@ impl LspCommand for GetCompletions {
         message
             .completions
             .into_iter()
-            .map(Project::deserialize_completion)
+            .map(LspStore::deserialize_completion)
             .collect()
     }
 

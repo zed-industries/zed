@@ -72,6 +72,15 @@ pub struct ProjectTransaction(pub HashMap<Model<Buffer>, language::Transaction>)
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
 
 impl BufferStore {
+    pub fn init(client: &Arc<Client>) {
+        client.add_model_message_handler(Self::handle_buffer_reloaded);
+        client.add_model_message_handler(Self::handle_buffer_saved);
+        client.add_model_message_handler(Self::handle_update_buffer_file);
+        client.add_model_message_handler(Self::handle_update_diff_base);
+        client.add_model_request_handler(Self::handle_save_buffer);
+        client.add_model_request_handler(Self::handle_blame_buffer);
+    }
+
     /// Creates a buffer store, optionally retaining its buffers.
     ///
     /// If `retain_buffers` is `true`, then buffers are owned by the buffer store
@@ -1501,6 +1510,29 @@ impl BufferStore {
 
     pub fn shared_buffers(&self) -> &HashMap<proto::PeerId, HashSet<BufferId>> {
         &self.shared_buffers
+    }
+
+    pub fn serialize_project_transaction_for_peer(
+        &mut self,
+        project_transaction: ProjectTransaction,
+        peer_id: proto::PeerId,
+        cx: &mut ModelContext<Self>,
+    ) -> proto::ProjectTransaction {
+        let mut serialized_transaction = proto::ProjectTransaction {
+            buffer_ids: Default::default(),
+            transactions: Default::default(),
+        };
+        for (buffer, transaction) in project_transaction.0 {
+            self.create_buffer_for_peer(&buffer, peer_id, cx)
+                .detach_and_log_err(cx);
+            serialized_transaction
+                .buffer_ids
+                .push(buffer.read(cx).remote_id().into());
+            serialized_transaction
+                .transactions
+                .push(language::proto::serialize_transaction(&transaction));
+        }
+        serialized_transaction
     }
 
     pub async fn deserialize_project_transaction(
