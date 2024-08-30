@@ -45,14 +45,14 @@ pub trait Watcher: Send + Sync {
     fn remove(&self, path: &Path) -> Result<()>;
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PathEventKind {
-    Created,
     Removed,
+    Created,
     Changed,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PathEvent {
     pub path: PathBuf,
     pub kind: Option<PathEventKind>,
@@ -574,7 +574,9 @@ impl Fs for RealFs {
                     if pending_paths.is_empty() {
                         tx.try_send(()).ok();
                     }
-                    util::extend_sorted(&mut *pending_paths, paths, usize::MAX, PathBuf::cmp);
+                    util::extend_sorted(&mut *pending_paths, paths, usize::MAX, |a, b| {
+                        a.path.cmp(&b.path)
+                    });
                 }
             })
         })
