@@ -331,29 +331,61 @@ pub async fn stream_completion_with_rate_limit_info(
 }
 
 pub fn extract_content_from_events(
-    response: impl Stream<Item = Result<Event, AnthropicError>>,
+    events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>, // response: impl Stream<Item = Result<Event, AnthropicError>>,
 ) -> impl Stream<Item = Result<String, AnthropicError>> {
-    // TODO: We currently assume that the content is in order and not interleaved.
-    // We will likely need to account for the `index` of each content block.
-    response.filter_map(|event| async move {
-        match event {
-            Ok(event) => match event {
-                Event::ContentBlockStart { content_block, .. } => match content_block {
-                    ResponseContent::Text { text } => Some(Ok(text)),
-                    ResponseContent::ToolUse { id, name, input } => {
-                        Some(Ok(format!("\nTool Use: {id} {name} {input:?}\n")))
-                    }
-                },
-                Event::ContentBlockDelta { delta, .. } => match delta {
-                    ContentDelta::TextDelta { text } => Some(Ok(text)),
-                    ContentDelta::InputJsonDelta { partial_json } => Some(Ok(partial_json)),
-                },
-                Event::Error { error } => Some(Err(AnthropicError::ApiError(error))),
-                _ => None,
+    struct State {
+        current_tool_use_index: Option<usize>,
+    }
+
+    futures::stream::unfold(
+        (
+            events,
+            State {
+                current_tool_use_index: None,
             },
-            Err(err) => Some(Err(err)),
-        }
-    })
+        ),
+        |(mut stream, mut state)| async move {
+            while let Some(event) = stream.next().await {
+                match event {
+                    Ok(event) => match event {
+                        Event::ContentBlockStart {
+                            index,
+                            content_block,
+                        } => match content_block {
+                            ResponseContent::Text { text } => {
+                                return Some((Ok(text), (stream, state)));
+                            }
+                            ResponseContent::ToolUse { id, name, input } => {
+                                state.current_tool_use_index = Some(index);
+
+                                let content = format!("\nTool Use: {id} {name} {input:?}\n");
+                                return Some((Ok(content), (stream, state)));
+                            }
+                        },
+                        Event::ContentBlockDelta { index, delta } => match delta {
+                            ContentDelta::TextDelta { text } => {
+                                return Some((Ok(text), (stream, state)));
+                            }
+                            ContentDelta::InputJsonDelta { partial_json } => {
+                                if Some(index) == state.current_tool_use_index {
+                                    return Some((Ok(partial_json), (stream, state)));
+                                }
+                            }
+                        },
+                        Event::Error { error } => {
+                            return Some((Err(AnthropicError::ApiError(error)), (stream, state)));
+                        }
+                        _ => {}
+                    },
+                    Err(err) => {
+                        return Some((Err(err), (stream, state)));
+                    }
+                }
+            }
+
+            None
+        },
+    )
 }
 
 pub async fn extract_tool_args_from_events(
