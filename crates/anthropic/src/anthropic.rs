@@ -337,7 +337,7 @@ pub fn extract_text_from_events(
         match response {
             Ok(response) => match response {
                 Event::ContentBlockStart { content_block, .. } => match content_block {
-                    Content::Text { text, .. } => Some(Ok(text)),
+                    ResponseContent::Text { text, .. } => Some(Ok(text)),
                     _ => None,
                 },
                 Event::ContentBlockDelta { delta, .. } => match delta {
@@ -363,7 +363,7 @@ pub async fn extract_tool_args_from_events(
             content_block,
         } = event?
         {
-            if let Content::ToolUse { name, .. } = content_block {
+            if let ResponseContent::ToolUse { name, .. } = content_block {
                 if name == tool_name {
                     tool_use_index = Some(index);
                     break;
@@ -411,7 +411,7 @@ pub struct CacheControl {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
-    pub content: Vec<Content>,
+    pub content: Vec<RequestContent>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -423,7 +423,7 @@ pub enum Role {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum Content {
+pub enum RequestContent {
     #[serde(rename = "text")]
     Text {
         text: String,
@@ -444,10 +444,22 @@ pub enum Content {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
-    #[serde(rename = "tool_result")]
-    ToolResult {
-        tool_use_id: String,
-        content: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ResponseContent {
+    #[serde(rename = "text")]
+    Text {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
@@ -525,7 +537,7 @@ pub struct Response {
     #[serde(rename = "type")]
     pub response_type: String,
     pub role: Role,
-    pub content: Vec<Content>,
+    pub content: Vec<ResponseContent>,
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<String>,
@@ -542,7 +554,7 @@ pub enum Event {
     #[serde(rename = "content_block_start")]
     ContentBlockStart {
         index: usize,
-        content_block: Content,
+        content_block: ResponseContent,
     },
     #[serde(rename = "content_block_delta")]
     ContentBlockDelta { index: usize, delta: ContentDelta },
