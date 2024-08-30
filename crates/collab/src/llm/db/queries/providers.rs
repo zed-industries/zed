@@ -1,5 +1,5 @@
 use super::*;
-use sea_orm::QueryOrder;
+use sea_orm::{sea_query::OnConflict, QueryOrder};
 use std::str::FromStr;
 use strum::IntoEnumIterator as _;
 
@@ -99,6 +99,17 @@ impl LlmDatabase {
                     ..Default::default()
                 }
             }))
+            .on_conflict(
+                OnConflict::columns([model::Column::ProviderId, model::Column::Name])
+                    .update_columns([
+                        model::Column::MaxRequestsPerMinute,
+                        model::Column::MaxTokensPerMinute,
+                        model::Column::MaxTokensPerDay,
+                        model::Column::PricePerMillionInputTokens,
+                        model::Column::PricePerMillionOutputTokens,
+                    ])
+                    .to_owned(),
+            )
             .exec_without_returning(&*tx)
             .await?;
             Ok(())

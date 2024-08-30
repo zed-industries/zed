@@ -1,6 +1,7 @@
 use crate::db::{self, ChannelRole, NewUserParams};
 
 use anyhow::Context;
+use chrono::{TimeDelta, Utc};
 use db::Database;
 use serde::{de::DeserializeOwned, Deserialize};
 use std::{fmt::Write, fs, path::Path};
@@ -129,7 +130,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
                         &github_user.login,
                         Some(github_user.id),
                         github_user.email.as_deref(),
-                        None,
+                        Some(Utc::now() - TimeDelta::weeks(52)),
                         None,
                     )
                     .await
