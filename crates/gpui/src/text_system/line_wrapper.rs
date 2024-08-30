@@ -116,14 +116,14 @@ impl LineWrapper {
         let mut char_indices = line.char_indices();
         let mut truncate_ix = 0;
         for (ix, c) in char_indices {
-            if width + ellipsis_width < truncate_width {
+            if width + ellipsis_width <= truncate_width {
                 truncate_ix = ix;
             }
 
             let char_width = self.width_for_char(c);
             width += char_width;
 
-            if width > truncate_width {
+            if width.floor() > truncate_width {
                 return SharedString::from(format!(
                     "{}{}",
                     &line[..truncate_ix],
