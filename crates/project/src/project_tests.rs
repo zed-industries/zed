@@ -3945,7 +3945,8 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
                 true,
                 false,
                 Default::default(),
-                Default::default()
+                Default::default(),
+                None
             )
             .unwrap(),
             cx
@@ -3978,7 +3979,8 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
                 true,
                 false,
                 Default::default(),
-                Default::default()
+                Default::default(),
+                None,
             )
             .unwrap(),
             cx
@@ -4021,7 +4023,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 false,
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
-                Default::default()
+                Default::default(),
+                None
             )
             .unwrap(),
             cx
@@ -4041,7 +4044,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 false,
                 PathMatcher::new(&["*.rs".to_owned()]).unwrap(),
-                Default::default()
+                Default::default(),
+                None
             )
             .unwrap(),
             cx
@@ -4067,6 +4071,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                     PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
 
                 Default::default(),
+                None,
             ).unwrap(),
             cx
         )
@@ -4091,6 +4096,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                     PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
 
                Default::default(),
+               None,
             ).unwrap(),
             cx
         )
@@ -4135,6 +4141,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                None,
             )
             .unwrap(),
             cx
@@ -4159,7 +4166,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 false,
                 Default::default(),
-                PathMatcher::new(&["*.rs".to_owned()]).unwrap()
+                PathMatcher::new(&["*.rs".to_owned()]).unwrap(),
+                None,
             )
             .unwrap(),
             cx
@@ -4183,6 +4191,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                None,
             ).unwrap(),
             cx
         )
@@ -4206,6 +4215,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                  Default::default(),
 
                     PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                    None,
 
             ).unwrap(),
             cx
@@ -4245,6 +4255,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                None,
             )
             .unwrap(),
             cx
@@ -4265,6 +4276,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
+                None,
             ).unwrap(),
             cx
         )
@@ -4284,6 +4296,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                None,
             )
             .unwrap(),
             cx
@@ -4304,6 +4317,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.rs".to_owned(), "*.odd".to_owned()]).unwrap(),
+                None,
             )
             .unwrap(),
             cx
@@ -4356,7 +4370,8 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 true,
                 false,
                 PathMatcher::new(&["worktree-a/*.rs".to_owned()]).unwrap(),
-                Default::default()
+                Default::default(),
+                None,
             )
             .unwrap(),
             cx
@@ -4375,7 +4390,8 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 true,
                 false,
                 PathMatcher::new(&["worktree-b/*.rs".to_owned()]).unwrap(),
-                Default::default()
+                Default::default(),
+                None,
             )
             .unwrap(),
             cx
@@ -4395,7 +4411,8 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 true,
                 false,
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
-                Default::default()
+                Default::default(),
+                None,
             )
             .unwrap(),
             cx
@@ -4449,7 +4466,8 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 false,
                 false,
                 Default::default(),
-                Default::default()
+                Default::default(),
+                None,
             )
             .unwrap(),
             cx
@@ -4470,7 +4488,8 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 Default::default(),
-                Default::default()
+                Default::default(),
+                None,
             )
             .unwrap(),
             cx
@@ -4510,6 +4529,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 true,
                 files_to_include,
                 files_to_exclude,
+                None,
             )
             .unwrap(),
             cx
@@ -4556,6 +4576,7 @@ async fn test_search_ordering(cx: &mut gpui::TestAppContext) {
                 true,
                 Default::default(),
                 Default::default(),
+                None,
             )
             .unwrap(),
             cx,

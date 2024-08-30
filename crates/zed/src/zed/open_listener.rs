@@ -22,7 +22,7 @@ use util::paths::PathWithPosition;
 use util::ResultExt;
 use welcome::{show_welcome_view, FIRST_OPEN};
 use workspace::item::ItemHandle;
-use workspace::{AppState, Workspace};
+use workspace::{AppState, OpenOptions, Workspace};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -257,6 +257,7 @@ pub async fn handle_cli_connection(
                 wait,
                 open_new_workspace,
                 dev_server_token,
+                env,
             } => {
                 if let Some(dev_server_token) = dev_server_token {
                     match cx
@@ -332,6 +333,7 @@ pub async fn handle_cli_connection(
                     &responses,
                     wait,
                     app_state.clone(),
+                    env,
                     &mut cx,
                 )
                 .await;
@@ -349,6 +351,7 @@ async fn open_workspaces(
     responses: &IpcSender<CliResponse>,
     wait: bool,
     app_state: Arc<AppState>,
+    env: Option<collections::HashMap<String, String>>,
     mut cx: &mut AsyncAppContext,
 ) -> Result<()> {
     let grouped_paths = if paths.is_empty() {
@@ -397,7 +400,11 @@ async fn open_workspaces(
         // If not the first launch, show an empty window with empty editor
         else {
             cx.update(|cx| {
-                workspace::open_new(app_state, cx, |workspace, cx| {
+                let open_options = OpenOptions {
+                    env,
+                    ..Default::default()
+                };
+                workspace::open_new(open_options, app_state, cx, |workspace, cx| {
                     Editor::new_file(workspace, &Default::default(), cx)
                 })
                 .detach();
@@ -414,6 +421,7 @@ async fn open_workspaces(
                 open_new_workspace,
                 wait,
                 responses,
+                env.as_ref(),
                 &app_state,
                 &mut cx,
             )
@@ -437,6 +445,7 @@ async fn open_workspace(
     open_new_workspace: Option<bool>,
     wait: bool,
     responses: &IpcSender<CliResponse>,
+    env: Option<&HashMap<String, String>>,
     app_state: &Arc<AppState>,
     cx: &mut AsyncAppContext,
 ) -> bool {
@@ -447,6 +456,7 @@ async fn open_workspace(
         app_state.clone(),
         workspace::OpenOptions {
             open_new_workspace,
+            env: env.cloned(),
             ..Default::default()
         },
         cx,
@@ -669,6 +679,7 @@ mod tests {
                     open_new_workspace,
                     false,
                     &response_tx,
+                    None,
                     &app_state,
                     &mut cx,
                 )

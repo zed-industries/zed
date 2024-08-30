@@ -4,7 +4,7 @@ use crate::{
     RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
-use cocoa::appkit::{CGFloat, CGPoint};
+use cocoa::appkit::CGFloat;
 use collections::HashMap;
 use core_foundation::{
     attributed_string::CFMutableAttributedString,
@@ -16,6 +16,7 @@ use core_graphics::{
     base::{kCGImageAlphaPremultipliedLast, CGGlyph},
     color_space::CGColorSpace,
     context::CGContext,
+    display::CGPoint,
 };
 use core_text::{
     font::CTFont,

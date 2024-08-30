@@ -4920,6 +4920,7 @@ async fn test_project_search(
                 false,
                 Default::default(),
                 Default::default(),
+                None,
             )
             .unwrap(),
             cx,

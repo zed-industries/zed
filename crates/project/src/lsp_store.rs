@@ -1,18 +1,19 @@
 use crate::{
-    buffer_store::BufferStore,
-    lsp_command::*,
-    project_settings::{DirenvSettings, ProjectSettings},
-    resolve_path,
-    worktree_store::WorktreeStore,
-    yarn::YarnPathStore,
-    CodeAction, Completion, CoreCompletion, Hover, InlayHint, Item as _, ProjectPath,
-    ProjectTransaction, ResolveState, Symbol,
+    buffer_store::BufferStore, environment::ProjectEnvironment, lsp_command::*,
+    project_settings::ProjectSettings, resolve_path, worktree_store::WorktreeStore,
+    yarn::YarnPathStore, CodeAction, Completion, CoreCompletion, Hover, InlayHint, Item as _,
+    ProjectPath, ProjectTransaction, ResolveState, Symbol,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use client::{proto, TypedEnvelope};
 use collections::{btree_map, BTreeMap, HashMap, HashSet};
-use futures::{future::join_all, select, stream::FuturesUnordered, Future, FutureExt, StreamExt};
+use futures::{
+    future::{join_all, Shared},
+    select,
+    stream::FuturesUnordered,
+    Future, FutureExt, StreamExt,
+};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
     AppContext, AsyncAppContext, Entity, EventEmitter, Model, ModelContext, PromptLevel, Task,
@@ -124,6 +125,7 @@ pub struct LspStore {
     buffer_store: Model<BufferStore>,
     worktree_store: Model<WorktreeStore>,
     buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
+    environment: Option<Model<ProjectEnvironment>>,
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     languages: Arc<LanguageRegistry>,
@@ -153,9 +155,11 @@ pub struct LspStore {
 }
 
 impl LspStore {
-    pub fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
         buffer_store: Model<BufferStore>,
         worktree_store: Model<WorktreeStore>,
+        environment: Option<Model<ProjectEnvironment>>,
         languages: Arc<LanguageRegistry>,
         http_client: Arc<dyn HttpClient>,
         fs: Arc<dyn Fs>,
@@ -175,6 +179,7 @@ impl LspStore {
             buffer_store,
             worktree_store,
             languages,
+            environment,
             buffer_snapshots: Default::default(),
             supplementary_language_servers: Default::default(),
             language_servers: Default::default(),
@@ -195,6 +200,10 @@ impl LspStore {
 
     pub fn buffer_store(&self) -> Model<BufferStore> {
         self.buffer_store.clone()
+    }
+
+    pub(crate) fn set_environment(&mut self, environment: Model<ProjectEnvironment>) {
+        self.environment = Some(environment);
     }
 
     pub fn set_active_entry(&mut self, active_entry: Option<ProjectEntryId>) {
@@ -2302,9 +2311,9 @@ impl LspStore {
         }
     }
 
-    pub fn language_server_statuses<'a>(
-        &'a self,
-    ) -> impl DoubleEndedIterator<Item = (LanguageServerId, &'a LanguageServerStatus)> {
+    pub fn language_server_statuses(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = (LanguageServerId, &LanguageServerStatus)> {
         self.language_server_statuses
             .iter()
             .map(|(key, value)| (*key, value))
@@ -3245,7 +3254,7 @@ impl LspStore {
         Ok(proto::Ack {})
     }
 
-    pub(crate) fn start_language_servers(
+    pub fn start_language_servers(
         &mut self,
         worktree: &Model<Worktree>,
         language: Arc<Language>,
@@ -3337,12 +3346,17 @@ impl LspStore {
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let lsp_adapter_delegate = ProjectLspAdapterDelegate::new(self, worktree_handle, cx);
+        let cli_environment = self
+            .environment
+            .as_ref()
+            .and_then(|environment| environment.read(cx).get_cli_environment());
         let pending_server = match self.languages.create_pending_language_server(
             stderr_capture.clone(),
             language.clone(),
             adapter.clone(),
             Arc::clone(&worktree_path),
             lsp_adapter_delegate.clone(),
+            cli_environment,
             cx,
         ) {
             Some(pending_server) => pending_server,
@@ -4980,38 +4994,33 @@ pub struct ProjectLspAdapterDelegate {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
-    shell_env: Mutex<Option<HashMap<String, String>>>,
-    load_direnv: DirenvSettings,
+    load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
 }
 
 impl ProjectLspAdapterDelegate {
     pub fn new(
         lsp_store: &LspStore,
         worktree: &Model<Worktree>,
-        cx: &ModelContext<LspStore>,
+        cx: &mut ModelContext<LspStore>,
     ) -> Arc<Self> {
-        let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
+        let worktree_id = worktree.read(cx).id();
+        let worktree_abs_path = worktree.read(cx).abs_path();
+        let load_shell_env_task = if let Some(environment) = &lsp_store.environment {
+            environment.update(cx, |env, cx| {
+                env.get_environment(Some(worktree_id), Some(worktree_abs_path), cx)
+            })
+        } else {
+            Task::ready(None).shared()
+        };
+
         Arc::new(Self {
             lsp_store: cx.weak_model(),
             worktree: worktree.read(cx).snapshot(),
             fs: lsp_store.fs.clone(),
             http_client: lsp_store.http_client.clone(),
             language_registry: lsp_store.languages.clone(),
-            shell_env: Default::default(),
-            load_direnv,
+            load_shell_env_task,
         })
-    }
-
-    async fn load_shell_env(&self) {
-        let worktree_abs_path = self.worktree.abs_path();
-        let shell_env = crate::load_shell_environment(&worktree_abs_path, &self.load_direnv)
-            .await
-            .with_context(|| {
-                format!("failed to determine load login shell environment in {worktree_abs_path:?}")
-            })
-            .log_err()
-            .unwrap_or_default();
-        *self.shell_env.lock() = Some(shell_env);
     }
 }
 
@@ -5038,19 +5047,14 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {
-        self.load_shell_env().await;
-        self.shell_env.lock().as_ref().cloned().unwrap_or_default()
+        let task = self.load_shell_env_task.clone();
+        task.await.unwrap_or_default()
     }
 
     #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
-        self.load_shell_env().await;
-        let shell_path = self
-            .shell_env
-            .lock()
-            .as_ref()
-            .and_then(|shell_env| shell_env.get("PATH").cloned());
+        let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), &worktree_abs_path).ok()
     }
 

@@ -46,7 +46,7 @@ pub fn show_welcome_view(
     app_state: Arc<AppState>,
     cx: &mut AppContext,
 ) -> Task<anyhow::Result<()>> {
-    open_new(app_state, cx, |workspace, cx| {
+    open_new(Default::default(), app_state, cx, |workspace, cx| {
         workspace.toggle_dock(DockPosition::Left, cx);
         let welcome_page = WelcomePage::new(workspace, cx);
         workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);

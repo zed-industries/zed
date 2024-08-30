@@ -309,7 +309,12 @@ impl Vim {
         editor.set_autoindent(true);
         editor.selections.line_mode = false;
         editor.unregister_addon::<VimAddon>();
-        editor.set_relative_line_number(None, cx)
+        editor.set_relative_line_number(None, cx);
+        if let Some(vim) = Vim::globals(cx).focused_vim() {
+            if vim.entity_id() == cx.view().entity_id() {
+                Vim::globals(cx).focused_vim = None;
+            }
+        }
     }
 
     /// Register an action on the editor.
@@ -656,6 +661,11 @@ impl Vim {
                         editor.set_relative_line_number(Some(is_relative), cx)
                     });
                 }
+            } else {
+                self.update_editor(cx, |vim, editor, cx| {
+                    let is_relative = vim.mode != Mode::Insert;
+                    editor.set_relative_line_number(Some(is_relative), cx)
+                });
             }
         }
         Vim::globals(cx).focused_vim = Some(cx.view().downgrade());

@@ -112,7 +112,7 @@ impl InitializedContextServerProtocol {
         &self,
         prompt: P,
         arguments: HashMap<String, String>,
-    ) -> Result<String> {
+    ) -> Result<types::PromptsGetResponse> {
         self.check_capability(ServerCapability::Prompts)?;
 
         let params = types::PromptsGetParams {
@@ -125,7 +125,36 @@ impl InitializedContextServerProtocol {
             .request(types::RequestType::PromptsGet.as_str(), params)
             .await?;
 
-        Ok(response.prompt)
+        Ok(response)
+    }
+
+    pub async fn completion<P: Into<String>>(
+        &self,
+        reference: types::CompletionReference,
+        argument: P,
+        value: P,
+    ) -> Result<types::Completion> {
+        let params = types::CompletionCompleteParams {
+            r#ref: reference,
+            argument: types::CompletionArgument {
+                name: argument.into(),
+                value: value.into(),
+            },
+        };
+        let result: types::CompletionCompleteResponse = self
+            .inner
+            .request(types::RequestType::CompletionComplete.as_str(), params)
+            .await?;
+
+        let completion = types::Completion {
+            values: result.completion.values,
+            total: types::CompletionTotal::from_options(
+                result.completion.has_more,
+                result.completion.total,
+            ),
+        };
+
+        Ok(completion)
     }
 }
 

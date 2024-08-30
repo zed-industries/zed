@@ -25,5 +25,4 @@ block_comment = ["{/* ", " */}"]
 opt_into_language_servers = ["emmet-language-server"]
 
 [overrides.string]
-word_characters = ["-"]
 opt_into_language_servers = ["tailwindcss-language-server"]

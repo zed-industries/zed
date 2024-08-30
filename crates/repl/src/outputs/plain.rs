@@ -15,8 +15,14 @@
 //! - Error tracebacks
 //!
 
-use alacritty_terminal::{grid::Dimensions as _, term::Config, vte::ansi::Processor};
-use gpui::{canvas, size, AnyElement, ClipboardItem, FontStyle, TextStyle, WhiteSpace};
+use alacritty_terminal::{
+    grid::Dimensions as _,
+    index::{Column, Line, Point},
+    term::Config,
+    vte::ansi::Processor,
+};
+use gpui::{canvas, size, ClipboardItem, FontStyle, Model, TextStyle, WhiteSpace};
+use language::Buffer;
 use settings::Settings as _;
 use std::mem;
 use terminal::ZedListener;
@@ -24,7 +30,7 @@ use terminal_view::terminal_element::TerminalElement;
 use theme::ThemeSettings;
 use ui::{prelude::*, IntoElement};
 
-use crate::outputs::SupportsClipboard;
+use crate::outputs::OutputContent;
 
 /// The `TerminalOutput` struct handles the parsing and rendering of text input,
 /// simulating a basic terminal environment within REPL output.
@@ -40,6 +46,7 @@ use crate::outputs::SupportsClipboard;
 /// supporting ANSI escape sequences for text formatting and colors.
 ///
 pub struct TerminalOutput {
+    full_buffer: Option<Model<Buffer>>,
     /// ANSI escape sequence processor for parsing input text.
     parser: Processor,
     /// Alacritty terminal instance that manages the terminal state and content.
@@ -67,7 +74,6 @@ pub fn text_style(cx: &mut WindowContext) -> TextStyle {
         font_fallbacks,
         font_size: theme::get_buffer_font_size(cx).into(),
         font_style: FontStyle::Normal,
-        // todo
         line_height: cx.line_height().into(),
         background_color: Some(theme.colors().terminal_background),
         white_space: WhiteSpace::Normal,
@@ -128,6 +134,7 @@ impl TerminalOutput {
         Self {
             parser: Processor::new(),
             handler: term,
+            full_buffer: None,
         }
     }
 
@@ -145,7 +152,7 @@ impl TerminalOutput {
     /// A new instance of `TerminalOutput` containing the provided text.
     pub fn from(text: &str, cx: &mut WindowContext) -> Self {
         let mut output = Self::new(cx);
-        output.append_text(text);
+        output.append_text(text, cx);
         output
     }
 
@@ -175,7 +182,7 @@ impl TerminalOutput {
     /// # Arguments
     ///
     /// * `text` - A string slice containing the text to be appended.
-    pub fn append_text(&mut self, text: &str) {
+    pub fn append_text(&mut self, text: &str, cx: &mut WindowContext) {
         for byte in text.as_bytes() {
             if *byte == b'\n' {
                 // Dirty (?) hack to move the cursor down
@@ -184,17 +191,62 @@ impl TerminalOutput {
             } else {
                 self.parser.advance(&mut self.handler, *byte);
             }
+        }
 
-            // self.parser.advance(&mut self.handler, *byte);
+        // This will keep the buffer up to date, though with some terminal codes it won't be perfect
+        if let Some(buffer) = self.full_buffer.as_ref() {
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(buffer.len()..buffer.len(), text)], None, cx);
+            });
         }
     }
 
+    fn full_text(&self) -> String {
+        let mut full_text = String::new();
+
+        // Get the total number of lines, including history
+        let total_lines = self.handler.grid().total_lines();
+        let visible_lines = self.handler.screen_lines();
+        let history_lines = total_lines - visible_lines;
+
+        // Capture history lines in correct order (oldest to newest)
+        for line in (0..history_lines).rev() {
+            let line_index = Line(-(line as i32) - 1);
+            let start = Point::new(line_index, Column(0));
+            let end = Point::new(line_index, Column(self.handler.columns() - 1));
+            let line_content = self.handler.bounds_to_string(start, end);
+
+            if !line_content.trim().is_empty() {
+                full_text.push_str(&line_content);
+                full_text.push('\n');
+            }
+        }
+
+        // Capture visible lines
+        for line in 0..visible_lines {
+            let line_index = Line(line as i32);
+            let start = Point::new(line_index, Column(0));
+            let end = Point::new(line_index, Column(self.handler.columns() - 1));
+            let line_content = self.handler.bounds_to_string(start, end);
+
+            if !line_content.trim().is_empty() {
+                full_text.push_str(&line_content);
+                full_text.push('\n');
+            }
+        }
+
+        // Trim any trailing newlines
+        full_text.trim_end().to_string()
+    }
+}
+
+impl Render for TerminalOutput {
     /// Renders the terminal output as a GPUI element.
     ///
     /// Converts the current terminal state into a renderable GPUI element. It handles
     /// the layout of the terminal grid, calculates the dimensions of the output, and
     /// creates a canvas element that paints the terminal cells and background rectangles.
-    pub fn render(&self, cx: &mut WindowContext) -> AnyElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let text_style = text_style(cx);
         let text_system = cx.text_system();
 
@@ -254,25 +306,31 @@ impl TerminalOutput {
         )
         // We must set the height explicitly for the editor block to size itself correctly
         .h(height)
-        .into_any_element()
     }
 }
 
-impl SupportsClipboard for TerminalOutput {
+impl OutputContent for TerminalOutput {
     fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
-        let start = alacritty_terminal::index::Point::new(
-            alacritty_terminal::index::Line(0),
-            alacritty_terminal::index::Column(0),
-        );
-        let end = alacritty_terminal::index::Point::new(
-            alacritty_terminal::index::Line(self.handler.screen_lines() as i32 - 1),
-            alacritty_terminal::index::Column(self.handler.columns() - 1),
-        );
-        let text = self.handler.bounds_to_string(start, end);
-        Some(ClipboardItem::new_string(text.trim().into()))
+        Some(ClipboardItem::new_string(self.full_text()))
     }
 
     fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
         true
+    }
+
+    fn has_buffer_content(&self, _cx: &WindowContext) -> bool {
+        true
+    }
+
+    fn buffer_content(&mut self, cx: &mut WindowContext) -> Option<Model<Buffer>> {
+        if let Some(_) = self.full_buffer.as_ref() {
+            return self.full_buffer.clone();
+        }
+
+        let buffer = cx.new_model(|cx| {
+            Buffer::local(self.full_text(), cx).with_language(language::PLAIN_TEXT.clone(), cx)
+        });
+        self.full_buffer = Some(buffer.clone());
+        Some(buffer)
     }
 }

@@ -14,6 +14,7 @@ pub mod worktree_store;
 #[cfg(test)]
 mod project_tests;
 
+mod environment;
 pub mod search_history;
 mod yarn;
 
@@ -26,6 +27,7 @@ use client::{
 use clock::ReplicaId;
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
+use environment::ProjectEnvironment;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::try_join_all,
@@ -66,7 +68,7 @@ use paths::{
     local_vscode_tasks_file_relative_path,
 };
 use prettier_support::{DefaultPrettier, PrettierInstance};
-use project_settings::{DirenvSettings, LspSettings, ProjectSettings};
+use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use remote::SshSession;
 use rpc::{proto::AnyProtoClient, ErrorCode};
@@ -80,7 +82,6 @@ use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
     convert::TryInto,
-    env,
     hash::Hash,
     ops::Range,
     path::{Component, Path, PathBuf},
@@ -94,7 +95,7 @@ use task::{
 };
 use terminals::Terminals;
 use text::{Anchor, BufferId, LineEnding};
-use util::{defer, maybe, parse_env_output, paths::compare_paths, ResultExt as _};
+use util::{defer, maybe, paths::compare_paths, ResultExt as _};
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
@@ -178,9 +179,9 @@ pub struct Project {
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
     snippets: Model<SnippetProvider>,
-    cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
     last_formatting_failure: Option<String>,
     buffers_being_formatted: HashSet<BufferId>,
+    environment: Model<ProjectEnvironment>,
 }
 
 #[derive(Default)]
@@ -630,7 +631,6 @@ impl Project {
         client.add_model_request_handler(LspStore::handle_inlay_hints);
         client.add_model_request_handler(LspStore::handle_get_project_symbols);
         client.add_model_request_handler(LspStore::handle_resolve_inlay_hint);
-        client.add_model_request_handler(LspStore::handle_get_project_symbols);
         client.add_model_request_handler(LspStore::handle_lsp_command::<GetCodeActions>);
         client.add_model_request_handler(LspStore::handle_lsp_command::<GetCompletions>);
         client.add_model_request_handler(LspStore::handle_lsp_command::<GetHover>);
@@ -653,6 +653,7 @@ impl Project {
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        env: Option<HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx: &mut ModelContext<Self>| {
@@ -673,10 +674,12 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
+            let environment = ProjectEnvironment::new(env, cx);
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new(
                     buffer_store.clone(),
                     worktree_store.clone(),
+                    Some(environment.clone()),
                     languages.clone(),
                     client.http_client(),
                     fs.clone(),
@@ -724,7 +727,7 @@ impl Project {
                 hosted_project_id: None,
                 dev_server_project_id: None,
                 search_history: Self::new_search_history(),
-                cached_shell_environments: HashMap::default(),
+                environment,
                 remotely_created_buffers: Default::default(),
                 last_formatting_failure: None,
                 buffers_being_formatted: Default::default(),
@@ -741,7 +744,7 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        let this = Self::local(client, node, user_store, languages, fs, cx);
+        let this = Self::local(client, node, user_store, languages, fs, None, cx);
         this.update(cx, |this, cx| {
             let buffer_store = this.buffer_store.downgrade();
             this.worktree_store.update(cx, |store, _cx| {
@@ -837,6 +840,7 @@ impl Project {
             LspStore::new(
                 buffer_store.clone(),
                 worktree_store.clone(),
+                None,
                 languages.clone(),
                 client.http_client(),
                 fs.clone(),
@@ -911,7 +915,7 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
-                cached_shell_environments: HashMap::default(),
+                environment: ProjectEnvironment::new(None, cx),
                 remotely_created_buffers: Arc::new(Mutex::new(RemotelyCreatedBuffers::default())),
                 last_formatting_failure: None,
                 buffers_being_formatted: Default::default(),
@@ -1025,6 +1029,7 @@ impl Project {
                     user_store,
                     Arc::new(languages),
                     fs,
+                    None,
                     cx,
                 )
             })
@@ -1064,6 +1069,7 @@ impl Project {
                 user_store,
                 Arc::new(languages),
                 fs,
+                None,
                 cx,
             )
         });
@@ -1076,11 +1082,13 @@ impl Project {
                 .unwrap();
 
             project.update(cx, |project, cx| {
-                let tree_id = tree.read(cx).id();
                 // In tests we always populate the environment to be empty so we don't run the shell
+                let tree_id = tree.read(cx).id();
+                let environment = ProjectEnvironment::test(&[(tree_id, HashMap::default())], cx);
+                project.environment = environment.clone();
                 project
-                    .cached_shell_environments
-                    .insert(tree_id, HashMap::default());
+                    .lsp_store
+                    .update(cx, |lsp_store, _| lsp_store.set_environment(environment));
             });
 
             tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
@@ -1222,6 +1230,10 @@ impl Project {
 
     pub fn opened_buffers(&self, cx: &AppContext) -> Vec<Model<Buffer>> {
         self.buffer_store.read(cx).buffers().collect()
+    }
+
+    pub fn cli_environment(&self, cx: &AppContext) -> Option<HashMap<String, String>> {
+        self.environment.read(cx).get_cli_environment()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2225,7 +2237,9 @@ impl Project {
             }
             return;
         }
-        self.cached_shell_environments.remove(&id_to_remove);
+        self.environment.update(cx, |environment, _| {
+            environment.remove_worktree_environment(id_to_remove);
+        });
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.remove_worktree(id_to_remove, cx);
         });
@@ -2530,7 +2544,7 @@ impl Project {
             if worktree.read(cx).is_local() {
                 self.lsp_store.update(cx, |lsp_store, cx| {
                     lsp_store.start_language_servers(&worktree, new_language, cx);
-                })
+                });
             }
         }
     }
@@ -3245,6 +3259,11 @@ impl Project {
         })?;
 
         let mut child = smol::process::Command::new(command);
+        #[cfg(target_os = "windows")]
+        {
+            use smol::process::windows::CommandExt;
+            child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+        }
 
         if let Some(working_dir_path) = working_dir_path {
             child.current_dir(working_dir_path);
@@ -4086,8 +4105,11 @@ impl Project {
     ) -> Receiver<SearchResult> {
         let (result_tx, result_rx) = smol::channel::unbounded();
 
-        let matching_buffers_rx =
-            self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx);
+        let matching_buffers_rx = if query.is_opened_only() {
+            self.sort_candidate_buffers(&query, cx)
+        } else {
+            self.search_for_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx)
+        };
 
         cx.spawn(|_, cx| async move {
             let mut range_count = 0;
@@ -4163,6 +4185,48 @@ impl Project {
         } else {
             self.search_for_candidate_buffers_remote(query, limit, cx)
         }
+    }
+
+    fn sort_candidate_buffers(
+        &mut self,
+        search_query: &SearchQuery,
+        cx: &mut ModelContext<Project>,
+    ) -> Receiver<Model<Buffer>> {
+        let worktree_store = self.worktree_store.read(cx);
+        let mut buffers = search_query
+            .buffers()
+            .into_iter()
+            .flatten()
+            .filter(|buffer| {
+                let b = buffer.read(cx);
+                if let Some(file) = b.file() {
+                    if !search_query.file_matches(file.path()) {
+                        return false;
+                    }
+                    if let Some(entry) = b
+                        .entry_id(cx)
+                        .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
+                    {
+                        if entry.is_ignored && !search_query.include_ignored() {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            })
+            .collect::<Vec<_>>();
+        let (tx, rx) = smol::channel::unbounded();
+        buffers.sort_by(|a, b| match (a.read(cx).file(), b.read(cx).file()) {
+            (None, None) => a.read(cx).remote_id().cmp(&b.read(cx).remote_id()),
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (Some(a), Some(b)) => compare_paths((a.path(), true), (b.path(), true)),
+        });
+        for buffer in buffers {
+            tx.send_blocking(buffer.clone()).unwrap()
+        }
+
+        rx
     }
 
     fn search_for_candidate_buffers_remote(
@@ -5672,16 +5736,16 @@ impl Project {
         cx: &mut ModelContext<'_, Project>,
     ) -> Task<Option<TaskContext>> {
         if self.is_local_or_ssh() {
-            let (worktree_id, cwd) = if let Some(worktree) = self.task_worktree(cx) {
+            let (worktree_id, worktree_abs_path) = if let Some(worktree) = self.task_worktree(cx) {
                 (
                     Some(worktree.read(cx).id()),
-                    Some(self.task_cwd(worktree, cx)),
+                    Some(worktree.read(cx).abs_path()),
                 )
             } else {
                 (None, None)
             };
 
-            cx.spawn(|project, cx| async move {
+            cx.spawn(|project, mut cx| async move {
                 let mut task_variables = cx
                     .update(|cx| {
                         combine_task_variables(
@@ -5697,17 +5761,19 @@ impl Project {
                 // Remove all custom entries starting with _, as they're not intended for use by the end user.
                 task_variables.sweep();
 
-                let mut project_env = None;
-                if let Some((worktree_id, cwd)) = worktree_id.zip(cwd.as_ref()) {
-                    let env = Self::get_worktree_shell_env(project, worktree_id, cwd, cx).await;
-                    if let Some(env) = env {
-                        project_env.replace(env);
-                    }
-                };
+                let project_env = project
+                    .update(&mut cx, |project, cx| {
+                        let worktree_abs_path = worktree_abs_path.clone();
+                        project.environment.update(cx, |environment, cx| {
+                            environment.get_environment(worktree_id, worktree_abs_path, cx)
+                        })
+                    })
+                    .ok()?
+                    .await;
 
                 Some(TaskContext {
                     project_env: project_env.unwrap_or_default(),
-                    cwd,
+                    cwd: worktree_abs_path.map(|p| p.to_path_buf()),
                     task_variables,
                 })
             })
@@ -5745,50 +5811,6 @@ impl Project {
             })
         } else {
             Task::ready(None)
-        }
-    }
-
-    async fn get_worktree_shell_env(
-        this: WeakModel<Self>,
-        worktree_id: WorktreeId,
-        cwd: &PathBuf,
-        mut cx: AsyncAppContext,
-    ) -> Option<HashMap<String, String>> {
-        let cached_env = this
-            .update(&mut cx, |project, _| {
-                project.cached_shell_environments.get(&worktree_id).cloned()
-            })
-            .ok()?;
-
-        if let Some(env) = cached_env {
-            Some(env)
-        } else {
-            let load_direnv = this
-                .update(&mut cx, |_, cx| {
-                    ProjectSettings::get_global(cx).load_direnv.clone()
-                })
-                .ok()?;
-
-            let shell_env = cx
-                .background_executor()
-                .spawn({
-                    let cwd = cwd.clone();
-                    async move {
-                        load_shell_environment(&cwd, &load_direnv)
-                            .await
-                            .unwrap_or_default()
-                    }
-                })
-                .await;
-
-            this.update(&mut cx, |project, _| {
-                project
-                    .cached_shell_environments
-                    .insert(worktree_id, shell_env.clone());
-            })
-            .ok()?;
-
-            Some(shell_env)
         }
     }
 
@@ -5939,10 +5961,6 @@ impl Project {
                 })
             }),
         }
-    }
-
-    fn task_cwd(&self, worktree: Model<Worktree>, cx: &AppContext) -> PathBuf {
-        worktree.read(cx).abs_path().to_path_buf()
     }
 }
 
@@ -6182,115 +6200,6 @@ impl Completion {
     pub fn is_snippet(&self) -> bool {
         self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
     }
-}
-
-async fn load_direnv_environment(dir: &Path) -> Result<Option<HashMap<String, String>>> {
-    let Ok(direnv_path) = which::which("direnv") else {
-        return Ok(None);
-    };
-
-    let direnv_output = smol::process::Command::new(direnv_path)
-        .args(["export", "json"])
-        .current_dir(dir)
-        .output()
-        .await
-        .context("failed to spawn direnv to get local environment variables")?;
-
-    anyhow::ensure!(
-        direnv_output.status.success(),
-        "direnv exited with error {:?}",
-        direnv_output.status
-    );
-
-    let output = String::from_utf8_lossy(&direnv_output.stdout);
-    if output.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(
-        serde_json::from_str(&output).context("failed to parse direnv output")?,
-    ))
-}
-
-pub(crate) async fn load_shell_environment(
-    dir: &Path,
-    load_direnv: &DirenvSettings,
-) -> Result<HashMap<String, String>> {
-    let direnv_environment = match load_direnv {
-        DirenvSettings::ShellHook => None,
-        DirenvSettings::Direct => load_direnv_environment(dir).await?,
-    }
-    .unwrap_or(HashMap::default());
-
-    let marker = "ZED_SHELL_START";
-    let shell = env::var("SHELL").context(
-        "SHELL environment variable is not assigned so we can't source login environment variables",
-    )?;
-
-    // What we're doing here is to spawn a shell and then `cd` into
-    // the project directory to get the env in there as if the user
-    // `cd`'d into it. We do that because tools like direnv, asdf, ...
-    // hook into `cd` and only set up the env after that.
-    //
-    // If the user selects `Direct` for direnv, it would set an environment
-    // variable that later uses to know that it should not run the hook.
-    // We would include in `.envs` call so it is okay to run the hook
-    // even if direnv direct mode is enabled.
-    //
-    // In certain shells we need to execute additional_command in order to
-    // trigger the behavior of direnv, etc.
-    //
-    //
-    // The `exit 0` is the result of hours of debugging, trying to find out
-    // why running this command here, without `exit 0`, would mess
-    // up signal process for our process so that `ctrl-c` doesn't work
-    // anymore.
-    //
-    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
-    // do that, but it does, and `exit 0` helps.
-    let additional_command = PathBuf::from(&shell)
-        .file_name()
-        .and_then(|f| f.to_str())
-        .and_then(|shell| match shell {
-            "fish" => Some("emit fish_prompt;"),
-            _ => None,
-        });
-
-    let command = format!(
-        "cd '{}';{} printf '%s' {marker}; /usr/bin/env; exit 0;",
-        dir.display(),
-        additional_command.unwrap_or("")
-    );
-
-    let output = smol::process::Command::new(&shell)
-        .args(["-i", "-c", &command])
-        .envs(direnv_environment)
-        .output()
-        .await
-        .context("failed to spawn login shell to source login environment variables")?;
-
-    anyhow::ensure!(
-        output.status.success(),
-        "login shell exited with error {:?}",
-        output.status
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let env_output_start = stdout.find(marker).ok_or_else(|| {
-        anyhow!(
-            "failed to parse output of `env` command in login shell: {}",
-            stdout
-        )
-    })?;
-
-    let mut parsed_env = HashMap::default();
-    let env_output = &stdout[env_output_start + marker.len()..];
-
-    parse_env_output(env_output, |key, value| {
-        parsed_env.insert(key, value);
-    });
-
-    Ok(parsed_env)
 }
 
 #[derive(Debug)]
