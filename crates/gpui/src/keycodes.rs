@@ -528,7 +528,7 @@ impl VirtualKeyCode {
             // VirtualKeyCode::RightPlatform => "platform",
             // VirtualKeyCode::App => "UnImplemented", // TODO: Chrome use this as Fn key
             // VirtualKeyCode::Sleep => "UnImplemented",
-            // VirtualKeyCode::Numpad0 => "UnImplemented", // TODO: Hanlde numpad key
+            // VirtualKeyCode::Numpad0 => "UnImplemented", // TODO: Handle numpad keys
             // VirtualKeyCode::Numpad1 => "UnImplemented",
             // VirtualKeyCode::Numpad2 => "UnImplemented",
             // VirtualKeyCode::Numpad3 => "UnImplemented",

@@ -20,7 +20,7 @@ pub(crate) type KeyboardLayoutMapping = &'static LazyLock<FxHashMap<u16, Virtual
 pub(crate) enum KeyboardLayout {
     #[default]
     ABC,
-    // Czech,
+    Czech,
     CzechQwerty,
     German,
     Russian,
@@ -30,7 +30,7 @@ impl KeyboardLayout {
     pub(crate) fn layout_data(&self) -> Option<KeyboardLayoutMapping> {
         match self {
             KeyboardLayout::ABC => None,
-            KeyboardLayout::CzechQwerty => Some(&CZECH_QWERTY_ANSI),
+            KeyboardLayout::CzechQwerty | KeyboardLayout::Czech => Some(&CZECH_QWERTY_ANSI),
             KeyboardLayout::German => Some(&GERMAN_LAYOUT_ANSI),
             KeyboardLayout::Russian => Some(&RUSSIAN_LAYOUT_ANSI),
         }
