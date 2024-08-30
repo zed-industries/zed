@@ -91,7 +91,8 @@ pub fn init(cx: &mut AppContext) {
     VimSettings::register(cx);
     VimGlobals::register(cx);
 
-    cx.observe_new_views(Vim::register).detach();
+    cx.observe_new_views(|editor: &mut Editor, cx| Vim::register(editor, cx))
+        .detach();
 
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, _: &ToggleVimMode, cx| {
@@ -132,11 +133,6 @@ pub(crate) struct VimAddon {
 impl editor::Addon for VimAddon {
     fn extend_key_context(&self, key_context: &mut KeyContext, cx: &AppContext) {
         self.view.read(cx).extend_key_context(key_context)
-    }
-
-    fn should_show_inline_completions(&self, cx: &AppContext) -> bool {
-        let mode = self.view.read(cx).mode;
-        mode == Mode::Insert || mode == Mode::Replace
     }
 
     fn to_any(&self) -> &dyn std::any::Any {
