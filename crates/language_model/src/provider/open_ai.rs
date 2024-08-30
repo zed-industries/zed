@@ -480,9 +480,10 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        const OPENAI_CONSOLE_URL: &str = "https://console.anthropic.com/settings/keys";
         const INSTRUCTIONS: [&str; 6] = [
             "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
-            " - You can create an API key at: platform.openai.com/api-keys",
+            " - You can create an API key at: ",
             " - Make sure your OpenAI account has credits",
             " - Having a subscription for another service like GitHub Copilot won't work.",
             "",
@@ -497,9 +498,19 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .children(
-                    INSTRUCTIONS.map(|instruction| Label::new(instruction)),
+                .child(Label::new(INSTRUCTIONS[0]))
+                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
+                    Button::new("openai_console", OPENAI_CONSOLE_URL)
+                        .style(ButtonStyle::Subtle)
+                        .icon(IconName::ExternalLink)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .on_click(move |_, cx| cx.open_url(OPENAI_CONSOLE_URL))
+                    )
                 )
+                .children(
+                    (2..INSTRUCTIONS.len()).map(|n|
+                        Label::new(INSTRUCTIONS[n])).collect::<Vec<_>>())
                 .child(
                     h_flex()
                         .w_full()

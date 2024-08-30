@@ -106,18 +106,29 @@ impl LineWrapper {
         ellipsis: Option<&str>,
     ) -> SharedString {
         let mut width = px(0.);
+        let mut ellipsis_width = px(0.);
         if let Some(ellipsis) = ellipsis {
             for c in ellipsis.chars() {
-                width += self.width_for_char(c);
+                ellipsis_width += self.width_for_char(c);
             }
         }
 
         let mut char_indices = line.char_indices();
+        let mut truncate_ix = 0;
         for (ix, c) in char_indices {
+            if width + ellipsis_width <= truncate_width {
+                truncate_ix = ix;
+            }
+
             let char_width = self.width_for_char(c);
             width += char_width;
-            if width > truncate_width {
-                return SharedString::from(format!("{}{}", &line[..ix], ellipsis.unwrap_or("")));
+
+            if width.floor() > truncate_width {
+                return SharedString::from(format!(
+                    "{}{}",
+                    &line[..truncate_ix],
+                    ellipsis.unwrap_or("")
+                ));
             }
         }
 

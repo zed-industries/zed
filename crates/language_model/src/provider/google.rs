@@ -423,9 +423,10 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        const GOOGLE_CONSOLE_URL: &str = "https://aistudio.google.com/app/apikey";
         const INSTRUCTIONS: [&str; 4] = [
             "To use the Google AI assistant, you need to add your Google AI API key.",
-            "You can create an API key at: https://makersuite.google.com/app/apikey",
+            "You can create an API key at:",
             "",
             "Paste your Google AI API key below and hit enter to use the assistant:",
         ];
@@ -438,9 +439,18 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .children(
-                    INSTRUCTIONS.map(|instruction| Label::new(instruction)),
+                .child(Label::new(INSTRUCTIONS[0]))
+                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
+                    Button::new("google_console", GOOGLE_CONSOLE_URL)
+                        .style(ButtonStyle::Subtle)
+                        .icon(IconName::ExternalLink)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .on_click(move |_, cx| cx.open_url(GOOGLE_CONSOLE_URL))
+                    )
                 )
+                .child(Label::new(INSTRUCTIONS[2]))
+                .child(Label::new(INSTRUCTIONS[3]))
                 .child(
                     h_flex()
                         .w_full()

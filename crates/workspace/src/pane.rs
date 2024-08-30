@@ -1556,8 +1556,16 @@ impl Pane {
                         .update(cx, |workspace, cx| workspace.prompt_for_new_path(cx))
                 })??;
                 if let Some(abs_path) = abs_path.await.ok().flatten() {
-                    pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))?
-                        .await?;
+                    pane.update(cx, |pane, cx| {
+                        if let Some(item) = pane.item_for_path(abs_path.clone(), cx) {
+                            if let Some(idx) = pane.index_for_item(&*item) {
+                                pane.remove_item(idx, false, false, cx);
+                            }
+                        }
+
+                        item.save_as(project, abs_path, cx)
+                    })?
+                    .await?;
                 } else {
                     return Ok(false);
                 }
