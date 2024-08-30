@@ -9015,7 +9015,6 @@ dependencies = [
  "shellexpand 2.1.2",
  "smol",
  "toml 0.8.19",
- "util",
  "worktree",
 ]
 

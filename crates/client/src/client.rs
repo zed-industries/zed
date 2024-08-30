@@ -446,6 +446,15 @@ impl<T: 'static> PendingEntitySubscription<T> {
         );
         drop(state);
         for message in messages {
+            let client_id = self.client.id();
+            let type_name = message.payload_type_name();
+            let sender_id = message.original_sender_id();
+            log::debug!(
+                "handling queued rpc message. client_id:{}, sender_id:{:?}, type:{}",
+                client_id,
+                sender_id,
+                type_name
+            );
             self.client.handle_message(message, cx);
         }
         Subscription::Entity {
@@ -1516,7 +1525,12 @@ impl Client {
         self.peer.send(self.connection_id()?, message)
     }
 
-    pub fn send_dynamic(&self, envelope: proto::Envelope) -> Result<()> {
+    pub fn send_dynamic(
+        &self,
+        envelope: proto::Envelope,
+        message_type: &'static str,
+    ) -> Result<()> {
+        log::debug!("rpc send. client_id:{}, name:{}", self.id(), message_type);
         let connection_id = self.connection_id()?;
         self.peer.send_dynamic(connection_id, envelope)
     }
@@ -1728,8 +1742,8 @@ impl ProtoClient for Client {
         self.request_dynamic(envelope, request_type).boxed()
     }
 
-    fn send(&self, envelope: proto::Envelope) -> Result<()> {
-        self.send_dynamic(envelope)
+    fn send(&self, envelope: proto::Envelope, message_type: &'static str) -> Result<()> {
+        self.send_dynamic(envelope, message_type)
     }
 }
 

@@ -67,7 +67,7 @@ pub trait ProtoClient: Send + Sync {
         request_type: &'static str,
     ) -> BoxFuture<'static, anyhow::Result<Envelope>>;
 
-    fn send(&self, envelope: Envelope) -> anyhow::Result<()>;
+    fn send(&self, envelope: Envelope, message_type: &'static str) -> anyhow::Result<()>;
 }
 
 #[derive(Clone)]
@@ -101,11 +101,7 @@ impl AnyProtoClient {
 
     pub fn send<T: EnvelopedMessage>(&self, request: T) -> anyhow::Result<()> {
         let envelope = request.into_envelope(0, None, None);
-        self.0.send(envelope)
-    }
-
-    pub fn send_dynamic(&self, message: Envelope) -> anyhow::Result<()> {
-        self.0.send(message)
+        self.0.send(envelope, T::NAME)
     }
 }
 

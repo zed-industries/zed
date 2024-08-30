@@ -18,11 +18,11 @@ use language::{
     Buffer, Capability, Event as BufferEvent, File as _, Language, Operation,
 };
 use rpc::{
-    proto::{self, AnyProtoClient, EnvelopedMessage},
+    proto::{self, AnyProtoClient},
     ErrorExt as _, TypedEnvelope,
 };
 use smol::channel::Receiver;
-use std::{io, path::Path, str::FromStr as _, sync::Arc};
+use std::{io, path::Path, str::FromStr as _, sync::Arc, time::Instant};
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt as _, TryFutureExt};
 use worktree::{
@@ -32,6 +32,7 @@ use worktree::{
 
 /// A set of open buffers.
 pub struct BufferStore {
+    downstream_client: Option<AnyProtoClient>,
     remote_id: Option<u64>,
     #[allow(unused)]
     worktree_store: Model<WorktreeStore>,
@@ -62,12 +63,23 @@ pub enum BufferStoreEvent {
         buffer: Model<Buffer>,
         old_file: Option<Arc<dyn language::File>>,
     },
-    MessageToReplicas(Box<proto::Envelope>),
 }
+
+#[derive(Default)]
+pub struct ProjectTransaction(pub HashMap<Model<Buffer>, language::Transaction>);
 
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
 
 impl BufferStore {
+    pub fn init(client: &Arc<Client>) {
+        client.add_model_message_handler(Self::handle_buffer_reloaded);
+        client.add_model_message_handler(Self::handle_buffer_saved);
+        client.add_model_message_handler(Self::handle_update_buffer_file);
+        client.add_model_message_handler(Self::handle_update_diff_base);
+        client.add_model_request_handler(Self::handle_save_buffer);
+        client.add_model_request_handler(Self::handle_blame_buffer);
+    }
+
     /// Creates a buffer store, optionally retaining its buffers.
     ///
     /// If `retain_buffers` is `true`, then buffers are owned by the buffer store
@@ -89,6 +101,7 @@ impl BufferStore {
 
         Self {
             remote_id,
+            downstream_client: None,
             worktree_store,
             opened_buffers: Default::default(),
             remote_buffer_listeners: Default::default(),
@@ -280,14 +293,15 @@ impl BufferStore {
                         buffer.remote_id().to_proto()
                     });
                     if let Some(project_id) = this.remote_id {
-                        cx.emit(BufferStoreEvent::MessageToReplicas(Box::new(
-                            proto::UpdateDiffBase {
-                                project_id,
-                                buffer_id,
-                                diff_base,
-                            }
-                            .into_envelope(0, None, None),
-                        )))
+                        if let Some(client) = &this.downstream_client {
+                            client
+                                .send(proto::UpdateDiffBase {
+                                    project_id,
+                                    buffer_id,
+                                    diff_base,
+                                })
+                                .log_err();
+                        }
                     }
                 }
             })
@@ -486,26 +500,25 @@ impl BufferStore {
             let new_file = save.await?;
             let mtime = new_file.mtime;
             this.update(&mut cx, |this, cx| {
-                if let Some(project_id) = this.remote_id {
+                if let Some(downstream_client) = this.downstream_client.as_ref() {
+                    let project_id = this.remote_id.unwrap_or(0);
                     if has_changed_file {
-                        cx.emit(BufferStoreEvent::MessageToReplicas(Box::new(
-                            proto::UpdateBufferFile {
+                        downstream_client
+                            .send(proto::UpdateBufferFile {
                                 project_id,
                                 buffer_id: buffer_id.to_proto(),
                                 file: Some(language::File::to_proto(&*new_file, cx)),
-                            }
-                            .into_envelope(0, None, None),
-                        )));
+                            })
+                            .log_err();
                     }
-                    cx.emit(BufferStoreEvent::MessageToReplicas(Box::new(
-                        proto::BufferSaved {
+                    downstream_client
+                        .send(proto::BufferSaved {
                             project_id,
                             buffer_id: buffer_id.to_proto(),
                             version: serialize_version(&version),
                             mtime: mtime.map(|time| time.into()),
-                        }
-                        .into_envelope(0, None, None),
-                    )));
+                        })
+                        .log_err();
                 }
             })?;
             buffer_handle.update(&mut cx, |buffer, cx| {
@@ -759,6 +772,7 @@ impl BufferStore {
     }
 
     pub fn disconnected_from_host(&mut self, cx: &mut AppContext) {
+        self.downstream_client.take();
         self.set_remote_id(None, cx);
 
         for buffer in self.buffers() {
@@ -772,7 +786,21 @@ impl BufferStore {
         self.remote_buffer_listeners.clear();
     }
 
-    pub fn set_remote_id(&mut self, remote_id: Option<u64>, cx: &mut AppContext) {
+    pub fn shared(
+        &mut self,
+        remote_id: u64,
+        downstream_client: AnyProtoClient,
+        cx: &mut AppContext,
+    ) {
+        self.downstream_client = Some(downstream_client);
+        self.set_remote_id(Some(remote_id), cx);
+    }
+
+    pub fn unshared(&mut self, _cx: &mut ModelContext<Self>) {
+        self.remote_id.take();
+    }
+
+    fn set_remote_id(&mut self, remote_id: Option<u64>, cx: &mut AppContext) {
         self.remote_id = remote_id;
         for open_buffer in self.opened_buffers.values_mut() {
             if remote_id.is_some() {
@@ -966,14 +994,15 @@ impl BufferStore {
             }
 
             if let Some(project_id) = self.remote_id {
-                events.push(BufferStoreEvent::MessageToReplicas(Box::new(
-                    proto::UpdateBufferFile {
-                        project_id,
-                        buffer_id: buffer_id.to_proto(),
-                        file: Some(new_file.to_proto(cx)),
-                    }
-                    .into_envelope(0, None, None),
-                )))
+                if let Some(client) = &self.downstream_client {
+                    client
+                        .send(proto::UpdateBufferFile {
+                            project_id,
+                            buffer_id: buffer_id.to_proto(),
+                            file: Some(new_file.to_proto(cx)),
+                        })
+                        .ok();
+                }
             }
 
             buffer.file_updated(Arc::new(new_file), cx);
@@ -1406,8 +1435,6 @@ impl BufferStore {
         &mut self,
         buffer: &Model<Buffer>,
         peer_id: proto::PeerId,
-        project_id: u64,
-        client: AnyProtoClient,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let buffer_id = buffer.read(cx).remote_id();
@@ -1419,6 +1446,10 @@ impl BufferStore {
         {
             return Task::ready(Ok(()));
         }
+
+        let Some((client, project_id)) = self.downstream_client.clone().zip(self.remote_id) else {
+            return Task::ready(Ok(()));
+        };
 
         cx.spawn(|this, mut cx| async move {
             let Some(buffer) = this.update(&mut cx, |this, _| this.get(buffer_id))? else {
@@ -1479,6 +1510,64 @@ impl BufferStore {
 
     pub fn shared_buffers(&self) -> &HashMap<proto::PeerId, HashSet<BufferId>> {
         &self.shared_buffers
+    }
+
+    pub fn serialize_project_transaction_for_peer(
+        &mut self,
+        project_transaction: ProjectTransaction,
+        peer_id: proto::PeerId,
+        cx: &mut ModelContext<Self>,
+    ) -> proto::ProjectTransaction {
+        let mut serialized_transaction = proto::ProjectTransaction {
+            buffer_ids: Default::default(),
+            transactions: Default::default(),
+        };
+        for (buffer, transaction) in project_transaction.0 {
+            self.create_buffer_for_peer(&buffer, peer_id, cx)
+                .detach_and_log_err(cx);
+            serialized_transaction
+                .buffer_ids
+                .push(buffer.read(cx).remote_id().into());
+            serialized_transaction
+                .transactions
+                .push(language::proto::serialize_transaction(&transaction));
+        }
+        serialized_transaction
+    }
+
+    pub async fn deserialize_project_transaction(
+        this: WeakModel<Self>,
+        message: proto::ProjectTransaction,
+        push_to_history: bool,
+        mut cx: AsyncAppContext,
+    ) -> Result<ProjectTransaction> {
+        let mut project_transaction = ProjectTransaction::default();
+        for (buffer_id, transaction) in message.buffer_ids.into_iter().zip(message.transactions) {
+            let buffer_id = BufferId::new(buffer_id)?;
+            let buffer = this
+                .update(&mut cx, |this, cx| {
+                    this.wait_for_remote_buffer(buffer_id, cx)
+                })?
+                .await?;
+            let transaction = language::proto::deserialize_transaction(transaction)?;
+            project_transaction.0.insert(buffer, transaction);
+        }
+
+        for (buffer, transaction) in &project_transaction.0 {
+            buffer
+                .update(&mut cx, |buffer, _| {
+                    buffer.wait_for_edits(transaction.edit_ids.iter().copied())
+                })?
+                .await?;
+
+            if push_to_history {
+                buffer.update(&mut cx, |buffer, _| {
+                    buffer.push_transaction(transaction.clone(), Instant::now());
+                })?;
+            }
+        }
+
+        Ok(project_transaction)
     }
 }
 
