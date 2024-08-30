@@ -145,7 +145,7 @@ impl SearchState {
         cx: &mut ViewContext<'_, OutlinePanel>,
     ) -> Self {
         let (highlight_search_match_tx, highlight_search_match_rx) = channel::unbounded();
-        let (notify_tx, mut notify_rx) = async_watch::channel(());
+        let (notify_tx, notify_rx) = channel::bounded::<()>(1);
         Self {
             kind,
             query,
@@ -209,7 +209,7 @@ impl SearchState {
                         range.end = range.end.saturating_sub(left_whitespaces_count);
                     });
                     if highlight_data.set(highlight_ranges).ok().is_some() {
-                        notify_tx.send(()).ok();
+                        notify_tx.try_send(()).ok();
                     }
 
                     let trimmed_text = context_text[left_whitespaces_count..].to_owned();
@@ -221,8 +221,8 @@ impl SearchState {
             }),
             _search_match_notify: cx.spawn(|outline_panel, mut cx| async move {
                 while let Some(()) = notify_rx.recv().await.ok() {
-                    let update_result = outline_panel.update(&mut cx, |outline_panel, cx| {
-                        outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), cx);
+                    let update_result = outline_panel.update(&mut cx, |_, cx| {
+                        cx.notify();
                     });
                     if update_result.is_err() {
                         break;

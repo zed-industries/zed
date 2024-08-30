@@ -7655,7 +7655,6 @@ name = "outline_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-watch",
  "collections",
  "db",
  "editor",
