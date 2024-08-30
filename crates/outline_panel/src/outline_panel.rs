@@ -1,10 +1,12 @@
 mod outline_panel_settings;
 
 use std::{
+    cell::OnceCell,
     cmp,
     hash::Hash,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{atomic::AtomicBool, Arc, OnceLock},
     time::Duration,
     u32,
@@ -24,11 +26,11 @@ use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
-    AppContext, AssetSource, AsyncWindowContext, BackgroundExecutor, ClipboardItem, DismissEvent,
-    Div, ElementId, EventEmitter, FocusHandle, FocusableView, HighlightStyle, InteractiveElement,
-    IntoElement, KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    Render, SharedString, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, ElementId,
+    EventEmitter, FocusHandle, FocusableView, HighlightStyle, InteractiveElement, IntoElement,
+    KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render,
+    SharedString, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -39,7 +41,6 @@ use project::{File, Fs, Item, Project};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use theme::SyntaxTheme;
 use util::{debug_panic, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -83,6 +84,7 @@ const OUTLINE_PANEL_KEY: &str = "OutlinePanel";
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 type Outline = OutlineItem<language::Anchor>;
+type HighlightStyleData = Arc<OnceLock<Vec<(Range<usize>, HighlightStyle)>>>;
 
 pub struct OutlinePanel {
     fs: Arc<dyn Fs>,
@@ -113,7 +115,8 @@ pub struct OutlinePanel {
     filter_editor: View<Editor>,
     mode: ItemsDisplayMode,
     search: Option<(SearchKind, String)>,
-    search_matches: Vec<Range<editor::Anchor>>,
+    search_matches: Vec<(Range<editor::Anchor>, OnceCell<Rc<SearchData>>)>,
+    // TODO have a background loop + channel to schedule highlights?
     search_matches_update_tasks: HashMap<FsEntry, Task<()>>,
 }
 
@@ -220,7 +223,7 @@ enum PanelEntry {
 struct SearchEntry {
     match_range: Range<editor::Anchor>,
     kind: SearchKind,
-    render_data: Arc<OnceLock<SearchData>>,
+    render_data: Rc<SearchData>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -235,8 +238,8 @@ struct SearchData {
     context_text: String,
     truncated_left: bool,
     truncated_right: bool,
-    highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
     search_match_indices: Vec<Range<usize>>,
+    highlights_data: HighlightStyleData,
 }
 
 impl PartialEq for PanelEntry {
@@ -270,11 +273,10 @@ const TRUNCATED_CONTEXT_MARK: &str = "…";
 impl SearchData {
     fn new(
         match_range: &Range<editor::Anchor>,
+        highlights_data: HighlightStyleData,
         multi_buffer_snapshot: &MultiBufferSnapshot,
-        theme: &SyntaxTheme,
     ) -> Self {
         let match_point_range = match_range.to_point(&multi_buffer_snapshot);
-
         let context_left_border = multi_buffer_snapshot.clip_point(
             language::Point::new(
                 match_point_range.start.row,
@@ -309,47 +311,15 @@ impl SearchData {
                 ),
         ];
 
-        let mut left_whitespaces_offset = 0;
-        let mut non_whitespace_symbol_occurred = false;
-        let mut offset = context_offset_range.start;
-        let mut entire_context_text = String::new();
-        let mut highlight_ranges = Vec::new();
-        for mut chunk in
-            multi_buffer_snapshot.chunks(context_offset_range.start..context_offset_range.end, true)
-        {
-            if !non_whitespace_symbol_occurred {
-                for c in chunk.text.chars() {
-                    if c.is_whitespace() {
-                        left_whitespaces_offset += c.len_utf8();
-                    } else {
-                        non_whitespace_symbol_occurred = true;
-                        break;
-                    }
-                }
-            }
+        let entire_context_text = multi_buffer_snapshot
+            .text_for_range(context_offset_range.clone())
+            .collect::<String>();
+        let left_whitespaces_offset = entire_context_text
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .map(|c| c.len_utf8())
+            .sum::<usize>();
 
-            if chunk.text.len() > context_offset_range.end - offset {
-                chunk.text = &chunk.text[0..(context_offset_range.end - offset)];
-                offset = context_offset_range.end;
-            } else {
-                offset += chunk.text.len();
-            }
-            let style = chunk
-                .syntax_highlight_id
-                .and_then(|highlight| highlight.style(theme));
-            if let Some(style) = style {
-                let start = entire_context_text.len();
-                let end = start + chunk.text.len();
-                highlight_ranges.push((start..end, style));
-            }
-            entire_context_text.push_str(chunk.text);
-            if offset >= context_offset_range.end {
-                break;
-            }
-        }
-
-        // TODO kb store matches rendering with the match ranges
-        // TODO kb filtering does not work for buffer search
         let mut extended_context_left_border = context_left_border;
         extended_context_left_border.column = extended_context_left_border.column.saturating_sub(1);
         let extended_context_left_border =
@@ -374,19 +344,22 @@ impl SearchData {
                 .chars_at(extended_context_right_border)
                 .next()
                 .map_or(false, |c| !c.is_whitespace());
-        highlight_ranges.iter_mut().for_each(|(range, _)| {
-            range.start = range.start.saturating_sub(left_whitespaces_offset);
-            range.end = range.end.saturating_sub(left_whitespaces_offset);
-        });
         search_match_indices.iter_mut().for_each(|range| {
-            range.start = range.start.saturating_sub(left_whitespaces_offset);
-            range.end = range.end.saturating_sub(left_whitespaces_offset);
+            range.start = multi_buffer_snapshot.clip_offset(
+                range.start.saturating_sub(left_whitespaces_offset),
+                Bias::Left,
+            );
+            range.end = multi_buffer_snapshot.clip_offset(
+                range.end.saturating_sub(left_whitespaces_offset),
+                Bias::Right,
+            );
         });
+
         let trimmed_row_offset_range =
             context_offset_range.start + left_whitespaces_offset..context_offset_range.end;
         let trimmed_text = entire_context_text[left_whitespaces_offset..].to_owned();
         Self {
-            highlight_ranges,
+            highlights_data,
             search_match_indices,
             context_range: trimmed_row_offset_range.to_anchors(&multi_buffer_snapshot),
             context_text: trimmed_text,
@@ -1745,7 +1718,7 @@ impl OutlinePanel {
     fn render_search_match(
         &self,
         match_range: &Range<editor::Anchor>,
-        search_data: &SearchData,
+        search_data: &Rc<SearchData>,
         kind: SearchKind,
         depth: usize,
         string_match: Option<&StringMatch>,
@@ -1766,7 +1739,11 @@ impl OutlinePanel {
                 annotation_range: None,
                 range: search_data.context_range.clone(),
                 text: search_data.context_text.clone(),
-                highlight_ranges: search_data.highlight_ranges.clone(),
+                highlight_ranges: search_data
+                    .highlights_data
+                    .get()
+                    .cloned()
+                    .unwrap_or_default(),
                 name_ranges: search_data.search_match_indices.clone(),
                 body_range: Some(search_data.context_range.clone()),
             },
@@ -1797,7 +1774,7 @@ impl OutlinePanel {
             PanelEntry::Search(SearchEntry {
                 kind,
                 match_range: match_range.clone(),
-                render_data: Arc::default(),
+                render_data: Rc::clone(search_data),
             }),
             ElementId::from(SharedString::from(format!("search-{match_range:?}"))),
             depth,
@@ -2306,7 +2283,7 @@ impl OutlinePanel {
                 .search_matches
                 .iter()
                 .rev()
-                .min_by_key(|&match_range| {
+                .min_by_key(|&(match_range, _)| {
                     let match_display_range =
                         match_range.clone().to_display_points(&editor_snapshot);
                     let start_distance = if selection_display_point < match_display_range.start {
@@ -2321,7 +2298,7 @@ impl OutlinePanel {
                     };
                     start_distance + end_distance
                 })
-                .and_then(|closest_range| {
+                .and_then(|(closest_range, _)| {
                     self.cached_entries.iter().find_map(|cached_entry| {
                         if let PanelEntry::Search(SearchEntry { match_range, .. }) =
                             &cached_entry.entry
@@ -2932,7 +2909,7 @@ impl OutlinePanel {
                     match outline_panel.mode {
                         ItemsDisplayMode::Search => {
                             if is_singleton || query.is_some() || (should_add && is_expanded) {
-                                outline_panel.spawn_search_entries_resolve(
+                                outline_panel.add_search_entries(
                                     &mut entries,
                                     &mut match_candidates,
                                     entry.clone(),
@@ -3115,13 +3092,11 @@ impl OutlinePanel {
                     OutlineEntry::Excerpt(..) => {}
                 },
                 PanelEntry::Search(new_search_entry) => {
-                    if let Some(search_data) = new_search_entry.render_data.get() {
-                        match_candidates.push(StringMatchCandidate {
-                            id,
-                            char_bag: search_data.context_text.chars().collect(),
-                            string: search_data.context_text.clone(),
-                        });
-                    }
+                    match_candidates.push(StringMatchCandidate {
+                        id,
+                        char_bag: new_search_entry.render_data.context_text.chars().collect(),
+                        string: new_search_entry.render_data.context_text.clone(),
+                    });
                 }
             }
         }
@@ -3227,8 +3202,16 @@ impl OutlinePanel {
             };
             update_cached_entries = self.mode != ItemsDisplayMode::Search
                 || self.search_matches.is_empty()
-                || self.search_matches != new_search_matches;
-            self.search_matches = new_search_matches;
+                || self
+                    .search_matches
+                    .iter()
+                    .enumerate()
+                    .any(|(i, (match_range, _))| new_search_matches.get(i) != Some(match_range));
+            // TODO kb init somehow
+            self.search_matches = new_search_matches
+                .into_iter()
+                .map(|match_range| (match_range, OnceCell::new()))
+                .collect();
             self.mode = ItemsDisplayMode::Search;
         }
         if update_cached_entries {
@@ -3301,7 +3284,7 @@ impl OutlinePanel {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn spawn_search_entries_resolve(
+    fn add_search_entries(
         &mut self,
         entries: &mut Vec<CachedEntry>,
         match_candidates: &mut Vec<StringMatchCandidate>,
@@ -3328,131 +3311,33 @@ impl OutlinePanel {
 
         let depth = if is_singleton { 0 } else { parent_depth + 1 };
         let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
-        let mut cached_search_entries = self
-            .cached_entries
-            .iter()
-            .skip_while(|cached_entry| match &cached_entry.entry {
-                PanelEntry::Fs(entry) => entry != &parent_entry,
-                _ => true,
-            })
-            .take_while(|entry| matches!(entry.entry, PanelEntry::Search(_)))
-            .fold(
-                HashMap::default(),
-                |mut cached_matches, cached_entry| match &cached_entry.entry {
-                    PanelEntry::Search(search_entry) => {
-                        if cached_entry.depth == depth
-                            && search_entry.kind == kind
-                            && search_entry.render_data.get().is_some()
-                        {
-                            cached_matches.insert(&search_entry.match_range, search_entry);
-                        }
-                        cached_matches
-                    }
-                    _ => cached_matches,
-                },
-            );
-        let mut match_ranges_to_render = self.search_matches.iter().filter(|match_range| {
+        let match_ranges_to_render = self.search_matches.iter().filter(|(match_range, _)| {
             related_excerpts.contains(&match_range.start.excerpt_id)
                 || related_excerpts.contains(&match_range.end.excerpt_id)
         });
 
-        let mut matches_to_render = Vec::new();
-        let mut has_matches_to_render = false;
-        while let Some(match_range_to_render) = match_ranges_to_render.next() {
-            match cached_search_entries.remove(match_range_to_render) {
-                Some(cached_entry) => {
-                    self.push_entry(
-                        entries,
-                        match_candidates,
-                        filter_query.is_some(),
-                        PanelEntry::Search(cached_entry.clone()),
-                        depth,
-                        cx,
-                    );
-                    matches_to_render.push(None);
-                }
-                None => {
-                    let render_data = Arc::default();
-                    self.push_entry(
-                        entries,
-                        match_candidates,
-                        filter_query.is_some(),
-                        PanelEntry::Search(SearchEntry {
-                            match_range: match_range_to_render.clone(),
-                            kind,
-                            render_data: Arc::clone(&render_data),
-                        }),
-                        depth,
-                        cx,
-                    );
-                    matches_to_render.push(Some((match_range_to_render.clone(), render_data)));
-                    has_matches_to_render = true;
-                }
-            };
-        }
-        if !has_matches_to_render {
-            return;
-        }
-
         let theme = cx.theme().syntax().clone();
-        let search = self.search.clone();
-        self.search_matches_update_tasks.insert(
-            parent_entry.clone(),
-            cx.spawn(|outline_panel, mut cx| async move {
-                let background_executor = cx.background_executor().clone();
-                let search_match_updates = cx
-                    .background_executor()
-                    .spawn(init_search_match_data(
-                        matches_to_render,
-                        theme,
-                        filter_query,
-                        multi_buffer_snapshot,
-                        background_executor,
-                    ))
-                    .await;
-                outline_panel
-                    .update(&mut cx, |outline_panel, cx| {
-                        outline_panel
-                            .search_matches_update_tasks
-                            .remove(&parent_entry);
-                        if outline_panel.search != search {
-                            return;
-                        }
-
-                        let updates_returned = search_match_updates.len();
-                        let match_updates = search_match_updates
-                            .into_iter()
-                            .enumerate()
-                            .filter_map(|(ix, search_match)| Some((ix, search_match?)))
-                            .fold(
-                                HashMap::default(),
-                                |mut match_updates, (ix, search_match)| {
-                                    match_updates.insert(ix, search_match);
-                                    match_updates
-                                },
-                            );
-                        if !match_updates.is_empty() {
-                            let mut cached_search_entries = outline_panel
-                                .cached_entries
-                                .iter_mut()
-                                .skip_while(|cached_entry| match &cached_entry.entry {
-                                    PanelEntry::Fs(entry) => entry != &parent_entry,
-                                    _ => true,
-                                })
-                                .take_while(|entry| matches!(entry.entry, PanelEntry::Search(_)))
-                                .collect::<Vec<_>>();
-                            if cached_search_entries.len() == updates_returned {
-                                for (ix, new_match) in match_updates {
-                                    cached_search_entries[ix].string_match = Some(new_match);
-                                }
-                            }
-                            outline_panel.autoscroll(cx);
-                            cx.notify();
-                        }
-                    })
-                    .ok();
-            }),
-        );
+        for (match_range, search_data) in match_ranges_to_render {
+            self.push_entry(
+                entries,
+                match_candidates,
+                filter_query.is_some(),
+                PanelEntry::Search(SearchEntry {
+                    match_range: match_range.clone(),
+                    kind,
+                    render_data: Rc::clone(search_data.get_or_init(|| {
+                        // TODO kb init this somehow, use `theme`?
+                        Rc::new(SearchData::new(
+                            match_range,
+                            Arc::default(),
+                            &multi_buffer_snapshot,
+                        ))
+                    })),
+                }),
+                depth,
+                cx,
+            );
+        }
     }
 
     fn active_editor(&self) -> Option<View<Editor>> {
@@ -3504,52 +3389,6 @@ impl OutlinePanel {
         self.autoscroll(cx);
         cx.notify();
     }
-}
-
-async fn init_search_match_data(
-    matches_to_render: Vec<Option<(Range<editor::Anchor>, Arc<OnceLock<SearchData>>)>>,
-    theme: Arc<SyntaxTheme>,
-    filter_query: Option<String>,
-    multi_buffer_snapshot: MultiBufferSnapshot,
-    backround_executor: BackgroundExecutor,
-) -> Vec<Option<StringMatch>> {
-    let matches_to_render_count = matches_to_render.len();
-    let match_candidates = matches_to_render
-        .into_iter()
-        .enumerate()
-        .filter_map(|(id, render_data)| {
-            let (match_range, render_data) = render_data?;
-            let search_data = render_data
-                .get_or_init(|| SearchData::new(&match_range, &multi_buffer_snapshot, &theme));
-            if filter_query.is_some() {
-                Some(StringMatchCandidate {
-                    id,
-                    char_bag: search_data.context_text.chars().collect(),
-                    string: search_data.context_text.clone(),
-                })
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-
-    let mut updated_matches = vec![None; matches_to_render_count];
-    if let Some(query) = filter_query {
-        for string_match in match_strings(
-            &match_candidates,
-            &query,
-            true,
-            usize::MAX,
-            &AtomicBool::default(),
-            backround_executor,
-        )
-        .await
-        {
-            let id = string_match.candidate_id;
-            updated_matches[id] = Some(string_match);
-        }
-    }
-    updated_matches
 }
 
 fn cleanup_fs_entries_without_search_children(
@@ -3968,16 +3807,14 @@ impl Render for OutlinePanel {
                                         render_data,
                                         kind,
                                         ..
-                                    }) => render_data.get().map(|search_data| {
-                                        outline_panel.render_search_match(
-                                            &match_range,
-                                            search_data,
-                                            kind,
-                                            cached_entry.depth,
-                                            cached_entry.string_match.as_ref(),
-                                            cx,
-                                        )
-                                    }),
+                                    }) => Some(outline_panel.render_search_match(
+                                        &match_range,
+                                        &render_data,
+                                        kind,
+                                        cached_entry.depth,
+                                        cached_entry.string_match.as_ref(),
+                                        cx,
+                                    )),
                                 })
                                 .collect()
                         }
@@ -4370,7 +4207,7 @@ mod tests {
                             format!("outline: {}", outline.text),
                     },
                     PanelEntry::Search(SearchEntry { render_data, .. }) => {
-                        format!("search: {}", &render_data.get().unwrap().context_text)
+                        format!("search: {}", render_data.context_text)
                     }
                 }
             );
