@@ -111,7 +111,7 @@ struct AuthenticatedUserParams {
     github_user_id: i32,
     github_login: String,
     github_email: Option<String>,
-    github_user_created_at: Option<chrono::DateTime<chrono::Utc>>,
+    github_user_created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Serialize)]

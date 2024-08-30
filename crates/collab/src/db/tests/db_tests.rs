@@ -101,7 +101,7 @@ async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
         .user_id;
 
     let user = db
-        .get_or_create_user_by_github_account("the-new-login2", 102, None, Some(Utc::now()), None)
+        .get_or_create_user_by_github_account("the-new-login2", 102, None, Utc::now(), None)
         .await
         .unwrap();
     assert_eq!(user.id, user_id2);
@@ -113,7 +113,7 @@ async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
             "login3",
             103,
             Some("user3@example.com"),
-            Some(Utc::now()),
+            Utc::now(),
             None,
         )
         .await
