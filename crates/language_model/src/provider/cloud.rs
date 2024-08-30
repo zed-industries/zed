@@ -515,9 +515,9 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    Ok(anthropic::extract_text_from_events(
+                    Ok(anthropic::extract_content_from_events(Box::pin(
                         response_lines(response).map_err(AnthropicError::Other),
-                    ))
+                    )))
                 });
                 async move {
                     Ok(future

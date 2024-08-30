@@ -2048,7 +2048,8 @@ impl Context {
 
         LanguageModelRequest {
             messages: request_messages,
-            stop: vec![],
+            tools: Vec::new(),
+            stop: Vec::new(),
             temperature: 1.0,
         }
     }
@@ -2398,7 +2399,8 @@ impl Context {
                 }));
             let request = LanguageModelRequest {
                 messages: messages.collect(),
-                stop: vec![],
+                tools: Vec::new(),
+                stop: Vec::new(),
                 temperature: 1.0,
             };
 

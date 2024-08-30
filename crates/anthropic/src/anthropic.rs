@@ -330,26 +330,94 @@ pub async fn stream_completion_with_rate_limit_info(
     }
 }
 
-pub fn extract_text_from_events(
-    response: impl Stream<Item = Result<Event, AnthropicError>>,
+pub fn extract_content_from_events(
+    events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
 ) -> impl Stream<Item = Result<String, AnthropicError>> {
-    response.filter_map(|response| async move {
-        match response {
-            Ok(response) => match response {
-                Event::ContentBlockStart { content_block, .. } => match content_block {
-                    ResponseContent::Text { text, .. } => Some(Ok(text)),
-                    _ => None,
-                },
-                Event::ContentBlockDelta { delta, .. } => match delta {
-                    ContentDelta::TextDelta { text } => Some(Ok(text)),
-                    _ => None,
-                },
-                Event::Error { error } => Some(Err(AnthropicError::ApiError(error))),
-                _ => None,
-            },
-            Err(error) => Some(Err(error)),
-        }
-    })
+    struct State {
+        events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
+        current_tool_use_index: Option<usize>,
+    }
+
+    const INDENT: &str = "  ";
+    const NEWLINE: char = '\n';
+
+    futures::stream::unfold(
+        State {
+            events,
+            current_tool_use_index: None,
+        },
+        |mut state| async move {
+            while let Some(event) = state.events.next().await {
+                match event {
+                    Ok(event) => match event {
+                        Event::ContentBlockStart {
+                            index,
+                            content_block,
+                        } => match content_block {
+                            ResponseContent::Text { text } => {
+                                return Some((Ok(text), state));
+                            }
+                            ResponseContent::ToolUse { id, name, .. } => {
+                                state.current_tool_use_index = Some(index);
+
+                                let mut text = String::new();
+                                text.push(NEWLINE);
+
+                                text.push_str("<tool_use>");
+                                text.push(NEWLINE);
+
+                                text.push_str(INDENT);
+                                text.push_str("<id>");
+                                text.push_str(&id);
+                                text.push_str("</id>");
+                                text.push(NEWLINE);
+
+                                text.push_str(INDENT);
+                                text.push_str("<name>");
+                                text.push_str(&name);
+                                text.push_str("</name>");
+                                text.push(NEWLINE);
+
+                                text.push_str(INDENT);
+                                text.push_str("<input>");
+
+                                return Some((Ok(text), state));
+                            }
+                        },
+                        Event::ContentBlockDelta { index, delta } => match delta {
+                            ContentDelta::TextDelta { text } => {
+                                return Some((Ok(text), state));
+                            }
+                            ContentDelta::InputJsonDelta { partial_json } => {
+                                if Some(index) == state.current_tool_use_index {
+                                    return Some((Ok(partial_json), state));
+                                }
+                            }
+                        },
+                        Event::ContentBlockStop { index } => {
+                            if Some(index) == state.current_tool_use_index.take() {
+                                let mut text = String::new();
+                                text.push_str("</input>");
+                                text.push(NEWLINE);
+                                text.push_str("</tool_use>");
+
+                                return Some((Ok(text), state));
+                            }
+                        }
+                        Event::Error { error } => {
+                            return Some((Err(AnthropicError::ApiError(error)), state));
+                        }
+                        _ => {}
+                    },
+                    Err(err) => {
+                        return Some((Err(err), state));
+                    }
+                }
+            }
+
+            None
+        },
+    )
 }
 
 pub async fn extract_tool_args_from_events(
