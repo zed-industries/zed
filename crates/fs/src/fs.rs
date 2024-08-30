@@ -540,22 +540,34 @@ impl Fs for RealFs {
         Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
         Arc<dyn Watcher>,
     ) {
+        use notify::EventKind;
         use parking_lot::Mutex;
 
         let (tx, rx) = smol::channel::unbounded();
-        let pending_paths: Arc<Mutex<Vec<PathBuf>>> = Default::default();
+        let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
         let root_path = path.to_path_buf();
 
         watcher::global(|g| {
             let tx = tx.clone();
             let pending_paths = pending_paths.clone();
             g.add(move |event: &notify::Event| {
+                let kind = match event.kind {
+                    EventKind::Create(_) => Some(PathEventKind::Created),
+                    EventKind::Modify(_) => Some(PathEventKind::Changed),
+                    EventKind::Remove(_) => Some(PathEventKind::Removed),
+                    _ => None,
+                };
                 let mut paths = event
                     .paths
                     .iter()
-                    .filter(|path| path.starts_with(&root_path))
-                    .cloned()
+                    .filter_map(|path| {
+                        path.starts_with(&root_path).then(|| PathEvent {
+                            path: path.clone(),
+                            kind,
+                        })
+                    })
                     .collect::<Vec<_>>();
+
                 if !paths.is_empty() {
                     paths.sort();
                     let mut pending_paths = pending_paths.lock();
