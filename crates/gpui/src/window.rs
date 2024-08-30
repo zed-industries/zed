@@ -2551,6 +2551,7 @@ impl<'a> WindowContext<'a> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
+            let opacity = self.element_opacity();
 
             self.window
                 .next_frame
@@ -2562,6 +2563,7 @@ impl<'a> WindowContext<'a> {
                     corner_radii: Default::default(),
                     content_mask,
                     tile,
+                    opacity: opacity.into(),
                 });
         }
         Ok(())
@@ -2666,6 +2668,7 @@ impl<'a> WindowContext<'a> {
             .expect("Callback above only returns Some");
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
+        let opacity = self.element_opacity();
 
         self.window
             .next_frame
@@ -2677,6 +2680,7 @@ impl<'a> WindowContext<'a> {
                 content_mask,
                 corner_radii,
                 tile,
+                opacity: opacity.into(),
             });
         Ok(())
     }
