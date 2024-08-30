@@ -334,15 +334,15 @@ impl SummaryIndex {
                 if entry.mtime != opt_saved_digest.and_then(|digest| digest.mtime) {
                     let mut backlog = backlog.lock();
 
-                    eprintln!(
-                        "* * * * * * * * Inserting {:?}B entry into backlog: {:?}",
-                        entry.size, &entry.path
+                    log::info!(
+                        "Inserting {:?} ({:?} bytes) into backlog",
+                        &entry.path,
+                        entry.size,
                     );
-
                     backlog.insert(Arc::clone(&entry.path), entry.size, entry.mtime);
 
                     if backlog.needs_drain() {
-                        eprintln!("* * * * * * * * DRAINING BACKLOG!");
+                        log::info!("Draining summary backlog...");
                         return backlog.drain().collect();
                     }
                 }
@@ -365,7 +365,7 @@ impl SummaryIndex {
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> Backlogged {
-        eprintln!("* * * Scanning for updated entries...");
+        log::info!("Scanning for updated entries that might need summarization...");
         let (tx, rx) = channel::bounded(512);
         // let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
         let db_connection = self.db_connection.clone();
@@ -431,11 +431,6 @@ impl SummaryIndex {
                     for _ in 0..cx.num_cpus() {
                         cx.spawn(async {
                             while let Ok(pairs) = paths.recv().await {
-                                eprintln!(
-                                    "* * * * * Reading files to look up their digests {:?}",
-                                    pairs
-                                );
-
                                 // Note: we could process all these files concurrently if desired. Might or might not speed things up.
                                 for (path, mtime) in pairs {
                                     let entry_abs_path = worktree_abs_path.join(&path);
@@ -543,8 +538,8 @@ impl SummaryIndex {
     ) -> impl Future<Output = Result<String>> {
         let start = Instant::now();
         let (summary_model_id, use_cache): (LanguageModelId, bool) = (
-            "qwen2-7b-instruct".to_string().into(), // TODO read this from the user's settings.
-            false,                                  // qwen2 doesn't have a cache
+            "Qwen/Qwen2-7B-Instruct".to_string().into(), // TODO read this from the user's settings.
+            false, // qwen2 doesn't have a cache, but we should probably infer this from the model
         );
         let Some(model) = LanguageModelRegistry::read_global(cx)
             .available_models(cx)
@@ -621,13 +616,10 @@ impl SummaryIndex {
                 let mut txn = db_connection.write_txn()?;
                 for file in &summaries {
                     log::debug!(
-                        "Saving {} bytes of summary for content digest {:?}",
+                        "Saving summary of {:?} - which is {} bytes of summary for content digest {:?}",
+                        &file.path,
                         file.summary.len(),
                         file.digest
-                    );
-                    eprintln!(
-                        "- - - Persisting digest {:?} for {:?} with summary: {:?}",
-                        &file.path, &file.digest, &file.summary
                     );
                     digest_db.put(
                         &mut txn,

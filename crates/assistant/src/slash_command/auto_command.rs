@@ -7,7 +7,7 @@ use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
 use language_model::{
-    LanguageModelId, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use semantic_index::{FileSummary, SemanticDb};
 use smol::channel;
@@ -182,26 +182,14 @@ async fn commands_for_summaries(
         return Ok(Vec::new());
     }
 
-    let inference_model_id: LanguageModelId = "qwen2-7b-instruct".to_string().into(); // TODO read this from the user's settings.
-    eprintln!("* * * running summaries...");
-    let Ok(model) = cx.update(|cx| {
-        match LanguageModelRegistry::read_global(cx)
-            .available_models(cx)
-            .find(|model| &model.id() == &inference_model_id)
-        {
-            Some(model) => Ok(model),
-            None => match LanguageModelRegistry::read_global(cx).active_model() {
-                Some(model) => Ok(model),
-                None => Err(anyhow::anyhow!(
-                    "Can't infer context because there's no active model."
-                )),
-            },
-        }
-    })?
-    else {
-        log::info!("Can't infer context because there's no active model.");
+    // Use the globally configured model to translate the summaries into slash-commands,
+    // because Qwen2-7B-Instruct has not done a good job at that task.
+    let Some(model) = cx.update(|cx| LanguageModelRegistry::read_global(cx).active_model())? else {
+        log::warn!("Can't infer context because there's no active model.");
         return Ok(Vec::new());
     };
+    // Only go up to 90% of the actual max token count, to reduce chances of
+    // exceeding the token count due to inaccuracies in the token counting heuristic.
     let max_token_count = (model.max_token_count() * 9) / 10;
 
     // Rather than recursing (which would require this async function use a pinned box),
@@ -246,7 +234,7 @@ async fn commands_for_summaries(
         // source: https://help.openai.com/en/articles/4936856-what-are-tokens-and-how-to-count-them
         let token_estimate = prompt.len() * 2 / 9;
         let duration = start.elapsed();
-        eprintln!(
+        log::info!(
             "Time taken to count tokens for prompt of length {:?}B: {:?}",
             prompt.len(),
             duration
@@ -276,10 +264,6 @@ async fn commands_for_summaries(
             let request = make_request(prompt.clone());
             let model = model.clone();
             let tx = tx.clone();
-            eprintln!(
-                "kicking off model.stream_completion for prompt of this length: {:?}",
-                prompt.len()
-            );
             let stream = model.stream_completion(request, &cx);
 
             (stream, tx)
@@ -294,17 +278,16 @@ async fn commands_for_summaries(
                 .map(|(ix, (stream, tx))| async move {
                     let start = std::time::Instant::now();
                     let mut chunks = stream.await?;
-                    eprintln!("Time taken for awaiting chunk stream #{ix}: {:?}", start.elapsed());
+                    log::info!("Time taken for awaiting /await chunk stream #{ix}: {:?}", start.elapsed());
 
                     let mut completion = String::new();
 
                     while let Some(chunk) = chunks.next().await {
-                        eprintln!("got chunk for #{ix} in: {:?}", start.elapsed());
                         let chunk = chunk?;
                         completion.push_str(&chunk);
                     }
 
-                    eprintln!("Time taken for all chunks to come back for #{ix}: {:?}", start.elapsed());
+                    log::info!("Time taken for all /auto chunks to come back for #{ix}: {:?}", start.elapsed());
 
                     for line in completion.split('\n') {
                         if let Some(first_space) = line.find(' ') {
