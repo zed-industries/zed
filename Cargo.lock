@@ -14214,7 +14214,6 @@ dependencies = [
  "audio",
  "auto_update",
  "backtrace",
- "blake3",
  "breadcrumbs",
  "call",
  "channel",
