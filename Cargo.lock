@@ -7655,6 +7655,7 @@ name = "outline_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-watch",
  "collections",
  "db",
  "editor",
@@ -7672,6 +7673,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "theme",
  "util",
  "workspace",
