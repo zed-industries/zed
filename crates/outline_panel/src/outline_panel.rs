@@ -233,6 +233,8 @@ enum SearchKind {
 struct SearchData {
     context_range: Range<editor::Anchor>,
     context_text: String,
+    truncated_left: bool,
+    truncated_right: bool,
     highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
     search_match_indices: Vec<Range<usize>>,
 }
@@ -262,41 +264,63 @@ impl PartialEq for PanelEntry {
 
 impl Eq for PanelEntry {}
 
+const SEARCH_MATCH_CONTEXT_SIZE: u32 = 40;
+const TRUNCATED_CONTEXT_MARK: &str = "…";
+
 impl SearchData {
     fn new(
-        kind: SearchKind,
         match_range: &Range<editor::Anchor>,
         multi_buffer_snapshot: &MultiBufferSnapshot,
         theme: &SyntaxTheme,
     ) -> Self {
         let match_point_range = match_range.to_point(&multi_buffer_snapshot);
-        let entire_row_range_start = language::Point::new(match_point_range.start.row, 0);
-        let entire_row_range_end = multi_buffer_snapshot.clip_point(
-            language::Point::new(match_point_range.end.row, u32::MAX),
+
+        let context_left_border = multi_buffer_snapshot.clip_point(
+            language::Point::new(
+                match_point_range.start.row,
+                match_point_range
+                    .start
+                    .column
+                    .saturating_sub(SEARCH_MATCH_CONTEXT_SIZE),
+            ),
+            Bias::Left,
+        );
+        let context_right_border = multi_buffer_snapshot.clip_point(
+            language::Point::new(
+                match_point_range.end.row,
+                match_point_range.end.column + SEARCH_MATCH_CONTEXT_SIZE,
+            ),
             Bias::Right,
         );
-        let entire_row_range =
-            (entire_row_range_start..entire_row_range_end).to_anchors(&multi_buffer_snapshot);
-        let entire_row_offset_range = entire_row_range.to_offset(&multi_buffer_snapshot);
+
+        let context_anchor_range =
+            (context_left_border..context_right_border).to_anchors(&multi_buffer_snapshot);
+        let context_offset_range = context_anchor_range.to_offset(&multi_buffer_snapshot);
         let match_offset_range = match_range.to_offset(&multi_buffer_snapshot);
+
         let mut search_match_indices = vec![
-            match_offset_range.start - entire_row_offset_range.start
-                ..match_offset_range.end - entire_row_offset_range.start,
+            multi_buffer_snapshot.clip_offset(
+                match_offset_range.start - context_offset_range.start,
+                Bias::Left,
+            )
+                ..multi_buffer_snapshot.clip_offset(
+                    match_offset_range.end - context_offset_range.start,
+                    Bias::Right,
+                ),
         ];
 
-        let mut left_whitespaces_count = 0;
+        let mut left_whitespaces_offset = 0;
         let mut non_whitespace_symbol_occurred = false;
-        let mut offset = entire_row_offset_range.start;
-        let mut entire_row_text = String::new();
+        let mut offset = context_offset_range.start;
+        let mut entire_context_text = String::new();
         let mut highlight_ranges = Vec::new();
-        for mut chunk in multi_buffer_snapshot.chunks(
-            entire_row_offset_range.start..entire_row_offset_range.end,
-            true,
-        ) {
+        for mut chunk in
+            multi_buffer_snapshot.chunks(context_offset_range.start..context_offset_range.end, true)
+        {
             if !non_whitespace_symbol_occurred {
                 for c in chunk.text.chars() {
                     if c.is_whitespace() {
-                        left_whitespaces_count += 1;
+                        left_whitespaces_offset += c.len_utf8();
                     } else {
                         non_whitespace_symbol_occurred = true;
                         break;
@@ -304,9 +328,9 @@ impl SearchData {
                 }
             }
 
-            if chunk.text.len() > entire_row_offset_range.end - offset {
-                chunk.text = &chunk.text[0..(entire_row_offset_range.end - offset)];
-                offset = entire_row_offset_range.end;
+            if chunk.text.len() > context_offset_range.end - offset {
+                chunk.text = &chunk.text[0..(context_offset_range.end - offset)];
+                offset = context_offset_range.end;
             } else {
                 offset += chunk.text.len();
             }
@@ -314,35 +338,60 @@ impl SearchData {
                 .syntax_highlight_id
                 .and_then(|highlight| highlight.style(theme));
             if let Some(style) = style {
-                let start = entire_row_text.len();
+                let start = entire_context_text.len();
                 let end = start + chunk.text.len();
                 highlight_ranges.push((start..end, style));
             }
-            entire_row_text.push_str(chunk.text);
-            if offset >= entire_row_offset_range.end {
+            entire_context_text.push_str(chunk.text);
+            if offset >= context_offset_range.end {
                 break;
             }
         }
 
-        if kind == SearchKind::Buffer && multi_buffer_snapshot.as_singleton().is_some() {
-            left_whitespaces_count = 0;
-        }
+        // TODO kb store matches rendering with the match ranges
+        // TODO kb filtering does not work for buffer search
+        let mut extended_context_left_border = context_left_border;
+        extended_context_left_border.column = extended_context_left_border.column.saturating_sub(1);
+        let extended_context_left_border =
+            multi_buffer_snapshot.clip_point(extended_context_left_border, Bias::Left);
+        let mut extended_context_right_border = context_right_border;
+        extended_context_right_border.column += 1;
+        let extended_context_right_border =
+            multi_buffer_snapshot.clip_point(extended_context_right_border, Bias::Right);
+
+        let truncated_left = left_whitespaces_offset == 0
+            && extended_context_left_border < context_left_border
+            && multi_buffer_snapshot
+                .chars_at(extended_context_left_border)
+                .last()
+                .map_or(false, |c| !c.is_whitespace());
+        let truncated_right = entire_context_text
+            .chars()
+            .last()
+            .map_or(true, |c| !c.is_whitespace())
+            && extended_context_right_border > context_right_border
+            && multi_buffer_snapshot
+                .chars_at(extended_context_right_border)
+                .next()
+                .map_or(false, |c| !c.is_whitespace());
         highlight_ranges.iter_mut().for_each(|(range, _)| {
-            range.start = range.start.saturating_sub(left_whitespaces_count);
-            range.end = range.end.saturating_sub(left_whitespaces_count);
+            range.start = range.start.saturating_sub(left_whitespaces_offset);
+            range.end = range.end.saturating_sub(left_whitespaces_offset);
         });
         search_match_indices.iter_mut().for_each(|range| {
-            range.start = range.start.saturating_sub(left_whitespaces_count);
-            range.end = range.end.saturating_sub(left_whitespaces_count);
+            range.start = range.start.saturating_sub(left_whitespaces_offset);
+            range.end = range.end.saturating_sub(left_whitespaces_offset);
         });
         let trimmed_row_offset_range =
-            entire_row_offset_range.start + left_whitespaces_count..entire_row_offset_range.end;
-        let trimmed_text = entire_row_text[left_whitespaces_count..].to_owned();
+            context_offset_range.start + left_whitespaces_offset..context_offset_range.end;
+        let trimmed_text = entire_context_text[left_whitespaces_offset..].to_owned();
         Self {
             highlight_ranges,
             search_match_indices,
             context_range: trimmed_row_offset_range.to_anchors(&multi_buffer_snapshot),
             context_text: trimmed_text,
+            truncated_left,
+            truncated_right,
         }
     }
 }
@@ -1723,8 +1772,19 @@ impl OutlinePanel {
             },
             match_ranges.into_iter().cloned(),
             cx,
-        )
-        .into_any_element();
+        );
+        let truncated_contents_label = || Label::new(TRUNCATED_CONTEXT_MARK);
+        let entire_label = h_flex()
+            .justify_center()
+            .p_0()
+            .when(search_data.truncated_left, |parent| {
+                parent.child(truncated_contents_label())
+            })
+            .child(label_element)
+            .when(search_data.truncated_right, |parent| {
+                parent.child(truncated_contents_label())
+            })
+            .into_any_element();
 
         let is_active = match self.selected_entry() {
             Some(PanelEntry::Search(SearchEntry {
@@ -1743,7 +1803,7 @@ impl OutlinePanel {
             depth,
             None,
             is_active,
-            label_element,
+            entire_label,
             cx,
         )
     }
@@ -3345,7 +3405,6 @@ impl OutlinePanel {
                     .spawn(init_search_match_data(
                         matches_to_render,
                         theme,
-                        kind,
                         filter_query,
                         multi_buffer_snapshot,
                         background_executor,
@@ -3386,8 +3445,9 @@ impl OutlinePanel {
                                 for (ix, new_match) in match_updates {
                                     cached_search_entries[ix].string_match = Some(new_match);
                                 }
-                                cx.notify();
                             }
+                            outline_panel.autoscroll(cx);
+                            cx.notify();
                         }
                     })
                     .ok();
@@ -3449,25 +3509,18 @@ impl OutlinePanel {
 async fn init_search_match_data(
     matches_to_render: Vec<Option<(Range<editor::Anchor>, Arc<OnceLock<SearchData>>)>>,
     theme: Arc<SyntaxTheme>,
-    kind: SearchKind,
     filter_query: Option<String>,
     multi_buffer_snapshot: MultiBufferSnapshot,
     backround_executor: BackgroundExecutor,
 ) -> Vec<Option<StringMatch>> {
-    // TODO kb take a context range (~20 chars) around each match, merge overlapping matches into same line and split off the rest into another search entry
-    // do SearchMatch::new on it where it'll colour the line, cuts off trimming whitespaces, prepends and appends `…` etc.
-    // Do filter out by filter_query too.
-    // let mut previous_search_entries = previous_search_entries.into_iter().peekable();
-
     let matches_to_render_count = matches_to_render.len();
     let match_candidates = matches_to_render
         .into_iter()
         .enumerate()
         .filter_map(|(id, render_data)| {
             let (match_range, render_data) = render_data?;
-            let search_data = render_data.get_or_init(|| {
-                SearchData::new(kind, &match_range, &multi_buffer_snapshot, &theme)
-            });
+            let search_data = render_data
+                .get_or_init(|| SearchData::new(&match_range, &multi_buffer_snapshot, &theme));
             if filter_query.is_some() {
                 Some(StringMatchCandidate {
                     id,
