@@ -2801,10 +2801,17 @@ impl Workspace {
         .unwrap_or(Origin::Center);
 
         let get_last_active_pane = || {
-            self.last_active_center_pane.as_ref().and_then(|p| {
-                let p = p.upgrade()?;
-                (p.read(cx).items_len() != 0).then_some(p)
-            })
+            let pane = self
+                .last_active_center_pane
+                .clone()
+                .unwrap_or_else(|| {
+                    self.panes
+                        .first()
+                        .expect("There must be an active pane")
+                        .downgrade()
+                })
+                .upgrade()?;
+            (pane.read(cx).items_len() != 0).then_some(pane)
         };
 
         let try_dock =
@@ -2921,6 +2928,10 @@ impl Workspace {
         if self.active_pane != pane {
             self.active_pane = pane.clone();
             self.active_item_path_changed(cx);
+            self.last_active_center_pane = Some(pane.downgrade());
+        }
+
+        if self.last_active_center_pane.is_none() {
             self.last_active_center_pane = Some(pane.downgrade());
         }
 
