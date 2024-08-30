@@ -2,6 +2,8 @@
 
 Zed includes a vim emulation layer known as "vim mode". This document aims to describe how it works, and how to make the most out of it.
 
+  https://zed.dev/docs/vim
+
 ## Philosophy
 
 Vim mode in Zed is supposed to primarily "do what you expect": it mostly tries to copy vim exactly, but will use Zed-specific functionality when available to make things smoother.

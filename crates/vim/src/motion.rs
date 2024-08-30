@@ -1,10 +1,11 @@
 use editor::{
     display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{
-        self, find_boundary, find_preceding_boundary_display_point, FindRange, TextLayoutDetails,
+        self, find_boundary, find_preceding_boundary_display_point, find_preceding_boundary_point,
+        FindRange, TextLayoutDetails,
     },
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset,
+    Anchor, Bias, DisplayPoint, Editor, MultiBufferSnapshot, RowExt, ToOffset, ToPoint,
 };
 use gpui::{actions, impl_actions, px, ViewContext};
 use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
@@ -65,6 +66,8 @@ pub enum Motion {
     EndOfLine {
         display_lines: bool,
     },
+    SentenceBackward,
+    SentenceForward,
     StartOfParagraph,
     EndOfParagraph,
     StartOfDocument,
@@ -228,6 +231,8 @@ actions!(
         Right,
         Space,
         CurrentLine,
+        SentenceForward,
+        SentenceBackward,
         StartOfParagraph,
         EndOfParagraph,
         StartOfDocument,
@@ -305,6 +310,13 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &EndOfParagraph, cx| {
         vim.motion(Motion::EndOfParagraph, cx)
+    });
+
+    Vim::action(editor, cx, |vim, _: &SentenceForward, cx| {
+        vim.motion(Motion::SentenceForward, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &SentenceBackward, cx| {
+        vim.motion(Motion::SentenceBackward, cx)
     });
     Vim::action(editor, cx, |vim, _: &StartOfDocument, cx| {
         vim.motion(Motion::StartOfDocument, cx)
@@ -483,12 +495,14 @@ impl Motion {
             | NextLineStart
             | PreviousLineStart
             | StartOfLineDownward
+            | SentenceBackward
+            | SentenceForward
             | StartOfParagraph
+            | EndOfParagraph
             | WindowTop
             | WindowMiddle
             | WindowBottom
-            | Jump { line: true, .. }
-            | EndOfParagraph => true,
+            | Jump { line: true, .. } => true,
             EndOfLine { .. }
             | Matching
             | FindForward { .. }
@@ -533,6 +547,8 @@ impl Motion {
             | StartOfLine { .. }
             | StartOfParagraph
             | EndOfParagraph
+            | SentenceBackward
+            | SentenceForward
             | StartOfLineDownward
             | EndOfLineDownward
             | GoToColumn
@@ -586,6 +602,8 @@ impl Motion {
             | StartOfLineDownward
             | StartOfParagraph
             | EndOfParagraph
+            | SentenceBackward
+            | SentenceForward
             | GoToColumn
             | NextWordStart { .. }
             | PreviousWordStart { .. }
@@ -673,6 +691,8 @@ impl Motion {
                 end_of_line(map, *display_lines, point, times),
                 SelectionGoal::None,
             ),
+            SentenceBackward => (sentence_backwards(map, point, times), SelectionGoal::None),
+            SentenceForward => (sentence_forwards(map, point, times), SelectionGoal::None),
             StartOfParagraph => (
                 movement::start_of_paragraph(map, point, times),
                 SelectionGoal::None,
@@ -1508,6 +1528,134 @@ pub(crate) fn end_of_line(
     } else {
         map.clip_point(map.next_line_boundary(point.to_point(map)).1, Bias::Left)
     }
+}
+/*
+A sentence is defined as ending at a '.', '!' or '?' followed by either the
+end of a line, or by a space or tab.  Any number of closing ')', ']', '"'
+and ''' characters may appear after the '.', '!' or '?' before the spaces,
+tabs or end of line.  OR \n\n
+boundary.
+
+                                                        paragraph
+A paragraph begins after each empty line.
+*/
+
+fn sentence_backwards(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    mut times: usize,
+) -> DisplayPoint {
+    let mut start = point.to_point(&map).to_offset(&map.buffer_snapshot);
+    let mut chars = map.reverse_buffer_chars_at(start).peekable();
+
+    let mut was_newline = map
+        .buffer_chars_at(start)
+        .next()
+        .is_some_and(|(c, _)| c == '\n');
+
+    while let Some((ch, offset)) = chars.next() {
+        let start_of_next_sentence = if was_newline && ch == '\n' {
+            Some(offset + ch.len_utf8())
+        } else if ch == '\n' && chars.peek().is_some_and(|(c, _)| *c == '\n') {
+            Some(next_non_blank(map, offset + ch.len_utf8()))
+        } else if ch == '.' || ch == '?' || ch == '!' {
+            start_of_next_sentence(map, offset + ch.len_utf8())
+        } else {
+            None
+        };
+
+        let Some(start_of_next_sentence) = start_of_next_sentence else {
+            continue;
+        };
+
+        if start_of_next_sentence < start {
+            times = times.saturating_sub(1);
+        }
+        if times == 0 || offset == 0 {
+            return map.clip_point(
+                start_of_next_sentence
+                    .to_offset(&map.buffer_snapshot)
+                    .to_display_point(&map),
+                Bias::Left,
+            );
+        }
+        if was_newline {
+            start = offset;
+        }
+        was_newline = ch == '\n';
+    }
+
+    return DisplayPoint::zero();
+}
+
+fn sentence_forwards(map: &DisplaySnapshot, point: DisplayPoint, mut times: usize) -> DisplayPoint {
+    let mut start = point.to_point(&map).to_offset(&map.buffer_snapshot);
+    let mut chars = map.buffer_chars_at(start).peekable();
+
+    while let Some((ch, offset)) = chars.next() {
+        let start_of_next_sentence = if ch == '\n' && chars.peek().is_some_and(|(c, _)| *c == '\n')
+        {
+            Some(next_non_blank(map, offset + ch.len_utf8()))
+        } else if ch == '.' || ch == '?' || ch == '!' {
+            start_of_next_sentence(map, offset + ch.len_utf8())
+        } else {
+            None
+        };
+        let was_newline = ch == '\n';
+
+        let Some(start_of_next_sentence) = start_of_next_sentence else {
+            continue;
+        };
+
+        times = times.saturating_sub(1);
+        if times == 0 {
+            return map.clip_point(
+                start_of_next_sentence
+                    .to_offset(&map.buffer_snapshot)
+                    .to_display_point(&map),
+                Bias::Right,
+            );
+        }
+    }
+
+    return map.max_point();
+}
+
+fn next_non_blank(map: &DisplaySnapshot, start: usize) -> usize {
+    for (c, o) in map.buffer_chars_at(start) {
+        if c == '\n' || !c.is_whitespace() {
+            return o;
+        }
+    }
+
+    return map.buffer_snapshot.len();
+}
+
+// given the offset after a ., !, or ? find the start of the next sentence.
+// if this is not a sentence boundary, returns None.
+fn start_of_next_sentence(map: &DisplaySnapshot, end_of_sentence: usize) -> Option<usize> {
+    let mut chars = map.buffer_chars_at(end_of_sentence);
+
+    let mut seen_space = false;
+    while let Some((char, offset)) = chars.next() {
+        if !seen_space && (char == ')' || char == ']' || char == '"' || char == '\'') {
+            continue;
+        }
+        if char == '\n' {
+            return Some(offset + char.len_utf8());
+        }
+        if char.is_whitespace() {
+            seen_space = true;
+            continue;
+        }
+        if seen_space {
+            return Some(offset);
+        } else {
+            return None;
+        }
+    }
+
+    return Some(map.buffer_snapshot.len());
 }
 
 fn start_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) -> DisplayPoint {
