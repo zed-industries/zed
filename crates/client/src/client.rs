@@ -12,6 +12,7 @@ use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{HeaderValue, Request, StatusCode},
 };
+use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use collections::HashMap;
 use futures::{
@@ -1400,6 +1401,7 @@ impl Client {
             struct GithubUser {
                 id: i32,
                 login: String,
+                created_at: DateTime<Utc>,
             }
 
             let request = {
@@ -1445,13 +1447,15 @@ impl Client {
             user
         };
 
-        // Use the collab server's admin API to retrieve the id
+        // Use the collab server's admin API to retrieve the ID
         // of the impersonated user.
         let mut url = self.rpc_url(http.clone(), None).await?;
         url.set_path("/user");
         url.set_query(Some(&format!(
-            "github_login={}&github_user_id={}",
-            github_user.login, github_user.id
+            "github_login={login}&github_user_id={id}&github_user_created_at={created_at}",
+            login = github_user.login,
+            id = github_user.id,
+            created_at = github_user.created_at.to_rfc3339()
         )));
         let request: http_client::Request<AsyncBody> = Request::get(url.as_str())
             .header("Authorization", format!("token {api_token}"))

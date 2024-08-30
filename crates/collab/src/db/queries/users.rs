@@ -101,7 +101,7 @@ impl Database {
         github_login: &str,
         github_user_id: i32,
         github_email: Option<&str>,
-        github_user_created_at: Option<DateTimeUtc>,
+        github_user_created_at: DateTimeUtc,
         initial_channel_id: Option<ChannelId>,
     ) -> Result<User> {
         self.transaction(|tx| async move {
@@ -109,7 +109,7 @@ impl Database {
                 github_login,
                 github_user_id,
                 github_email,
-                github_user_created_at.map(|created_at| created_at.naive_utc()),
+                github_user_created_at.naive_utc(),
                 initial_channel_id,
                 &tx,
             )
@@ -123,7 +123,7 @@ impl Database {
         github_login: &str,
         github_user_id: i32,
         github_email: Option<&str>,
-        github_user_created_at: Option<NaiveDateTime>,
+        github_user_created_at: NaiveDateTime,
         initial_channel_id: Option<ChannelId>,
         tx: &DatabaseTransaction,
     ) -> Result<User> {
@@ -134,10 +134,8 @@ impl Database {
         {
             let mut user_by_github_user_id = user_by_github_user_id.into_active_model();
             user_by_github_user_id.github_login = ActiveValue::set(github_login.into());
-            if github_user_created_at.is_some() {
-                user_by_github_user_id.github_user_created_at =
-                    ActiveValue::set(github_user_created_at);
-            }
+            user_by_github_user_id.github_user_created_at =
+                ActiveValue::set(Some(github_user_created_at));
             Ok(user_by_github_user_id.update(tx).await?)
         } else if let Some(user_by_github_login) = user::Entity::find()
             .filter(user::Column::GithubLogin.eq(github_login))
@@ -146,17 +144,15 @@ impl Database {
         {
             let mut user_by_github_login = user_by_github_login.into_active_model();
             user_by_github_login.github_user_id = ActiveValue::set(github_user_id);
-            if github_user_created_at.is_some() {
-                user_by_github_login.github_user_created_at =
-                    ActiveValue::set(github_user_created_at);
-            }
+            user_by_github_login.github_user_created_at =
+                ActiveValue::set(Some(github_user_created_at));
             Ok(user_by_github_login.update(tx).await?)
         } else {
             let user = user::Entity::insert(user::ActiveModel {
                 email_address: ActiveValue::set(github_email.map(|email| email.into())),
                 github_login: ActiveValue::set(github_login.into()),
                 github_user_id: ActiveValue::set(github_user_id),
-                github_user_created_at: ActiveValue::set(github_user_created_at),
+                github_user_created_at: ActiveValue::set(Some(github_user_created_at)),
                 admin: ActiveValue::set(false),
                 invite_count: ActiveValue::set(0),
                 invite_code: ActiveValue::set(None),
