@@ -866,6 +866,7 @@ impl FakeFs {
                             inode: new_inode,
                             mtime: new_mtime,
                             content: Vec::new(),
+                            len: 0,
                         })));
                     }
                     btree_map::Entry::Occupied(mut e) => match &mut *e.get_mut().lock() {
