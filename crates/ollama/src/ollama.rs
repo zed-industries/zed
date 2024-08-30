@@ -72,31 +72,22 @@ pub struct Model {
 }
 
 // This could be dynamically retrieved via the API (1 call per model)
-// curl -s http://localhost:11434/api/show -d '{"model": "llama3.1:latest"}' | jq '.model_info."llama.context_length"'
+// curl -s http://localhost:11434/api/show9 -d '{"model": "llama3.1:latest"}'
+// under ."model_info"."*.context_length"
 fn get_max_tokens(name: &str) -> usize {
     /// Default context length for unknown models.
     const DEFAULT_TOKENS: usize = 2048;
     /// Magic number. Lets many Ollama models work with ~16GB of ram.
     const MAXIMUM_TOKENS: usize = 16384;
-    match name {
-        "dolphin-llama3:8b-256k" => 262144, // 256K
-        _ => match name.split(':').next().unwrap() {
-            "mistral-nemo" => 1024000,                                      // 1M
-            "deepseek-coder-v2" => 163840,                                  // 160K
-            "llama3.1" | "phi3" | "command-r" | "command-r-plus" => 131072, // 128K
-            "codeqwen" => 65536,                                            // 64K
-            "mistral" | "mistral-large" | "dolphin-mistral" | "codestral"   // 32K
-            | "mistral-openorca" | "dolphin-mixtral" | "mixstral" | "llava"
-            | "qwen" | "qwen2" | "wizardlm2" | "wizard-math" => 32768,
-            "codellama" | "stable-code" | "deepseek-coder" | "starcoder2"   // 16K
-            | "wizardcoder" => 16384,
-            "llama3" | "gemma2" | "gemma" | "codegemma" | "dolphin-llama3"  // 8K
-            | "llava-llama3" | "starcoder" | "openchat" | "aya" => 8192,
-            "llama2" | "yi" | "llama2-chinese" | "vicuna" | "nous-hermes2"  // 4K
-            | "stablelm2" => 4096,
-            "phi" | "orca-mini" | "tinyllama" | "granite-code" => 2048,     // 2K
-            _ => DEFAULT_TOKENS,                                            // 2K (default)
-        },
+
+    match name.split(':').next().unwrap() {
+        "phi" | "tinyllama" | "granite-code" => 2048,
+        "llama2" | "yi" | "vicuna" | "stablelm2" => 4096,
+        "llama3" | "gemma2" | "gemma" | "codegemma" | "starcoder" | "aya" => 8192,
+        "codellama" | "starcoder2" => 16384,
+        "mistral" | "codestral" | "mixstral" | "llava" | "qwen2" | "dolphin-mixtral" => 32768,
+        "llama3.1" | "phi3" | "phi3.5" | "command-r" | "deepseek-coder-v2" => 128000,
+        _ => DEFAULT_TOKENS,
     }
     .clamp(1, MAXIMUM_TOKENS)
 }
@@ -105,7 +96,9 @@ impl Model {
     pub fn new(name: &str, display_name: Option<&str>, max_tokens: Option<usize>) -> Self {
         Self {
             name: name.to_owned(),
-            display_name: display_name.map(|s| s.to_owned()),
+            display_name: display_name
+                .map(ToString::to_string)
+                .or_else(|| name.strip_suffix(":latest").map(ToString::to_string)),
             max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
         }
@@ -116,13 +109,7 @@ impl Model {
     }
 
     pub fn display_name(&self) -> &str {
-        if let Some(display_name) = &self.display_name {
-            display_name
-        } else if let Some(short) = self.name.strip_suffix(":latest") {
-            short
-        } else {
-            &self.name
-        }
+        self.display_name.as_ref().unwrap_or(&self.name)
     }
 
     pub fn max_token_count(&self) -> usize {
