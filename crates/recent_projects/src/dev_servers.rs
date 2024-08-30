@@ -138,7 +138,7 @@ impl DevServerProjects {
             base_text_style: base_style,
             code_block: gpui::StyleRefinement {
                 text: Some(gpui::TextStyleRefinement {
-                    font_family: Some("Zed Plex Mono".into()),
+                    font_family: Some("IBM Plex Mono".into()),
                     ..Default::default()
                 }),
                 ..Default::default()

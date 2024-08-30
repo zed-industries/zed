@@ -44,8 +44,8 @@ in
 
       FONTCONFIG_FILE = pkgs.makeFontsConf {
         fontDirectories = [
-          "./assets/fonts/zed-mono"
-          "./assets/fonts/zed-sans"
+          "./assets/fonts/ibm-plex-mono"
+          "./assets/fonts/ibm-plex-sans"
         ];
       };
       ZSTD_SYS_USE_PKG_CONFIG = true;

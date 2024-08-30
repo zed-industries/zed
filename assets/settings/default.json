@@ -25,14 +25,14 @@
     "inline_completion_provider": "copilot"
   },
   // The name of a font to use for rendering text in the editor
-  "buffer_font_family": "Zed Plex Mono",
+  "buffer_font_family": "IBM Plex Mono",
   // Set the buffer text's font fallbacks, this will be merged with
   // the platform's default fallbacks.
   "buffer_font_fallbacks": null,
   // The OpenType features to enable for text in the editor.
   "buffer_font_features": {
     // Disable ligatures:
-    // "calt": false
+    "calt": false
   },
   // The default font size for text in the editor
   "buffer_font_size": 15,
@@ -51,7 +51,7 @@
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
   // You can set this to ".SystemUIFont" to use the system font
-  "ui_font_family": "Zed Plex Sans",
+  "ui_font_family": "IBM Plex Sans",
   // Set the UI's font fallbacks, this will be merged with the platform's
   // default font fallbacks.
   "ui_font_fallbacks": null,
@@ -703,7 +703,7 @@
     // "font_size": 15,
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
-    // "font_family": "Zed Plex Mono",
+    // "font_family": "IBM Plex Mono",
     // Set the terminal's font fallbacks. If this option is not included,
     // the terminal will default to matching the buffer's font fallbacks.
     // This will be merged with the platform's default font fallbacks

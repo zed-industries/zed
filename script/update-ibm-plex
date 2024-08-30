@@ -1,0 +1,55 @@
+#!/bin/sh
+set -eu
+
+REPO="https://github.com/IBM/plex"
+ASSET_FONTS_DIR="assets/fonts"
+FONT_NAMES=("plex-sans" "plex-mono")
+FILENAMES=("IBMPlexSans" "IBMPlexMono")
+STYLES=("Regular" "Italic" "Bold" "BoldItalic")
+
+run_else() { $1 >/dev/null 2>&1 || { echo "$2"; exit 1; }; }
+
+run_else "gh"                       "gh CLI missing"
+run_else "which unzip"              "unzip CLI missing"
+run_else "gh auth status"           "run: gh auth login"
+run_else "ls ${ASSET_FONTS_DIR}"    "Not in repo root. Run from repo root."
+
+pushd "${ASSET_FONTS_DIR}"
+
+for i in $(seq 0 $((${#FONT_NAMES[@]} - 1))); do
+    font="${FONT_NAMES[$i]}"
+    filename="${FILENAMES[$i]}"
+    tagName=$(gh release list \
+        --repo "$REPO" \
+        --json tagName,createdAt,isDraft,isPrerelease \
+        --jq '
+            [.[] | select(.tagName | startswith("'"@ibm/$font"'@"))
+            | select(.isDraft == false and .isPrerelease == false)
+            | {tagName, createdAt}]
+            | sort_by(.tagName | split("@")[2] | split(".") | map(tonumber))
+            | reverse
+            | first
+            | .tagName
+        ')
+    releaseDate=$(gh api /repos/IBM/plex/releases/tags/"$tagName" --jq '.published_at[:10]')
+    releaseUrl=$(gh api /repos/IBM/plex/releases/tags/"$tagName" --jq '.html_url')
+    echo "- Update [${tagName}](${releaseUrl})"
+    zipFileName=$(gh api /repos/IBM/plex/releases/tags/"$tagName" --jq '.assets[].name | select(endswith(".zip"))')
+    gh release download "$tagName" \
+        --repo https://github.com/IBM/plex \
+        --clobber \
+        --pattern "$zipFileName"
+
+    prefix="ibm-${font}/fonts/complete/ttf"
+    out_dir="ibm-${font}"
+    files_to_extract="$prefix/license.txt"
+    for style in "${STYLES[@]}"; do
+        files_to_extract+=" $prefix/${filename}-$style.ttf"
+    done
+    unzip -q -o -j "$zipFileName" $files_to_extract -d $out_dir
+    rm "$zipFileName"
+done
+echo
+echo "\`\`\`"
+shasum -a 256 */*.ttf
+echo "\`\`\`"

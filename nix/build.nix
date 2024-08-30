@@ -79,8 +79,8 @@
       ZSTD_SYS_USE_PKG_CONFIG = true;
       FONTCONFIG_FILE = makeFontsConf {
         fontDirectories = [
-          "../assets/fonts/zed-mono"
-          "../assets/fonts/zed-sans"
+          "../assets/fonts/ibm-plex-mono"
+          "../assets/fonts/ibm-plex-sans"
         ];
       };
       ZED_UPDATE_EXPLANATION = "zed has been installed using nix. Auto-updates have thus been disabled.";

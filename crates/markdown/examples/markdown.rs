@@ -117,12 +117,12 @@ pub fn main() {
             cx.new_view(|cx| {
                 let markdown_style = MarkdownStyle {
                     base_text_style: gpui::TextStyle {
-                        font_family: "Zed Plex Sans".into(),
+                        font_family: "IBM Plex Sans".into(),
                         color: cx.theme().colors().terminal_ansi_black,
                         ..Default::default()
                     },
                     code_block: StyleRefinement::default()
-                        .font_family("Zed Plex Mono")
+                        .font_family("IBM Plex Mono")
                         .m(rems(1.))
                         .bg(rgb(0xAAAAAAA)),
                     inline_code: gpui::TextStyleRefinement {

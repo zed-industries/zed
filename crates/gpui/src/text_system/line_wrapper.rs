@@ -223,12 +223,12 @@ mod tests {
         let cx = TestAppContext::new(dispatcher, None);
         cx.text_system()
             .add_fonts(vec![std::fs::read(
-                "../../assets/fonts/plex-mono/ZedPlexMono-Regular.ttf",
+                "../../assets/fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf",
             )
             .unwrap()
             .into()])
             .unwrap();
-        let id = cx.text_system().font_id(&font("Zed Plex Mono")).unwrap();
+        let id = cx.text_system().font_id(&font("IBM Plex Mono")).unwrap();
         LineWrapper::new(id, px(16.), cx.text_system().platform_text_system.clone())
     }
 
