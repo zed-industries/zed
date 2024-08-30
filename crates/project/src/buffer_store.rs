@@ -18,7 +18,7 @@ use language::{
     Buffer, Capability, Event as BufferEvent, File as _, Language, Operation,
 };
 use rpc::{
-    proto::{self, AnyProtoClient, EnvelopedMessage},
+    proto::{self, AnyProtoClient},
     ErrorExt as _, TypedEnvelope,
 };
 use smol::channel::Receiver;
@@ -63,7 +63,6 @@ pub enum BufferStoreEvent {
         buffer: Model<Buffer>,
         old_file: Option<Arc<dyn language::File>>,
     },
-    MessageToReplicas(Box<proto::Envelope>),
 }
 
 #[derive(Default)]
@@ -294,14 +293,15 @@ impl BufferStore {
                         buffer.remote_id().to_proto()
                     });
                     if let Some(project_id) = this.remote_id {
-                        cx.emit(BufferStoreEvent::MessageToReplicas(Box::new(
-                            proto::UpdateDiffBase {
-                                project_id,
-                                buffer_id,
-                                diff_base,
-                            }
-                            .into_envelope(0, None, None),
-                        )))
+                        if let Some(client) = &this.downstream_client {
+                            client
+                                .send(proto::UpdateDiffBase {
+                                    project_id,
+                                    buffer_id,
+                                    diff_base,
+                                })
+                                .log_err();
+                        }
                     }
                 }
             })
@@ -500,26 +500,25 @@ impl BufferStore {
             let new_file = save.await?;
             let mtime = new_file.mtime;
             this.update(&mut cx, |this, cx| {
-                if let Some(project_id) = this.remote_id {
+                if let Some(downstream_client) = this.downstream_client.as_ref() {
+                    let project_id = this.remote_id.unwrap_or(0);
                     if has_changed_file {
-                        cx.emit(BufferStoreEvent::MessageToReplicas(Box::new(
-                            proto::UpdateBufferFile {
+                        downstream_client
+                            .send(proto::UpdateBufferFile {
                                 project_id,
                                 buffer_id: buffer_id.to_proto(),
                                 file: Some(language::File::to_proto(&*new_file, cx)),
-                            }
-                            .into_envelope(0, None, None),
-                        )));
+                            })
+                            .log_err();
                     }
-                    cx.emit(BufferStoreEvent::MessageToReplicas(Box::new(
-                        proto::BufferSaved {
+                    downstream_client
+                        .send(proto::BufferSaved {
                             project_id,
                             buffer_id: buffer_id.to_proto(),
                             version: serialize_version(&version),
                             mtime: mtime.map(|time| time.into()),
-                        }
-                        .into_envelope(0, None, None),
-                    )));
+                        })
+                        .log_err();
                 }
             })?;
             buffer_handle.update(&mut cx, |buffer, cx| {
@@ -995,14 +994,15 @@ impl BufferStore {
             }
 
             if let Some(project_id) = self.remote_id {
-                events.push(BufferStoreEvent::MessageToReplicas(Box::new(
-                    proto::UpdateBufferFile {
-                        project_id,
-                        buffer_id: buffer_id.to_proto(),
-                        file: Some(new_file.to_proto(cx)),
-                    }
-                    .into_envelope(0, None, None),
-                )))
+                if let Some(client) = &self.downstream_client {
+                    client
+                        .send(proto::UpdateBufferFile {
+                            project_id,
+                            buffer_id: buffer_id.to_proto(),
+                            file: Some(new_file.to_proto(cx)),
+                        })
+                        .ok();
+                }
             }
 
             buffer.file_updated(Arc::new(new_file), cx);

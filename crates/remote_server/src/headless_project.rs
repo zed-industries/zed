@@ -2,10 +2,8 @@ use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
 use project::{
-    buffer_store::{BufferStore, BufferStoreEvent},
-    search::SearchQuery,
-    worktree_store::WorktreeStore,
-    ProjectPath, WorktreeId, WorktreeSettings,
+    buffer_store::BufferStore, search::SearchQuery, worktree_store::WorktreeStore, ProjectPath,
+    WorktreeId, WorktreeSettings,
 };
 use remote::SshSession;
 use rpc::{
@@ -18,7 +16,6 @@ use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
-use util::ResultExt as _;
 use worktree::Worktree;
 
 const PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
@@ -47,8 +44,6 @@ impl HeadlessProject {
             buffer_store.shared(PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
-        cx.subscribe(&buffer_store, Self::on_buffer_store_event)
-            .detach();
 
         session.add_request_handler(this.clone(), Self::handle_list_remote_directory);
         session.add_request_handler(this.clone(), Self::handle_add_worktree);
@@ -210,21 +205,5 @@ impl HeadlessProject {
             }
         }
         Ok(proto::ListRemoteDirectoryResponse { entries })
-    }
-
-    pub fn on_buffer_store_event(
-        &mut self,
-        _: Model<BufferStore>,
-        event: &BufferStoreEvent,
-        _: &mut ModelContext<Self>,
-    ) {
-        match event {
-            BufferStoreEvent::MessageToReplicas(message) => {
-                self.session
-                    .send_dynamic(message.as_ref().clone())
-                    .log_err();
-            }
-            _ => {}
-        }
     }
 }

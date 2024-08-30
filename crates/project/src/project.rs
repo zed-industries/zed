@@ -2041,12 +2041,6 @@ impl Project {
                 self.detect_language_for_buffer(&buffer, cx);
                 self.register_buffer_with_language_servers(&buffer, cx);
             }
-            BufferStoreEvent::MessageToReplicas(message) => {
-                // TODO - remove this event, give buffer store a downstream client instead
-                self.client
-                    .send_dynamic(message.as_ref().clone(), "")
-                    .log_err();
-            }
             BufferStoreEvent::BufferDropped(buffer_id) => {
                 if let Some(ref ssh_session) = self.ssh_session {
                     ssh_session
