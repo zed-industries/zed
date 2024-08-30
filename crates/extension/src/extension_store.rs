@@ -772,6 +772,7 @@ impl ExtensionStore {
 
     pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut ModelContext<Self>) {
         let extension_dir = self.installed_dir.join(extension_id.as_ref());
+        let work_dir = self.wasm_host.work_dir.join(extension_id.as_ref());
         let fs = self.fs.clone();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
@@ -792,6 +793,15 @@ impl ExtensionStore {
                     .ok();
                 }
             });
+
+            fs.remove_dir(
+                &work_dir,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
 
             fs.remove_dir(
                 &extension_dir,
