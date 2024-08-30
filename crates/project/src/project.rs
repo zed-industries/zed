@@ -2511,20 +2511,6 @@ impl Project {
         buffers: impl IntoIterator<Item = Model<Buffer>>,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.is_via_collab() {
-            let request = self.client.request(proto::RestartLanguageServers {
-                project_id: self.remote_id().unwrap(),
-                buffer_ids: buffers
-                    .into_iter()
-                    .map(|b| b.read(cx).remote_id().to_proto())
-                    .collect(),
-            });
-            cx.background_executor()
-                .spawn(request)
-                .detach_and_log_err(cx);
-            return;
-        }
-
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.restart_language_servers_for_buffers(buffers, cx)
         })

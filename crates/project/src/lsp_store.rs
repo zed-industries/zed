@@ -4335,10 +4335,10 @@ impl LspStore {
             });
 
             let project_id = self.project_id;
-            if let Some(downstream_client) = self.downstream_client.clone() {
-                for (worktree_id, summaries) in self.diagnostic_summaries.iter_mut() {
-                    summaries.retain(|path, summaries_by_server_id| {
-                        if summaries_by_server_id.remove(&server_id).is_some() {
+            for (worktree_id, summaries) in self.diagnostic_summaries.iter_mut() {
+                summaries.retain(|path, summaries_by_server_id| {
+                    if summaries_by_server_id.remove(&server_id).is_some() {
+                        if let Some(downstream_client) = self.downstream_client.clone() {
                             downstream_client
                                 .send(proto::UpdateDiagnosticSummary {
                                     project_id,
@@ -4351,12 +4351,12 @@ impl LspStore {
                                     }),
                                 })
                                 .log_err();
-                            !summaries_by_server_id.is_empty()
-                        } else {
-                            true
                         }
-                    });
-                }
+                        !summaries_by_server_id.is_empty()
+                    } else {
+                        true
+                    }
+                });
             }
 
             for diagnostics in self.diagnostics.values_mut() {
@@ -4392,24 +4392,37 @@ impl LspStore {
         buffers: impl IntoIterator<Item = Model<Buffer>>,
         cx: &mut ModelContext<Self>,
     ) {
-        #[allow(clippy::mutable_key_type)]
-        let language_server_lookup_info: HashSet<(Model<Worktree>, Arc<Language>)> = buffers
-            .into_iter()
-            .filter_map(|buffer| {
-                let buffer = buffer.read(cx);
-                let file = buffer.file()?;
-                let worktree = File::from_dyn(Some(file))?.worktree.clone();
-                let language = self
-                    .languages
-                    .language_for_file(file, Some(buffer.as_rope()), cx)
-                    .now_or_never()?
-                    .ok()?;
-                Some((worktree, language))
-            })
-            .collect();
+        if let Some(client) = self.upstream_client.clone() {
+            let request = client.request(proto::RestartLanguageServers {
+                project_id: self.project_id,
+                buffer_ids: buffers
+                    .into_iter()
+                    .map(|b| b.read(cx).remote_id().to_proto())
+                    .collect(),
+            });
+            cx.background_executor()
+                .spawn(request)
+                .detach_and_log_err(cx);
+        } else {
+            #[allow(clippy::mutable_key_type)]
+            let language_server_lookup_info: HashSet<(Model<Worktree>, Arc<Language>)> = buffers
+                .into_iter()
+                .filter_map(|buffer| {
+                    let buffer = buffer.read(cx);
+                    let file = buffer.file()?;
+                    let worktree = File::from_dyn(Some(file))?.worktree.clone();
+                    let language = self
+                        .languages
+                        .language_for_file(file, Some(buffer.as_rope()), cx)
+                        .now_or_never()?
+                        .ok()?;
+                    Some((worktree, language))
+                })
+                .collect();
 
-        for (worktree, language) in language_server_lookup_info {
-            self.restart_language_servers(worktree, language, cx);
+            for (worktree, language) in language_server_lookup_info {
+                self.restart_language_servers(worktree, language, cx);
+            }
         }
     }
 
