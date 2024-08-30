@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub(crate) mod czech;
 pub(crate) mod german;
 pub(crate) mod russian;
