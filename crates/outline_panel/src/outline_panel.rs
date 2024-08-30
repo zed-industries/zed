@@ -126,7 +126,6 @@ struct SearchState {
     kind: SearchKind,
     query: String,
     matches: Vec<(Range<editor::Anchor>, OnceCell<Arc<SearchData>>)>,
-    highlight_request_sent: HashSet<Range<editor::Anchor>>,
     highlight_search_match_tx: channel::Sender<HighlightArguments>,
     _search_match_highlighter: Task<()>,
     _search_match_notify: Task<()>,
@@ -154,7 +153,6 @@ impl SearchState {
                 .into_iter()
                 .map(|range| (range, OnceCell::new()))
                 .collect(),
-            highlight_request_sent: HashSet::default(),
             highlight_search_match_tx,
             _search_match_highlighter: cx.background_executor().spawn(async move {
                 while let Some(highlight_arguments) = highlight_search_match_rx.recv().await.ok() {
@@ -223,8 +221,8 @@ impl SearchState {
             }),
             _search_match_notify: cx.spawn(|outline_panel, mut cx| async move {
                 while let Some(()) = notity_rx.recv().await.ok() {
-                    let update_result = outline_panel.update(&mut cx, |_, cx| {
-                        cx.notify();
+                    let update_result = outline_panel.update(&mut cx, |outline_panel, cx| {
+                        outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), cx);
                     });
                     if update_result.is_err() {
                         break;
@@ -241,19 +239,15 @@ impl SearchState {
     ) {
         if let Some((_, search_data)) = self.matches.iter().find(|(range, _)| range == match_range)
         {
-            if !self.highlight_request_sent.contains(match_range) {
+            if search_data.get().is_none() {
                 let search_data = search_data
                     .get_or_init(|| Arc::new(SearchData::new(match_range, multi_buffer_snapshot)));
-                let sent = self
-                    .highlight_search_match_tx
+                self.highlight_search_match_tx
                     .send_blocking(HighlightArguments {
                         multi_buffer_snapshot: multi_buffer_snapshot.clone(),
                         search_data: Arc::clone(search_data),
                     })
                     .ok();
-                if sent.is_some() {
-                    self.highlight_request_sent.insert(match_range.clone());
-                }
             }
         }
     }
@@ -359,7 +353,7 @@ struct SearchEntry {
     render_data: Arc<SearchData>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 enum SearchKind {
     Project,
     Buffer,
@@ -401,6 +395,7 @@ impl PartialEq for PanelEntry {
 impl Eq for PanelEntry {}
 
 const SEARCH_MATCH_CONTEXT_SIZE: u32 = 40;
+const PRERENDER_SEARCH_ENTRIES: usize = 300;
 const TRUNCATED_CONTEXT_MARK: &str = "…";
 
 impl SearchData {
@@ -2388,6 +2383,7 @@ impl OutlinePanel {
         self.excerpts.clear();
         self.cached_entries = Vec::new();
         self.pinned = false;
+        self.mode = ItemsDisplayMode::Outline;
     }
 
     fn location_for_editor_selection(
@@ -2825,6 +2821,7 @@ impl OutlinePanel {
                     depth: usize,
                 }
                 let mut parent_dirs = Vec::<ParentStats>::new();
+                let mut prerender_search_entries = PRERENDER_SEARCH_ENTRIES;
                 for entry in outline_panel.fs_entries.clone() {
                     let is_expanded = outline_panel.is_expanded(&entry);
                     let (depth, should_add) = match &entry {
@@ -3043,6 +3040,7 @@ impl OutlinePanel {
                         ItemsDisplayMode::Search(_) => {
                             if is_singleton || query.is_some() || (should_add && is_expanded) {
                                 outline_panel.add_search_entries(
+                                    &mut prerender_search_entries,
                                     &mut entries,
                                     &mut match_candidates,
                                     entry.clone(),
@@ -3426,6 +3424,7 @@ impl OutlinePanel {
     #[allow(clippy::too_many_arguments)]
     fn add_search_entries(
         &mut self,
+        prerender_search_entries: &mut usize,
         entries: &mut Vec<CachedEntry>,
         match_candidates: &mut Vec<StringMatchCandidate>,
         parent_entry: FsEntry,
@@ -3434,12 +3433,13 @@ impl OutlinePanel {
         is_singleton: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let ItemsDisplayMode::Search(search_state) = &self.mode else {
-            return;
-        };
         let Some(active_editor) = self.active_editor() else {
             return;
         };
+        let ItemsDisplayMode::Search(search_state) = &mut self.mode else {
+            return;
+        };
+
         let kind = search_state.kind;
         let related_excerpts = match &parent_entry {
             FsEntry::Directory(_, _) => return,
@@ -3452,25 +3452,82 @@ impl OutlinePanel {
 
         let depth = if is_singleton { 0 } else { parent_depth + 1 };
         let multi_buffer_snapshot = active_editor.read(cx).buffer().read(cx).snapshot(cx);
-        let match_ranges_to_render = search_state.matches.iter().filter(|(match_range, _)| {
-            related_excerpts.contains(&match_range.start.excerpt_id)
-                || related_excerpts.contains(&match_range.end.excerpt_id)
-        });
+        let new_search_matches = search_state
+            .matches
+            .iter()
+            .filter(|(match_range, _)| {
+                related_excerpts.contains(&match_range.start.excerpt_id)
+                    || related_excerpts.contains(&match_range.end.excerpt_id)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
 
-        for (match_range, search_data) in match_ranges_to_render {
-            let render_data =
-                Arc::clone(search_data.get_or_init(|| {
-                    Arc::new(SearchData::new(match_range, &multi_buffer_snapshot))
-                }));
+        let previous_search_matches = entries
+            .iter()
+            .skip_while(|entry| {
+                if let PanelEntry::Fs(entry) = &entry.entry {
+                    entry == &parent_entry
+                } else {
+                    true
+                }
+            })
+            .take_while(|entry| matches!(entry.entry, PanelEntry::Search(_)))
+            .fold(
+                HashMap::default(),
+                |mut previous_matches, previous_entry| match &previous_entry.entry {
+                    PanelEntry::Search(search_entry) => {
+                        previous_matches.insert(
+                            (search_entry.kind, &search_entry.match_range),
+                            &search_entry.render_data,
+                        );
+                        previous_matches
+                    }
+                    _ => previous_matches,
+                },
+            );
+
+        let new_search_entries = new_search_matches
+            .into_iter()
+            .map(|(match_range, search_data)| {
+                let previous_search_data = previous_search_matches
+                    .get(&(kind, &match_range))
+                    .map(|&data| data);
+                let render_data = search_data
+                    .get()
+                    .or_else(|| previous_search_data)
+                    .unwrap_or_else(|| {
+                        search_data.get_or_init(|| {
+                            Arc::new(SearchData::new(&match_range, &multi_buffer_snapshot))
+                        })
+                    });
+                if let (Some(previous_highlights), None) = (
+                    previous_search_data.and_then(|data| data.highlights_data.get()),
+                    render_data.highlights_data.get(),
+                ) {
+                    render_data
+                        .highlights_data
+                        .set(previous_highlights.clone())
+                        .ok();
+                }
+
+                let render_data = Arc::clone(render_data);
+                *prerender_search_entries = prerender_search_entries.saturating_sub(1);
+                if *prerender_search_entries > 0 {
+                    search_state.highlight_search_match(&match_range, &multi_buffer_snapshot)
+                }
+                SearchEntry {
+                    match_range,
+                    kind,
+                    render_data,
+                }
+            })
+            .collect::<Vec<_>>();
+        for new_search_entry in new_search_entries {
             self.push_entry(
                 entries,
                 match_candidates,
                 filter_query.is_some(),
-                PanelEntry::Search(SearchEntry {
-                    match_range: match_range.clone(),
-                    kind,
-                    render_data,
-                }),
+                PanelEntry::Search(new_search_entry),
                 depth,
                 cx,
             );
