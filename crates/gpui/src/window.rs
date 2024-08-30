@@ -2558,12 +2558,13 @@ impl<'a> WindowContext<'a> {
                 .scene
                 .insert_primitive(PolychromeSprite {
                     order: 0,
+                    pad: 0,
                     grayscale: false,
                     bounds,
                     corner_radii: Default::default(),
                     content_mask,
                     tile,
-                    opacity: opacity.into(),
+                    opacity,
                 });
         }
         Ok(())
@@ -2675,12 +2676,13 @@ impl<'a> WindowContext<'a> {
             .scene
             .insert_primitive(PolychromeSprite {
                 order: 0,
+                pad: 0,
                 grayscale,
                 bounds,
                 content_mask,
                 corner_radii,
                 tile,
-                opacity: opacity.into(),
+                opacity,
             });
         Ok(())
     }

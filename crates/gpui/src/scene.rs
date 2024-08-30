@@ -12,16 +12,6 @@ pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 
 pub(crate) type DrawOrder = u32;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[repr(transparent)]
-pub(crate) struct Opacity(pub(crate) f32);
-impl Eq for Opacity {}
-impl From<f32> for Opacity {
-    fn from(value: f32) -> Self {
-        Self(value)
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
@@ -650,17 +640,19 @@ impl From<MonochromeSprite> for Primitive {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub(crate) struct PolychromeSprite {
     pub order: DrawOrder,
+    pub pad: u32, // align to 8 bytes
     pub grayscale: bool,
-    pub opacity: Opacity,
+    pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
 }
+impl Eq for PolychromeSprite {}
 
 impl Ord for PolychromeSprite {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
