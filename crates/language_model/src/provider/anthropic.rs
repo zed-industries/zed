@@ -370,7 +370,7 @@ impl LanguageModel for AnthropicModel {
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await.map_err(|err| anyhow!(err))?;
-            Ok(anthropic::extract_text_from_events(response))
+            Ok(anthropic::extract_content_from_events(response))
         });
         async move {
             Ok(future

@@ -330,24 +330,28 @@ pub async fn stream_completion_with_rate_limit_info(
     }
 }
 
-pub fn extract_text_from_events(
+pub fn extract_content_from_events(
     response: impl Stream<Item = Result<Event, AnthropicError>>,
 ) -> impl Stream<Item = Result<String, AnthropicError>> {
-    response.filter_map(|response| async move {
-        match response {
-            Ok(response) => match dbg!(response) {
+    // TODO: We currently assume that the content is in order and not interleaved.
+    // We will likely need to account for the `index` of each content block.
+    response.filter_map(|event| async move {
+        match event {
+            Ok(event) => match event {
                 Event::ContentBlockStart { content_block, .. } => match content_block {
-                    ResponseContent::Text { text, .. } => Some(Ok(text)),
-                    _ => None,
+                    ResponseContent::Text { text } => Some(Ok(text)),
+                    ResponseContent::ToolUse { id, name, input } => {
+                        Some(Ok(format!("\nTool Use: {id} {name} {input:?}\n")))
+                    }
                 },
                 Event::ContentBlockDelta { delta, .. } => match delta {
                     ContentDelta::TextDelta { text } => Some(Ok(text)),
-                    _ => None,
+                    ContentDelta::InputJsonDelta { partial_json } => Some(Ok(partial_json)),
                 },
                 Event::Error { error } => Some(Err(AnthropicError::ApiError(error))),
                 _ => None,
             },
-            Err(error) => Some(Err(error)),
+            Err(err) => Some(Err(err)),
         }
     })
 }

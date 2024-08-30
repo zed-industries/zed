@@ -515,7 +515,7 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    Ok(anthropic::extract_text_from_events(
+                    Ok(anthropic::extract_content_from_events(
                         response_lines(response).map_err(AnthropicError::Other),
                     ))
                 });
