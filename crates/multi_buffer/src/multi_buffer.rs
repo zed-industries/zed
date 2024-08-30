@@ -9,12 +9,12 @@ use git::diff::DiffHunk;
 use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext};
 use itertools::Itertools;
 use language::{
-    char_kind,
     language_settings::{language_settings, LanguageSettings},
-    AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharKind, Chunk,
-    CursorShape, DiagnosticEntry, File, IndentGuide, IndentSize, Language, LanguageScope,
-    OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension,
-    ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
+    AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
+    CharKind, Chunk, CursorShape, DiagnosticEntry, File, IndentGuide, IndentSize, Language,
+    LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
+    TextDimension, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _,
+    TransactionId, Unclipped,
 };
 use smallvec::SmallVec;
 use std::{
@@ -2295,21 +2295,27 @@ impl MultiBufferSnapshot {
                 .eq(needle.bytes())
     }
 
-    pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
+    pub fn surrounding_word<T: ToOffset>(
+        &self,
+        start: T,
+        for_completion: bool,
+    ) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
 
-        let scope = self.language_scope_at(start);
-        let kind = |c| char_kind(&scope, c);
+        let classifier = self
+            .char_classifier_at(start)
+            .for_completion(for_completion);
+
         let word_kind = cmp::max(
-            prev_chars.peek().copied().map(kind),
-            next_chars.peek().copied().map(kind),
+            prev_chars.peek().copied().map(|c| classifier.kind(c)),
+            next_chars.peek().copied().map(|c| classifier.kind(c)),
         );
 
         for ch in prev_chars {
-            if Some(kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
                 start -= ch.len_utf8();
             } else {
                 break;
@@ -2317,7 +2323,7 @@ impl MultiBufferSnapshot {
         }
 
         for ch in next_chars {
-            if Some(kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
                 end += ch.len_utf8();
             } else {
                 break;
@@ -3476,6 +3482,12 @@ impl MultiBufferSnapshot {
     pub fn language_scope_at<T: ToOffset>(&self, point: T) -> Option<LanguageScope> {
         self.point_to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_scope_at(offset))
+    }
+
+    pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {
+        self.point_to_buffer_offset(point)
+            .map(|(buffer, offset)| buffer.char_classifier_at(offset))
+            .unwrap_or_default()
     }
 
     pub fn language_indent_size_at<T: ToOffset>(
