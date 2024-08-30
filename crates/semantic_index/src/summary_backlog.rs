@@ -27,7 +27,7 @@ impl SummaryBacklog {
     /// Returns true if the total number of bytes in the backlog exceeds a predefined threshold.
     pub fn needs_drain(&self) -> bool {
         self.files.len() > MAX_FILES_BEFORE_RESUMMARIZE ||
-        // The whole purpose of the cached total_bytes is to make this comparision cheap.
+        // The whole purpose of the cached total_bytes is to make this comparison cheap.
         // Otherwise we'd have to traverse the entire dictionary every time we wanted this answer.
         self.total_bytes > MAX_BYTES_BEFORE_RESUMMARIZE
     }

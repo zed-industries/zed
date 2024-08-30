@@ -198,7 +198,7 @@ async fn commands_for_summaries(
     let mut final_response = Vec::new();
     let mut prompts = Vec::new();
 
-    // TODO We only need to create multiple Requests becuase we currently
+    // TODO We only need to create multiple Requests because we currently
     // don't have the ability to tell if a CompletionProvider::complete response
     // was a "too many tokens in this request" error. If we had that, then
     // we could try the request once, instead of having to make separate requests
