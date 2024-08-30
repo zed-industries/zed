@@ -337,6 +337,9 @@ pub fn extract_content_from_events(
         current_tool_use_index: Option<usize>,
     }
 
+    const INDENT: &str = "  ";
+    const NEWLINE: char = '\n';
+
     futures::stream::unfold(
         (
             events,
@@ -355,11 +358,31 @@ pub fn extract_content_from_events(
                             ResponseContent::Text { text } => {
                                 return Some((Ok(text), (stream, state)));
                             }
-                            ResponseContent::ToolUse { id, name, input } => {
+                            ResponseContent::ToolUse { id, name, .. } => {
                                 state.current_tool_use_index = Some(index);
 
-                                let content = format!("\nTool Use: {id} {name} {input:?}\n");
-                                return Some((Ok(content), (stream, state)));
+                                let mut text = String::new();
+                                text.push(NEWLINE);
+
+                                text.push_str("<tool_use>");
+                                text.push(NEWLINE);
+
+                                text.push_str(INDENT);
+                                text.push_str("<id>");
+                                text.push_str(&id);
+                                text.push_str("</id>");
+                                text.push(NEWLINE);
+
+                                text.push_str(INDENT);
+                                text.push_str("<name>");
+                                text.push_str(&name);
+                                text.push_str("</name>");
+                                text.push(NEWLINE);
+
+                                text.push_str(INDENT);
+                                text.push_str("<input>");
+
+                                return Some((Ok(text), (stream, state)));
                             }
                         },
                         Event::ContentBlockDelta { index, delta } => match delta {
@@ -372,6 +395,16 @@ pub fn extract_content_from_events(
                                 }
                             }
                         },
+                        Event::ContentBlockStop { index } => {
+                            if Some(index) == state.current_tool_use_index {
+                                let mut text = String::new();
+                                text.push_str("</input>");
+                                text.push(NEWLINE);
+                                text.push_str("</tool_use>");
+
+                                return Some((Ok(text), (stream, state)));
+                            }
+                        }
                         Event::Error { error } => {
                             return Some((Err(AnthropicError::ApiError(error)), (stream, state)));
                         }
