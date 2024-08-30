@@ -3,7 +3,7 @@ use crate::{rgb, Hsla, Rgba, WindowAppearance};
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 /// The appearance of the base gpui colors, used to style gpui elements
 ///
-/// Varries based on the system's current [WindowAppearance].
+/// Varies based on the system's current [WindowAppearance].
 pub enum DefaultThemeAppearance {
     #[default]
     /// Use the set of colors for light appearances
