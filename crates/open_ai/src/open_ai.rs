@@ -120,14 +120,10 @@ impl Model {
 
     pub fn max_output_tokens(&self) -> Option<u32> {
         match self {
-            Self::ThreePointFiveTurbo => Some(4096),
-            Self::Four => Some(8192),
-            Self::FourTurbo => Some(4096),
-            Self::FourOmni => Some(4096),
-            Self::FourOmniMini => Some(16384),
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
+            _ => None,
         }
     }
 }
