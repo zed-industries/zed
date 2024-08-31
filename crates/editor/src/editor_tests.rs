@@ -2120,7 +2120,12 @@ fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
                 DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 10),
             ])
         });
-        view.delete_to_next_word_end(&DeleteToNextWordEnd, cx);
+        view.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: false,
+            },
+            cx,
+        );
         assert_eq!(view.buffer.read(cx).read(cx).text(), "e t te our");
     });
 }
@@ -2157,6 +2162,48 @@ fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
         view.delete_to_previous_word_start(&del_to_prev_word_start_ignore_newlines, cx);
         assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n");
         view.delete_to_previous_word_start(&del_to_prev_word_start_ignore_newlines, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "");
+    });
+}
+
+#[gpui::test]
+fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("\none\n   two\nthree\n   four", cx);
+        build_editor(buffer.clone(), cx)
+    });
+    let del_to_next_word_end = DeleteToNextWordEnd {
+        ignore_newlines: false,
+    };
+    let del_to_next_word_end_ignore_newlines = DeleteToNextWordEnd {
+        ignore_newlines: true,
+    };
+
+    _ = view.update(cx, |view, cx| {
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
+            ])
+        });
+        view.delete_to_next_word_end(&del_to_next_word_end, cx);
+        assert_eq!(
+            view.buffer.read(cx).read(cx).text(),
+            "one\n   two\nthree\n   four"
+        );
+        view.delete_to_next_word_end(&del_to_next_word_end, cx);
+        assert_eq!(
+            view.buffer.read(cx).read(cx).text(),
+            "\n   two\nthree\n   four"
+        );
+        view.delete_to_next_word_end(&del_to_next_word_end, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "two\nthree\n   four");
+        view.delete_to_next_word_end(&del_to_next_word_end, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "\nthree\n   four");
+        view.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, cx);
+        assert_eq!(view.buffer.read(cx).read(cx).text(), "\n   four");
+        view.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, cx);
         assert_eq!(view.buffer.read(cx).read(cx).text(), "");
     });
 }
