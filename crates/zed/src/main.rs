@@ -1158,13 +1158,13 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
             .await;
 
         while let Some(paths) = events.next().await {
-            for event in paths {
-                if fs.metadata(&event.path).await.ok().flatten().is_some() {
+            for path in paths {
+                if fs.metadata(&path).await.ok().flatten().is_some() {
                     if let Some(theme_registry) =
                         cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
                     {
                         if let Some(()) = theme_registry
-                            .load_user_theme(&event.path, fs.clone())
+                            .load_user_theme(&path, fs.clone())
                             .await
                             .log_err()
                         {
@@ -1194,10 +1194,8 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
     cx.spawn(|_| async move {
         let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
         while let Some(event) = events.next().await {
-            let has_language_file = event.iter().any(|event| {
-                event
-                    .path
-                    .extension()
+            let has_language_file = event.iter().any(|path| {
+                path.extension()
                     .map(|ext| ext.to_string_lossy().as_ref() == "scm")
                     .unwrap_or(false)
             });
