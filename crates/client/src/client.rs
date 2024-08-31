@@ -26,7 +26,7 @@ use gpui::{
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
-use proto::ProtoClient;
+use proto::{AnyProtoClient, ProtoClient};
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
@@ -318,7 +318,7 @@ struct ClientState {
                 + Fn(
                     AnyModel,
                     Box<dyn AnyTypedEnvelope>,
-                    &Arc<Client>,
+                    AnyProtoClient,
                     AsyncAppContext,
                 ) -> LocalBoxFuture<'static, Result<()>>,
         >,
@@ -752,7 +752,7 @@ impl Client {
         E: 'static,
         H: 'static
             + Sync
-            + Fn(Model<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F
+            + Fn(Model<E>, TypedEnvelope<M>, AnyProtoClient, AsyncAppContext) -> F
             + Send
             + Sync,
         F: 'static + Future<Output = Result<()>>,
@@ -819,7 +819,10 @@ impl Client {
     where
         M: EntityMessage,
         E: 'static,
-        H: 'static + Fn(AnyModel, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F + Send + Sync,
+        H: 'static
+            + Fn(AnyModel, TypedEnvelope<M>, AnyProtoClient, AsyncAppContext) -> F
+            + Send
+            + Sync,
         F: 'static + Future<Output = Result<()>>,
     {
         let model_type_id = TypeId::of::<E>();
@@ -873,15 +876,15 @@ impl Client {
     async fn respond_to_request<T: RequestMessage, F: Future<Output = Result<T::Response>>>(
         receipt: Receipt<T>,
         response: F,
-        client: Arc<Self>,
+        client: AnyProtoClient,
     ) -> Result<()> {
         match response.await {
             Ok(response) => {
-                client.respond(receipt, response)?;
+                client.send_response(receipt.message_id, response)?;
                 Ok(())
             }
             Err(error) => {
-                client.respond_with_error(receipt, error.to_proto())?;
+                client.send_response(receipt.message_id, error.to_proto())?;
                 Err(error)
             }
         }
@@ -1525,16 +1528,6 @@ impl Client {
         self.peer.send(self.connection_id()?, message)
     }
 
-    pub fn send_dynamic(
-        &self,
-        envelope: proto::Envelope,
-        message_type: &'static str,
-    ) -> Result<()> {
-        log::debug!("rpc send. client_id:{}, name:{}", self.id(), message_type);
-        let connection_id = self.connection_id()?;
-        self.peer.send_dynamic(connection_id, envelope)
-    }
-
     pub fn request<T: RequestMessage>(
         &self,
         request: T,
@@ -1616,20 +1609,6 @@ impl Client {
         }
     }
 
-    fn respond<T: RequestMessage>(&self, receipt: Receipt<T>, response: T::Response) -> Result<()> {
-        log::debug!("rpc respond. client_id:{}. name:{}", self.id(), T::NAME);
-        self.peer.respond(receipt, response)
-    }
-
-    fn respond_with_error<T: RequestMessage>(
-        &self,
-        receipt: Receipt<T>,
-        error: proto::Error,
-    ) -> Result<()> {
-        log::debug!("rpc respond. client_id:{}. name:{}", self.id(), T::NAME);
-        self.peer.respond_with_error(receipt, error)
-    }
-
     fn handle_message(
         self: &Arc<Client>,
         message: Box<dyn AnyTypedEnvelope>,
@@ -1692,7 +1671,7 @@ impl Client {
         drop(state);
 
         if let Some(handler) = handler {
-            let future = handler(subscriber, message, self, cx.clone());
+            let future = handler(subscriber, message, self.clone().into(), cx.clone());
             let client_id = self.id();
             log::debug!(
                 "rpc message received. client_id:{}, sender_id:{:?}, type:{}",
@@ -1743,7 +1722,69 @@ impl ProtoClient for Client {
     }
 
     fn send(&self, envelope: proto::Envelope, message_type: &'static str) -> Result<()> {
-        self.send_dynamic(envelope, message_type)
+        log::debug!("rpc send. client_id:{}, name:{}", self.id(), message_type);
+        let connection_id = self.connection_id()?;
+        self.peer.send_dynamic(connection_id, envelope)
+    }
+
+    fn send_response(&self, envelope: proto::Envelope, message_type: &'static str) -> Result<()> {
+        log::debug!(
+            "rpc respond. client_id:{}, name:{}",
+            self.id(),
+            message_type
+        );
+        let connection_id = self.connection_id()?;
+        self.peer.send_dynamic(connection_id, envelope)
+    }
+
+    fn add_message_handler(
+        &self,
+        message_type_id: TypeId,
+        model: gpui::AnyWeakModel,
+        handler: proto::ProtoMessageHandler,
+    ) {
+        let mut state = self.state.write();
+        state.models_by_message_type.insert(message_type_id, model);
+        let prev_handler = state.message_handlers.insert(message_type_id, handler);
+        if prev_handler.is_some() {
+            panic!("registered handler for the same message twice");
+        }
+    }
+
+    fn add_entity_message_handler(
+        &self,
+        message_type_id: TypeId,
+        model_type_id: TypeId,
+        entity_id_extractor: fn(&dyn AnyTypedEnvelope) -> u64,
+        handler: Arc<
+            dyn Send
+                + Sync
+                + Fn(
+                    AnyModel,
+                    Box<dyn AnyTypedEnvelope>,
+                    proto::AnyProtoClient,
+                    AsyncAppContext,
+                ) -> LocalBoxFuture<'static, anyhow::Result<()>>,
+        >,
+    ) {
+        let mut state = self.state.write();
+        state
+            .entity_types_by_message_type
+            .insert(message_type_id, model_type_id);
+        state
+            .entity_id_extractors
+            .entry(message_type_id)
+            .or_insert(entity_id_extractor);
+
+        let prev_handler = self
+            .state
+            .write()
+            .message_handlers
+            .insert(message_type_id, handler);
+
+        if prev_handler.is_some() {
+            panic!("registered handler for the same message twice");
+        }
     }
 }
 

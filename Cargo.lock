@@ -8512,6 +8512,7 @@ dependencies = [
  "anyhow",
  "collections",
  "futures 0.3.30",
+ "gpui",
  "prost",
  "prost-build",
  "serde",

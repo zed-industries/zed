@@ -9,7 +9,11 @@ pub use typed_envelope::*;
 
 use anyhow::anyhow;
 use collections::HashMap;
-use futures::{future::BoxFuture, Future};
+use futures::{
+    future::{BoxFuture, LocalBoxFuture},
+    Future, FutureExt as _,
+};
+use gpui::{AnyModel, AsyncAppContext, Model};
 pub use prost::{DecodeError, Message};
 use serde::Serialize;
 use std::{
@@ -22,6 +26,9 @@ use std::{
 };
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
+
+pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
+pub const SSH_PROJECT_ID: u64 = 0;
 
 pub trait EnvelopedMessage: Clone + Debug + Serialize + Sized + Send + Sync + 'static {
     const NAME: &'static str;
@@ -60,6 +67,17 @@ pub enum MessagePriority {
     Background,
 }
 
+pub type ProtoMessageHandler = Arc<
+    dyn Send
+        + Sync
+        + Fn(
+            AnyModel,
+            Box<dyn AnyTypedEnvelope>,
+            AnyProtoClient,
+            AsyncAppContext,
+        ) -> LocalBoxFuture<'static, anyhow::Result<()>>,
+>;
+
 pub trait ProtoClient: Send + Sync {
     fn request(
         &self,
@@ -68,6 +86,23 @@ pub trait ProtoClient: Send + Sync {
     ) -> BoxFuture<'static, anyhow::Result<Envelope>>;
 
     fn send(&self, envelope: Envelope, message_type: &'static str) -> anyhow::Result<()>;
+
+    fn send_response(&self, envelope: Envelope, message_type: &'static str) -> anyhow::Result<()>;
+
+    fn add_message_handler(
+        &self,
+        message_type_id: TypeId,
+        model: gpui::AnyWeakModel,
+        handler: ProtoMessageHandler,
+    );
+
+    fn add_entity_message_handler(
+        &self,
+        message_type_id: TypeId,
+        model_type_id: TypeId,
+        entity_id_extractor: fn(&dyn AnyTypedEnvelope) -> u64,
+        handler: ProtoMessageHandler,
+    );
 }
 
 #[derive(Clone)]
@@ -102,6 +137,119 @@ impl AnyProtoClient {
     pub fn send<T: EnvelopedMessage>(&self, request: T) -> anyhow::Result<()> {
         let envelope = request.into_envelope(0, None, None);
         self.0.send(envelope, T::NAME)
+    }
+
+    pub fn send_response<T: EnvelopedMessage>(
+        &self,
+        request_id: u32,
+        request: T,
+    ) -> anyhow::Result<()> {
+        let envelope = request.into_envelope(0, Some(request_id), None);
+        self.0.send(envelope, T::NAME)
+    }
+
+    pub fn add_request_handler<M, E, H, F>(&self, model: gpui::WeakModel<E>, handler: H)
+    where
+        M: RequestMessage,
+        E: 'static,
+        H: 'static + Sync + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
+        F: 'static + Future<Output = anyhow::Result<M::Response>>,
+    {
+        self.0.add_message_handler(
+            TypeId::of::<M>(),
+            model.into(),
+            Arc::new(move |model, envelope, client, cx| {
+                let model = model.downcast::<E>().unwrap();
+                let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
+                let request_id = envelope.message_id();
+                handler(model, *envelope, cx)
+                    .then(move |result| async move {
+                        match result {
+                            Ok(response) => {
+                                client.send_response(request_id, response)?;
+                                Ok(())
+                            }
+                            Err(error) => {
+                                client.send_response(request_id, error.to_proto())?;
+                                Err(error)
+                            }
+                        }
+                    })
+                    .boxed_local()
+            }),
+        )
+    }
+
+    pub fn add_entity_request_handler<M, E, H, F>(&self, handler: H)
+    where
+        M: EnvelopedMessage + RequestMessage + EntityMessage,
+        E: 'static,
+        H: 'static + Sync + Send + Fn(gpui::Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F,
+        F: 'static + Future<Output = anyhow::Result<M::Response>>,
+    {
+        let message_type_id = TypeId::of::<M>();
+        let model_type_id = TypeId::of::<E>();
+        let entity_id_extractor = |envelope: &dyn AnyTypedEnvelope| {
+            envelope
+                .as_any()
+                .downcast_ref::<TypedEnvelope<M>>()
+                .unwrap()
+                .payload
+                .remote_entity_id()
+        };
+        self.0.add_entity_message_handler(
+            message_type_id,
+            model_type_id,
+            entity_id_extractor,
+            Arc::new(move |model, envelope, client, cx| {
+                let model = model.downcast::<E>().unwrap();
+                let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
+                let request_id = envelope.message_id();
+                handler(model, *envelope, cx)
+                    .then(move |result| async move {
+                        match result {
+                            Ok(response) => {
+                                client.send_response(request_id, response)?;
+                                Ok(())
+                            }
+                            Err(error) => {
+                                client.send_response(request_id, error.to_proto())?;
+                                Err(error)
+                            }
+                        }
+                    })
+                    .boxed_local()
+            }),
+        );
+    }
+
+    pub fn add_entity_message_handler<M, E, H, F>(&self, handler: H)
+    where
+        M: EnvelopedMessage + EntityMessage,
+        E: 'static,
+        H: 'static + Sync + Send + Fn(gpui::Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F,
+        F: 'static + Future<Output = anyhow::Result<()>>,
+    {
+        let message_type_id = TypeId::of::<M>();
+        let model_type_id = TypeId::of::<E>();
+        let entity_id_extractor = |envelope: &dyn AnyTypedEnvelope| {
+            envelope
+                .as_any()
+                .downcast_ref::<TypedEnvelope<M>>()
+                .unwrap()
+                .payload
+                .remote_entity_id()
+        };
+        self.0.add_entity_message_handler(
+            message_type_id,
+            model_type_id,
+            entity_id_extractor,
+            Arc::new(move |model, envelope, _, cx| {
+                let model = model.downcast::<E>().unwrap();
+                let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
+                handler(model, *envelope, cx).boxed_local()
+            }),
+        );
     }
 }
 
@@ -537,11 +685,13 @@ request_messages!(
 entity_messages!(
     {project_id, ShareProject},
     AddProjectCollaborator,
+    AddWorktree,
     ApplyCodeAction,
     ApplyCompletionAdditionalEdits,
     BlameBuffer,
     BufferReloaded,
     BufferSaved,
+    CloseBuffer,
     CopyProjectEntry,
     CreateBufferForPeer,
     CreateProjectEntry,

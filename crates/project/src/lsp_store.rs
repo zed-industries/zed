@@ -12,7 +12,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
-use client::{proto, Client, TypedEnvelope};
+use client::{proto, TypedEnvelope};
 use collections::{btree_map, BTreeMap, HashMap, HashSet};
 use futures::{
     future::{join_all, Shared},
@@ -45,6 +45,7 @@ use lsp::{
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use rand::prelude::*;
+
 use rpc::proto::AnyProtoClient;
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
@@ -174,33 +175,33 @@ struct CoreSymbol {
 }
 
 impl LspStore {
-    pub fn init(client: &Arc<Client>) {
-        client.add_model_request_handler(Self::handle_multi_lsp_query);
-        client.add_model_request_handler(Self::handle_restart_language_servers);
-        client.add_model_message_handler(Self::handle_start_language_server);
-        client.add_model_message_handler(Self::handle_update_language_server);
-        client.add_model_message_handler(Self::handle_update_diagnostic_summary);
-        client.add_model_request_handler(Self::handle_resolve_completion_documentation);
-        client.add_model_request_handler(Self::handle_apply_code_action);
-        client.add_model_request_handler(Self::handle_inlay_hints);
-        client.add_model_request_handler(Self::handle_get_project_symbols);
-        client.add_model_request_handler(Self::handle_resolve_inlay_hint);
-        client.add_model_request_handler(Self::handle_open_buffer_for_symbol);
-        client.add_model_request_handler(Self::handle_refresh_inlay_hints);
-        client.add_model_request_handler(Self::handle_on_type_formatting);
-        client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetCodeActions>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetCompletions>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetHover>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetDefinition>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetDeclaration>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetTypeDefinition>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetReferences>);
-        client.add_model_request_handler(Self::handle_lsp_command::<PrepareRename>);
-        client.add_model_request_handler(Self::handle_lsp_command::<PerformRename>);
-        client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
-        client.add_model_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
+    pub fn init(client: &AnyProtoClient) {
+        client.add_entity_request_handler(Self::handle_multi_lsp_query);
+        client.add_entity_request_handler(Self::handle_restart_language_servers);
+        client.add_entity_message_handler(Self::handle_start_language_server);
+        client.add_entity_message_handler(Self::handle_update_language_server);
+        client.add_entity_message_handler(Self::handle_update_diagnostic_summary);
+        client.add_entity_request_handler(Self::handle_resolve_completion_documentation);
+        client.add_entity_request_handler(Self::handle_apply_code_action);
+        client.add_entity_request_handler(Self::handle_inlay_hints);
+        client.add_entity_request_handler(Self::handle_get_project_symbols);
+        client.add_entity_request_handler(Self::handle_resolve_inlay_hint);
+        client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
+        client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
+        client.add_entity_request_handler(Self::handle_on_type_formatting);
+        client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetCodeActions>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetCompletions>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetHover>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetDefinition>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetDeclaration>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetTypeDefinition>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetReferences>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3695,7 +3696,7 @@ impl LspStore {
         })
     }
 
-    async fn handle_restart_language_servers(
+    pub async fn handle_restart_language_servers(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::RestartLanguageServers>,
         mut cx: AsyncAppContext,

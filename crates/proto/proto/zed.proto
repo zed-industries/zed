@@ -2484,6 +2484,7 @@ message GetLlmTokenResponse {
 // Remote FS
 
 message AddWorktree {
+    uint64 project_id = 2;
     string path = 1;
 }
 
