@@ -230,7 +230,11 @@ impl LspAdapter for RustLspAdapter {
                     && completion.insert_text_format != Some(lsp::InsertTextFormat::SNIPPET) =>
             {
                 let name = &completion.label;
-                let text = format!("{}: {}", name, detail.unwrap());
+                let text = format!(
+                    "{}: {}",
+                    name,
+                    completion.detail.as_ref().or(detail.as_ref()).unwrap()
+                );
                 let source = Rope::from(format!("let {} = ();", text).as_str());
                 let runs = language.highlight_text(&source, 4..4 + text.len());
                 return Some(CodeLabel {
