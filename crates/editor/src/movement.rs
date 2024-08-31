@@ -274,10 +274,10 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
 /// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
 pub fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
-    let scope = map.buffer_snapshot.language_scope_at(raw_point);
+    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
-        (char_kind(&scope, left) != char_kind(&scope, right) && !right.is_whitespace())
+        (classifier.kind(left) != classifier.kind(right) && !right.is_whitespace())
             || left == '\n'
             || right == '\n'
     })
@@ -316,7 +316,7 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
 /// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
 pub fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
-    let scope = map.buffer_snapshot.language_scope_at(raw_point);
+    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
     let mut on_starting_row = true;
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
@@ -324,10 +324,10 @@ pub fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> D
             on_starting_row = false;
         }
         if on_starting_row {
-            (char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace())
+            (classifier.kind(left) != classifier.kind(right) && !left.is_whitespace())
                 || right == '\n'
         } else {
-            (char_kind(&scope, left) != char_kind(&scope, right) && !right.is_whitespace())
+            (classifier.kind(left) != classifier.kind(right) && !right.is_whitespace())
                 || right == '\n'
         }
     })
