@@ -1,11 +1,12 @@
 use super::{ns_string, renderer, MacDisplay, NSRange, NSStringExt};
 use crate::{
-    keyboard_layouts::KeyboardLayoutMapping, platform::PlatformInputHandler, point, px,
-    retrieve_current_keboard_layout, size, AnyWindowHandle, Bounds, DisplayLink, ExternalPaths,
-    FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel, Size, Timer,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
+    check_current_keyboard_type, keyboard_layouts::KeyboardLayoutMapping,
+    platform::PlatformInputHandler, point, px, retrieve_current_keboard_layout, size,
+    AnyWindowHandle, Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor,
+    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformWindow, Point, PromptLevel, Size, Timer, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -594,7 +595,7 @@ impl MacWindow {
             let keyboard_layout = retrieve_current_keboard_layout();
             // let keyboard_layout = KeyboardLayout::ABC;
             println!("-> Current layout: {:?}", keyboard_layout);
-            let keyboard_mapping_data = keyboard_layout.layout_data();
+            let keyboard_mapping_data = keyboard_layout.layout_data(check_current_keyboard_type());
 
             let mut window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
