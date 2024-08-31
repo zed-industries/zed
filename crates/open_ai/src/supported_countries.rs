@@ -104,6 +104,7 @@ static SUPPORTED_COUNTRIES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "IS", // Iceland
         "IN", // India
         "ID", // Indonesia
+        "IR", // Iran
         "IQ", // Iraq
         "IE", // Ireland
         "IL", // Israel
