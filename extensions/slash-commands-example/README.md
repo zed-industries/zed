@@ -29,7 +29,7 @@ echo "*.wasm" >> .gitignore
 
 git init
 git add .
-git commit -m "initial commit"
+git commit -m "Initial commit"
 
 cd ..
 mv slash-commands-example MY-SUPER-COOL-ZED-EXTENSION
