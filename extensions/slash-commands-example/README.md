@@ -54,7 +54,7 @@ Rename `slash-commands-example.rs` you'll also have to update `Cargo.toml
 
 ## Rebuild
 
-Rebuild to see these changes refelcted:
+Rebuild to see these changes reflected:
 
 1. Open Zed Extensions (`cmd-shift-x` or `ctrl-shift-x`).
 3. Click `Rebuild` next to your Dev Extension (formerly "Slash Command Example")
