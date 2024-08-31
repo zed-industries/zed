@@ -23,10 +23,16 @@ cd slash-commands-example/
 sed -i '' '/\[lints]/,/^$/s/^workspace/#&/' Cargo.toml
 curl -O https://raw.githubusercontent.com/rust-lang/rust/master/LICENSE-APACHE
 echo "# Zed Slash Commands Example Extension" > README.md
+echo "target/" > .gitignore
+echo "*.wasm" >> .gitignore
 
 git init
 git add .
 git commit -m "initial commit"
+
+cd ..
+mv slash-commands-example MY-SUPER-COOL-ZED-EXTENSION
+zed $_
 ```
 
 ## Installation
