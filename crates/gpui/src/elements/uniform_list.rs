@@ -71,6 +71,13 @@ pub struct UniformList {
     sizing_behavior: ListSizingBehavior,
 }
 
+/// State used to scroll to a specific item in the [UniformList].
+#[derive(Clone, Debug)]
+pub struct ScrollToItemState {
+    index: usize,
+    center: bool,
+}
+
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
     item_size: Size<Pixels>,
@@ -86,7 +93,7 @@ pub struct UniformListScrollHandle(pub Rc<RefCell<UniformListScrollState>>);
 #[allow(missing_docs)]
 pub struct UniformListScrollState {
     pub base_handle: ScrollHandle,
-    pub deferred_scroll_to_item: Option<usize>,
+    pub deferred_scroll_to_item: Option<ScrollToItemState>,
     pub last_item_height: Option<Pixels>,
 }
 
@@ -100,15 +107,28 @@ impl UniformListScrollHandle {
         })))
     }
 
-    /// Scroll the list to the given item index.
+    /// Scroll the list so the given item index is at the center
+    pub fn scroll_center_item(&mut self, ix: usize) {
+        self.0.borrow_mut().deferred_scroll_to_item = Some(ScrollToItemState {
+            index: ix,
+            center: true,
+        });
+    }
+
+    /// Scroll the list to the given item index with default center value (false).
     pub fn scroll_to_item(&mut self, ix: usize) {
-        self.0.borrow_mut().deferred_scroll_to_item = Some(ix);
+        self.0.borrow_mut().deferred_scroll_to_item = Some(ScrollToItemState {
+            index: ix,
+            center: false,
+        });
     }
 
     /// Get the index of the topmost visible child.
     pub fn logical_scroll_top_index(&self) -> usize {
         let this = self.0.borrow();
         this.deferred_scroll_to_item
+            .as_ref()
+            .map(|state| state.index)
             .unwrap_or_else(|| this.base_handle.logical_scroll_top().0)
     }
 }
@@ -236,16 +256,20 @@ impl Element for UniformList {
                         scroll_offset.y = min_scroll_offset;
                     }
 
-                    if let Some(ix) = shared_scroll_to_item {
+                    if let Some(ScrollToItemState {index: ix, center}) = shared_scroll_to_item {
                         let list_height = padded_bounds.size.height;
                         let mut updated_scroll_offset = shared_scroll_offset.borrow_mut();
                         let item_top = item_height * ix + padding.top;
                         let item_bottom = item_top + item_height;
                         let scroll_top = -updated_scroll_offset.y;
-                        if item_top < scroll_top + padding.top {
-                            updated_scroll_offset.y = -(item_top) + padding.top;
-                        } else if item_bottom > scroll_top + list_height - padding.bottom {
-                            updated_scroll_offset.y = -(item_bottom - list_height) - padding.bottom;
+                        if center {
+                            updated_scroll_offset.y = -(item_top - (list_height - item_height) / 2.0);
+                        } else {
+                            if item_top < scroll_top + padding.top {
+                                updated_scroll_offset.y = -(item_top) + padding.top;
+                            } else if item_bottom > scroll_top + list_height - padding.bottom {
+                                updated_scroll_offset.y = -(item_bottom - list_height) - padding.bottom;
+                            }
                         }
                         scroll_offset = *updated_scroll_offset;
                     }
