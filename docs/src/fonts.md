@@ -4,10 +4,7 @@
 TBD: WIP. Zed Fonts documentation. This is currently not linked from SUMMARY.md are so unpublished.
 -->
 
-Zed ships two font faces by [Mike Abbink](https://mikeabbink.com/typefaces/) and [Bold Monday](https://boldmonday.com/custom/ibm/):
-
-- [IBM Plex Mono](https://fonts.google.com/specimen/IBM+Plex+Mono)
-- [IBM Plex Sans](https://fonts.google.com/specimen/IBM+Plex+Sans)
+Zed ships two font faces by [Mike Abbink](https://mikeabbink.com/typefaces/) and [Bold Monday](https://boldmonday.com/custom/ibm/): IBM Plex Mono and IBM Plex Sans.
 
 ## Settings
 
