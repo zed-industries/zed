@@ -72,12 +72,12 @@ impl EventEmitter<BufferStoreEvent> for BufferStore {}
 
 impl BufferStore {
     pub fn init(client: &AnyProtoClient) {
-        client.add_entity_message_handler(Self::handle_buffer_reloaded);
-        client.add_entity_message_handler(Self::handle_buffer_saved);
-        client.add_entity_message_handler(Self::handle_update_buffer_file);
-        client.add_entity_message_handler(Self::handle_update_diff_base);
-        client.add_entity_request_handler(Self::handle_save_buffer);
-        client.add_entity_request_handler(Self::handle_blame_buffer);
+        client.add_model_message_handler(Self::handle_buffer_reloaded);
+        client.add_model_message_handler(Self::handle_buffer_saved);
+        client.add_model_message_handler(Self::handle_update_buffer_file);
+        client.add_model_message_handler(Self::handle_update_diff_base);
+        client.add_model_request_handler(Self::handle_save_buffer);
+        client.add_model_request_handler(Self::handle_blame_buffer);
     }
 
     /// Creates a buffer store, optionally retaining its buffers.

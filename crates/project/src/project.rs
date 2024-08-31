@@ -575,25 +575,25 @@ impl Project {
         Self::init_settings(cx);
 
         let client: AnyProtoClient = client.clone().into();
-        client.add_entity_message_handler(Self::handle_add_collaborator);
-        client.add_entity_message_handler(Self::handle_update_project_collaborator);
-        client.add_entity_message_handler(Self::handle_remove_collaborator);
-        client.add_entity_message_handler(Self::handle_update_project);
-        client.add_entity_message_handler(Self::handle_unshare_project);
-        client.add_entity_request_handler(Self::handle_update_buffer);
-        client.add_entity_message_handler(Self::handle_update_worktree);
-        client.add_entity_message_handler(Self::handle_update_worktree_settings);
-        client.add_entity_request_handler(Self::handle_reload_buffers);
-        client.add_entity_request_handler(Self::handle_synchronize_buffers);
-        client.add_entity_request_handler(Self::handle_format_buffers);
-        client.add_entity_request_handler(Self::handle_search_project);
-        client.add_entity_request_handler(Self::handle_search_candidate_buffers);
-        client.add_entity_request_handler(Self::handle_open_buffer_by_id);
-        client.add_entity_request_handler(Self::handle_open_buffer_by_path);
-        client.add_entity_request_handler(Self::handle_open_new_buffer);
-        client.add_entity_request_handler(Self::handle_task_context_for_location);
-        client.add_entity_request_handler(Self::handle_task_templates);
-        client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
+        client.add_model_message_handler(Self::handle_add_collaborator);
+        client.add_model_message_handler(Self::handle_update_project_collaborator);
+        client.add_model_message_handler(Self::handle_remove_collaborator);
+        client.add_model_message_handler(Self::handle_update_project);
+        client.add_model_message_handler(Self::handle_unshare_project);
+        client.add_model_request_handler(Self::handle_update_buffer);
+        client.add_model_message_handler(Self::handle_update_worktree);
+        client.add_model_message_handler(Self::handle_update_worktree_settings);
+        client.add_model_request_handler(Self::handle_reload_buffers);
+        client.add_model_request_handler(Self::handle_synchronize_buffers);
+        client.add_model_request_handler(Self::handle_format_buffers);
+        client.add_model_request_handler(Self::handle_search_project);
+        client.add_model_request_handler(Self::handle_search_candidate_buffers);
+        client.add_model_request_handler(Self::handle_open_buffer_by_id);
+        client.add_model_request_handler(Self::handle_open_buffer_by_path);
+        client.add_model_request_handler(Self::handle_open_new_buffer);
+        client.add_model_request_handler(Self::handle_task_context_for_location);
+        client.add_model_request_handler(Self::handle_task_templates);
+        client.add_model_message_handler(Self::handle_create_buffer_for_peer);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -704,10 +704,10 @@ impl Project {
                 store.set_upstream_client(client.clone());
             });
 
-            client.add_entity_message_handler(Self::handle_update_worktree);
-            client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
-            client.add_entity_message_handler(BufferStore::handle_update_buffer_file);
-            client.add_entity_message_handler(BufferStore::handle_update_diff_base);
+            client.add_model_message_handler(Self::handle_update_worktree);
+            client.add_model_message_handler(Self::handle_create_buffer_for_peer);
+            client.add_model_message_handler(BufferStore::handle_update_buffer_file);
+            client.add_model_message_handler(BufferStore::handle_update_diff_base);
 
             this.ssh_session = Some(ssh);
         });

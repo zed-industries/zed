@@ -301,7 +301,7 @@ impl TestServer {
             dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
             language_model::LanguageModelRegistry::test(cx);
-            assistant::context_store::init(&client);
+            assistant::context_store::init(&client.clone().into());
         });
 
         client

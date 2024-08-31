@@ -18,6 +18,6 @@ mod channel_store_tests;
 
 pub fn init(client: &Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     channel_store::init(client, user_store, cx);
-    channel_buffer::init(client);
-    channel_chat::init(client);
+    channel_buffer::init(&client.clone().into());
+    channel_chat::init(&client.clone().into());
 }

@@ -29,7 +29,7 @@ use postage::watch;
 use proto::{AnyProtoClient, ProtoClient};
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
-use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
+use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -800,76 +800,6 @@ impl Client {
     {
         self.add_message_handler_impl(model, move |handle, envelope, this, cx| {
             Self::respond_to_request(envelope.receipt(), handler(handle, envelope, cx), this)
-        })
-    }
-
-    pub fn add_model_message_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
-    where
-        M: EntityMessage,
-        E: 'static,
-        H: 'static + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
-        F: 'static + Future<Output = Result<()>>,
-    {
-        self.add_entity_message_handler::<M, E, _, _>(move |subscriber, message, _, cx| {
-            handler(subscriber.downcast::<E>().unwrap(), message, cx)
-        })
-    }
-
-    fn add_entity_message_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
-    where
-        M: EntityMessage,
-        E: 'static,
-        H: 'static
-            + Fn(AnyModel, TypedEnvelope<M>, AnyProtoClient, AsyncAppContext) -> F
-            + Send
-            + Sync,
-        F: 'static + Future<Output = Result<()>>,
-    {
-        let model_type_id = TypeId::of::<E>();
-        let message_type_id = TypeId::of::<M>();
-
-        let mut state = self.state.write();
-        state
-            .entity_types_by_message_type
-            .insert(message_type_id, model_type_id);
-        state
-            .entity_id_extractors
-            .entry(message_type_id)
-            .or_insert_with(|| {
-                |envelope| {
-                    envelope
-                        .as_any()
-                        .downcast_ref::<TypedEnvelope<M>>()
-                        .unwrap()
-                        .payload
-                        .remote_entity_id()
-                }
-            });
-        let prev_handler = state.message_handlers.insert(
-            message_type_id,
-            Arc::new(move |handle, envelope, client, cx| {
-                let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                handler(handle, *envelope, client.clone(), cx).boxed_local()
-            }),
-        );
-        if prev_handler.is_some() {
-            panic!("registered handler for the same message twice");
-        }
-    }
-
-    pub fn add_model_request_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
-    where
-        M: EntityMessage + RequestMessage,
-        E: 'static,
-        H: 'static + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
-        F: 'static + Future<Output = Result<M::Response>>,
-    {
-        self.add_entity_message_handler::<M, E, _, _>(move |entity, envelope, client, cx| {
-            Self::respond_to_request::<M, _>(
-                envelope.receipt(),
-                handler(entity.downcast::<E>().unwrap(), envelope, cx),
-                client,
-            )
         })
     }
 
@@ -2124,7 +2054,7 @@ mod tests {
 
         let (done_tx1, mut done_rx1) = smol::channel::unbounded();
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
-        client.add_model_message_handler(
+        AnyProtoClient::from(client.clone()).add_model_message_handler(
             move |model: Model<TestModel>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
                 match model.update(&mut cx, |model, _| model.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),

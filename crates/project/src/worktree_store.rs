@@ -59,11 +59,11 @@ impl EventEmitter<WorktreeStoreEvent> for WorktreeStore {}
 
 impl WorktreeStore {
     pub fn init(client: &AnyProtoClient) {
-        client.add_entity_request_handler(WorktreeStore::handle_create_project_entry);
-        client.add_entity_request_handler(WorktreeStore::handle_rename_project_entry);
-        client.add_entity_request_handler(WorktreeStore::handle_copy_project_entry);
-        client.add_entity_request_handler(WorktreeStore::handle_delete_project_entry);
-        client.add_entity_request_handler(WorktreeStore::handle_expand_project_entry);
+        client.add_model_request_handler(Self::handle_create_project_entry);
+        client.add_model_request_handler(Self::handle_rename_project_entry);
+        client.add_model_request_handler(Self::handle_copy_project_entry);
+        client.add_model_request_handler(Self::handle_delete_project_entry);
+        client.add_model_request_handler(Self::handle_expand_project_entry);
     }
 
     pub fn new(retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {

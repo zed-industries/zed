@@ -51,9 +51,9 @@ impl HeadlessProject {
 
         client.add_request_handler(this.clone(), Self::handle_list_remote_directory);
 
-        client.add_entity_request_handler(Self::handle_add_worktree);
-        client.add_entity_request_handler(Self::handle_open_buffer_by_path);
-        client.add_entity_request_handler(Self::handle_find_search_candidates);
+        client.add_model_request_handler(Self::handle_add_worktree);
+        client.add_model_request_handler(Self::handle_open_buffer_by_path);
+        client.add_model_request_handler(Self::handle_find_search_candidates);
 
         BufferStore::init(&client);
         WorktreeStore::init(&client);

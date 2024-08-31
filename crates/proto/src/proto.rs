@@ -180,7 +180,7 @@ impl AnyProtoClient {
         )
     }
 
-    pub fn add_entity_request_handler<M, E, H, F>(&self, handler: H)
+    pub fn add_model_request_handler<M, E, H, F>(&self, handler: H)
     where
         M: EnvelopedMessage + RequestMessage + EntityMessage,
         E: 'static,
@@ -223,7 +223,7 @@ impl AnyProtoClient {
         );
     }
 
-    pub fn add_entity_message_handler<M, E, H, F>(&self, handler: H)
+    pub fn add_model_message_handler<M, E, H, F>(&self, handler: H)
     where
         M: EnvelopedMessage + EntityMessage,
         E: 'static,
