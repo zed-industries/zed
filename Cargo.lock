@@ -6640,7 +6640,6 @@ dependencies = [
  "collections",
  "editor",
  "gpui",
- "isahc",
  "language",
  "linkify",
  "log",

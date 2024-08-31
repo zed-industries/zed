@@ -1159,8 +1159,8 @@ Some other content
             vec![
                 list_item(0..8, 1, Unordered, vec![p("code", 2..8)]),
                 list_item(9..19, 1, Unordered, vec![p("bold", 11..19)]),
-                list_item(20..49, 1, Unordered, vec![p("link", 22..49)]),
-                list_item(50..63, 1, Unordered, vec![p("image", 52..61)]),
+                list_item(20..49, 1, Unordered, vec![p("link", 22..49)],),
+                list_item(50..62, 1, Unordered, vec![p("image", 52..62)],),
             ],
         );
     }
