@@ -6,9 +6,9 @@ See: [Extensions: Slash Commands](https://zed.dev/docs/extensions/slash-commands
 
 ## Setup
 
-```
+```sh
 git clone https://github.com/zed-industries/zed.git
-rsync -av zed/extensions/slash-commands-example ./
+cp -R zed/extensions/slash-commands-example .
 
 cd slash-commands-example/
 sed -i '' '/^\[lints\]/,/^$/s/^workspace = true/#workspace = true/' Cargo.toml
