@@ -16,14 +16,15 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ```sh
 git clone https://github.com/zed-industries/zed.git
-cp -R zed/extensions/slash-commands-example .
+cp -RL zed/extensions/slash-commands-example .
 
 cd slash-commands-example/
 
 sed -i '' '/\[lints]/,/^$/s/^workspace/#&/' Cargo.toml
 curl -O https://raw.githubusercontent.com/rust-lang/rust/master/LICENSE-APACHE
 echo "# Zed Slash Commands Example Extension" > README.md
-echo "target/" > .gitignore
+echo "Cargo.lock" > .gitignore
+echo "target/" >> .gitignore
 echo "*.wasm" >> .gitignore
 
 git init
