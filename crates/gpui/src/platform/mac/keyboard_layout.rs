@@ -6,6 +6,13 @@ use core_foundation::{
 
 use crate::keyboard_layouts::KeyboardLayout;
 
+const ISO_KEYBOARD: std::os::raw::c_uint = 1230196512;
+
+pub(crate) fn check_current_keyboard_type() -> bool {
+    let kbd_type = unsafe { KBGetLayoutType(LMGetKbdType() as _) };
+    kbd_type == ISO_KEYBOARD
+}
+
 pub(crate) fn retrieve_current_keboard_layout() -> KeyboardLayout {
     let Some(name) = get_current_layout() else {
         log::error!("Cannot retrieve current keyboard layout");
@@ -55,4 +62,6 @@ extern "C" {
     fn TISInputSourceGetTypeID() -> CFTypeID;
     fn TISCopyCurrentKeyboardLayoutInputSource() -> TISInputSourceRef;
     fn TISGetInputSourceProperty(source: TISInputSourceRef, key: CFStringRef) -> CFStringRef;
+    fn LMGetKbdType() -> u8;
+    fn KBGetLayoutType(iKeyboardType: std::os::raw::c_short) -> std::os::raw::c_uint;
 }

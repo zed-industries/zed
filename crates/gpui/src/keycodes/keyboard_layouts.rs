@@ -27,13 +27,34 @@ pub(crate) enum KeyboardLayout {
 }
 
 impl KeyboardLayout {
-    pub(crate) fn layout_data(&self) -> Option<KeyboardLayoutMapping> {
+    pub(crate) fn layout_data(&self, keyboard_iso: bool) -> Option<KeyboardLayoutMapping> {
+        if keyboard_iso {
+            println!("ISO keyboard detected.");
+        } else {
+            println!("ANSI keyboard detected.");
+        }
         match self {
             KeyboardLayout::ABC => None,
-            KeyboardLayout::Czech => Some(&CZECH_LAYOUT_ANSI),
-            KeyboardLayout::CzechQwerty => Some(&CZECH_QWERTY_ANSI),
-            KeyboardLayout::German => Some(&GERMAN_LAYOUT_ANSI),
-            KeyboardLayout::Russian => Some(&RUSSIAN_LAYOUT_ANSI),
+            KeyboardLayout::Czech => Some(if keyboard_iso {
+                &CZECH_LAYOUT_ISO
+            } else {
+                &CZECH_LAYOUT_ANSI
+            }),
+            KeyboardLayout::CzechQwerty => Some(if keyboard_iso {
+                &CZECH_QWERTY_ISO
+            } else {
+                &CZECH_QWERTY_ANSI
+            }),
+            KeyboardLayout::German => Some(if keyboard_iso {
+                &GERMAN_LAYOUT_ISO
+            } else {
+                &GERMAN_LAYOUT_ANSI
+            }),
+            KeyboardLayout::Russian => Some(if keyboard_iso {
+                &RUSSIAN_LAYOUT_ISO
+            } else {
+                &RUSSIAN_LAYOUT_ANSI
+            }),
         }
     }
 }
