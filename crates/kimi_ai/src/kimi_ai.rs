@@ -2,7 +2,6 @@ use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
-use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -300,7 +299,6 @@ pub async fn stream_completion(
     } else {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-        log::info!("{body}");
         #[derive(Deserialize)]
         struct KimiAiResponse {
             error: KimiAiError,

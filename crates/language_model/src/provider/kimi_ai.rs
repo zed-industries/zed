@@ -287,9 +287,16 @@ impl LanguageModel for KimiAiLanguageModel {
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
-        cx: &AppContext,
+        _cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        count_kimi_ai_tokens(request, self.model.clone(), cx)
+        // count_kimi_ai_tokens(request, self.model.clone(), cx)
+        let token_count = request
+            .messages
+            .iter()
+            .map(|msg| msg.string_contents().chars().count())
+            .sum::<usize>()
+            *2;
+        async move { Ok(token_count)}.boxed()
     }
 
     fn stream_completion(
