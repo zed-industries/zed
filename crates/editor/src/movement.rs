@@ -323,13 +323,10 @@ pub fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> D
         if left == '\n' {
             on_starting_row = false;
         }
-        if on_starting_row {
-            (classifier.kind(left) != classifier.kind(right) && !left.is_whitespace())
-                || right == '\n'
-        } else {
-            (classifier.kind(left) != classifier.kind(right) && !right.is_whitespace())
-                || right == '\n'
-        }
+        (classifier.kind(left) != classifier.kind(right)
+            && ((on_starting_row && !left.is_whitespace())
+                || (!on_starting_row && !right.is_whitespace())))
+            || right == '\n'
     })
 }
 
