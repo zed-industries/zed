@@ -1,22 +1,28 @@
 use crate::debugger_panel_item::{DebugPanelItem, DebugPanelItemEvent, ThreadEntry};
 use dap::{client::ThreadState, Scope, Variable};
 
-use gpui::{list, AnyElement, ListState, Model, Subscription};
-use ui::{prelude::*, ListItem};
+use gpui::{
+    anchored, deferred, list, AnyElement, ClipboardItem, DismissEvent, FocusHandle, FocusableView,
+    ListState, Model, MouseDownEvent, Point, Subscription, View,
+};
+use ui::{prelude::*, ContextMenu, ListItem};
 
 use std::{collections::HashMap, sync::Arc};
 
 pub struct VariableList {
     pub list: ListState,
-    debug_panel_item: Model<DebugPanelItem>,
+    focus_handle: FocusHandle,
     open_entries: Vec<SharedString>,
-    stack_frame_entries: HashMap<u64, Vec<ThreadEntry>>,
     _subscriptions: Vec<Subscription>,
+    debug_panel_item: Model<DebugPanelItem>,
+    stack_frame_entries: HashMap<u64, Vec<ThreadEntry>>,
+    open_context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
 }
 
 impl VariableList {
     pub fn new(debug_panel_item: Model<DebugPanelItem>, cx: &mut ViewContext<Self>) -> Self {
         let weakview = cx.view().downgrade();
+        let focus_handle = cx.focus_handle();
 
         let list = ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
             weakview
@@ -29,10 +35,12 @@ impl VariableList {
 
         Self {
             list,
+            focus_handle,
+            _subscriptions,
             debug_panel_item,
+            open_context_menu: None,
             open_entries: Default::default(),
             stack_frame_entries: Default::default(),
-            _subscriptions,
         }
     }
 
@@ -151,6 +159,46 @@ impl VariableList {
         self.list.reset(len);
     }
 
+    fn deploy_variable_context_menu(
+        &mut self,
+        variable: Variable,
+        position: Point<Pixels>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let this = cx.view().clone();
+
+        let context_menu = ContextMenu::build(cx, |menu, cx| {
+            menu.entry(
+                "Copy name",
+                None,
+                cx.handler_for(&this, move |_, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(variable.name.clone()))
+                }),
+            )
+            .entry(
+                "Copy value",
+                None,
+                cx.handler_for(&this, move |_, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(variable.value.clone()))
+                }),
+            )
+        });
+
+        cx.focus_view(&context_menu);
+        let subscription =
+            cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+                if this.open_context_menu.as_ref().is_some_and(|context_menu| {
+                    context_menu.0.focus_handle(cx).contains_focused(cx)
+                }) {
+                    cx.focus_self();
+                }
+                this.open_context_menu.take();
+                cx.notify();
+            });
+
+        self.open_context_menu = Some((context_menu, position, subscription));
+    }
+
     pub fn render_variable(
         &self,
         ix: usize,
@@ -252,6 +300,12 @@ impl VariableList {
                             .detach_and_log_err(cx);
                         }
                     }))
+                    .on_secondary_mouse_down(cx.listener({
+                        let variable = variable.clone();
+                        move |this, event: &MouseDownEvent, cx| {
+                            this.deploy_variable_context_menu(variable.clone(), event.position, cx)
+                        }
+                    }))
                     .child(
                         h_flex()
                             .gap_1()
@@ -295,9 +349,26 @@ impl VariableList {
     }
 }
 
+impl FocusableView for VariableList {
+    fn focus_handle(&self, _: &gpui::AppContext) -> gpui::FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Render for VariableList {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        list(self.list.clone()).gap_1_5().size_full()
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .child(list(self.list.clone()).gap_1_5().size_full())
+            .children(self.open_context_menu.as_ref().map(|(menu, position, _)| {
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(gpui::AnchorCorner::TopLeft)
+                        .child(menu.clone()),
+                )
+                .with_priority(1)
+            }))
     }
 }
 
