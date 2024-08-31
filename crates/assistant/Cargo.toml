@@ -55,6 +55,7 @@ menu.workspace = true
 multi_buffer.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
+kimi_ai = {workspace = true, features = ["schemars"]}
 ordered-float.workspace = true
 parking_lot.workspace = true
 paths.workspace = true

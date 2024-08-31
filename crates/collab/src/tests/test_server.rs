@@ -664,6 +664,7 @@ impl TestServer {
                 blob_store_secret_key: None,
                 blob_store_bucket: None,
                 openai_api_key: None,
+                kimi_api_key: None,
                 google_ai_api_key: None,
                 anthropic_api_key: None,
                 anthropic_staff_api_key: None,

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anthropic::Model as AnthropicModel;
 use fs::Fs;
 use gpui::{AppContext, Pixels};
+use kimi_ai::Model as KimiAiModel;
 use language_model::{settings::AllLanguageModelSettings, CloudModel, LanguageModel};
 use ollama::Model as OllamaModel;
 use open_ai::Model as OpenAiModel;
@@ -42,6 +43,13 @@ pub enum AssistantProviderContentV1 {
         default_model: Option<OllamaModel>,
         api_url: Option<String>,
         low_speed_timeout_in_seconds: Option<u64>,
+    },
+    #[serde(rename = "kimiai")]
+    KimiAi {
+        default_model: Option<KimiAiModel>,
+        api_url: Option<String>,
+        low_speed_timeout_in_seconds: Option<u64>,
+        available_models: Option<Vec<KimiAiModel>>,
     },
 }
 
@@ -173,6 +181,40 @@ impl AssistantSettingsContent {
                                 }
                             },
                         ),
+                        AssistantProviderContentV1::KimiAi {
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                            available_models,
+                            ..
+                        } => update_settings_file::<AllLanguageModelSettings>(
+                            fs,
+                            cx,
+                            move |content, _| {
+                                if content.kimiai.is_none() {
+                                    let available_models = available_models.map(|models| {
+                                        models
+                                            .into_iter()
+                                            .filter_map(|model| match model {
+                                                kimi_ai::Model::Custom { name, max_tokens,max_output_tokens } => {
+                                                    Some(language_model::provider::kimi_ai::KimiAvailableModel { name, max_tokens,max_output_tokens })
+                                                }
+                                                _ => None,
+                                            })
+                                            .collect::<Vec<_>>()
+                                    });
+                                    content.kimiai =
+                                        Some(language_model::settings::KimiAiSettingsContent::Versioned(
+                                            language_model::settings::VersionedKimiAiSettingsContent::V1(
+                                                language_model::settings::KimiAiSettingsContentV1 {
+                                                    api_url,
+                                                    low_speed_timeout_in_seconds,
+                                                    available_models
+                                                }
+                                            )
+                                        ));
+                                }
+                            },
+                        ),
                         _ => {}
                     }
                 }
@@ -218,6 +260,12 @@ impl AssistantSettingsContent {
                             AssistantProviderContentV1::Ollama { default_model, .. } => {
                                 default_model.map(|model| LanguageModelSelection {
                                     provider: "ollama".to_string(),
+                                    model: model.id().to_string(),
+                                })
+                            }
+                            AssistantProviderContentV1::KimiAi { default_model, .. } => {
+                                default_model.map(|model| LanguageModelSelection {
+                                    provider: "kimiai".to_string(),
                                     model: model.id().to_string(),
                                 })
                             }
@@ -322,6 +370,28 @@ impl AssistantSettingsContent {
                             available_models,
                         });
                     }
+                    "kimiai" => {
+                        let (api_url, low_speed_timeout_in_seconds, available_models) =
+                            match &settings.provider {
+                                Some(AssistantProviderContentV1::KimiAi {
+                                    api_url,
+                                    low_speed_timeout_in_seconds,
+                                    available_models,
+                                    ..
+                                }) => (
+                                    api_url.clone(),
+                                    *low_speed_timeout_in_seconds,
+                                    available_models.clone(),
+                                ),
+                                _ => (None, None, None),
+                            };
+                        settings.provider = Some(AssistantProviderContentV1::KimiAi {
+                            default_model: kimi_ai::Model::from_id(&model).ok(),
+                            api_url,
+                            low_speed_timeout_in_seconds,
+                            available_models,
+                        });
+                    }
                     _ => {}
                 },
                 VersionedAssistantSettingsContent::V2(settings) => {
@@ -401,6 +471,7 @@ fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema:
             "openai".into(),
             "zed.dev".into(),
             "copilot_chat".into(),
+            "kimiai".into(),
         ]),
         ..Default::default()
     }

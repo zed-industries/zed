@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg viewBox="44.851 100.121 303.893 284.51" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient gradientUnits="userSpaceOnUse" cx="196.758" cy="282.238" r="106.671" id="gradient-0" spreadMethod="pad">
+      <stop offset="0" style="stop-color: rgb(20% 20% 20%)"/>
+      <stop offset="1" style="stop-color: rgb(12.948% 12.948% 12.948%)"/>
+    </radialGradient>
+  </defs>
+  <text style="fill: url('#gradient-0'); font-family: 'ZedPlexSans'; font-size: 150px; stroke-miterlimit: 7.93; text-transform: uppercase; white-space: pre; text-decoration: underline solid rgba(255, 255, 255, 0.8);" x="90.087" y="296.1" transform="matrix(1, 0, 0, 1, -7.105427357601002e-15, 0)">Lh</text>
+</svg>

@@ -13,6 +13,7 @@ pub enum CloudModel {
     OpenAi(open_ai::Model),
     Google(google_ai::Model),
     Zed(ZedModel),
+    KimiAi(kimi_ai::Model),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, EnumIter)]
@@ -54,6 +55,7 @@ impl CloudModel {
             Self::OpenAi(model) => model.id(),
             Self::Google(model) => model.id(),
             Self::Zed(model) => model.id(),
+            Self::KimiAi(model) => model.id(),
         }
     }
 
@@ -63,6 +65,7 @@ impl CloudModel {
             Self::OpenAi(model) => model.display_name(),
             Self::Google(model) => model.display_name(),
             Self::Zed(model) => model.display_name(),
+            Self::KimiAi(model) => model.display_name(),
         }
     }
 
@@ -79,6 +82,7 @@ impl CloudModel {
             Self::OpenAi(model) => model.max_token_count(),
             Self::Google(model) => model.max_token_count(),
             Self::Zed(model) => model.max_token_count(),
+            Self::KimiAi(model) => model.max_token_count(),
         }
     }
 
@@ -110,6 +114,15 @@ impl CloudModel {
                 google_ai::Model::Gemini15Pro
                 | google_ai::Model::Gemini15Flash
                 | google_ai::Model::Custom { .. } => {
+                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
+                }
+            },
+            Self::KimiAi(model) => match model {
+                kimi_ai::Model::MoonShotV1128K 
+                | kimi_ai::Model::MoonShotV132K
+                | kimi_ai::Model::MoonShotV18K
+                | kimi_ai::Model::MoonShotV1Auto
+                | kimi_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }
             },

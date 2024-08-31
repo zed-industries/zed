@@ -389,6 +389,7 @@ dependencies = [
  "http_client",
  "indexed_docs",
  "indoc",
+ "kimi_ai",
  "language",
  "language_model",
  "log",
@@ -2512,6 +2513,7 @@ dependencies = [
  "hyper",
  "indoc",
  "jsonwebtoken",
+ "kimi_ai",
  "language",
  "language_model",
  "live_kit_client",
@@ -6046,6 +6048,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "kimi_ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ctor",
+ "env_logger",
+ "futures 0.3.30",
+ "http_client",
+ "isahc",
+ "log",
+ "schemars",
+ "serde",
+ "serde_json",
+ "strum 0.25.0",
+]
+
+[[package]]
 name = "kqueue"
 version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6158,6 +6177,7 @@ dependencies = [
  "http_client",
  "image",
  "inline_completion_button",
+ "kimi_ai",
  "language",
  "log",
  "menu",

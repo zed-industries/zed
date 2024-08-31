@@ -2,7 +2,8 @@ use crate::{
     provider::{
         anthropic::AnthropicLanguageModelProvider, cloud::CloudLanguageModelProvider,
         copilot_chat::CopilotChatLanguageModelProvider, google::GoogleLanguageModelProvider,
-        ollama::OllamaLanguageModelProvider, open_ai::OpenAiLanguageModelProvider,
+        kimi_ai::KimiAiLanguageModelProvider, ollama::OllamaLanguageModelProvider,
+        open_ai::OpenAiLanguageModelProvider,
     },
     LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderState,
@@ -36,6 +37,10 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         OpenAiLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        KimiAiLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(
