@@ -1701,13 +1701,7 @@ impl ProtoClient for Client {
             .entity_id_extractors
             .entry(message_type_id)
             .or_insert(entity_id_extractor);
-
-        let prev_handler = self
-            .state
-            .write()
-            .message_handlers
-            .insert(message_type_id, handler);
-
+        let prev_handler = state.message_handlers.insert(message_type_id, handler);
         if prev_handler.is_some() {
             panic!("registered handler for the same message twice");
         }
