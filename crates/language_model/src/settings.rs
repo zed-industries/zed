@@ -14,6 +14,7 @@ use crate::{
         cloud::{self, ZedDotDevSettings},
         copilot_chat::CopilotChatSettings,
         google::GoogleSettings,
+        kimi_ai::KimiAiSettings,
         ollama::OllamaSettings,
         open_ai::OpenAiSettings,
     },
@@ -37,7 +38,20 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
             }
         });
     }
-
+    if AllLanguageModelSettings::get_global(cx)
+        .kimiai
+        .needs_setting_migration
+    {
+        log::info!("kimiai settings init");
+        update_settings_file::<AllLanguageModelSettings>(fs.clone(), cx, move |setting, _| {
+            if let Some(settings) = setting.kimiai.clone() {
+                let (newest_version, _) = settings.upgrade();
+                setting.kimiai = Some(KimiAiSettingsContent::Versioned(
+                    VersionedKimiAiSettingsContent::V1(newest_version),
+                ));
+            }
+        });
+    }
     if AllLanguageModelSettings::get_global(cx)
         .anthropic
         .needs_setting_migration
@@ -61,6 +75,7 @@ pub struct AllLanguageModelSettings {
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
     pub copilot_chat: CopilotChatSettings,
+    pub kimiai: KimiAiSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -68,6 +83,7 @@ pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
+    pub kimiai: Option<KimiAiSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
@@ -197,6 +213,46 @@ impl OpenAiSettingsContent {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(untagged)]
+pub enum KimiAiSettingsContent {
+    Legacy(LegacyKimiAiSettingsContent),
+    Versioned(VersionedKimiAiSettingsContent),
+}
+impl KimiAiSettingsContent {
+    pub fn upgrade(self) -> (KimiAiSettingsContentV1, bool) {
+        match self {
+            KimiAiSettingsContent::Legacy(content) => (
+                KimiAiSettingsContentV1 {
+                    api_url: content.api_url,
+                    low_speed_timeout_in_seconds: content.low_speed_timeout_in_seconds,
+                    available_models: content.available_models.map(|models| {
+                        models
+                            .into_iter()
+                            .filter_map(|model| match model {
+                                kimi_ai::Model::Custom {
+                                    name,
+                                    max_tokens,
+                                    max_output_tokens,
+                                } => Some(provider::kimi_ai::KimiAvailableModel {
+                                    name,
+                                    max_tokens,
+                                    max_output_tokens,
+                                }),
+                                _ => None,
+                            })
+                            .collect()
+                    }),
+                },
+                true,
+            ),
+            KimiAiSettingsContent::Versioned(content) => match content {
+                VersionedKimiAiSettingsContent::V1(content) => (content, false),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct LegacyOpenAiSettingsContent {
     pub api_url: Option<String>,
     pub low_speed_timeout_in_seconds: Option<u64>,
@@ -215,6 +271,27 @@ pub struct OpenAiSettingsContentV1 {
     pub api_url: Option<String>,
     pub low_speed_timeout_in_seconds: Option<u64>,
     pub available_models: Option<Vec<provider::open_ai::AvailableModel>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct LegacyKimiAiSettingsContent {
+    pub api_url: Option<String>,
+    pub low_speed_timeout_in_seconds: Option<u64>,
+    pub available_models: Option<Vec<kimi_ai::Model>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(tag = "version")]
+pub enum VersionedKimiAiSettingsContent {
+    #[serde(rename = "1")]
+    V1(KimiAiSettingsContentV1),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct KimiAiSettingsContentV1 {
+    pub api_url: Option<String>,
+    pub low_speed_timeout_in_seconds: Option<u64>,
+    pub available_models: Option<Vec<provider::kimi_ai::KimiAvailableModel>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -358,6 +435,31 @@ impl settings::Settings for AllLanguageModelSettings {
                 settings.copilot_chat.low_speed_timeout =
                     Some(Duration::from_secs(low_speed_timeout));
             }
+
+            // KimiAi
+            let (kimi_ai, upgraded) = match value.kimiai.clone().map(|s| s.upgrade()) {
+                Some((content, upgraded)) => (Some(content), upgraded),
+                None => (None, false),
+            };
+            if upgraded {
+                settings.kimiai.needs_setting_migration = true;
+            }
+
+            merge(
+                &mut settings.kimiai.api_url,
+                kimi_ai.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            if let Some(low_speed_timeout_in_seconds) = kimi_ai
+                .as_ref()
+                .and_then(|s| s.low_speed_timeout_in_seconds)
+            {
+                settings.kimiai.low_speed_timeout =
+                    Some(Duration::from_secs(low_speed_timeout_in_seconds));
+            }
+            merge(
+                &mut settings.kimiai.available_models,
+                kimi_ai.as_ref().and_then(|s| s.available_models.clone()),
+            );
         }
 
         Ok(settings)

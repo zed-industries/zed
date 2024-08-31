@@ -333,6 +333,37 @@ async fn perform_completion(
                 })
                 .boxed()
         }
+        LanguageModelProvider::KimiAi => {
+            let api_key = state
+                .config
+                .kimi_api_key
+                .as_ref()
+                .context("no KimiAI API key configured on thre server")?;
+            let chunks = kimi_ai::stream_completion(
+                &state.http_client,
+                kimi_ai::KIMI_AI_API_URL,
+                api_key,
+                serde_json::from_str(&params.provider_request.get())?,
+                None,
+            )
+            .await?;
+
+            chunks
+                .map(|event| {
+                    event.map(|chunk| {
+                        let input_tokens =
+                            chunk.usage.as_ref().map_or(0, |u| u.prompt_tokens) as usize;
+                        let output_tokens =
+                            chunk.usage.as_ref().map_or(0, |u| u.completion_tokens) as usize;
+                        (
+                            serde_json::to_vec(&chunk).unwrap(),
+                            input_tokens,
+                            output_tokens,
+                        )
+                    })
+                })
+                .boxed()
+        }
         LanguageModelProvider::Google => {
             let api_key = state
                 .config

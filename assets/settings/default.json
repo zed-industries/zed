@@ -909,6 +909,10 @@
     "openai": {
       "version": "1",
       "api_url": "https://api.openai.com/v1"
+    },
+    "kimiai": {
+      "version": "1",
+      "api_url": "https://api.moonshot.cn/v1"
     }
   },
   // Zed's Prettier integration settings.

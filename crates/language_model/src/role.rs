@@ -65,3 +65,13 @@ impl From<Role> for open_ai::Role {
         }
     }
 }
+
+impl From<Role> for kimi_ai::Role {
+    fn from(val: Role) -> Self {
+        match val {
+            Role::User => kimi_ai::Role::User,
+            Role::Assistant => kimi_ai::Role::Assistant,
+            Role::System => kimi_ai::Role::System,
+        }
+    }
+}

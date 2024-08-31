@@ -13,6 +13,7 @@ pub enum LanguageModelProvider {
     OpenAi,
     Google,
     Zed,
+    KimiAi,
 }
 
 #[derive(Serialize, Deserialize)]

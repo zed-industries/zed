@@ -1,3 +1,4 @@
+use super::kimi_ai::count_kimi_ai_tokens;
 use super::open_ai::count_open_ai_tokens;
 use crate::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
@@ -63,6 +64,7 @@ pub enum AvailableProvider {
     Anthropic,
     OpenAi,
     Google,
+    KimiAi,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -207,6 +209,11 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     models.insert(model.id().to_string(), CloudModel::OpenAi(model));
                 }
             }
+            for model in kimi_ai::Model::iter() {
+                if !matches!(model, kimi_ai::Model::Custom { .. }) {
+                    models.insert(model.id().to_string(), CloudModel::KimiAi(model));
+                }
+            }
             for model in google_ai::Model::iter() {
                 if !matches!(model, google_ai::Model::Custom { .. }) {
                     models.insert(model.id().to_string(), CloudModel::Google(model));
@@ -259,6 +266,11 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
                     name: model.name.clone(),
                     max_tokens: model.max_tokens,
+                }),
+                AvailableProvider::KimiAi => CloudModel::KimiAi(kimi_ai::Model::Custom {
+                    name: model.name.clone(),
+                    max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
                 }),
             };
             models.insert(model.id().to_string(), model.clone());
@@ -456,7 +468,10 @@ impl LanguageModel for CloudLanguageModel {
                         min_total_token: cache.min_total_token,
                     })
             }
-            CloudModel::OpenAi(_) | CloudModel::Google(_) | CloudModel::Zed(_) => None,
+            CloudModel::OpenAi(_)
+            | CloudModel::Google(_)
+            | CloudModel::Zed(_)
+            | CloudModel::KimiAi(_) => None,
         }
     }
 
@@ -468,6 +483,7 @@ impl LanguageModel for CloudLanguageModel {
         match self.model.clone() {
             CloudModel::Anthropic(_) => count_anthropic_tokens(request, cx),
             CloudModel::OpenAi(model) => count_open_ai_tokens(request, model, cx),
+            CloudModel::KimiAi(model) => count_kimi_ai_tokens(request, model, cx),
             CloudModel::Google(model) => {
                 let client = self.client.clone();
                 let request = request.into_google(model.id().into());
@@ -537,6 +553,27 @@ impl LanguageModel for CloudLanguageModel {
                         llm_api_token,
                         PerformCompletionParams {
                             provider: client::LanguageModelProvider::OpenAi,
+                            model: request.model.clone(),
+                            provider_request: RawValue::from_string(serde_json::to_string(
+                                &request,
+                            )?)?,
+                        },
+                    )
+                    .await?;
+                    Ok(open_ai::extract_text_from_events(response_lines(response)))
+                });
+                async move { Ok(future.await?.boxed()) }.boxed()
+            }
+            CloudModel::KimiAi(model) => {
+                let client = self.client.clone();
+                let request = request.into_open_ai(model.id().into(), model.max_output_tokens());
+                let llm_api_token = self.llm_api_token.clone();
+                let future = self.request_limiter.stream(async move {
+                    let response = Self::perform_llm_completion(
+                        client.clone(),
+                        llm_api_token,
+                        PerformCompletionParams {
+                            provider: client::LanguageModelProvider::KimiAi,
                             model: request.model.clone(),
                             provider_request: RawValue::from_string(serde_json::to_string(
                                 &request,
@@ -680,6 +717,50 @@ impl LanguageModel for CloudLanguageModel {
                         .await?;
 
                         Ok(open_ai::extract_tool_args_from_events(
+                            tool_name,
+                            Box::pin(response_lines(response)),
+                        )
+                        .await?
+                        .boxed())
+                    })
+                    .boxed()
+            }
+            CloudModel::KimiAi(model) => {
+                let mut request =
+                    request.into_kimi_ai(model.id().into(), model.max_output_tokens());
+                request.tool_choice = Some(kimi_ai::KimiToolChoice::Other(
+                    kimi_ai::KimiToolDefinition::Function {
+                        function: kimi_ai::KimiFunctionDefinition {
+                            name: tool_name.clone(),
+                            description: None,
+                            parameters: None,
+                        },
+                    },
+                ));
+                request.tools = vec![kimi_ai::KimiToolDefinition::Function {
+                    function: kimi_ai::KimiFunctionDefinition {
+                        name: tool_name.clone(),
+                        description: Some(tool_description),
+                        parameters: Some(input_schema),
+                    },
+                }];
+
+                self.request_limiter
+                    .run(async move {
+                        let response = Self::perform_llm_completion(
+                            client.clone(),
+                            llm_api_token,
+                            PerformCompletionParams {
+                                provider: client::LanguageModelProvider::KimiAi,
+                                model: request.model.clone(),
+                                provider_request: RawValue::from_string(serde_json::to_string(
+                                    &request,
+                                )?)?,
+                            },
+                        )
+                        .await?;
+
+                        Ok(kimi_ai::extract_tool_args_from_events(
                             tool_name,
                             Box::pin(response_lines(response)),
                         )
