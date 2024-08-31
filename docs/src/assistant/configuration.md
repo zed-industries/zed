@@ -108,32 +108,48 @@ Custom models will be listed in the model dropdown in the assistant panel.
 
 Download and install Ollama from [ollama.com/download](https://ollama.com/download) (Linux or macOS) and ensure it's running with `ollama --version`.
 
-You can use Ollama with the Zed assistant by making Ollama appear as an OpenAPI endpoint.
-
-1. Download, for example, the `mistral` model with Ollama:
+1. Download one of the [available models](https://ollama.com/models), for example, for `mistral`:
 
    ```sh
    ollama pull mistral
    ```
 
-2. Make sure that the Ollama server is running. You can start it either via running the Ollama app, or launching:
+2. Make sure that the Ollama server is running. You can start it either via running Ollama.app (MacOS) or launching:
 
    ```sh
    ollama serve
    ```
 
 3. In the assistant panel, select one of the Ollama models using the model dropdown.
-4. (Optional) If you want to change the default URL that is used to access the Ollama server, you can do so by adding the following settings:
+
+4. (Optional) Specify a [custom api_url](#custom-endpoint) or [custom `low_speed_timeout_in_seconds`](#provider-timeout) if required.
+
+#### Ollama Context Length {#ollama-context}
+
+Zed has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models. Zed API requests to Ollama include this as `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of ram are able to use most models out of the box. See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete set of defaults.
+
+**Note**: Tokens counts displayed in the assistant panel are only estimates and will differ from the models native tokenizer.
+
+Depending on your hardware or use-case you may wish to limit or increase the context length for a specific model via settings.json:
 
 ```json
 {
   "language_models": {
     "ollama": {
-      "api_url": "http://localhost:11434"
+      "low_speed_timeout_in_seconds": 120,
+      "available_models": [
+        {
+          "provider": "ollama",
+          "name": "mistral:latest",
+          "max_tokens": 32768
+        }
+      ]
     }
   }
 }
 ```
+
+If you specify a context length that is too large for your hardware, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
 
 ### OpenAI {#openai}
 

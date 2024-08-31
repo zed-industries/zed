@@ -1,40 +1,37 @@
-mod step_view;
-
-use crate::{
-    prompts::StepResolutionContext, AssistantPanel, Context, InlineAssistId, InlineAssistant,
-};
-use anyhow::{anyhow, Error, Result};
+use crate::{AssistantPanel, InlineAssistId, InlineAssistant};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use editor::Editor;
-use futures::future;
-use gpui::{
-    Model, ModelContext, Task, UpdateGlobal as _, View, WeakModel, WeakView, WindowContext,
-};
-use language::{Anchor, Buffer, BufferSnapshot, SymbolPath};
-use language_model::{LanguageModelRegistry, LanguageModelRequestMessage, Role};
-use project::Project;
+use gpui::AsyncAppContext;
+use gpui::{Model, Task, UpdateGlobal as _, View, WeakView, WindowContext};
+use language::{Anchor, Buffer, BufferSnapshot, Outline, OutlineItem, ParseStatus, SymbolPath};
+use project::{Project, ProjectPath};
 use rope::Point;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use smol::stream::StreamExt;
-use std::{cmp, fmt::Write, ops::Range, sync::Arc};
-use text::{AnchorRangeExt as _, OffsetRangeExt as _};
-use util::ResultExt as _;
+use std::{ops::Range, path::Path, sync::Arc};
 use workspace::Workspace;
-
-pub use step_view::WorkflowStepView;
 
 const IMPORTS_SYMBOL: &str = "#imports";
 
-pub struct WorkflowStep {
-    context: WeakModel<Context>,
-    context_buffer_range: Range<Anchor>,
-    tool_output: String,
-    resolve_task: Option<Task<()>>,
-    pub resolution: Option<Result<WorkflowStepResolution, Arc<Error>>>,
+#[derive(Debug)]
+pub(crate) struct WorkflowStep {
+    pub range: Range<language::Anchor>,
+    pub leading_tags_end: text::Anchor,
+    pub trailing_tag_start: Option<text::Anchor>,
+    pub edits: Arc<[Result<WorkflowStepEdit>]>,
+    pub resolution_task: Option<Task<()>>,
+    pub resolution: Option<Arc<Result<WorkflowStepResolution>>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WorkflowStepEdit {
+    pub path: String,
+    pub kind: WorkflowStepEditKind,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkflowStepResolution {
+pub(crate) struct WorkflowStepResolution {
     pub title: String,
     pub suggestion_groups: HashMap<Model<Buffer>, Vec<WorkflowSuggestionGroup>>,
 }
@@ -81,194 +78,6 @@ pub enum WorkflowSuggestion {
     },
 }
 
-impl WorkflowStep {
-    pub fn new(range: Range<Anchor>, context: WeakModel<Context>) -> Self {
-        Self {
-            context_buffer_range: range,
-            tool_output: String::new(),
-            context,
-            resolution: None,
-            resolve_task: None,
-        }
-    }
-
-    pub fn resolve(&mut self, cx: &mut ModelContext<WorkflowStep>) -> Option<()> {
-        let range = self.context_buffer_range.clone();
-        let context = self.context.upgrade()?;
-        let context = context.read(cx);
-        let project = context.project()?;
-        let prompt_builder = context.prompt_builder();
-        let mut request = context.to_completion_request(cx);
-        let model = LanguageModelRegistry::read_global(cx).active_model();
-        let context_buffer = context.buffer();
-        let step_text = context_buffer
-            .read(cx)
-            .text_for_range(range.clone())
-            .collect::<String>();
-
-        let mut workflow_context = String::new();
-        for message in context.messages(cx) {
-            write!(&mut workflow_context, "<message role={}>", message.role).unwrap();
-            for chunk in context_buffer.read(cx).text_for_range(message.offset_range) {
-                write!(&mut workflow_context, "{chunk}").unwrap();
-            }
-            write!(&mut workflow_context, "</message>").unwrap();
-        }
-
-        self.resolve_task = Some(cx.spawn(|this, mut cx| async move {
-            let result = async {
-                let Some(model) = model else {
-                    return Err(anyhow!("no model selected"));
-                };
-
-                this.update(&mut cx, |this, cx| {
-                    this.tool_output.clear();
-                    this.resolution = None;
-                    this.result_updated(cx);
-                    cx.notify();
-                })?;
-
-                let resolution_context = StepResolutionContext {
-                    workflow_context,
-                    step_to_resolve: step_text.clone(),
-                };
-                let mut prompt =
-                    prompt_builder.generate_step_resolution_prompt(&resolution_context)?;
-                prompt.push_str(&step_text);
-                request.messages.push(LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: vec![prompt.into()],
-                    cache: false,
-                });
-
-                // Invoke the model to get its edit suggestions for this workflow step.
-                let mut stream = model
-                    .use_tool_stream::<tool::WorkflowStepResolutionTool>(request, &cx)
-                    .await?;
-                while let Some(chunk) = stream.next().await {
-                    let chunk = chunk?;
-                    this.update(&mut cx, |this, cx| {
-                        this.tool_output.push_str(&chunk);
-                        cx.notify();
-                    })?;
-                }
-
-                let resolution = this.update(&mut cx, |this, _| {
-                    serde_json::from_str::<tool::WorkflowStepResolutionTool>(&this.tool_output)
-                })??;
-
-                this.update(&mut cx, |this, cx| {
-                    this.tool_output = serde_json::to_string_pretty(&resolution).unwrap();
-                    cx.notify();
-                })?;
-
-                // Translate the parsed suggestions to our internal types, which anchor the suggestions to locations in the code.
-                let suggestion_tasks: Vec<_> = resolution
-                    .suggestions
-                    .iter()
-                    .map(|suggestion| suggestion.resolve(project.clone(), cx.clone()))
-                    .collect();
-
-                // Expand the context ranges of each suggestion and group suggestions with overlapping context ranges.
-                let suggestions = future::join_all(suggestion_tasks)
-                    .await
-                    .into_iter()
-                    .filter_map(|task| task.log_err())
-                    .collect::<Vec<_>>();
-
-                let mut suggestions_by_buffer = HashMap::default();
-                for (buffer, suggestion) in suggestions {
-                    suggestions_by_buffer
-                        .entry(buffer)
-                        .or_insert_with(Vec::new)
-                        .push(suggestion);
-                }
-
-                let mut suggestion_groups_by_buffer = HashMap::default();
-                for (buffer, mut suggestions) in suggestions_by_buffer {
-                    let mut suggestion_groups = Vec::<WorkflowSuggestionGroup>::new();
-                    let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-                    // Sort suggestions by their range so that earlier, larger ranges come first
-                    suggestions.sort_by(|a, b| a.range().cmp(&b.range(), &snapshot));
-
-                    // Merge overlapping suggestions
-                    suggestions.dedup_by(|a, b| b.try_merge(a, &snapshot));
-
-                    // Create context ranges for each suggestion
-                    for suggestion in suggestions {
-                        let context_range = {
-                            let suggestion_point_range = suggestion.range().to_point(&snapshot);
-                            let start_row = suggestion_point_range.start.row.saturating_sub(5);
-                            let end_row = cmp::min(
-                                suggestion_point_range.end.row + 5,
-                                snapshot.max_point().row,
-                            );
-                            let start = snapshot.anchor_before(Point::new(start_row, 0));
-                            let end = snapshot
-                                .anchor_after(Point::new(end_row, snapshot.line_len(end_row)));
-                            start..end
-                        };
-
-                        if let Some(last_group) = suggestion_groups.last_mut() {
-                            if last_group
-                                .context_range
-                                .end
-                                .cmp(&context_range.start, &snapshot)
-                                .is_ge()
-                            {
-                                // Merge with the previous group if context ranges overlap
-                                last_group.context_range.end = context_range.end;
-                                last_group.suggestions.push(suggestion);
-                            } else {
-                                // Create a new group
-                                suggestion_groups.push(WorkflowSuggestionGroup {
-                                    context_range,
-                                    suggestions: vec![suggestion],
-                                });
-                            }
-                        } else {
-                            // Create the first group
-                            suggestion_groups.push(WorkflowSuggestionGroup {
-                                context_range,
-                                suggestions: vec![suggestion],
-                            });
-                        }
-                    }
-
-                    suggestion_groups_by_buffer.insert(buffer, suggestion_groups);
-                }
-
-                Ok((resolution.step_title, suggestion_groups_by_buffer))
-            };
-
-            let result = result.await;
-            this.update(&mut cx, |this, cx| {
-                this.resolution = Some(match result {
-                    Ok((title, suggestion_groups)) => Ok(WorkflowStepResolution {
-                        title,
-                        suggestion_groups,
-                    }),
-                    Err(error) => Err(Arc::new(error)),
-                });
-                this.context
-                    .update(cx, |context, cx| context.workflow_step_updated(range, cx))
-                    .ok();
-                cx.notify();
-            })
-            .ok();
-        }));
-        None
-    }
-
-    fn result_updated(&mut self, cx: &mut ModelContext<Self>) {
-        self.context
-            .update(cx, |context, cx| {
-                context.workflow_step_updated(self.context_buffer_range.clone(), cx)
-            })
-            .ok();
-    }
-}
-
 impl WorkflowSuggestion {
     pub fn range(&self) -> Range<language::Anchor> {
         match self {
@@ -306,31 +115,7 @@ impl WorkflowSuggestion {
         }
     }
 
-    fn symbol_path(&self) -> Option<&SymbolPath> {
-        match self {
-            Self::Update { symbol_path, .. } => Some(symbol_path),
-            Self::InsertSiblingBefore { symbol_path, .. } => Some(symbol_path),
-            Self::InsertSiblingAfter { symbol_path, .. } => Some(symbol_path),
-            Self::PrependChild { symbol_path, .. } => symbol_path.as_ref(),
-            Self::AppendChild { symbol_path, .. } => symbol_path.as_ref(),
-            Self::Delete { symbol_path, .. } => Some(symbol_path),
-            Self::CreateFile { .. } => None,
-        }
-    }
-
-    fn kind(&self) -> &str {
-        match self {
-            Self::Update { .. } => "Update",
-            Self::CreateFile { .. } => "CreateFile",
-            Self::InsertSiblingBefore { .. } => "InsertSiblingBefore",
-            Self::InsertSiblingAfter { .. } => "InsertSiblingAfter",
-            Self::PrependChild { .. } => "PrependChild",
-            Self::AppendChild { .. } => "AppendChild",
-            Self::Delete { .. } => "Delete",
-        }
-    }
-
-    fn try_merge(&mut self, other: &Self, buffer: &BufferSnapshot) -> bool {
+    pub fn try_merge(&mut self, other: &Self, buffer: &BufferSnapshot) -> bool {
         let range = self.range();
         let other_range = other.range();
 
@@ -465,339 +250,323 @@ impl WorkflowSuggestion {
     }
 }
 
-pub mod tool {
-    use super::*;
-    use anyhow::Context as _;
-    use gpui::AsyncAppContext;
-    use language::{Outline, OutlineItem, ParseStatus};
-    use language_model::LanguageModelTool;
-    use project::ProjectPath;
-    use schemars::JsonSchema;
-    use std::path::Path;
+impl WorkflowStepEdit {
+    pub fn new(
+        path: Option<String>,
+        operation: Option<String>,
+        symbol: Option<String>,
+        description: Option<String>,
+    ) -> Result<Self> {
+        let path = path.ok_or_else(|| anyhow!("missing path"))?;
+        let operation = operation.ok_or_else(|| anyhow!("missing operation"))?;
 
-    #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-    pub struct WorkflowStepResolutionTool {
-        /// An extremely short title for the edit step represented by these operations.
-        pub step_title: String,
-        /// A sequence of operations to apply to the codebase.
-        /// When multiple operations are required for a step, be sure to include multiple operations in this list.
-        pub suggestions: Vec<WorkflowSuggestionTool>,
-    }
-
-    impl LanguageModelTool for WorkflowStepResolutionTool {
-        fn name() -> String {
-            "edit".into()
-        }
-
-        fn description() -> String {
-            "suggest edits to one or more locations in the codebase".into()
-        }
-    }
-
-    /// A description of an operation to apply to one location in the codebase.
-    ///
-    /// This object represents a single edit operation that can be performed on a specific file
-    /// in the codebase. It encapsulates both the location (file path) and the nature of the
-    /// edit to be made.
-    ///
-    /// # Fields
-    ///
-    /// * `path`: A string representing the file path where the edit operation should be applied.
-    ///           This path is relative to the root of the project or repository.
-    ///
-    /// * `kind`: An enum representing the specific type of edit operation to be performed.
-    ///
-    /// # Usage
-    ///
-    /// `EditOperation` is used within a code editor to represent and apply
-    /// programmatic changes to source code. It provides a structured way to describe
-    /// edits for features like refactoring tools or AI-assisted coding suggestions.
-    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-    pub struct WorkflowSuggestionTool {
-        /// The path to the file containing the relevant operation
-        pub path: String,
-        #[serde(flatten)]
-        pub kind: WorkflowSuggestionToolKind,
-    }
-
-    impl WorkflowSuggestionTool {
-        pub(super) async fn resolve(
-            &self,
-            project: Model<Project>,
-            mut cx: AsyncAppContext,
-        ) -> Result<(Model<Buffer>, super::WorkflowSuggestion)> {
-            let path = self.path.clone();
-            let kind = self.kind.clone();
-            let buffer = project
-                .update(&mut cx, |project, cx| {
-                    let project_path = project
-                        .find_project_path(Path::new(&path), cx)
-                        .or_else(|| {
-                            // If we couldn't find a project path for it, put it in the active worktree
-                            // so that when we create the buffer, it can be saved.
-                            let worktree = project
-                                .active_entry()
-                                .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
-                                .or_else(|| project.worktrees(cx).next())?;
-                            let worktree = worktree.read(cx);
-
-                            Some(ProjectPath {
-                                worktree_id: worktree.id(),
-                                path: Arc::from(Path::new(&path)),
-                            })
-                        })
-                        .with_context(|| format!("worktree not found for {:?}", path))?;
-                    anyhow::Ok(project.open_buffer(project_path, cx))
-                })??
-                .await?;
-
-            let mut parse_status = buffer.read_with(&cx, |buffer, _cx| buffer.parse_status())?;
-            while *parse_status.borrow() != ParseStatus::Idle {
-                parse_status.changed().await?;
-            }
-
-            let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-            let outline = snapshot.outline(None).context("no outline for buffer")?;
-
-            let suggestion = match kind {
-                WorkflowSuggestionToolKind::Update {
-                    symbol,
-                    description,
-                } => {
-                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
-                    let start = symbol
-                        .annotation_range
-                        .map_or(symbol.range.start, |range| range.start);
-                    let start = Point::new(start.row, 0);
-                    let end = Point::new(
-                        symbol.range.end.row,
-                        snapshot.line_len(symbol.range.end.row),
-                    );
-                    let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
-                    WorkflowSuggestion::Update {
-                        range,
-                        description,
-                        symbol_path,
-                    }
-                }
-                WorkflowSuggestionToolKind::Create { description } => {
-                    WorkflowSuggestion::CreateFile { description }
-                }
-                WorkflowSuggestionToolKind::InsertSiblingBefore {
-                    symbol,
-                    description,
-                } => {
-                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
-                    let position = snapshot.anchor_before(
-                        symbol
-                            .annotation_range
-                            .map_or(symbol.range.start, |annotation_range| {
-                                annotation_range.start
-                            }),
-                    );
-                    WorkflowSuggestion::InsertSiblingBefore {
-                        position,
-                        description,
-                        symbol_path,
-                    }
-                }
-                WorkflowSuggestionToolKind::InsertSiblingAfter {
-                    symbol,
-                    description,
-                } => {
-                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
-                    let position = snapshot.anchor_after(symbol.range.end);
-                    WorkflowSuggestion::InsertSiblingAfter {
-                        position,
-                        description,
-                        symbol_path,
-                    }
-                }
-                WorkflowSuggestionToolKind::PrependChild {
-                    symbol,
-                    description,
-                } => {
-                    if let Some(symbol) = symbol {
-                        let (symbol_path, symbol) =
-                            Self::resolve_symbol(&snapshot, &outline, &symbol)?;
-
-                        let position = snapshot.anchor_after(
-                            symbol
-                                .body_range
-                                .map_or(symbol.range.start, |body_range| body_range.start),
-                        );
-                        WorkflowSuggestion::PrependChild {
-                            position,
-                            description,
-                            symbol_path: Some(symbol_path),
-                        }
-                    } else {
-                        WorkflowSuggestion::PrependChild {
-                            position: language::Anchor::MIN,
-                            description,
-                            symbol_path: None,
-                        }
-                    }
-                }
-                WorkflowSuggestionToolKind::AppendChild {
-                    symbol,
-                    description,
-                } => {
-                    if let Some(symbol) = symbol {
-                        let (symbol_path, symbol) =
-                            Self::resolve_symbol(&snapshot, &outline, &symbol)?;
-
-                        let position = snapshot.anchor_before(
-                            symbol
-                                .body_range
-                                .map_or(symbol.range.end, |body_range| body_range.end),
-                        );
-                        WorkflowSuggestion::AppendChild {
-                            position,
-                            description,
-                            symbol_path: Some(symbol_path),
-                        }
-                    } else {
-                        WorkflowSuggestion::PrependChild {
-                            position: language::Anchor::MAX,
-                            description,
-                            symbol_path: None,
-                        }
-                    }
-                }
-                WorkflowSuggestionToolKind::Delete { symbol } => {
-                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
-                    let start = symbol
-                        .annotation_range
-                        .map_or(symbol.range.start, |range| range.start);
-                    let start = Point::new(start.row, 0);
-                    let end = Point::new(
-                        symbol.range.end.row,
-                        snapshot.line_len(symbol.range.end.row),
-                    );
-                    let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
-                    WorkflowSuggestion::Delete { range, symbol_path }
-                }
-            };
-
-            Ok((buffer, suggestion))
-        }
-
-        fn resolve_symbol(
-            snapshot: &BufferSnapshot,
-            outline: &Outline<Anchor>,
-            symbol: &str,
-        ) -> Result<(SymbolPath, OutlineItem<Point>)> {
-            if symbol == IMPORTS_SYMBOL {
-                let target_row = find_first_non_comment_line(snapshot);
-                Ok((
-                    SymbolPath(IMPORTS_SYMBOL.to_string()),
-                    OutlineItem {
-                        range: Point::new(target_row, 0)..Point::new(target_row + 1, 0),
-                        ..Default::default()
-                    },
-                ))
-            } else {
-                let (symbol_path, symbol) = outline
-                    .find_most_similar(symbol)
-                    .with_context(|| format!("symbol not found: {symbol}"))?;
-                Ok((symbol_path, symbol.to_point(snapshot)))
-            }
-        }
-    }
-
-    fn find_first_non_comment_line(snapshot: &BufferSnapshot) -> u32 {
-        let Some(language) = snapshot.language() else {
-            return 0;
+        let kind = match operation.as_str() {
+            "update" => WorkflowStepEditKind::Update {
+                symbol: symbol.ok_or_else(|| anyhow!("missing symbol"))?,
+                description: description.ok_or_else(|| anyhow!("missing description"))?,
+            },
+            "insert_sibling_before" => WorkflowStepEditKind::InsertSiblingBefore {
+                symbol: symbol.ok_or_else(|| anyhow!("missing symbol"))?,
+                description: description.ok_or_else(|| anyhow!("missing description"))?,
+            },
+            "insert_sibling_after" => WorkflowStepEditKind::InsertSiblingAfter {
+                symbol: symbol.ok_or_else(|| anyhow!("missing symbol"))?,
+                description: description.ok_or_else(|| anyhow!("missing description"))?,
+            },
+            "prepend_child" => WorkflowStepEditKind::PrependChild {
+                symbol,
+                description: description.ok_or_else(|| anyhow!("missing description"))?,
+            },
+            "append_child" => WorkflowStepEditKind::AppendChild {
+                symbol,
+                description: description.ok_or_else(|| anyhow!("missing description"))?,
+            },
+            "delete" => WorkflowStepEditKind::Delete {
+                symbol: symbol.ok_or_else(|| anyhow!("missing symbol"))?,
+            },
+            "create" => WorkflowStepEditKind::Create {
+                description: description.ok_or_else(|| anyhow!("missing description"))?,
+            },
+            _ => Err(anyhow!("unknown operation {operation:?}"))?,
         };
 
-        let scope = language.default_scope();
-        let comment_prefixes = scope.line_comment_prefixes();
+        Ok(Self { path, kind })
+    }
 
-        let mut chunks = snapshot.as_rope().chunks();
-        let mut target_row = 0;
-        loop {
-            let starts_with_comment = chunks
-                .peek()
-                .map(|chunk| {
-                    comment_prefixes
-                        .iter()
-                        .any(|s| chunk.starts_with(s.as_ref().trim_end()))
-                })
-                .unwrap_or(false);
+    pub async fn resolve(
+        &self,
+        project: Model<Project>,
+        mut cx: AsyncAppContext,
+    ) -> Result<(Model<Buffer>, super::WorkflowSuggestion)> {
+        let path = self.path.clone();
+        let kind = self.kind.clone();
+        let buffer = project
+            .update(&mut cx, |project, cx| {
+                let project_path = project
+                    .find_project_path(Path::new(&path), cx)
+                    .or_else(|| {
+                        // If we couldn't find a project path for it, put it in the active worktree
+                        // so that when we create the buffer, it can be saved.
+                        let worktree = project
+                            .active_entry()
+                            .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
+                            .or_else(|| project.worktrees(cx).next())?;
+                        let worktree = worktree.read(cx);
 
-            if !starts_with_comment {
-                break;
-            }
+                        Some(ProjectPath {
+                            worktree_id: worktree.id(),
+                            path: Arc::from(Path::new(&path)),
+                        })
+                    })
+                    .with_context(|| format!("worktree not found for {:?}", path))?;
+                anyhow::Ok(project.open_buffer(project_path, cx))
+            })??
+            .await?;
 
-            target_row += 1;
-            if !chunks.next_line() {
-                break;
-            }
+        let mut parse_status = buffer.read_with(&cx, |buffer, _cx| buffer.parse_status())?;
+        while *parse_status.borrow() != ParseStatus::Idle {
+            parse_status.changed().await?;
         }
-        target_row
+
+        let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+        let outline = snapshot.outline(None).context("no outline for buffer")?;
+
+        let suggestion = match kind {
+            WorkflowStepEditKind::Update {
+                symbol,
+                description,
+            } => {
+                let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
+                let start = symbol
+                    .annotation_range
+                    .map_or(symbol.range.start, |range| range.start);
+                let start = Point::new(start.row, 0);
+                let end = Point::new(
+                    symbol.range.end.row,
+                    snapshot.line_len(symbol.range.end.row),
+                );
+                let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                WorkflowSuggestion::Update {
+                    range,
+                    description,
+                    symbol_path,
+                }
+            }
+            WorkflowStepEditKind::Create { description } => {
+                WorkflowSuggestion::CreateFile { description }
+            }
+            WorkflowStepEditKind::InsertSiblingBefore {
+                symbol,
+                description,
+            } => {
+                let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
+                let position = snapshot.anchor_before(
+                    symbol
+                        .annotation_range
+                        .map_or(symbol.range.start, |annotation_range| {
+                            annotation_range.start
+                        }),
+                );
+                WorkflowSuggestion::InsertSiblingBefore {
+                    position,
+                    description,
+                    symbol_path,
+                }
+            }
+            WorkflowStepEditKind::InsertSiblingAfter {
+                symbol,
+                description,
+            } => {
+                let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
+                let position = snapshot.anchor_after(symbol.range.end);
+                WorkflowSuggestion::InsertSiblingAfter {
+                    position,
+                    description,
+                    symbol_path,
+                }
+            }
+            WorkflowStepEditKind::PrependChild {
+                symbol,
+                description,
+            } => {
+                if let Some(symbol) = symbol {
+                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
+
+                    let position = snapshot.anchor_after(
+                        symbol
+                            .body_range
+                            .map_or(symbol.range.start, |body_range| body_range.start),
+                    );
+                    WorkflowSuggestion::PrependChild {
+                        position,
+                        description,
+                        symbol_path: Some(symbol_path),
+                    }
+                } else {
+                    WorkflowSuggestion::PrependChild {
+                        position: language::Anchor::MIN,
+                        description,
+                        symbol_path: None,
+                    }
+                }
+            }
+            WorkflowStepEditKind::AppendChild {
+                symbol,
+                description,
+            } => {
+                if let Some(symbol) = symbol {
+                    let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
+
+                    let position = snapshot.anchor_before(
+                        symbol
+                            .body_range
+                            .map_or(symbol.range.end, |body_range| body_range.end),
+                    );
+                    WorkflowSuggestion::AppendChild {
+                        position,
+                        description,
+                        symbol_path: Some(symbol_path),
+                    }
+                } else {
+                    WorkflowSuggestion::PrependChild {
+                        position: language::Anchor::MAX,
+                        description,
+                        symbol_path: None,
+                    }
+                }
+            }
+            WorkflowStepEditKind::Delete { symbol } => {
+                let (symbol_path, symbol) = Self::resolve_symbol(&snapshot, &outline, &symbol)?;
+                let start = symbol
+                    .annotation_range
+                    .map_or(symbol.range.start, |range| range.start);
+                let start = Point::new(start.row, 0);
+                let end = Point::new(
+                    symbol.range.end.row,
+                    snapshot.line_len(symbol.range.end.row),
+                );
+                let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                WorkflowSuggestion::Delete { range, symbol_path }
+            }
+        };
+
+        Ok((buffer, suggestion))
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-    #[serde(tag = "kind")]
-    pub enum WorkflowSuggestionToolKind {
-        /// Rewrites the specified symbol entirely based on the given description.
-        /// This operation completely replaces the existing symbol with new content.
-        Update {
-            /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
-            /// The path should uniquely identify the symbol within the containing file.
-            symbol: String,
-            /// A brief description of the transformation to apply to the symbol.
-            description: String,
-        },
-        /// Creates a new file with the given path based on the provided description.
-        /// This operation adds a new file to the codebase.
-        Create {
-            /// A brief description of the file to be created.
-            description: String,
-        },
-        /// Inserts a new symbol based on the given description before the specified symbol.
-        /// This operation adds new content immediately preceding an existing symbol.
-        InsertSiblingBefore {
-            /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
-            /// The new content will be inserted immediately before this symbol.
-            symbol: String,
-            /// A brief description of the new symbol to be inserted.
-            description: String,
-        },
-        /// Inserts a new symbol based on the given description after the specified symbol.
-        /// This operation adds new content immediately following an existing symbol.
-        InsertSiblingAfter {
-            /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
-            /// The new content will be inserted immediately after this symbol.
-            symbol: String,
-            /// A brief description of the new symbol to be inserted.
-            description: String,
-        },
-        /// Inserts a new symbol as a child of the specified symbol at the start.
-        /// This operation adds new content as the first child of an existing symbol (or file if no symbol is provided).
-        PrependChild {
-            /// An optional fully-qualified reference to the symbol after the code you want to insert, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
-            /// If provided, the new content will be inserted as the first child of this symbol.
-            /// If not provided, the new content will be inserted at the top of the file.
-            symbol: Option<String>,
-            /// A brief description of the new symbol to be inserted.
-            description: String,
-        },
-        /// Inserts a new symbol as a child of the specified symbol at the end.
-        /// This operation adds new content as the last child of an existing symbol (or file if no symbol is provided).
-        AppendChild {
-            /// An optional fully-qualified reference to the symbol before the code you want to insert, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
-            /// If provided, the new content will be inserted as the last child of this symbol.
-            /// If not provided, the new content will be applied at the bottom of the file.
-            symbol: Option<String>,
-            /// A brief description of the new symbol to be inserted.
-            description: String,
-        },
-        /// Deletes the specified symbol from the containing file.
-        Delete {
-            /// An fully-qualified reference to the symbol to be deleted, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
-            symbol: String,
-        },
+    fn resolve_symbol(
+        snapshot: &BufferSnapshot,
+        outline: &Outline<Anchor>,
+        symbol: &str,
+    ) -> Result<(SymbolPath, OutlineItem<Point>)> {
+        if symbol == IMPORTS_SYMBOL {
+            let target_row = find_first_non_comment_line(snapshot);
+            Ok((
+                SymbolPath(IMPORTS_SYMBOL.to_string()),
+                OutlineItem {
+                    range: Point::new(target_row, 0)..Point::new(target_row + 1, 0),
+                    ..Default::default()
+                },
+            ))
+        } else {
+            let (symbol_path, symbol) = outline
+                .find_most_similar(symbol)
+                .with_context(|| format!("symbol not found: {symbol}"))?;
+            Ok((symbol_path, symbol.to_point(snapshot)))
+        }
     }
+}
+
+fn find_first_non_comment_line(snapshot: &BufferSnapshot) -> u32 {
+    let Some(language) = snapshot.language() else {
+        return 0;
+    };
+
+    let scope = language.default_scope();
+    let comment_prefixes = scope.line_comment_prefixes();
+
+    let mut chunks = snapshot.as_rope().chunks();
+    let mut target_row = 0;
+    loop {
+        let starts_with_comment = chunks
+            .peek()
+            .map(|chunk| {
+                comment_prefixes
+                    .iter()
+                    .any(|s| chunk.starts_with(s.as_ref().trim_end()))
+            })
+            .unwrap_or(false);
+
+        if !starts_with_comment {
+            break;
+        }
+
+        target_row += 1;
+        if !chunks.next_line() {
+            break;
+        }
+    }
+    target_row
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "operation")]
+pub enum WorkflowStepEditKind {
+    /// Rewrites the specified symbol entirely based on the given description.
+    /// This operation completely replaces the existing symbol with new content.
+    Update {
+        /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+        /// The path should uniquely identify the symbol within the containing file.
+        symbol: String,
+        /// A brief description of the transformation to apply to the symbol.
+        description: String,
+    },
+    /// Creates a new file with the given path based on the provided description.
+    /// This operation adds a new file to the codebase.
+    Create {
+        /// A brief description of the file to be created.
+        description: String,
+    },
+    /// Inserts a new symbol based on the given description before the specified symbol.
+    /// This operation adds new content immediately preceding an existing symbol.
+    InsertSiblingBefore {
+        /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+        /// The new content will be inserted immediately before this symbol.
+        symbol: String,
+        /// A brief description of the new symbol to be inserted.
+        description: String,
+    },
+    /// Inserts a new symbol based on the given description after the specified symbol.
+    /// This operation adds new content immediately following an existing symbol.
+    InsertSiblingAfter {
+        /// A fully-qualified reference to the symbol, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+        /// The new content will be inserted immediately after this symbol.
+        symbol: String,
+        /// A brief description of the new symbol to be inserted.
+        description: String,
+    },
+    /// Inserts a new symbol as a child of the specified symbol at the start.
+    /// This operation adds new content as the first child of an existing symbol (or file if no symbol is provided).
+    PrependChild {
+        /// An optional fully-qualified reference to the symbol after the code you want to insert, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+        /// If provided, the new content will be inserted as the first child of this symbol.
+        /// If not provided, the new content will be inserted at the top of the file.
+        symbol: Option<String>,
+        /// A brief description of the new symbol to be inserted.
+        description: String,
+    },
+    /// Inserts a new symbol as a child of the specified symbol at the end.
+    /// This operation adds new content as the last child of an existing symbol (or file if no symbol is provided).
+    AppendChild {
+        /// An optional fully-qualified reference to the symbol before the code you want to insert, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+        /// If provided, the new content will be inserted as the last child of this symbol.
+        /// If not provided, the new content will be applied at the bottom of the file.
+        symbol: Option<String>,
+        /// A brief description of the new symbol to be inserted.
+        description: String,
+    },
+    /// Deletes the specified symbol from the containing file.
+    Delete {
+        /// An fully-qualified reference to the symbol to be deleted, e.g. `mod foo impl Bar pub fn baz` instead of just `fn baz`.
+        symbol: String,
+    },
 }

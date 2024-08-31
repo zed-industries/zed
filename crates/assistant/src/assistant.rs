@@ -26,7 +26,7 @@ pub use context_store::*;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::Context as _;
-use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal};
+use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 use language_model::{
@@ -68,13 +68,6 @@ actions!(
 );
 
 const DEFAULT_CONTEXT_LINES: usize = 50;
-
-#[derive(Clone, Default, Deserialize, PartialEq)]
-pub struct InlineAssist {
-    prompt: Option<String>,
-}
-
-impl_actions!(assistant, [InlineAssist]);
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct MessageId(clock::Lamport);
@@ -369,7 +362,7 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
 
     if let Some(prompt_builder) = prompt_builder {
         slash_command_registry.register_command(
-            workflow_command::WorkflowSlashCommand::new(prompt_builder),
+            workflow_command::WorkflowSlashCommand::new(prompt_builder.clone()),
             true,
         );
     }

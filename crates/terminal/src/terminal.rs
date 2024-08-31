@@ -17,7 +17,7 @@ use alacritty_terminal::{
         search::{Match, RegexIter, RegexSearch},
         Config, RenderableCursor, TermMode,
     },
-    tty::{self, setup_env},
+    tty::{self},
     vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode},
     Term,
 };
@@ -345,17 +345,13 @@ impl TerminalBuilder {
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
                 working_directory: working_directory.clone(),
-                #[cfg(target_os = "linux")]
-                hold: !matches!(shell.clone(), Shell::System),
-                // with hold: true, macOS gets tasks stuck on ctrl-c interrupts periodically
-                #[cfg(not(target_os = "linux"))]
                 hold: false,
                 env: env.into_iter().collect(),
             }
         };
 
-        // Setup Alacritty's env
-        setup_env();
+        // Setup Alacritty's env, which modifies the current process's environment
+        alacritty_terminal::tty::setup_env();
 
         let scrolling_history = if task.is_some() {
             // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.

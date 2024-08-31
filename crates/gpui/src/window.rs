@@ -3389,7 +3389,7 @@ impl<'a> WindowContext<'a> {
         self.window.pending_input.is_some()
     }
 
-    fn clear_pending_keystrokes(&mut self) {
+    pub(crate) fn clear_pending_keystrokes(&mut self) {
         self.window.pending_input.take();
     }
 
@@ -3573,6 +3573,18 @@ impl<'a> WindowContext<'a> {
     /// Toggle full screen status on the current window at the platform level.
     pub fn toggle_fullscreen(&self) {
         self.window.platform_window.toggle_fullscreen();
+    }
+
+    /// Updates the IME panel position suggestions for languages like japanese, chinese.
+    pub fn invalidate_character_coordinates(&mut self) {
+        self.on_next_frame(|cx| {
+            if let Some(mut input_handler) = cx.window.platform_window.take_input_handler() {
+                if let Some(bounds) = input_handler.selected_bounds(cx) {
+                    cx.window.platform_window.update_ime_position(bounds);
+                }
+                cx.window.platform_window.set_input_handler(input_handler);
+            }
+        });
     }
 
     /// Present a platform dialog.

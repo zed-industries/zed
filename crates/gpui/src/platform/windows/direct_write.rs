@@ -275,54 +275,52 @@ impl DirectWriteState {
 
     fn generate_font_fallbacks(
         &self,
-        fallbacks: Option<&FontFallbacks>,
+        fallbacks: &FontFallbacks,
     ) -> Result<Option<IDWriteFontFallback>> {
-        if fallbacks.is_some_and(|fallbacks| fallbacks.fallback_list().is_empty()) {
+        if fallbacks.fallback_list().is_empty() {
             return Ok(None);
         }
         unsafe {
             let builder = self.components.factory.CreateFontFallbackBuilder()?;
             let font_set = &self.system_font_collection.GetFontSet()?;
-            if let Some(fallbacks) = fallbacks {
-                for family_name in fallbacks.fallback_list() {
-                    let Some(fonts) = font_set
-                        .GetMatchingFonts(
-                            &HSTRING::from(family_name),
-                            DWRITE_FONT_WEIGHT_NORMAL,
-                            DWRITE_FONT_STRETCH_NORMAL,
-                            DWRITE_FONT_STYLE_NORMAL,
-                        )
-                        .log_err()
-                    else {
-                        continue;
-                    };
-                    if fonts.GetFontCount() == 0 {
-                        log::error!("No matching font found for {}", family_name);
-                        continue;
-                    }
-                    let font = fonts.GetFontFaceReference(0)?.CreateFontFace()?;
-                    let mut count = 0;
-                    font.GetUnicodeRanges(None, &mut count).ok();
-                    if count == 0 {
-                        continue;
-                    }
-                    let mut unicode_ranges = vec![DWRITE_UNICODE_RANGE::default(); count as usize];
-                    let Some(_) = font
-                        .GetUnicodeRanges(Some(&mut unicode_ranges), &mut count)
-                        .log_err()
-                    else {
-                        continue;
-                    };
-                    let target_family_name = HSTRING::from(family_name);
-                    builder.AddMapping(
-                        &unicode_ranges,
-                        &[target_family_name.as_ptr()],
-                        None,
-                        None,
-                        None,
-                        1.0,
-                    )?;
+            for family_name in fallbacks.fallback_list() {
+                let Some(fonts) = font_set
+                    .GetMatchingFonts(
+                        &HSTRING::from(family_name),
+                        DWRITE_FONT_WEIGHT_NORMAL,
+                        DWRITE_FONT_STRETCH_NORMAL,
+                        DWRITE_FONT_STYLE_NORMAL,
+                    )
+                    .log_err()
+                else {
+                    continue;
+                };
+                if fonts.GetFontCount() == 0 {
+                    log::error!("No matching font found for {}", family_name);
+                    continue;
                 }
+                let font = fonts.GetFontFaceReference(0)?.CreateFontFace()?;
+                let mut count = 0;
+                font.GetUnicodeRanges(None, &mut count).ok();
+                if count == 0 {
+                    continue;
+                }
+                let mut unicode_ranges = vec![DWRITE_UNICODE_RANGE::default(); count as usize];
+                let Some(_) = font
+                    .GetUnicodeRanges(Some(&mut unicode_ranges), &mut count)
+                    .log_err()
+                else {
+                    continue;
+                };
+                let target_family_name = HSTRING::from(family_name);
+                builder.AddMapping(
+                    &unicode_ranges,
+                    &[target_family_name.as_ptr()],
+                    None,
+                    None,
+                    None,
+                    1.0,
+                )?;
             }
             let system_fallbacks = self.components.factory.GetSystemFontFallback()?;
             builder.AddMappings(&system_fallbacks)?;
@@ -378,10 +376,8 @@ impl DirectWriteState {
             else {
                 continue;
             };
-            let fallbacks = self
-                .generate_font_fallbacks(font_fallbacks)
-                .log_err()
-                .unwrap_or_default();
+            let fallbacks = font_fallbacks
+                .and_then(|fallbacks| self.generate_font_fallbacks(fallbacks).log_err().flatten());
             let font_info = FontInfo {
                 font_family: family_name.to_owned(),
                 font_face,

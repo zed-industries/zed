@@ -1,5 +1,4 @@
-use std::{path::Path, sync::Arc};
-
+use crate::{lsp_command::LspCommand, lsp_store::LspStore};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use gpui::{AppContext, AsyncAppContext, Model};
@@ -7,9 +6,8 @@ use language::{point_to_lsp, proto::deserialize_anchor, Buffer};
 use lsp::{LanguageServer, LanguageServerId};
 use rpc::proto::{self, PeerId};
 use serde::{Deserialize, Serialize};
+use std::{path::Path, sync::Arc};
 use text::{BufferId, PointUtf16, ToPointUtf16};
-
-use crate::{lsp_command::LspCommand, Project};
 
 pub enum LspExpandMacro {}
 
@@ -67,7 +65,7 @@ impl LspCommand for ExpandMacro {
     async fn response_from_lsp(
         self,
         message: Option<ExpandedMacro>,
-        _: Model<Project>,
+        _: Model<LspStore>,
         _: Model<Buffer>,
         _: LanguageServerId,
         _: AsyncAppContext,
@@ -92,7 +90,7 @@ impl LspCommand for ExpandMacro {
 
     async fn from_proto(
         message: Self::ProtoRequest,
-        _: Model<Project>,
+        _: Model<LspStore>,
         buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> anyhow::Result<Self> {
@@ -107,7 +105,7 @@ impl LspCommand for ExpandMacro {
 
     fn response_to_proto(
         response: ExpandedMacro,
-        _: &mut Project,
+        _: &mut LspStore,
         _: PeerId,
         _: &clock::Global,
         _: &mut AppContext,
@@ -121,7 +119,7 @@ impl LspCommand for ExpandMacro {
     async fn response_from_proto(
         self,
         message: proto::LspExtExpandMacroResponse,
-        _: Model<Project>,
+        _: Model<LspStore>,
         _: Model<Buffer>,
         _: AsyncAppContext,
     ) -> anyhow::Result<ExpandedMacro> {
@@ -177,7 +175,7 @@ impl LspCommand for SwitchSourceHeader {
     async fn response_from_lsp(
         self,
         message: Option<SwitchSourceHeaderResult>,
-        _: Model<Project>,
+        _: Model<LspStore>,
         _: Model<Buffer>,
         _: LanguageServerId,
         _: AsyncAppContext,
@@ -196,7 +194,7 @@ impl LspCommand for SwitchSourceHeader {
 
     async fn from_proto(
         _: Self::ProtoRequest,
-        _: Model<Project>,
+        _: Model<LspStore>,
         _: Model<Buffer>,
         _: AsyncAppContext,
     ) -> anyhow::Result<Self> {
@@ -205,7 +203,7 @@ impl LspCommand for SwitchSourceHeader {
 
     fn response_to_proto(
         response: SwitchSourceHeaderResult,
-        _: &mut Project,
+        _: &mut LspStore,
         _: PeerId,
         _: &clock::Global,
         _: &mut AppContext,
@@ -218,7 +216,7 @@ impl LspCommand for SwitchSourceHeader {
     async fn response_from_proto(
         self,
         message: proto::LspExtSwitchSourceHeaderResponse,
-        _: Model<Project>,
+        _: Model<LspStore>,
         _: Model<Buffer>,
         _: AsyncAppContext,
     ) -> anyhow::Result<SwitchSourceHeaderResult> {

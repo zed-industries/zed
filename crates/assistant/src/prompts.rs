@@ -8,6 +8,7 @@ use language::BufferSnapshot;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use text::LineEnding;
 use util::ResultExt;
 
 #[derive(Serialize)]
@@ -191,8 +192,8 @@ impl PromptBuilder {
             if let Some(id) = path.split('/').last().and_then(|s| s.strip_suffix(".hbs")) {
                 if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
                     log::info!("Registering built-in prompt template: {}", id);
-                    handlebars
-                        .register_template_string(id, String::from_utf8_lossy(prompt.as_ref()))?
+                    let prompt = String::from_utf8_lossy(prompt.as_ref());
+                    handlebars.register_template_string(id, LineEnding::normalize_cow(prompt))?
                 }
             }
         }
@@ -295,12 +296,5 @@ impl PromptBuilder {
 
     pub fn generate_workflow_prompt(&self) -> Result<String, RenderError> {
         self.handlebars.lock().render("edit_workflow", &())
-    }
-
-    pub fn generate_step_resolution_prompt(
-        &self,
-        context: &StepResolutionContext,
-    ) -> Result<String, RenderError> {
-        self.handlebars.lock().render("step_resolution", context)
     }
 }

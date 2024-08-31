@@ -1,4 +1,4 @@
-# TailWind CSS
+# Tailwind CSS
 
 Tailwind CSS support is built into Zed.
 
@@ -11,7 +11,7 @@ Tailwind CSS support is built into Zed.
 TBD: Document Tailwind CSS Configuration
 -->
 
-Languages which can be used with Tailwind CSS in Zed
+Languages which can be used with Tailwind CSS in Zed:
 
 - [Astro](./astro.md)
 - [CSS](./css.md)

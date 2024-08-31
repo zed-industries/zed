@@ -78,8 +78,6 @@ use tracing::{
     info_span, instrument, Instrument,
 };
 
-use self::connection_pool::VersionedMessage;
-
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 // kubernetes gives terminated pods 10s to shutdown gracefully. After they're gone, we can clean up old resources.
@@ -478,6 +476,7 @@ impl Server {
             .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::SearchProject>,
             ))
+            .add_request_handler(user_handler(forward_find_search_candidates_request))
             .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetDocumentHighlights>,
             ))
@@ -497,6 +496,9 @@ impl Server {
                 forward_read_only_project_request::<proto::InlayHints>,
             ))
             .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::ResolveInlayHint>,
+            ))
+            .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::OpenBufferByPath>,
             ))
             .add_request_handler(user_handler(
@@ -506,7 +508,7 @@ impl Server {
                 forward_mutating_project_request::<proto::ApplyCompletionAdditionalEdits>,
             ))
             .add_request_handler(user_handler(
-                forward_versioned_mutating_project_request::<proto::OpenNewBuffer>,
+                forward_mutating_project_request::<proto::OpenNewBuffer>,
             ))
             .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
@@ -548,7 +550,7 @@ impl Server {
                 forward_mutating_project_request::<proto::OnTypeFormatting>,
             ))
             .add_request_handler(user_handler(
-                forward_versioned_mutating_project_request::<proto::SaveBuffer>,
+                forward_mutating_project_request::<proto::SaveBuffer>,
             ))
             .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::BlameBuffer>,
@@ -2943,6 +2945,59 @@ where
     Ok(())
 }
 
+async fn forward_find_search_candidates_request(
+    request: proto::FindSearchCandidates,
+    response: Response<proto::FindSearchCandidates>,
+    session: UserSession,
+) -> Result<()> {
+    let project_id = ProjectId::from_proto(request.remote_entity_id());
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_read_only_project_request(project_id, session.connection_id, session.user_id())
+        .await?;
+
+    let host_version = session
+        .connection_pool()
+        .await
+        .connection(host_connection_id)
+        .map(|c| c.zed_version);
+
+    if host_version.is_some_and(|host_version| host_version < ZedVersion::with_search_candidates())
+    {
+        let query = request.query.ok_or_else(|| anyhow!("missing query"))?;
+        let search = proto::SearchProject {
+            project_id: project_id.to_proto(),
+            query: query.query,
+            regex: query.regex,
+            whole_word: query.whole_word,
+            case_sensitive: query.case_sensitive,
+            files_to_include: query.files_to_include,
+            files_to_exclude: query.files_to_exclude,
+            include_ignored: query.include_ignored,
+        };
+
+        let payload = session
+            .peer
+            .forward_request(session.connection_id, host_connection_id, search)
+            .await?;
+        return response.send(proto::FindSearchCandidatesResponse {
+            buffer_ids: payload
+                .locations
+                .into_iter()
+                .map(|loc| loc.buffer_id)
+                .collect(),
+        });
+    }
+
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, host_connection_id, request)
+        .await?;
+    response.send(payload)?;
+    Ok(())
+}
+
 /// forward a project request to the dev server. Only allowed
 /// if it's your dev server.
 async fn forward_project_request_for_owner<T>(
@@ -2985,45 +3040,6 @@ where
         .await
         .host_for_mutating_project_request(project_id, session.connection_id, session.user_id())
         .await?;
-    let payload = session
-        .peer
-        .forward_request(session.connection_id, host_connection_id, request)
-        .await?;
-    response.send(payload)?;
-    Ok(())
-}
-
-/// forward a project request to the host. These requests are disallowed
-/// for guests.
-async fn forward_versioned_mutating_project_request<T>(
-    request: T,
-    response: Response<T>,
-    session: UserSession,
-) -> Result<()>
-where
-    T: EntityMessage + RequestMessage + VersionedMessage,
-{
-    let project_id = ProjectId::from_proto(request.remote_entity_id());
-
-    let host_connection_id = session
-        .db()
-        .await
-        .host_for_mutating_project_request(project_id, session.connection_id, session.user_id())
-        .await?;
-    if let Some(host_version) = session
-        .connection_pool()
-        .await
-        .connection(host_connection_id)
-        .map(|c| c.zed_version)
-    {
-        if let Some(min_required_version) = request.required_host_version() {
-            if min_required_version > host_version {
-                return Err(anyhow!(ErrorCode::RemoteUpgradeRequired
-                    .with_tag("required", &min_required_version.to_string())))?;
-            }
-        }
-    }
-
     let payload = session
         .peer
         .forward_request(session.connection_id, host_connection_id, request)
