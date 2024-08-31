@@ -7,7 +7,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context as _, Result};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use fs::{copy_recursive, Fs, PathEvent, RemoveOptions, Watcher};
+use fs::{copy_recursive, Fs, RemoveOptions, Watcher};
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -1051,11 +1051,7 @@ impl LocalWorktree {
                     watcher,
                 };
 
-                scanner
-                    .run(Box::pin(
-                        events.map(|events| events.into_iter().map(Into::into).collect()),
-                    ))
-                    .await;
+                scanner.run(events).await;
             }
         });
         let scan_state_updater = cx.spawn(|this, mut cx| async move {
@@ -3526,7 +3522,7 @@ enum BackgroundScannerPhase {
 }
 
 impl BackgroundScanner {
-    async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>) {
+    async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>) {
         use futures::FutureExt as _;
 
         // If the worktree root does not contain a git repository, then find
@@ -3607,8 +3603,7 @@ impl BackgroundScanner {
             while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                 paths.extend(more_paths);
             }
-            self.process_events(paths.into_iter().map(Into::into).collect())
-                .await;
+            self.process_events(paths).await;
         }
 
         // Continue processing events until the worktree is dropped.
@@ -3649,7 +3644,7 @@ impl BackgroundScanner {
                     while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                         paths.extend(more_paths);
                     }
-                    self.process_events(paths.into_iter().map(Into::into).collect()).await;
+                    self.process_events(paths.clone()).await;
                 }
             }
         }

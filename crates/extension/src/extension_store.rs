@@ -369,9 +369,9 @@ impl ExtensionStore {
             let installed_dir = this.installed_dir.clone();
             async move {
                 let (mut paths, _) = fs.watch(&installed_dir, FS_WATCH_LATENCY).await;
-                while let Some(events) = paths.next().await {
-                    for event in events {
-                        let Ok(event_path) = event.path.strip_prefix(&installed_dir) else {
+                while let Some(paths) = paths.next().await {
+                    for path in paths {
+                        let Ok(event_path) = path.strip_prefix(&installed_dir) else {
                             continue;
                         };
 
