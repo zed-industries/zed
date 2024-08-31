@@ -362,30 +362,31 @@ impl SshSession {
                             envelope.payload_type_name()
                         );
                         let type_id = envelope.payload_type_id();
-                        let state = this.state.read();
-                        let handler = state.message_handlers.get(&type_id).cloned();
-
-                        let entity =
-                            if let Some(entity) = state.models_by_message_type.get(&type_id) {
-                                entity.upgrade()
-                            } else if let Some(entity_type) =
-                                state.entity_types_by_message_type.get(&type_id).copied()
-                            {
-                                state.entity_id_extractors.get(&type_id).copied().and_then(
-                                    |id_extractor| {
-                                        let remote_id = id_extractor(&*envelope);
-                                        state
-                                            .entities_by_type_and_remote_id
-                                            .get(&(entity_type, remote_id))?
-                                            .upgrade()
-                                    },
-                                )
-                            } else {
-                                None
-                            };
+                        let (handler, entity) = {
+                            let state = this.state.read();
+                            let handler = state.message_handlers.get(&type_id).cloned();
+                            let entity =
+                                if let Some(entity) = state.models_by_message_type.get(&type_id) {
+                                    entity.upgrade()
+                                } else if let Some(entity_type) =
+                                    state.entity_types_by_message_type.get(&type_id).copied()
+                                {
+                                    state.entity_id_extractors.get(&type_id).copied().and_then(
+                                        |id_extractor| {
+                                            let remote_id = id_extractor(&*envelope);
+                                            state
+                                                .entities_by_type_and_remote_id
+                                                .get(&(entity_type, remote_id))?
+                                                .upgrade()
+                                        },
+                                    )
+                                } else {
+                                    None
+                                };
+                            (handler, entity)
+                        };
 
                         if let Some((handler, entity)) = handler.zip(entity) {
-                            drop(state);
                             handler(entity, envelope, this.clone().into(), cx.clone())
                                 .await
                                 .log_err();

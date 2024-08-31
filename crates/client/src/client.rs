@@ -1645,13 +1645,9 @@ impl Client {
                     pending.push(message);
                     return;
                 }
-                Some(weak_subscriber) => match weak_subscriber {
-                    WeakSubscriber::Entity { handle } => {
-                        subscriber = handle.upgrade();
-                    }
-
-                    WeakSubscriber::Pending(_) => {}
-                },
+                Some(WeakSubscriber::Entity { handle }) => {
+                    subscriber = handle.upgrade();
+                }
                 _ => {}
             }
         }
