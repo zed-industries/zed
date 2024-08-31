@@ -481,7 +481,11 @@ impl BladeRenderer {
         let mut vertices_by_texture_id = HashMap::default();
 
         for path in paths {
-            let clipped_bounds = path.bounds.intersect(&path.content_mask.bounds);
+            let clipped_bounds = path
+                .bounds
+                .intersect(&path.content_mask.bounds)
+                .map_origin(|origin| origin.floor())
+                .map_size(|size| size.ceil());
             let tile = self.atlas.allocate_for_rendering(
                 clipped_bounds.size.map(Into::into),
                 AtlasTextureKind::Path,
@@ -774,6 +778,7 @@ impl BladeRenderer {
     }
 
     /// Required to compile on macOS, but not currently supported.
+    #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
     pub fn fps(&self) -> f32 {
         0.0
     }

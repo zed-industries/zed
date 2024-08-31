@@ -76,8 +76,8 @@ use gpui::{
     FocusOutEvent, FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText,
     KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
     SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
-    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
-    WeakFocusHandle, WeakView, WindowContext,
+    UTF16Selection, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
+    VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -89,13 +89,12 @@ pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
-    char_kind,
     language_settings::{self, all_language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
 };
-use language::{point_to_lsp, BufferRow, Runnable, RunnableRange};
+use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
@@ -307,7 +306,7 @@ pub fn init(cx: &mut AppContext) {
     cx.on_action(move |_: &workspace::NewFile, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(app_state, cx, |workspace, cx| {
+            workspace::open_new(Default::default(), app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
             .detach();
@@ -316,7 +315,7 @@ pub fn init(cx: &mut AppContext) {
     cx.on_action(move |_: &workspace::NewWindow, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(app_state, cx, |workspace, cx| {
+            workspace::open_new(Default::default(), app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
             .detach();
@@ -512,6 +511,7 @@ pub struct Editor {
     show_breadcrumbs: bool,
     show_gutter: bool,
     show_line_numbers: Option<bool>,
+    use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
@@ -555,7 +555,10 @@ pub struct Editor {
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
     active_inline_completion: Option<(Inlay, Option<Range<Anchor>>)>,
-    show_inline_completions: bool,
+    // enable_inline_completions is a switch that Vim can use to disable
+    // inline completions based on its mode.
+    enable_inline_completions: bool,
+    show_inline_completions_override: Option<bool>,
     inlay_hint_cache: InlayHintCache,
     expanded_hunks: ExpandedHunks,
     next_inlay_id: usize,
@@ -1853,6 +1856,7 @@ impl Editor {
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
             show_line_numbers: None,
+            use_relative_line_numbers: None,
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_runnables: None,
@@ -1910,7 +1914,8 @@ impl Editor {
             hovered_cursors: Default::default(),
             next_editor_action_id: EditorActionId::default(),
             editor_actions: Rc::default(),
-            show_inline_completions: mode == EditorMode::Full,
+            show_inline_completions_override: None,
+            enable_inline_completions: true,
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
@@ -2275,6 +2280,10 @@ impl Editor {
         self.input_enabled = input_enabled;
     }
 
+    pub fn set_inline_completions_enabled(&mut self, enabled: bool) {
+        self.enable_inline_completions = enabled;
+    }
+
     pub fn set_autoindent(&mut self, autoindent: bool) {
         if autoindent {
             self.autoindent_mode = Some(AutoindentMode::EachLine);
@@ -2303,8 +2312,49 @@ impl Editor {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
 
-    pub fn set_show_inline_completions(&mut self, show_inline_completions: bool) {
-        self.show_inline_completions = show_inline_completions;
+    pub fn toggle_inline_completions(
+        &mut self,
+        _: &ToggleInlineCompletions,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self.show_inline_completions_override.is_some() {
+            self.set_show_inline_completions(None, cx);
+        } else {
+            let cursor = self.selections.newest_anchor().head();
+            if let Some((buffer, cursor_buffer_position)) =
+                self.buffer.read(cx).text_anchor_for_position(cursor, cx)
+            {
+                let show_inline_completions =
+                    !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx);
+                self.set_show_inline_completions(Some(show_inline_completions), cx);
+            }
+        }
+    }
+
+    pub fn set_show_inline_completions(
+        &mut self,
+        show_inline_completions: Option<bool>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.show_inline_completions_override = show_inline_completions;
+        self.refresh_inline_completion(false, true, cx);
+    }
+
+    fn should_show_inline_completions(
+        &self,
+        buffer: &Model<Buffer>,
+        buffer_position: language::Anchor,
+        cx: &AppContext,
+    ) -> bool {
+        if let Some(provider) = self.inline_completion_provider() {
+            if let Some(show_inline_completions) = self.show_inline_completions_override {
+                show_inline_completions
+            } else {
+                self.mode == EditorMode::Full && provider.is_enabled(&buffer, buffer_position, cx)
+            }
+        } else {
+            false
+        }
     }
 
     pub fn set_use_modal_editing(&mut self, to: bool) {
@@ -2322,6 +2372,8 @@ impl Editor {
         show_completions: bool,
         cx: &mut ViewContext<Self>,
     ) {
+        cx.invalidate_character_coordinates();
+
         // Copy selections to primary selection buffer
         #[cfg(target_os = "linux")]
         if local {
@@ -2390,7 +2442,8 @@ impl Editor {
 
             if let Some(completion_menu) = completion_menu {
                 let cursor_position = new_cursor_position.to_offset(buffer);
-                let (word_range, kind) = buffer.surrounding_word(completion_menu.initial_position);
+                let (word_range, kind) =
+                    buffer.surrounding_word(completion_menu.initial_position, true);
                 if kind == Some(CharKind::Word)
                     && word_range.to_inclusive().contains(&cursor_position)
                 {
@@ -3236,10 +3289,8 @@ impl Editor {
                 let start_anchor = snapshot.anchor_before(selection.start);
 
                 let is_word_char = text.chars().next().map_or(true, |char| {
-                    let scope = snapshot.language_scope_at(start_anchor.to_offset(&snapshot));
-                    let kind = char_kind(&scope, char);
-
-                    kind == CharKind::Word
+                    let classifier = snapshot.char_classifier_at(start_anchor.to_offset(&snapshot));
+                    classifier.is_word(char)
                 });
 
                 if is_word_char {
@@ -3870,7 +3921,7 @@ impl Editor {
 
     fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
         let offset = position.to_offset(buffer);
-        let (word_range, kind) = buffer.surrounding_word(offset);
+        let (word_range, kind) = buffer.surrounding_word(offset, true);
         if offset > word_range.start && kind == Some(CharKind::Word) {
             Some(
                 buffer
@@ -4932,8 +4983,8 @@ impl Editor {
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         if !user_requested
-            && (!self.show_inline_completions
-                || !provider.is_enabled(&buffer, cursor_buffer_position, cx))
+            && self.enable_inline_completions
+            && !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
         {
             self.discard_inline_completion(false, cx);
             return None;
@@ -4953,8 +5004,8 @@ impl Editor {
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-        if !self.show_inline_completions
-            || !provider.is_enabled(&buffer, cursor_buffer_position, cx)
+        if !self.enable_inline_completions
+            || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
         {
             return None;
         }
@@ -9069,18 +9120,16 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Navigated>> {
         let definition = self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, cx);
-        let references = self.find_all_references(&FindAllReferences, cx);
-        cx.background_executor().spawn(async move {
+        cx.spawn(|editor, mut cx| async move {
             if definition.await? == Navigated::Yes {
                 return Ok(Navigated::Yes);
             }
-            if let Some(references) = references {
-                if references.await? == Navigated::Yes {
-                    return Ok(Navigated::Yes);
-                }
+            match editor.update(&mut cx, |editor, cx| {
+                editor.find_all_references(&FindAllReferences, cx)
+            })? {
+                Some(references) => references.await,
+                None => Ok(Navigated::No),
             }
-
-            Ok(Navigated::No)
         })
     }
 
@@ -10350,6 +10399,10 @@ impl Editor {
         }
     }
 
+    pub fn default_fold_placeholder(&self, cx: &AppContext) -> FoldPlaceholder {
+        self.display_map.read(cx).fold_placeholder.clone()
+    }
+
     pub fn set_gutter_hovered(&mut self, hovered: bool, cx: &mut ViewContext<Self>) {
         if hovered != self.gutter_hovered {
             self.gutter_hovered = hovered;
@@ -10610,6 +10663,29 @@ impl Editor {
         let mut editor_settings = EditorSettings::get_global(cx).clone();
         editor_settings.gutter.line_numbers = !editor_settings.gutter.line_numbers;
         EditorSettings::override_global(editor_settings, cx);
+    }
+
+    pub fn should_use_relative_line_numbers(&self, cx: &WindowContext) -> bool {
+        self.use_relative_line_numbers
+            .unwrap_or(EditorSettings::get_global(cx).relative_line_numbers)
+    }
+
+    pub fn toggle_relative_line_numbers(
+        &mut self,
+        _: &ToggleRelativeLineNumbers,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let is_relative = self.should_use_relative_line_numbers(cx);
+        self.set_relative_line_number(Some(!is_relative), cx)
+    }
+
+    pub fn set_relative_line_number(
+        &mut self,
+        is_relative: Option<bool>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.use_relative_line_numbers = is_relative;
+        cx.notify();
     }
 
     pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
@@ -10902,6 +10978,17 @@ impl Editor {
                             cx,
                         )
                     })
+                }
+            }
+        }
+    }
+
+    pub fn copy_file_location(&mut self, _: &CopyFileLocation, cx: &mut ViewContext<Self>) {
+        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
+                if let Some(path) = file.path().to_str() {
+                    let selection = self.selections.newest::<Point>(cx).start.row + 1;
+                    cx.write_to_clipboard(ClipboardItem::new_string(format!("{path}:{selection}")));
                 }
             }
         }
@@ -11767,12 +11854,12 @@ impl Editor {
 
         let snapshot = buffer.read(cx).snapshot();
         let range = self
-            .selected_text_range(cx)
-            .and_then(|selected_range| {
-                if selected_range.is_empty() {
+            .selected_text_range(false, cx)
+            .and_then(|selection| {
+                if selection.range.is_empty() {
                     None
                 } else {
-                    Some(selected_range)
+                    Some(selection.range)
                 }
             })
             .unwrap_or_else(|| 0..snapshot.len());
@@ -12215,10 +12302,11 @@ fn snippet_completions(
     };
 
     let scope = language.map(|language| language.default_scope());
+    let classifier = CharClassifier::new(scope).for_completion(true);
     let mut last_word = line_at
         .chars()
         .rev()
-        .take_while(|c| char_kind(&scope, *c) == CharKind::Word)
+        .take_while(|c| classifier.is_word(*c))
         .collect::<String>();
     last_word = last_word.chars().rev().collect();
     let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
@@ -12349,8 +12437,11 @@ impl CompletionProvider for Model<Project> {
         }
 
         let buffer = buffer.read(cx);
-        let scope = buffer.snapshot().language_scope_at(position);
-        if trigger_in_words && char_kind(&scope, char) == CharKind::Word {
+        let classifier = buffer
+            .snapshot()
+            .char_classifier_at(position)
+            .for_completion(true);
+        if trigger_in_words && classifier.is_word(char) {
             return true;
         }
 
@@ -12724,15 +12815,24 @@ impl ViewInputHandler for Editor {
         )
     }
 
-    fn selected_text_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {
+    fn selected_text_range(
+        &mut self,
+        ignore_disabled_input: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<UTF16Selection> {
         // Prevent the IME menu from appearing when holding down an alphabetic key
         // while input is disabled.
-        if !self.input_enabled {
+        if !ignore_disabled_input && !self.input_enabled {
             return None;
         }
 
-        let range = self.selections.newest::<OffsetUtf16>(cx).range();
-        Some(range.start.0..range.end.0)
+        let selection = self.selections.newest::<OffsetUtf16>(cx);
+        let range = selection.range();
+
+        Some(UTF16Selection {
+            range: range.start.0..range.end.0,
+            reversed: selection.reversed,
+        })
     }
 
     fn marked_text_range(&self, cx: &mut ViewContext<Self>) -> Option<Range<usize>> {

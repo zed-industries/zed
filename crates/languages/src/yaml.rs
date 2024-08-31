@@ -3,11 +3,12 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncAppContext;
 use language::{
-    language_settings::all_language_settings, LanguageServerName, LspAdapter, LspAdapterDelegate,
+    language_settings::AllLanguageSettings, LanguageServerName, LspAdapter, LspAdapterDelegate,
 };
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use serde_json::Value;
+use settings::{Settings, SettingsLocation};
 use smol::fs;
 use std::{
     any::Any,
@@ -95,11 +96,16 @@ impl LspAdapter for YamlLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
+        let location = SettingsLocation {
+            worktree_id: delegate.worktree_id() as usize,
+            path: delegate.worktree_root_path(),
+        };
+
         let tab_size = cx.update(|cx| {
-            all_language_settings(None, cx)
+            AllLanguageSettings::get(Some(location), cx)
                 .language(Some("YAML"))
                 .tab_size
         })?;

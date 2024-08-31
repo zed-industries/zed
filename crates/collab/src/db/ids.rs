@@ -99,7 +99,7 @@ id_type!(UserId);
 #[derive(
     Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash, Serialize,
 )]
-#[sea_orm(rs_type = "String", db_type = "String(None)")]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
 pub enum ChannelRole {
     /// Admin can read/write and change permissions.
     #[sea_orm(string_value = "admin")]
@@ -239,7 +239,7 @@ impl Into<i32> for ChannelRole {
 
 /// ChannelVisibility controls whether channels are public or private.
 #[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash)]
-#[sea_orm(rs_type = "String", db_type = "String(None)")]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
 pub enum ChannelVisibility {
     /// Public channels are visible to anyone with the link. People join with the Guest role by default.
     #[sea_orm(string_value = "public")]

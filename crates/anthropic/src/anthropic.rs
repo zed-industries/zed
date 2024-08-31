@@ -330,26 +330,94 @@ pub async fn stream_completion_with_rate_limit_info(
     }
 }
 
-pub fn extract_text_from_events(
-    response: impl Stream<Item = Result<Event, AnthropicError>>,
+pub fn extract_content_from_events(
+    events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
 ) -> impl Stream<Item = Result<String, AnthropicError>> {
-    response.filter_map(|response| async move {
-        match response {
-            Ok(response) => match response {
-                Event::ContentBlockStart { content_block, .. } => match content_block {
-                    Content::Text { text, .. } => Some(Ok(text)),
-                    _ => None,
-                },
-                Event::ContentBlockDelta { delta, .. } => match delta {
-                    ContentDelta::TextDelta { text } => Some(Ok(text)),
-                    _ => None,
-                },
-                Event::Error { error } => Some(Err(AnthropicError::ApiError(error))),
-                _ => None,
-            },
-            Err(error) => Some(Err(error)),
-        }
-    })
+    struct State {
+        events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
+        current_tool_use_index: Option<usize>,
+    }
+
+    const INDENT: &str = "  ";
+    const NEWLINE: char = '\n';
+
+    futures::stream::unfold(
+        State {
+            events,
+            current_tool_use_index: None,
+        },
+        |mut state| async move {
+            while let Some(event) = state.events.next().await {
+                match event {
+                    Ok(event) => match event {
+                        Event::ContentBlockStart {
+                            index,
+                            content_block,
+                        } => match content_block {
+                            ResponseContent::Text { text } => {
+                                return Some((Ok(text), state));
+                            }
+                            ResponseContent::ToolUse { id, name, .. } => {
+                                state.current_tool_use_index = Some(index);
+
+                                let mut text = String::new();
+                                text.push(NEWLINE);
+
+                                text.push_str("<tool_use>");
+                                text.push(NEWLINE);
+
+                                text.push_str(INDENT);
+                                text.push_str("<id>");
+                                text.push_str(&id);
+                                text.push_str("</id>");
+                                text.push(NEWLINE);
+
+                                text.push_str(INDENT);
+                                text.push_str("<name>");
+                                text.push_str(&name);
+                                text.push_str("</name>");
+                                text.push(NEWLINE);
+
+                                text.push_str(INDENT);
+                                text.push_str("<input>");
+
+                                return Some((Ok(text), state));
+                            }
+                        },
+                        Event::ContentBlockDelta { index, delta } => match delta {
+                            ContentDelta::TextDelta { text } => {
+                                return Some((Ok(text), state));
+                            }
+                            ContentDelta::InputJsonDelta { partial_json } => {
+                                if Some(index) == state.current_tool_use_index {
+                                    return Some((Ok(partial_json), state));
+                                }
+                            }
+                        },
+                        Event::ContentBlockStop { index } => {
+                            if Some(index) == state.current_tool_use_index.take() {
+                                let mut text = String::new();
+                                text.push_str("</input>");
+                                text.push(NEWLINE);
+                                text.push_str("</tool_use>");
+
+                                return Some((Ok(text), state));
+                            }
+                        }
+                        Event::Error { error } => {
+                            return Some((Err(AnthropicError::ApiError(error)), state));
+                        }
+                        _ => {}
+                    },
+                    Err(err) => {
+                        return Some((Err(err), state));
+                    }
+                }
+            }
+
+            None
+        },
+    )
 }
 
 pub async fn extract_tool_args_from_events(
@@ -363,7 +431,7 @@ pub async fn extract_tool_args_from_events(
             content_block,
         } = event?
         {
-            if let Content::ToolUse { name, .. } = content_block {
+            if let ResponseContent::ToolUse { name, .. } = content_block {
                 if name == tool_name {
                     tool_use_index = Some(index);
                     break;
@@ -411,7 +479,7 @@ pub struct CacheControl {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
-    pub content: Vec<Content>,
+    pub content: Vec<RequestContent>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -423,7 +491,7 @@ pub enum Role {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum Content {
+pub enum RequestContent {
     #[serde(rename = "text")]
     Text {
         text: String,
@@ -444,12 +512,18 @@ pub enum Content {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
-    #[serde(rename = "tool_result")]
-    ToolResult {
-        tool_use_id: String,
-        content: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cache_control: Option<CacheControl>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ResponseContent {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
     },
 }
 
@@ -525,7 +599,7 @@ pub struct Response {
     #[serde(rename = "type")]
     pub response_type: String,
     pub role: Role,
-    pub content: Vec<Content>,
+    pub content: Vec<ResponseContent>,
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<String>,
@@ -542,7 +616,7 @@ pub enum Event {
     #[serde(rename = "content_block_start")]
     ContentBlockStart {
         index: usize,
-        content_block: Content,
+        content_block: ResponseContent,
     },
     #[serde(rename = "content_block_delta")]
     ContentBlockDelta { index: usize, delta: ContentDelta },

@@ -221,9 +221,17 @@ impl LanguageModelRequestMessage {
     }
 }
 
+#[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
+pub struct LanguageModelRequestTool {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct LanguageModelRequest {
     pub messages: Vec<LanguageModelRequestMessage>,
+    pub tools: Vec<LanguageModelRequestTool>,
     pub stop: Vec<String>,
     pub temperature: f32,
 }
@@ -304,17 +312,17 @@ impl LanguageModelRequest {
                     } else {
                         None
                     };
-                    let anthropic_message_content: Vec<anthropic::Content> = message
+                    let anthropic_message_content: Vec<anthropic::RequestContent> = message
                         .content
                         .into_iter()
                         .filter_map(|content| match content {
                             MessageContent::Text(t) if !t.is_empty() => {
-                                Some(anthropic::Content::Text {
+                                Some(anthropic::RequestContent::Text {
                                     text: t,
                                     cache_control,
                                 })
                             }
-                            MessageContent::Image(i) => Some(anthropic::Content::Image {
+                            MessageContent::Image(i) => Some(anthropic::RequestContent::Image {
                                 source: anthropic::ImageSource {
                                     source_type: "base64".to_string(),
                                     media_type: "image/png".to_string(),
@@ -355,7 +363,15 @@ impl LanguageModelRequest {
             messages: new_messages,
             max_tokens: max_output_tokens,
             system: Some(system_message),
-            tools: Vec::new(),
+            tools: self
+                .tools
+                .into_iter()
+                .map(|tool| anthropic::Tool {
+                    name: tool.name,
+                    description: tool.description,
+                    input_schema: tool.input_schema,
+                })
+                .collect(),
             tool_choice: None,
             metadata: None,
             stop_sequences: Vec::new(),

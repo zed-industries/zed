@@ -9,7 +9,9 @@ use crate::{UseSystemClipboard, Vim, VimSettings};
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{Anchor, ClipboardSelection, Editor};
-use gpui::{Action, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Global};
+use gpui::{
+    Action, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Global, View, WeakView,
+};
 use language::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -160,6 +162,8 @@ pub struct VimGlobals {
     pub last_yank: Option<SharedString>,
     pub registers: HashMap<char, Register>,
     pub recordings: HashMap<char, Vec<ReplayableAction>>,
+
+    pub focused_vim: Option<WeakView<Vim>>,
 }
 impl Global for VimGlobals {}
 
@@ -372,6 +376,10 @@ impl VimGlobals {
                 },
             );
         }
+    }
+
+    pub fn focused_vim(&self) -> Option<View<Vim>> {
+        self.focused_vim.as_ref().and_then(|vim| vim.upgrade())
     }
 }
 

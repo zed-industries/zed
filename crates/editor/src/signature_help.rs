@@ -149,7 +149,7 @@ impl Editor {
     }
 
     pub fn show_signature_help(&mut self, _: &ShowSignatureHelp, cx: &mut ViewContext<Self>) {
-        if self.pending_rename.is_some() {
+        if self.pending_rename.is_some() || self.has_active_completions_menu() {
             return;
         }
 

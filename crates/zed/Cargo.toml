@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.151.0"
+version = "0.152.0"
 publish = false
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -32,6 +32,7 @@ client.workspace = true
 collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
+command_palette_hooks.workspace = true
 copilot.workspace = true
 db.workspace = true
 diagnostics.workspace = true
@@ -39,9 +40,10 @@ editor.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 extensions_ui.workspace = true
+feature_flags.workspace = true
 feedback.workspace = true
-file_icons.workspace = true
 file_finder.workspace = true
+file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
@@ -65,7 +67,7 @@ log.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 mimalloc = { version = "0.1", optional = true }
-nix = {workspace = true, features = ["pthread", "signal"] }
+nix = { workspace = true, features = ["pthread", "signal"] }
 node_runtime.workspace = true
 notifications.workspace = true
 outline.workspace = true
@@ -97,7 +99,7 @@ tab_switcher.workspace = true
 supermaven.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
-time.workspace =  true
+time.workspace = true
 telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
@@ -111,6 +113,9 @@ vim.workspace = true
 welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"

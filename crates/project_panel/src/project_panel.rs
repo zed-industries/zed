@@ -23,8 +23,12 @@ use gpui::{
     PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
     ViewContext, VisualContext as _, WeakView, WindowContext,
 };
+use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use project::{
+    relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
+    WorktreeId,
+};
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowScrollbar};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -495,23 +499,8 @@ impl ProjectPanel {
                             .action("Copy", Box::new(Copy))
                             .action("Duplicate", Box::new(Duplicate))
                             // TODO: Paste should always be visible, cbut disabled when clipboard is empty
-                            .when_some(self.clipboard.as_ref(), |menu, entry| {
-                                let entries_for_worktree_id = (SelectedEntry {
-                                    worktree_id,
-                                    entry_id: ProjectEntryId::MIN,
-                                })
-                                    ..(SelectedEntry {
-                                        worktree_id,
-                                        entry_id: ProjectEntryId::MAX,
-                                    });
-                                menu.when(
-                                    entry
-                                        .items()
-                                        .range(entries_for_worktree_id)
-                                        .next()
-                                        .is_some(),
-                                    |menu| menu.action("Paste", Box::new(Paste)),
-                                )
+                            .when(self.clipboard.as_ref().is_some(), |menu| {
+                                menu.action("Paste", Box::new(Paste))
                             })
                             .separator()
                             .action("Copy Path", Box::new(CopyPath))
@@ -1304,46 +1293,99 @@ impl ProjectPanel {
                 .as_ref()
                 .filter(|clipboard| !clipboard.items().is_empty())?;
 
-            let mut tasks = Vec::new();
-
+            enum PasteTask {
+                Rename(Task<Result<CreatedEntry>>),
+                Copy(Task<Result<Option<Entry>>>),
+            }
+            let mut paste_entry_tasks: IndexMap<(ProjectEntryId, bool), PasteTask> =
+                IndexMap::default();
+            let clip_is_cut = clipboard_entries.is_cut();
             for clipboard_entry in clipboard_entries.items() {
-                if clipboard_entry.worktree_id != worktree_id {
-                    return None;
-                }
                 let new_path =
                     self.create_paste_path(clipboard_entry, self.selected_entry_handle(cx)?, cx)?;
-                if clipboard_entries.is_cut() {
-                    self.project
-                        .update(cx, |project, cx| {
-                            project.rename_entry(clipboard_entry.entry_id, new_path, cx)
-                        })
-                        .detach_and_log_err(cx);
+                let clip_entry_id = clipboard_entry.entry_id;
+                let is_same_worktree = clipboard_entry.worktree_id == worktree_id;
+                let relative_worktree_source_path = if !is_same_worktree {
+                    let target_base_path = worktree.read(cx).abs_path();
+                    let clipboard_project_path =
+                        self.project.read(cx).path_for_entry(clip_entry_id, cx)?;
+                    let clipboard_abs_path = self
+                        .project
+                        .read(cx)
+                        .absolute_path(&clipboard_project_path, cx)?;
+                    Some(relativize_path(
+                        &target_base_path,
+                        clipboard_abs_path.as_path(),
+                    ))
                 } else {
+                    None
+                };
+                let task = if clip_is_cut && is_same_worktree {
                     let task = self.project.update(cx, |project, cx| {
-                        project.copy_entry(clipboard_entry.entry_id, new_path, cx)
+                        project.rename_entry(clip_entry_id, new_path, cx)
                     });
-                    tasks.push(task);
-                }
+                    PasteTask::Rename(task)
+                } else {
+                    let entry_id = if is_same_worktree {
+                        clip_entry_id
+                    } else {
+                        entry.id
+                    };
+                    let task = self.project.update(cx, |project, cx| {
+                        project.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
+                    });
+                    PasteTask::Copy(task)
+                };
+                let needs_delete = !is_same_worktree && clip_is_cut;
+                paste_entry_tasks.insert((clip_entry_id, needs_delete), task);
             }
 
             cx.spawn(|project_panel, mut cx| async move {
-                let entry_ids = futures::future::join_all(tasks).await;
-                if let Some(Some(entry)) = entry_ids
-                    .into_iter()
-                    .rev()
-                    .find_map(|entry_id| entry_id.ok())
-                {
+                let mut last_succeed = None;
+                let mut need_delete_ids = Vec::new();
+                for ((entry_id, need_delete), task) in paste_entry_tasks.into_iter() {
+                    match task {
+                        PasteTask::Rename(task) => {
+                            if let Some(CreatedEntry::Included(entry)) = task.await.log_err() {
+                                last_succeed = Some(entry.id);
+                            }
+                        }
+                        PasteTask::Copy(task) => {
+                            if let Some(Some(entry)) = task.await.log_err() {
+                                last_succeed = Some(entry.id);
+                                if need_delete {
+                                    need_delete_ids.push(entry_id);
+                                }
+                            }
+                        }
+                    }
+                }
+                // update selection
+                if let Some(entry_id) = last_succeed {
                     project_panel
                         .update(&mut cx, |project_panel, _cx| {
                             project_panel.selection = Some(SelectedEntry {
                                 worktree_id,
-                                entry_id: entry.id,
+                                entry_id,
                             });
                         })
                         .ok();
                 }
+                // remove entry for cut in difference worktree
+                for entry_id in need_delete_ids {
+                    project_panel
+                        .update(&mut cx, |project_panel, cx| {
+                            project_panel
+                                .project
+                                .update(cx, |project, cx| project.delete_entry(entry_id, true, cx))
+                                .ok_or_else(|| anyhow!("no such entry"))
+                        })??
+                        .await?;
+                }
+
+                anyhow::Ok(())
             })
-            .detach();
+            .detach_and_log_err(cx);
 
             self.expand_entry(worktree_id, entry.id, cx);
             Some(())
@@ -1678,6 +1720,7 @@ impl ProjectPanel {
                         canonical_path: entry.canonical_path.clone(),
                         is_symlink: entry.is_symlink,
                         char_bag: entry.char_bag,
+                        is_fifo: entry.is_fifo,
                     });
                 }
                 if expanded_dir_ids.binary_search(&entry.id).is_err()
@@ -1841,7 +1884,7 @@ impl ProjectPanel {
                     )?;
                     self.project
                         .update(cx, |project, cx| {
-                            project.copy_entry(selection.entry_id, new_path, cx)
+                            project.copy_entry(selection.entry_id, None, new_path, cx)
                         })
                         .detach_and_log_err(cx)
                 }
@@ -3675,6 +3718,236 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_cut_paste_between_different_worktrees(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "one.txt": "",
+                "two.txt": "",
+                "three.txt": "",
+                "a": {
+                    "0": { "q": "", "r": "", "s": "" },
+                    "1": { "t": "", "u": "" },
+                    "2": { "v": "", "w": "", "x": "", "y": "" },
+                },
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "one.txt": "",
+                "two.txt": "",
+                "four.txt": "",
+                "b": {
+                    "3": { "Q": "" },
+                    "4": { "R": "", "S": "", "T": "", "U": "" },
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        select_path(&panel, "root1/three.txt", cx);
+        panel.update(cx, |panel, cx| {
+            panel.cut(&Default::default(), cx);
+        });
+
+        select_path(&panel, "root2/one.txt", cx);
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "    > a",
+                "      one.txt",
+                "      two.txt",
+                "v root2",
+                "    > b",
+                "      four.txt",
+                "      one.txt",
+                "      three.txt  <== selected",
+                "      two.txt",
+            ]
+        );
+
+        select_path(&panel, "root1/a", cx);
+        panel.update(cx, |panel, cx| {
+            panel.cut(&Default::default(), cx);
+        });
+        select_path(&panel, "root2/two.txt", cx);
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "      one.txt",
+                "      two.txt",
+                "v root2",
+                "    > a  <== selected",
+                "    > b",
+                "      four.txt",
+                "      one.txt",
+                "      three.txt",
+                "      two.txt",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_paste_between_different_worktrees(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "one.txt": "",
+                "two.txt": "",
+                "three.txt": "",
+                "a": {
+                    "0": { "q": "", "r": "", "s": "" },
+                    "1": { "t": "", "u": "" },
+                    "2": { "v": "", "w": "", "x": "", "y": "" },
+                },
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "one.txt": "",
+                "two.txt": "",
+                "four.txt": "",
+                "b": {
+                    "3": { "Q": "" },
+                    "4": { "R": "", "S": "", "T": "", "U": "" },
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
+            .unwrap();
+
+        select_path(&panel, "root1/three.txt", cx);
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+        });
+
+        select_path(&panel, "root2/one.txt", cx);
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "    > a",
+                "      one.txt",
+                "      three.txt",
+                "      two.txt",
+                "v root2",
+                "    > b",
+                "      four.txt",
+                "      one.txt",
+                "      three.txt  <== selected",
+                "      two.txt",
+            ]
+        );
+
+        select_path(&panel, "root1/three.txt", cx);
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+        });
+        select_path(&panel, "root2/two.txt", cx);
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "    > a",
+                "      one.txt",
+                "      three.txt",
+                "      two.txt",
+                "v root2",
+                "    > b",
+                "      four.txt",
+                "      one.txt",
+                "      three copy.txt  <== selected",
+                "      three.txt",
+                "      two.txt",
+            ]
+        );
+
+        select_path(&panel, "root1/a", cx);
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+        });
+        select_path(&panel, "root2/two.txt", cx);
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "    > a",
+                "      one.txt",
+                "      three.txt",
+                "      two.txt",
+                "v root2",
+                "    > a  <== selected",
+                "    > b",
+                "      four.txt",
+                "      one.txt",
+                "      three copy.txt",
+                "      three.txt",
+                "      two.txt",
+            ]
+        );
+    }
+
+    #[gpui::test]
     async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
@@ -4359,9 +4632,9 @@ mod tests {
             &[
                 "v project_root",
                 "    v dir_1",
-                "        v nested_dir  <== selected",
+                "        v nested_dir",
                 "              file_1.py  <== marked",
-                "              file_a.py  <== marked",
+                "              file_a.py  <== selected  <== marked",
             ]
         );
         cx.simulate_modifiers_change(modifiers_with_shift);

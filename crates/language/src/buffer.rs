@@ -21,7 +21,7 @@ use async_watch as watch;
 pub use clock::ReplicaId;
 use futures::channel::oneshot;
 use gpui::{
-    AnyElement, AppContext, EventEmitter, HighlightStyle, ModelContext, Task, TaskLabel,
+    AnyElement, AppContext, EventEmitter, HighlightStyle, ModelContext, Pixels, Task, TaskLabel,
     WindowContext,
 };
 use lsp::LanguageServerId;
@@ -40,7 +40,7 @@ use std::{
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
-    ops::{Deref, Range},
+    ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
     sync::{Arc, LazyLock},
@@ -452,7 +452,7 @@ pub struct BufferChunks<'a> {
     buffer_snapshot: Option<&'a BufferSnapshot>,
     range: Range<usize>,
     chunks: text::Chunks<'a>,
-    diagnostic_endpoints: Peekable<vec::IntoIter<DiagnosticEndpoint>>,
+    diagnostic_endpoints: Option<Peekable<vec::IntoIter<DiagnosticEndpoint>>>,
     error_depth: usize,
     warning_depth: usize,
     information_depth: usize,
@@ -486,9 +486,14 @@ pub struct Chunk<'a> {
 #[derive(Clone)]
 pub struct ChunkRenderer {
     /// creates a custom element to represent this chunk.
-    pub render: Arc<dyn Send + Sync + Fn(&mut WindowContext) -> AnyElement>,
+    pub render: Arc<dyn Send + Sync + Fn(&mut ChunkRendererContext) -> AnyElement>,
     /// If true, the element is constrained to the shaped width of the text.
     pub constrain_width: bool,
+}
+
+pub struct ChunkRendererContext<'a, 'b> {
+    pub context: &'a mut WindowContext<'b>,
+    pub max_width: Pixels,
 }
 
 impl fmt::Debug for ChunkRenderer {
@@ -496,6 +501,20 @@ impl fmt::Debug for ChunkRenderer {
         f.debug_struct("ChunkRenderer")
             .field("constrain_width", &self.constrain_width)
             .finish()
+    }
+}
+
+impl<'a, 'b> Deref for ChunkRendererContext<'a, 'b> {
+    type Target = WindowContext<'b>;
+
+    fn deref(&self) -> &Self::Target {
+        self.context
+    }
+}
+
+impl<'a, 'b> DerefMut for ChunkRendererContext<'a, 'b> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.context
     }
 }
 
@@ -999,7 +1018,7 @@ impl Buffer {
         let offset = position.to_offset(self);
         self.syntax_map
             .lock()
-            .layers_for_range(offset..offset, &self.text)
+            .layers_for_range(offset..offset, &self.text, false)
             .last()
             .map(|info| info.language.clone())
             .or_else(|| self.language.clone())
@@ -1572,12 +1591,13 @@ impl Buffer {
 
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
-        self.has_conflict
-            || self.has_unsaved_edits()
-            || self
-                .file
-                .as_ref()
-                .map_or(false, |file| file.is_deleted() || !file.is_created())
+        self.capability != Capability::ReadOnly
+            && (self.has_conflict
+                || self.has_unsaved_edits()
+                || self
+                    .file
+                    .as_ref()
+                    .map_or(false, |file| file.is_deleted() || !file.is_created()))
     }
 
     /// Checks if the buffer and its file have both changed since the buffer
@@ -2578,8 +2598,9 @@ impl BufferSnapshot {
         if language_aware {
             syntax = Some(self.get_highlights(range.clone()));
         }
-
-        BufferChunks::new(self.text.as_rope(), range, syntax, Some(self))
+        // We want to look at diagnostic spans only when iterating over language-annotated chunks.
+        let diagnostics = language_aware;
+        BufferChunks::new(self.text.as_rope(), range, syntax, diagnostics, Some(self))
     }
 
     /// Invokes the given callback for each line of text in the given range of the buffer.
@@ -2605,13 +2626,14 @@ impl BufferSnapshot {
 
     /// Iterates over every [`SyntaxLayer`] in the buffer.
     pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayer> + '_ {
-        self.syntax.layers_for_range(0..self.len(), &self.text)
+        self.syntax
+            .layers_for_range(0..self.len(), &self.text, true)
     }
 
     pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer> {
         let offset = position.to_offset(self);
         self.syntax
-            .layers_for_range(offset..offset, &self.text)
+            .layers_for_range(offset..offset, &self.text, false)
             .filter(|l| l.node().end_byte() > offset)
             .last()
     }
@@ -2637,6 +2659,10 @@ impl BufferSnapshot {
         language_settings(self.language_at(position), self.file.as_ref(), cx)
     }
 
+    pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {
+        CharClassifier::new(self.language_scope_at(point))
+    }
+
     /// Returns the [LanguageScope] at the given location.
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
@@ -2644,7 +2670,10 @@ impl BufferSnapshot {
         let mut smallest_range: Option<Range<usize>> = None;
 
         // Use the layer that has the smallest node intersecting the given point.
-        for layer in self.syntax.layers_for_range(offset..offset, &self.text) {
+        for layer in self
+            .syntax
+            .layers_for_range(offset..offset, &self.text, false)
+        {
             let mut cursor = layer.node().walk();
 
             let mut range = None;
@@ -2690,15 +2719,14 @@ impl BufferSnapshot {
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
 
-        let scope = self.language_scope_at(start);
-        let kind = |c| char_kind(&scope, c);
+        let classifier = self.char_classifier_at(start);
         let word_kind = cmp::max(
-            prev_chars.peek().copied().map(kind),
-            next_chars.peek().copied().map(kind),
+            prev_chars.peek().copied().map(|c| classifier.kind(c)),
+            next_chars.peek().copied().map(|c| classifier.kind(c)),
         );
 
         for ch in prev_chars {
-            if Some(kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
                 start -= ch.len_utf8();
             } else {
                 break;
@@ -2706,7 +2734,7 @@ impl BufferSnapshot {
         }
 
         for ch in next_chars {
-            if Some(kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
                 end += ch.len_utf8();
             } else {
                 break;
@@ -2720,7 +2748,10 @@ impl BufferSnapshot {
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<Range<usize>> = None;
-        'outer: for layer in self.syntax.layers_for_range(range.clone(), &self.text) {
+        'outer: for layer in self
+            .syntax
+            .layers_for_range(range.clone(), &self.text, true)
+        {
             let mut cursor = layer.node().walk();
 
             // Descend to the first leaf that touches the start of the range,
@@ -3798,6 +3829,7 @@ impl<'a> BufferChunks<'a> {
         text: &'a Rope,
         range: Range<usize>,
         syntax: Option<(SyntaxMapCaptures<'a>, Vec<HighlightMap>)>,
+        diagnostics: bool,
         buffer_snapshot: Option<&'a BufferSnapshot>,
     ) -> Self {
         let mut highlights = None;
@@ -3810,7 +3842,7 @@ impl<'a> BufferChunks<'a> {
             })
         }
 
-        let diagnostic_endpoints = Vec::new().into_iter().peekable();
+        let diagnostic_endpoints = diagnostics.then(|| Vec::new().into_iter().peekable());
         let chunks = text.chunks_in_range(range.clone());
 
         let mut this = BufferChunks {
@@ -3871,25 +3903,27 @@ impl<'a> BufferChunks<'a> {
     }
 
     fn initialize_diagnostic_endpoints(&mut self) {
-        if let Some(buffer) = self.buffer_snapshot {
-            let mut diagnostic_endpoints = Vec::new();
-            for entry in buffer.diagnostics_in_range::<_, usize>(self.range.clone(), false) {
-                diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.start,
-                    is_start: true,
-                    severity: entry.diagnostic.severity,
-                    is_unnecessary: entry.diagnostic.is_unnecessary,
-                });
-                diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.end,
-                    is_start: false,
-                    severity: entry.diagnostic.severity,
-                    is_unnecessary: entry.diagnostic.is_unnecessary,
-                });
+        if let Some(diagnostics) = self.diagnostic_endpoints.as_mut() {
+            if let Some(buffer) = self.buffer_snapshot {
+                let mut diagnostic_endpoints = Vec::new();
+                for entry in buffer.diagnostics_in_range::<_, usize>(self.range.clone(), false) {
+                    diagnostic_endpoints.push(DiagnosticEndpoint {
+                        offset: entry.range.start,
+                        is_start: true,
+                        severity: entry.diagnostic.severity,
+                        is_unnecessary: entry.diagnostic.is_unnecessary,
+                    });
+                    diagnostic_endpoints.push(DiagnosticEndpoint {
+                        offset: entry.range.end,
+                        is_start: false,
+                        severity: entry.diagnostic.severity,
+                        is_unnecessary: entry.diagnostic.is_unnecessary,
+                    });
+                }
+                diagnostic_endpoints
+                    .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
+                *diagnostics = diagnostic_endpoints.into_iter().peekable();
             }
-            diagnostic_endpoints
-                .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
-            self.diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
         }
     }
 
@@ -3975,15 +4009,19 @@ impl<'a> Iterator for BufferChunks<'a> {
             }
         }
 
-        while let Some(endpoint) = self.diagnostic_endpoints.peek().copied() {
-            if endpoint.offset <= self.range.start {
-                self.update_diagnostic_depths(endpoint);
-                self.diagnostic_endpoints.next();
-            } else {
-                next_diagnostic_endpoint = endpoint.offset;
-                break;
+        let mut diagnostic_endpoints = std::mem::take(&mut self.diagnostic_endpoints);
+        if let Some(diagnostic_endpoints) = diagnostic_endpoints.as_mut() {
+            while let Some(endpoint) = diagnostic_endpoints.peek().copied() {
+                if endpoint.offset <= self.range.start {
+                    self.update_diagnostic_depths(endpoint);
+                    diagnostic_endpoints.next();
+                } else {
+                    next_diagnostic_endpoint = endpoint.offset;
+                    break;
+                }
             }
         }
+        self.diagnostic_endpoints = diagnostic_endpoints;
 
         if let Some(chunk) = self.chunks.peek() {
             let chunk_start = self.range.start;
@@ -4180,25 +4218,72 @@ pub(crate) fn contiguous_ranges(
     })
 }
 
-/// Returns the [CharKind] for the given character. When a scope is provided,
-/// the function checks if the character is considered a word character
-/// based on the language scope's word character settings.
-pub fn char_kind(scope: &Option<LanguageScope>, c: char) -> CharKind {
-    if c.is_whitespace() {
-        return CharKind::Whitespace;
-    } else if c.is_alphanumeric() || c == '_' {
-        return CharKind::Word;
-    }
+#[derive(Default, Debug)]
+pub struct CharClassifier {
+    scope: Option<LanguageScope>,
+    for_completion: bool,
+    ignore_punctuation: bool,
+}
 
-    if let Some(scope) = scope {
-        if let Some(characters) = scope.word_characters() {
-            if characters.contains(&c) {
-                return CharKind::Word;
-            }
+impl CharClassifier {
+    pub fn new(scope: Option<LanguageScope>) -> Self {
+        Self {
+            scope,
+            for_completion: false,
+            ignore_punctuation: false,
         }
     }
 
-    CharKind::Punctuation
+    pub fn for_completion(self, for_completion: bool) -> Self {
+        Self {
+            for_completion,
+            ..self
+        }
+    }
+
+    pub fn ignore_punctuation(self, ignore_punctuation: bool) -> Self {
+        Self {
+            ignore_punctuation,
+            ..self
+        }
+    }
+
+    pub fn is_whitespace(&self, c: char) -> bool {
+        self.kind(c) == CharKind::Whitespace
+    }
+
+    pub fn is_word(&self, c: char) -> bool {
+        self.kind(c) == CharKind::Word
+    }
+
+    pub fn is_punctuation(&self, c: char) -> bool {
+        self.kind(c) == CharKind::Punctuation
+    }
+
+    pub fn kind(&self, c: char) -> CharKind {
+        if c.is_whitespace() {
+            return CharKind::Whitespace;
+        } else if c.is_alphanumeric() || c == '_' {
+            return CharKind::Word;
+        }
+
+        if let Some(scope) = &self.scope {
+            if let Some(characters) = scope.word_characters() {
+                if characters.contains(&c) {
+                    if c == '-' && !self.for_completion && !self.ignore_punctuation {
+                        return CharKind::Punctuation;
+                    }
+                    return CharKind::Word;
+                }
+            }
+        }
+
+        if self.ignore_punctuation {
+            CharKind::Word
+        } else {
+            CharKind::Punctuation
+        }
+    }
 }
 
 /// Find all of the ranges of whitespace that occur at the ends of lines

@@ -67,7 +67,7 @@ pub trait ProtoClient: Send + Sync {
         request_type: &'static str,
     ) -> BoxFuture<'static, anyhow::Result<Envelope>>;
 
-    fn send(&self, envelope: Envelope) -> anyhow::Result<()>;
+    fn send(&self, envelope: Envelope, message_type: &'static str) -> anyhow::Result<()>;
 }
 
 #[derive(Clone)]
@@ -101,11 +101,7 @@ impl AnyProtoClient {
 
     pub fn send<T: EnvelopedMessage>(&self, request: T) -> anyhow::Result<()> {
         let envelope = request.into_envelope(0, None, None);
-        self.0.send(envelope)
-    }
-
-    pub fn send_dynamic(&self, message: Envelope) -> anyhow::Result<()> {
-        self.0.send(message)
+        self.0.send(envelope, T::NAME)
     }
 }
 
@@ -410,6 +406,9 @@ messages!(
     (LspExtSwitchSourceHeaderResponse, Background),
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
+    (FindSearchCandidates, Background),
+    (FindSearchCandidatesResponse, Background),
+    (CloseBuffer, Foreground)
 );
 
 request_messages!(
@@ -498,6 +497,7 @@ request_messages!(
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
     (SearchProject, SearchProjectResponse),
+    (FindSearchCandidates, FindSearchCandidatesResponse),
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
     (SetChannelVisibility, Ack),
@@ -547,6 +547,7 @@ entity_messages!(
     CreateProjectEntry,
     DeleteProjectEntry,
     ExpandProjectEntry,
+    FindSearchCandidates,
     FormatBuffers,
     GetCodeActions,
     GetCompletions,
