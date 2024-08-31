@@ -270,9 +270,19 @@ impl LspAdapter for RustLspAdapter {
                     if detail.starts_with(" (") {
                         text.push_str(&detail);
                     }
+
                     return Some(CodeLabel {
                         filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
                         text,
+                        runs,
+                    });
+                } else if detail.starts_with("macro_rules! ") {
+                    let source = Rope::from(completion.label.as_str());
+                    let runs = language.highlight_text(&source, 0..completion.label.len());
+
+                    return Some(CodeLabel {
+                        filter_range: 0..completion.label.len(),
+                        text: completion.label.clone(),
                         runs,
                     });
                 }
