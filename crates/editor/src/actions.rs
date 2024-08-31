@@ -141,12 +141,19 @@ pub struct ShowCompletions {
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct HandleInput(pub String);
 
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct DeleteToPreviousWordStart {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+}
+
 impl_actions!(
     editor,
     [
         ConfirmCodeAction,
         ConfirmCompletion,
         ComposeCompletion,
+        DeleteToPreviousWordStart,
         ExpandExcerpts,
         ExpandExcerptsUp,
         ExpandExcerptsDown,
@@ -209,8 +216,6 @@ gpui::actions!(
         DeleteToNextSubwordEnd,
         DeleteToNextWordEnd,
         DeleteToPreviousSubwordStart,
-        DeleteToPreviousWordStart,
-        DeleteToPreviousWordStartIgnoringNewlines,
         DisplayCursorNames,
         DuplicateLineDown,
         DuplicateLineUp,

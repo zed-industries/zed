@@ -7276,7 +7276,7 @@ impl Editor {
 
     pub fn delete_to_previous_word_start(
         &mut self,
-        _: &DeleteToPreviousWordStart,
+        action: &DeleteToPreviousWordStart,
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
@@ -7285,28 +7285,11 @@ impl Editor {
                 let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
                     if selection.is_empty() && !line_mode {
-                        let cursor =
-                            movement::previous_word_start_or_newline(map, selection.head());
-                        selection.set_head(cursor, SelectionGoal::None);
-                    }
-                });
-            });
-            this.insert("", cx);
-        });
-    }
-
-    pub fn delete_to_previous_word_start_ignoring_newlines(
-        &mut self,
-        _: &DeleteToPreviousWordStartIgnoringNewlines,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.transact(cx, |this, cx| {
-            this.select_autoclose_pair(cx);
-            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                let line_mode = s.line_mode;
-                s.move_with(|map, selection| {
-                    if selection.is_empty() && !line_mode {
-                        let cursor = movement::previous_word_start(map, selection.head());
+                        let cursor = if action.ignore_newlines {
+                            movement::previous_word_start(map, selection.head())
+                        } else {
+                            movement::previous_word_start_or_newline(map, selection.head())
+                        };
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });

@@ -2102,7 +2102,12 @@ fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
                 DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 12),
             ])
         });
-        view.delete_to_previous_word_start(&DeleteToPreviousWordStart, cx);
+        view.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: false,
+            },
+            cx,
+        );
         assert_eq!(view.buffer.read(cx).read(cx).text(), "e two te four");
     });
 
@@ -2128,6 +2133,12 @@ fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
         let buffer = MultiBuffer::build_simple("one\n2\nthree\n4", cx);
         build_editor(buffer.clone(), cx)
     });
+    let del_to_prev_word_start = DeleteToPreviousWordStart {
+        ignore_newlines: false,
+    };
+    let del_to_prev_word_start_ignore_newlines = DeleteToPreviousWordStart {
+        ignore_newlines: true,
+    };
 
     _ = view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
@@ -2135,23 +2146,17 @@ fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
                 DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 1)
             ])
         });
-        view.delete_to_previous_word_start(&DeleteToPreviousWordStart, cx);
+        view.delete_to_previous_word_start(&del_to_prev_word_start, cx);
         assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n2\nthree\n");
-        view.delete_to_previous_word_start(&DeleteToPreviousWordStart, cx);
+        view.delete_to_previous_word_start(&del_to_prev_word_start, cx);
         assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n2\nthree");
-        view.delete_to_previous_word_start(&DeleteToPreviousWordStart, cx);
+        view.delete_to_previous_word_start(&del_to_prev_word_start, cx);
         assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n2\n");
-        view.delete_to_previous_word_start(&DeleteToPreviousWordStart, cx);
+        view.delete_to_previous_word_start(&del_to_prev_word_start, cx);
         assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n2");
-        view.delete_to_previous_word_start_ignoring_newlines(
-            &DeleteToPreviousWordStartIgnoringNewlines,
-            cx,
-        );
+        view.delete_to_previous_word_start(&del_to_prev_word_start_ignore_newlines, cx);
         assert_eq!(view.buffer.read(cx).read(cx).text(), "one\n");
-        view.delete_to_previous_word_start_ignoring_newlines(
-            &DeleteToPreviousWordStartIgnoringNewlines,
-            cx,
-        );
+        view.delete_to_previous_word_start(&del_to_prev_word_start_ignore_newlines, cx);
         assert_eq!(view.buffer.read(cx).read(cx).text(), "");
     });
 }
