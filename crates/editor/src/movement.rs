@@ -10,7 +10,10 @@ use language::Point;
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
 
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::Range,
+    sync::{atomic::ATOMIC_BOOL_INIT, Arc},
+};
 
 /// Defines search strategy for items in `movement` module.
 /// `FindRange::SingeLine` only looks for a match on a single line at a time, whereas
@@ -310,6 +313,27 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
         (char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace())
             || right == '\n'
+    })
+}
+
+/// Returns a position of the next word boundary, where a word character is defined as either
+/// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
+pub fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let raw_point = point.to_point(map);
+    let scope = map.buffer_snapshot.language_scope_at(raw_point);
+
+    let mut on_starting_row = true;
+    find_boundary(map, point, FindRange::MultiLine, |left, right| {
+        if left == '\n' {
+            on_starting_row = false;
+        }
+        if on_starting_row {
+            (char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace())
+                || right == '\n'
+        } else {
+            (char_kind(&scope, left) != char_kind(&scope, right) && !right.is_whitespace())
+                || right == '\n'
+        }
     })
 }
 

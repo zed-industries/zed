@@ -142,6 +142,12 @@ pub struct ShowCompletions {
 pub struct HandleInput(pub String);
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct DeleteToNextWordEnd {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct DeleteToPreviousWordStart {
     #[serde(default)]
     pub ignore_newlines: bool,
@@ -153,6 +159,7 @@ impl_actions!(
         ConfirmCodeAction,
         ConfirmCompletion,
         ComposeCompletion,
+        DeleteToNextWordEnd,
         DeleteToPreviousWordStart,
         ExpandExcerpts,
         ExpandExcerptsUp,
@@ -214,7 +221,6 @@ gpui::actions!(
         DeleteToBeginningOfLine,
         DeleteToEndOfLine,
         DeleteToNextSubwordEnd,
-        DeleteToNextWordEnd,
         DeleteToPreviousSubwordStart,
         DisplayCursorNames,
         DuplicateLineDown,
