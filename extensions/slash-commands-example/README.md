@@ -19,7 +19,11 @@ git clone https://github.com/zed-industries/zed.git
 cp -R zed/extensions/slash-commands-example .
 
 cd slash-commands-example/
+
 sed -i '' '/\[lints]/,/^$/s/^workspace/#&/' Cargo.toml
+curl -O https://raw.githubusercontent.com/rust-lang/rust/master/LICENSE-APACHE
+echo "# Zed Slash Commands Example Extension" > README.md
+
 git init
 git add .
 git commit -m "initial commit"
@@ -31,11 +35,19 @@ git commit -m "initial commit"
 2. Launch `zed: install dev extension`
 3. Select the `slash-commands-example` folder created above
 
+## Test
+
+Open the assistant and type `/echo` and `/pick-one` at the beginning of a line.
+
 ## Customization
 
-Open the `extensions.toml` file and set the `id`, `name`, `description`, `authors` and `repository` fields. Rebuild to see these changes refelcted.
+Open the `extensions.toml` file and set the `id`, `name`, `description`, `authors` and `repository` fields.
+
+Rename `slash-commands-example.rs` you'll also have to update `Cargo.toml
 
 ## Rebuild
+
+Rebuild to see these changes refelcted:
 
 1. Open Zed Extensions (`cmd-shift-x` or `ctrl-shift-x`).
 3. Click `Rebuild` next to your Dev Extension (formerly "Slash Command Example")
