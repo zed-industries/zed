@@ -4,16 +4,13 @@ use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use fs::Fs;
 use gpui::{AppContext, Pixels};
-<<<<<<< HEAD
 use language_model::provider::open_ai;
 use language_model::settings::{
     AnthropicSettingsContent, AnthropicSettingsContentV1, OllamaSettingsContent,
     OpenAiSettingsContent, OpenAiSettingsContentV1, VersionedAnthropicSettingsContent,
     VersionedOpenAiSettingsContent,
 };
-=======
 use kimi_ai::Model as KimiAiModel;
->>>>>>> dev
 use language_model::{settings::AllLanguageModelSettings, CloudModel, LanguageModel};
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
