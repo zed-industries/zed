@@ -9995,6 +9995,7 @@ impl Editor {
         }
 
         let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
+
         let format = project.update(cx, |project, cx| {
             project.format(buffers, true, trigger, self.selections.all(cx), cx)
         });

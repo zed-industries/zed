@@ -45,25 +45,6 @@ pub trait Watcher: Send + Sync {
     fn remove(&self, path: &Path) -> Result<()>;
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PathEventKind {
-    Removed,
-    Created,
-    Changed,
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PathEvent {
-    pub path: PathBuf,
-    pub kind: Option<PathEventKind>,
-}
-
-impl From<PathEvent> for PathBuf {
-    fn from(event: PathEvent) -> Self {
-        event.path
-    }
-}
-
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
@@ -111,7 +92,7 @@ pub trait Fs: Send + Sync {
         path: &Path,
         latency: Duration,
     ) -> (
-        Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
         Arc<dyn Watcher>,
     );
 
@@ -488,38 +469,17 @@ impl Fs for RealFs {
         path: &Path,
         latency: Duration,
     ) -> (
-        Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
         Arc<dyn Watcher>,
     ) {
-        use fsevent::{EventStream, StreamFlags};
+        use fsevent::EventStream;
 
         let (tx, rx) = smol::channel::unbounded();
         let (stream, handle) = EventStream::new(&[path], latency);
         std::thread::spawn(move || {
             stream.run(move |events| {
-                smol::block_on(
-                    tx.send(
-                        events
-                            .into_iter()
-                            .map(|event| {
-                                let kind = if event.flags.contains(StreamFlags::ITEM_REMOVED) {
-                                    Some(PathEventKind::Removed)
-                                } else if event.flags.contains(StreamFlags::ITEM_CREATED) {
-                                    Some(PathEventKind::Created)
-                                } else if event.flags.contains(StreamFlags::ITEM_MODIFIED) {
-                                    Some(PathEventKind::Changed)
-                                } else {
-                                    None
-                                };
-                                PathEvent {
-                                    path: event.path,
-                                    kind,
-                                }
-                            })
-                            .collect(),
-                    ),
-                )
-                .is_ok()
+                smol::block_on(tx.send(events.into_iter().map(|event| event.path).collect()))
+                    .is_ok()
             });
         });
 
@@ -538,46 +498,32 @@ impl Fs for RealFs {
         path: &Path,
         latency: Duration,
     ) -> (
-        Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
         Arc<dyn Watcher>,
     ) {
-        use notify::EventKind;
         use parking_lot::Mutex;
 
         let (tx, rx) = smol::channel::unbounded();
-        let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
+        let pending_paths: Arc<Mutex<Vec<PathBuf>>> = Default::default();
         let root_path = path.to_path_buf();
 
         watcher::global(|g| {
             let tx = tx.clone();
             let pending_paths = pending_paths.clone();
             g.add(move |event: &notify::Event| {
-                let kind = match event.kind {
-                    EventKind::Create(_) => Some(PathEventKind::Created),
-                    EventKind::Modify(_) => Some(PathEventKind::Changed),
-                    EventKind::Remove(_) => Some(PathEventKind::Removed),
-                    _ => None,
-                };
                 let mut paths = event
                     .paths
                     .iter()
-                    .filter_map(|path| {
-                        path.starts_with(&root_path).then(|| PathEvent {
-                            path: path.clone(),
-                            kind,
-                        })
-                    })
+                    .filter(|path| path.starts_with(&root_path))
+                    .cloned()
                     .collect::<Vec<_>>();
-
                 if !paths.is_empty() {
                     paths.sort();
                     let mut pending_paths = pending_paths.lock();
                     if pending_paths.is_empty() {
                         tx.try_send(()).ok();
                     }
-                    util::extend_sorted(&mut *pending_paths, paths, usize::MAX, |a, b| {
-                        a.path.cmp(&b.path)
-                    });
+                    util::extend_sorted(&mut *pending_paths, paths, usize::MAX, PathBuf::cmp);
                 }
             })
         })
@@ -615,10 +561,10 @@ impl Fs for RealFs {
         path: &Path,
         _latency: Duration,
     ) -> (
-        Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
         Arc<dyn Watcher>,
     ) {
-        use notify::{EventKind, Watcher};
+        use notify::Watcher;
 
         let (tx, rx) = smol::channel::unbounded();
 
@@ -626,21 +572,7 @@ impl Fs for RealFs {
             let tx = tx.clone();
             move |event: Result<notify::Event, _>| {
                 if let Some(event) = event.log_err() {
-                    let kind = match event.kind {
-                        EventKind::Create(_) => Some(PathEventKind::Created),
-                        EventKind::Modify(_) => Some(PathEventKind::Changed),
-                        EventKind::Remove(_) => Some(PathEventKind::Removed),
-                        _ => None,
-                    };
-
-                    tx.try_send(
-                        event
-                            .paths
-                            .into_iter()
-                            .map(|path| PathEvent { path, kind })
-                            .collect::<Vec<_>>(),
-                    )
-                    .ok();
+                    tx.try_send(event.paths).ok();
                 }
             }
         })
@@ -750,9 +682,9 @@ struct FakeFsState {
     root: Arc<Mutex<FakeFsEntry>>,
     next_inode: u64,
     next_mtime: SystemTime,
-    event_txs: Vec<smol::channel::Sender<Vec<PathEvent>>>,
+    event_txs: Vec<smol::channel::Sender<Vec<PathBuf>>>,
     events_paused: bool,
-    buffered_events: Vec<PathEvent>,
+    buffered_events: Vec<PathBuf>,
     metadata_call_count: usize,
     read_dir_call_count: usize,
 }
@@ -861,14 +793,11 @@ impl FakeFsState {
 
     fn emit_event<I, T>(&mut self, paths: I)
     where
-        I: IntoIterator<Item = (T, Option<PathEventKind>)>,
+        I: IntoIterator<Item = T>,
         T: Into<PathBuf>,
     {
         self.buffered_events
-            .extend(paths.into_iter().map(|(path, kind)| PathEvent {
-                path: path.into(),
-                kind,
-            }));
+            .extend(paths.into_iter().map(Into::into));
 
         if !self.events_paused {
             self.flush_events(self.buffered_events.len());
@@ -943,7 +872,7 @@ impl FakeFs {
                 Ok(())
             })
             .unwrap();
-        state.emit_event([(path.to_path_buf(), None)]);
+        state.emit_event([path.to_path_buf()]);
     }
 
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
@@ -966,7 +895,7 @@ impl FakeFs {
                 }
             })
             .unwrap();
-        state.emit_event([(path, None)]);
+        state.emit_event([path]);
     }
 
     fn write_file_internal(&self, path: impl AsRef<Path>, content: Vec<u8>) -> Result<()> {
@@ -981,24 +910,18 @@ impl FakeFs {
             mtime,
             content,
         }));
-        let mut kind = None;
-        state.write_path(path, {
-            let kind = &mut kind;
-            move |entry| {
-                match entry {
-                    btree_map::Entry::Vacant(e) => {
-                        *kind = Some(PathEventKind::Created);
-                        e.insert(file);
-                    }
-                    btree_map::Entry::Occupied(mut e) => {
-                        *kind = Some(PathEventKind::Changed);
-                        *e.get_mut() = file;
-                    }
+        state.write_path(path, move |entry| {
+            match entry {
+                btree_map::Entry::Vacant(e) => {
+                    e.insert(file);
                 }
-                Ok(())
+                btree_map::Entry::Occupied(mut e) => {
+                    *e.get_mut() = file;
+                }
             }
+            Ok(())
         })?;
-        state.emit_event([(path, kind)]);
+        state.emit_event([path]);
         Ok(())
     }
 
@@ -1107,7 +1030,7 @@ impl FakeFs {
             f(&mut repo_state);
 
             if emit_git_event {
-                state.emit_event([(dot_git, None)]);
+                state.emit_event([dot_git]);
             }
         } else {
             panic!("not a directory");
@@ -1158,7 +1081,7 @@ impl FakeFs {
         self.state.lock().emit_event(
             statuses
                 .iter()
-                .map(|(path, _)| (dot_git.parent().unwrap().join(path), None)),
+                .map(|(path, _)| dot_git.parent().unwrap().join(path)),
         );
     }
 
@@ -1328,7 +1251,7 @@ impl Fs for FakeFs {
             state.next_inode += 1;
             state.write_path(&cur_path, |entry| {
                 entry.or_insert_with(|| {
-                    created_dirs.push((cur_path.clone(), Some(PathEventKind::Created)));
+                    created_dirs.push(cur_path.clone());
                     Arc::new(Mutex::new(FakeFsEntry::Dir {
                         inode,
                         mtime,
@@ -1340,7 +1263,7 @@ impl Fs for FakeFs {
             })?
         }
 
-        self.state.lock().emit_event(created_dirs);
+        self.state.lock().emit_event(&created_dirs);
         Ok(())
     }
 
@@ -1356,12 +1279,10 @@ impl Fs for FakeFs {
             mtime,
             content: Vec::new(),
         }));
-        let mut kind = Some(PathEventKind::Created);
         state.write_path(path, |entry| {
             match entry {
                 btree_map::Entry::Occupied(mut e) => {
                     if options.overwrite {
-                        kind = Some(PathEventKind::Changed);
                         *e.get_mut() = file;
                     } else if !options.ignore_if_exists {
                         return Err(anyhow!("path already exists: {}", path.display()));
@@ -1373,7 +1294,7 @@ impl Fs for FakeFs {
             }
             Ok(())
         })?;
-        state.emit_event([(path, kind)]);
+        state.emit_event([path]);
         Ok(())
     }
 
@@ -1392,7 +1313,7 @@ impl Fs for FakeFs {
                 }
             })
             .unwrap();
-        state.emit_event([(path, None)]);
+        state.emit_event(&[path]);
         Ok(())
     }
 
@@ -1467,10 +1388,7 @@ impl Fs for FakeFs {
             })
             .unwrap();
 
-        state.emit_event([
-            (old_path, Some(PathEventKind::Removed)),
-            (new_path, Some(PathEventKind::Created)),
-        ]);
+        state.emit_event(&[old_path, new_path]);
         Ok(())
     }
 
@@ -1485,11 +1403,9 @@ impl Fs for FakeFs {
         state.next_mtime += Duration::from_nanos(1);
         let source_entry = state.read_path(&source)?;
         let content = source_entry.lock().file_content(&source)?.clone();
-        let mut kind = Some(PathEventKind::Created);
         let entry = state.write_path(&target, |e| match e {
             btree_map::Entry::Occupied(e) => {
                 if options.overwrite {
-                    kind = Some(PathEventKind::Changed);
                     Ok(Some(e.get().clone()))
                 } else if !options.ignore_if_exists {
                     return Err(anyhow!("{target:?} already exists"));
@@ -1509,7 +1425,7 @@ impl Fs for FakeFs {
         if let Some(entry) = entry {
             entry.lock().set_file_content(&target, content)?;
         }
-        state.emit_event([(target, kind)]);
+        state.emit_event(&[target]);
         Ok(())
     }
 
@@ -1546,7 +1462,7 @@ impl Fs for FakeFs {
                 e.remove();
             }
         }
-        state.emit_event([(path, Some(PathEventKind::Removed))]);
+        state.emit_event(&[path]);
         Ok(())
     }
 
@@ -1575,7 +1491,7 @@ impl Fs for FakeFs {
                 e.remove();
             }
         }
-        state.emit_event([(path, Some(PathEventKind::Removed))]);
+        state.emit_event(&[path]);
         Ok(())
     }
 
@@ -1716,7 +1632,7 @@ impl Fs for FakeFs {
         path: &Path,
         _: Duration,
     ) -> (
-        Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
+        Pin<Box<dyn Send + Stream<Item = Vec<PathBuf>>>>,
         Arc<dyn Watcher>,
     ) {
         self.simulate_random_delay().await;
@@ -1726,9 +1642,7 @@ impl Fs for FakeFs {
         let executor = self.executor.clone();
         (
             Box::pin(futures::StreamExt::filter(rx, move |events| {
-                let result = events
-                    .iter()
-                    .any(|evt_path| evt_path.path.starts_with(&path));
+                let result = events.iter().any(|evt_path| evt_path.starts_with(&path));
                 let executor = executor.clone();
                 async move {
                     executor.simulate_random_delay().await;

@@ -2887,7 +2887,7 @@ impl Project {
                                                     &settings,
                                                     &adapters_and_servers,
                                                     push_to_history,
-                                                    selections.clone(),
+                                                    &Vec::with_capacity(0),
                                                     &mut project_transaction,
                                                     &mut cx,
                                                 )
@@ -2911,7 +2911,7 @@ impl Project {
                                                     &settings,
                                                     &adapters_and_servers,
                                                     push_to_history,
-                                                    selections.clone(),
+                                                    &Vec::with_capacity(0),
                                                     &mut project_transaction,
                                                     &mut cx,
                                                 )
@@ -2935,7 +2935,7 @@ impl Project {
                                                 &settings,
                                                 &adapters_and_servers,
                                                 push_to_history,
-                                                selections.clone(),
+                                                &Vec::with_capacity(0),
                                                 &mut project_transaction,
                                                 &mut cx,
                                             )
@@ -2962,7 +2962,7 @@ impl Project {
                                         &settings,
                                         &adapters_and_servers,
                                         push_to_history,
-                                        selections.clone(),
+                                        &Vec::with_capacity(0),
                                         &mut project_transaction,
                                         &mut cx,
                                     )
@@ -2991,7 +2991,7 @@ impl Project {
                                             &settings,
                                             &adapters_and_servers,
                                             push_to_history,
-                                            selections.clone(),
+                                            &selections,
                                             &mut project_transaction,
                                             &mut cx,
                                         )
@@ -3015,7 +3015,7 @@ impl Project {
                                             &settings,
                                             &adapters_and_servers,
                                             push_to_history,
-                                            selections.clone(),
+                                            &selections,
                                             &mut project_transaction,
                                             &mut cx,
                                         )
@@ -3041,7 +3041,7 @@ impl Project {
                                         &settings,
                                         &adapters_and_servers,
                                         push_to_history,
-                                        selections.clone(),
+                                        &selections,
                                         &mut project_transaction,
                                         &mut cx,
                                     )
@@ -3114,7 +3114,7 @@ impl Project {
         settings: &LanguageSettings,
         adapters_and_servers: &Vec<(Arc<CachedLspAdapter>, Arc<LanguageServer>)>,
         push_to_history: bool,
-        selections: Vec<Selection<Point>>,
+        selections: &[Selection<Point>],
         transaction: &mut ProjectTransaction,
         mut cx: &mut AsyncAppContext,
     ) -> Result<Option<FormatOperation>, anyhow::Error> {
