@@ -33,13 +33,11 @@ impl HeadlessProject {
     }
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
-        let this = cx.weak_model();
-
         let worktree_store = cx.new_model(|_| WorktreeStore::new(true, fs.clone()));
         let buffer_store = cx.new_model(|cx| {
             let mut buffer_store =
-                BufferStore::new(worktree_store.clone(), Some(proto::SSH_PROJECT_ID), cx);
-            buffer_store.shared(proto::SSH_PROJECT_ID, session.clone().into(), cx);
+                BufferStore::new(worktree_store.clone(), Some(SSH_PROJECT_ID), cx);
+            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
 
@@ -49,11 +47,12 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &buffer_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
 
-        client.add_request_handler(this.clone(), Self::handle_list_remote_directory);
+        client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
 
         client.add_model_request_handler(Self::handle_add_worktree);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_find_search_candidates);
+        client.add_model_request_handler(BufferStore::handle_update_buffer);
 
         BufferStore::init(&client);
         WorktreeStore::init(&client);

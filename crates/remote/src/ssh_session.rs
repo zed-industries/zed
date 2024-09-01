@@ -342,19 +342,19 @@ impl SshSession {
                             this.clone().into(),
                             cx.clone(),
                         ) {
-                            log::debug!("ssh message received. name:{}", type_name);
+                            log::debug!("ssh message received. name:{type_name}");
                             match future.await {
                                 Ok(_) => {
-                                    log::debug!("ssh message handled. name:{}", type_name);
+                                    log::debug!("ssh message handled. name:{type_name}");
                                 }
                                 Err(error) => {
                                     log::error!(
-                                        "error handling message. type:{}, error:{:?}",
-                                        type_name,
-                                        error
+                                        "error handling message. type:{type_name}, error:{error:?}",
                                     );
                                 }
                             }
+                        } else {
+                            log::error!("unhandled ssh message name:{type_name}");
                         }
                     }
                 }
@@ -381,6 +381,7 @@ impl SshSession {
     }
 
     pub fn send<T: EnvelopedMessage>(&self, payload: T) -> Result<()> {
+        log::debug!("ssh send name:{}", T::NAME);
         self.send_dynamic(payload.into_envelope(0, None, None))
     }
 

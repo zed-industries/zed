@@ -17,7 +17,7 @@ use smol::stream::StreamExt;
 use std::{path::Path, sync::Arc};
 
 #[gpui::test]
-async fn test_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let (project, _headless, fs) = init_test(cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {

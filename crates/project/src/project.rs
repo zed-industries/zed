@@ -65,7 +65,10 @@ use paths::{
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use remote::SshSession;
-use rpc::{proto::AnyProtoClient, ErrorCode};
+use rpc::{
+    proto::{AnyProtoClient, SSH_PROJECT_ID},
+    ErrorCode,
+};
 use search::{SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
@@ -704,6 +707,9 @@ impl Project {
                 store.set_upstream_client(client.clone());
             });
 
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
             client.add_model_message_handler(Self::handle_update_worktree);
             client.add_model_message_handler(Self::handle_create_buffer_for_peer);
             client.add_model_message_handler(BufferStore::handle_update_buffer_file);
