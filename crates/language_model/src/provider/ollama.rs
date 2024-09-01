@@ -166,7 +166,7 @@ impl State {
         if self.is_authenticated() {
             Task::ready(Ok(()))
         } else {
-            let _ = cx.spawn(|this, mut cx| async move {
+            cx.spawn(|this, mut cx| async move {
                 let (api_key, from_env) = if let Ok(api_key) = std::env::var(OLLAMA_API_KEY_VAR) {
                     (Some(api_key), true)
                 } else {
@@ -181,8 +181,9 @@ impl State {
                     }
                 })
                 .log_err();
-            });
-            self.fetch_models(cx)
+
+                this.update(&mut cx, |this, cx| this.fetch_models(cx))?.await
+            })
         }
     }
 }
@@ -515,7 +516,7 @@ impl ConfigurationView {
                     if std::env::var(OLLAMA_API_URL_VAR).is_ok() {
                         format!("API URL set by {} environment variable", OLLAMA_API_URL_VAR)
                     } else {
-                        format!("{}", OLLAMA_API_URL_DEFAULT)
+                        OLLAMA_API_URL_DEFAULT.to_string()
                     },
                     cx,
                 );
