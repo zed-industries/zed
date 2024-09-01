@@ -1031,7 +1031,7 @@
   "ssh_connections": null,
 
   "debugger": {
-    // Save breakpoints across different Zed sessions
+    "stepping_granularity": "line",
     "save_breakpoints": true,
     "button": true
   },

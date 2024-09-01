@@ -4,6 +4,7 @@ use crate::variable_list::VariableList;
 
 use anyhow::Result;
 use dap::client::{DebugAdapterClient, DebugAdapterClientId, ThreadState, ThreadStatus};
+use dap::debugger_settings::DebuggerSettings;
 use dap::{
     OutputEvent, OutputEventCategory, Scope, StackFrame, StoppedEvent, ThreadEvent, Variable,
 };
@@ -13,6 +14,7 @@ use gpui::{
     FocusableView, ListState, Subscription, View, WeakView,
 };
 use serde::Deserialize;
+use settings::Settings;
 use std::sync::Arc;
 use ui::WindowContext;
 use ui::{prelude::*, Tooltip};
@@ -441,9 +443,10 @@ impl DebugPanelItem {
         let client = self.client.clone();
         let thread_id = self.thread_id;
         let previous_status = self.current_thread_state().status;
+        let granularity = DebuggerSettings::get_global(cx).stepping_granularity();
 
         cx.spawn(|this, cx| async move {
-            client.step_over(thread_id).await?;
+            client.step_over(thread_id, granularity).await?;
 
             Self::update_thread_state(this, previous_status, None, cx)
         })
@@ -454,9 +457,10 @@ impl DebugPanelItem {
         let client = self.client.clone();
         let thread_id = self.thread_id;
         let previous_status = self.current_thread_state().status;
+        let granularity = DebuggerSettings::get_global(cx).stepping_granularity();
 
         cx.spawn(|this, cx| async move {
-            client.step_in(thread_id).await?;
+            client.step_in(thread_id, granularity).await?;
 
             Self::update_thread_state(this, previous_status, None, cx)
         })
@@ -467,9 +471,10 @@ impl DebugPanelItem {
         let client = self.client.clone();
         let thread_id = self.thread_id;
         let previous_status = self.current_thread_state().status;
+        let granularity = DebuggerSettings::get_global(cx).stepping_granularity();
 
         cx.spawn(|this, cx| async move {
-            client.step_out(thread_id).await?;
+            client.step_out(thread_id, granularity).await?;
 
             Self::update_thread_state(this, previous_status, None, cx)
         })

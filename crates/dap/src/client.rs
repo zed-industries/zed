@@ -476,16 +476,12 @@ impl DebugAdapterClient {
 
         self.request::<Continue>(ContinueArguments {
             thread_id,
-            single_thread: if supports_single_thread_execution_requests {
-                Some(true)
-            } else {
-                None
-            },
+            single_thread: supports_single_thread_execution_requests.then(|| true),
         })
         .await
     }
 
-    pub async fn step_over(&self, thread_id: u64) -> Result<()> {
+    pub async fn step_over(&self, thread_id: u64, granularity: SteppingGranularity) -> Result<()> {
         let capabilities = self.capabilities();
 
         let supports_single_thread_execution_requests = capabilities
@@ -497,21 +493,13 @@ impl DebugAdapterClient {
 
         self.request::<Next>(NextArguments {
             thread_id,
-            granularity: if supports_stepping_granularity {
-                Some(SteppingGranularity::Statement)
-            } else {
-                None
-            },
-            single_thread: if supports_single_thread_execution_requests {
-                Some(true)
-            } else {
-                None
-            },
+            granularity: supports_stepping_granularity.then(|| granularity),
+            single_thread: supports_single_thread_execution_requests.then(|| true),
         })
         .await
     }
 
-    pub async fn step_in(&self, thread_id: u64) -> Result<()> {
+    pub async fn step_in(&self, thread_id: u64, granularity: SteppingGranularity) -> Result<()> {
         let capabilities = self.capabilities();
 
         let supports_single_thread_execution_requests = capabilities
@@ -524,21 +512,13 @@ impl DebugAdapterClient {
         self.request::<StepIn>(StepInArguments {
             thread_id,
             target_id: None,
-            granularity: if supports_stepping_granularity {
-                Some(SteppingGranularity::Statement)
-            } else {
-                None
-            },
-            single_thread: if supports_single_thread_execution_requests {
-                Some(true)
-            } else {
-                None
-            },
+            granularity: supports_stepping_granularity.then(|| granularity),
+            single_thread: supports_single_thread_execution_requests.then(|| true),
         })
         .await
     }
 
-    pub async fn step_out(&self, thread_id: u64) -> Result<()> {
+    pub async fn step_out(&self, thread_id: u64, granularity: SteppingGranularity) -> Result<()> {
         let capabilities = self.capabilities();
 
         let supports_single_thread_execution_requests = capabilities
@@ -550,21 +530,13 @@ impl DebugAdapterClient {
 
         self.request::<StepOut>(StepOutArguments {
             thread_id,
-            granularity: if supports_stepping_granularity {
-                Some(SteppingGranularity::Statement)
-            } else {
-                None
-            },
-            single_thread: if supports_single_thread_execution_requests {
-                Some(true)
-            } else {
-                None
-            },
+            granularity: supports_stepping_granularity.then(|| granularity),
+            single_thread: supports_single_thread_execution_requests.then(|| true),
         })
         .await
     }
 
-    pub async fn step_back(&self, thread_id: u64) -> Result<()> {
+    pub async fn step_back(&self, thread_id: u64, granularity: SteppingGranularity) -> Result<()> {
         let capabilities = self.capabilities();
 
         let supports_single_thread_execution_requests = capabilities
@@ -576,16 +548,8 @@ impl DebugAdapterClient {
 
         self.request::<StepBack>(StepBackArguments {
             thread_id,
-            granularity: if supports_stepping_granularity {
-                Some(SteppingGranularity::Statement)
-            } else {
-                None
-            },
-            single_thread: if supports_single_thread_execution_requests {
-                Some(true)
-            } else {
-                None
-            },
+            granularity: supports_stepping_granularity.then(|| granularity),
+            single_thread: supports_single_thread_execution_requests.then(|| true),
         })
         .await
     }
