@@ -2,14 +2,14 @@
 
 pub mod error;
 mod macros;
+mod proto_client;
 mod typed_envelope;
 
 pub use error::*;
+pub use proto_client::*;
 pub use typed_envelope::*;
 
-use anyhow::anyhow;
 use collections::HashMap;
-use futures::{future::BoxFuture, Future};
 pub use prost::{DecodeError, Message};
 use serde::Serialize;
 use std::{
@@ -17,11 +17,13 @@ use std::{
     cmp,
     fmt::{self, Debug},
     iter, mem,
-    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
+
+pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
+pub const SSH_PROJECT_ID: u64 = 0;
 
 pub trait EnvelopedMessage: Clone + Debug + Serialize + Sized + Send + Sync + 'static {
     const NAME: &'static str;
@@ -58,51 +60,6 @@ pub trait AnyTypedEnvelope: 'static + Send + Sync {
 pub enum MessagePriority {
     Foreground,
     Background,
-}
-
-pub trait ProtoClient: Send + Sync {
-    fn request(
-        &self,
-        envelope: Envelope,
-        request_type: &'static str,
-    ) -> BoxFuture<'static, anyhow::Result<Envelope>>;
-
-    fn send(&self, envelope: Envelope, message_type: &'static str) -> anyhow::Result<()>;
-}
-
-#[derive(Clone)]
-pub struct AnyProtoClient(Arc<dyn ProtoClient>);
-
-impl<T> From<Arc<T>> for AnyProtoClient
-where
-    T: ProtoClient + 'static,
-{
-    fn from(client: Arc<T>) -> Self {
-        Self(client)
-    }
-}
-
-impl AnyProtoClient {
-    pub fn new<T: ProtoClient + 'static>(client: Arc<T>) -> Self {
-        Self(client)
-    }
-
-    pub fn request<T: RequestMessage>(
-        &self,
-        request: T,
-    ) -> impl Future<Output = anyhow::Result<T::Response>> {
-        let envelope = request.into_envelope(0, None, None);
-        let response = self.0.request(envelope, T::NAME);
-        async move {
-            T::Response::from_envelope(response.await?)
-                .ok_or_else(|| anyhow!("received response of the wrong type"))
-        }
-    }
-
-    pub fn send<T: EnvelopedMessage>(&self, request: T) -> anyhow::Result<()> {
-        let envelope = request.into_envelope(0, None, None);
-        self.0.send(envelope, T::NAME)
-    }
 }
 
 impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
@@ -537,11 +494,13 @@ request_messages!(
 entity_messages!(
     {project_id, ShareProject},
     AddProjectCollaborator,
+    AddWorktree,
     ApplyCodeAction,
     ApplyCompletionAdditionalEdits,
     BlameBuffer,
     BufferReloaded,
     BufferSaved,
+    CloseBuffer,
     CopyProjectEntry,
     CreateBufferForPeer,
     CreateProjectEntry,

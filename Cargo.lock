@@ -8512,6 +8512,8 @@ dependencies = [
  "anyhow",
  "collections",
  "futures 0.3.30",
+ "gpui",
+ "parking_lot",
  "prost",
  "prost-build",
  "serde",

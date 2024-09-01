@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context as _, Result};
-use client::{Client, DevServerProjectId};
+use client::DevServerProjectId;
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::{
@@ -17,7 +17,7 @@ use gpui::{
 };
 use postage::oneshot;
 use rpc::{
-    proto::{self, AnyProtoClient},
+    proto::{self, AnyProtoClient, SSH_PROJECT_ID},
     TypedEnvelope,
 };
 use smol::{
@@ -58,12 +58,12 @@ pub enum WorktreeStoreEvent {
 impl EventEmitter<WorktreeStoreEvent> for WorktreeStore {}
 
 impl WorktreeStore {
-    pub fn init(client: &Arc<Client>) {
-        client.add_model_request_handler(WorktreeStore::handle_create_project_entry);
-        client.add_model_request_handler(WorktreeStore::handle_rename_project_entry);
-        client.add_model_request_handler(WorktreeStore::handle_copy_project_entry);
-        client.add_model_request_handler(WorktreeStore::handle_delete_project_entry);
-        client.add_model_request_handler(WorktreeStore::handle_expand_project_entry);
+    pub fn init(client: &AnyProtoClient) {
+        client.add_model_request_handler(Self::handle_create_project_entry);
+        client.add_model_request_handler(Self::handle_rename_project_entry);
+        client.add_model_request_handler(Self::handle_copy_project_entry);
+        client.add_model_request_handler(Self::handle_delete_project_entry);
+        client.add_model_request_handler(Self::handle_expand_project_entry);
     }
 
     pub fn new(retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {
@@ -188,7 +188,10 @@ impl WorktreeStore {
         let path = abs_path.to_string_lossy().to_string();
         cx.spawn(|this, mut cx| async move {
             let response = client
-                .request(proto::AddWorktree { path: path.clone() })
+                .request(proto::AddWorktree {
+                    project_id: SSH_PROJECT_ID,
+                    path: path.clone(),
+                })
                 .await?;
             let worktree = cx.update(|cx| {
                 Worktree::remote(

@@ -71,7 +71,7 @@ pub struct ProjectTransaction(pub HashMap<Model<Buffer>, language::Transaction>)
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
 
 impl BufferStore {
-    pub fn init(client: &Arc<Client>) {
+    pub fn init(client: &AnyProtoClient) {
         client.add_model_message_handler(Self::handle_buffer_reloaded);
         client.add_model_message_handler(Self::handle_buffer_saved);
         client.add_model_message_handler(Self::handle_update_buffer_file);
