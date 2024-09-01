@@ -52,7 +52,7 @@ ui.workspace = true
 util.workspace = true
 base64.workspace = true
 image.workspace = true
-
+fs.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

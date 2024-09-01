@@ -6152,6 +6152,7 @@ dependencies = [
  "editor",
  "env_logger",
  "feature_flags",
+ "fs",
  "futures 0.3.30",
  "google_ai",
  "gpui",

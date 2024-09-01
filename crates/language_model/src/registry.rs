@@ -12,11 +12,12 @@ use collections::BTreeMap;
 use gpui::{AppContext, EventEmitter, Global, Model, ModelContext};
 use std::sync::Arc;
 use ui::Context;
+use fs::Fs;
 
-pub fn init(user_store: Model<UserStore>, client: Arc<Client>, cx: &mut AppContext) {
+pub fn init(user_store: Model<UserStore>, client: Arc<Client>, fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let registry = cx.new_model(|cx| {
         let mut registry = LanguageModelRegistry::default();
-        register_language_model_providers(&mut registry, user_store, client, cx);
+        register_language_model_providers(&mut registry, user_store, client, fs, cx);
         registry
     });
     cx.set_global(GlobalLanguageModelRegistry(registry));
@@ -26,6 +27,7 @@ fn register_language_model_providers(
     registry: &mut LanguageModelRegistry,
     user_store: Model<UserStore>,
     client: Arc<Client>,
+    fs: Arc<dyn Fs>,
     cx: &mut ModelContext<LanguageModelRegistry>,
 ) {
     use feature_flags::FeatureFlagAppExt;
@@ -39,7 +41,7 @@ fn register_language_model_providers(
         cx,
     );
     registry.register_provider(
-        OllamaLanguageModelProvider::new(client.http_client(), cx),
+        OllamaLanguageModelProvider::new(client.http_client(), fs.clone(), cx),
         cx,
     );
     registry.register_provider(

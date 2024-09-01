@@ -30,8 +30,8 @@ pub fn init(
     fs: Arc<dyn Fs>,
     cx: &mut AppContext,
 ) {
-    settings::init(fs, cx);
-    registry::init(user_store, client, cx);
+    settings::init(fs.clone(), cx);
+    registry::init(user_store, client, fs, cx);
 }
 
 /// The availability of a [`LanguageModel`].

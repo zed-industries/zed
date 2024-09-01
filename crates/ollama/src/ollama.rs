@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{value::RawValue, Value};
 use std::{convert::TryFrom, sync::Arc, time::Duration};
 
-pub const OLLAMA_API_URL: &str = "http://localhost:11434";
+pub const OLLAMA_API_URL_VAR: &'static str = "OLLAMA_SERVER";
+pub const OLLAMA_API_URL_DEFAULT: &'static str = "http://localhost:11434";
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
