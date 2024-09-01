@@ -168,29 +168,60 @@ pub struct FileFinderDelegate {
     separate_history: bool,
 }
 
-/// Use a custom ordering for file finder: the regular one
-/// defines max element with the highest score and the latest alphanumerical path (in case of a tie on other params), e.g:
-/// `[{score: 0.5, path = "c/d" }, { score: 0.5, path = "/a/b" }]`
+/// Use a custom ordering for file finder:
+/// 1. Highest score (calculated as raw match score plus distance-based boost)
+/// 2. Earliest alphanumerical path (in case of a tie on score)
+/// 3. Lowest worktree_id (in case of a tie on score and path)
 ///
-/// In the file finder, we would prefer to have the max element with the highest score and the earliest alphanumerical path, e.g:
-/// `[{ score: 0.5, path = "/a/b" }, {score: 0.5, path = "c/d" }]`
-/// as the files are shown in the project panel lists.
+/// This ordering ensures that matches with higher relevance (based on both raw score and proximity to relative ancestor)
+/// are prioritized, followed by alphabetical ordering of paths, and finally by worktree precedence.
+///
+/// Example:
+/// `[{ score: 0.8, path = "/a/b", distance: 1 }, { score: 0.7, path = "c/d", distance: 0 }]`
+///
+/// The distance-based boost factor is used to slightly adjust scores based on proximity to the relative ancestor,
+/// allowing for more nuanced ordering when raw scores are similar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectPanelOrdMatch(PathMatch);
 
 impl Ord for ProjectPanelOrdMatch {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.0
-            .score
-            .partial_cmp(&other.0.score)
+        // The comparison should take into account both the "raw" match score and the distance
+        // to the relative ancestor.
+
+        // First, we compute the maximum distance to the relative ancestor between the two matches.
+        // This will be used to calculate a distance-based boost factor for each match.
+        let max_distance: f64 = cmp::max(
+            self.0.distance_to_relative_ancestor,
+            other.0.distance_to_relative_ancestor,
+        ) as f64;
+        let min_distance: f64 = cmp::min(
+            self.0.distance_to_relative_ancestor,
+            other.0.distance_to_relative_ancestor,
+        ) as f64;
+
+        // The distance-based boost factor is calculated as the normalized distance
+        // between the match's distance to the relative ancestor and the min/max distances.
+        // This ensures that the depth of the directory tree doesn't affect calculations.
+        let (self_distance_boost, other_distance_boost) = if max_distance == min_distance {
+            (1.0, 1.0)
+        } else {
+            (
+                (max_distance - self.0.distance_to_relative_ancestor as f64)
+                    / (max_distance - min_distance),
+                (max_distance - other.0.distance_to_relative_ancestor as f64)
+                    / (max_distance - min_distance),
+            )
+        };
+
+        // The final score is the raw match score plus the distance-based boost factor.
+        let self_score = self.0.score + self_distance_boost;
+        let other_score = other.0.score + other_distance_boost;
+
+        self_score
+            .partial_cmp(&other_score)
             .unwrap_or(cmp::Ordering::Equal)
             .then_with(|| self.0.worktree_id.cmp(&other.0.worktree_id))
-            .then_with(|| {
-                other
-                    .0
-                    .distance_to_relative_ancestor
-                    .cmp(&self.0.distance_to_relative_ancestor)
-            })
             .then_with(|| self.0.path.cmp(&other.0.path).reverse())
     }
 }
@@ -345,9 +376,14 @@ fn matching_history_item_paths<'a>(
                 candidates
             },
         );
+
+    let relative_to: Option<&Path> =
+        currently_opened.map(|currently_opened_path| currently_opened_path.project.path.as_ref());
+
     let mut matching_history_paths = HashMap::default();
     for (worktree, candidates) in history_items_by_worktrees {
         let max_results = candidates.len() + 1;
+
         matching_history_paths.extend(
             fuzzy::match_fixed_path_set(
                 candidates,
@@ -355,6 +391,7 @@ fn matching_history_item_paths<'a>(
                 query.path_query(),
                 false,
                 max_results,
+                relative_to,
             )
             .into_iter()
             .map(|path_match| {
