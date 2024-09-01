@@ -182,7 +182,8 @@ impl State {
                 })
                 .log_err();
 
-                this.update(&mut cx, |this, cx| this.fetch_models(cx))?.await
+                this.update(&mut cx, |this, cx| this.fetch_models(cx))?
+                    .await
             })
         }
     }
