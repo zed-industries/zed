@@ -498,7 +498,8 @@ pub struct Editor {
     snippet_stack: InvalidationStack<SnippetState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     ime_transaction: Option<TransactionId>,
-    active_diagnostics: Option<ActiveDiagnosticGroup>,
+    active_diagnostics: HashMap<usize, ActiveDiagnosticGroup>,
+    focused_diagnostic: Option<usize>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     project: Option<Model<Project>>,
     completion_provider: Option<Box<dyn CompletionProvider>>,
@@ -1573,7 +1574,6 @@ impl CodeActionsMenu {
 struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
     primary_message: String,
-    group_id: usize,
     blocks: HashMap<CustomBlockId, Diagnostic>,
     is_valid: bool,
 }
@@ -1845,7 +1845,8 @@ impl Editor {
             snippet_stack: Default::default(),
             select_larger_syntax_node_stack: Vec::new(),
             ime_transaction: Default::default(),
-            active_diagnostics: None,
+            active_diagnostics: HashMap::default(),
+            focused_diagnostic: None,
             soft_wrap_mode_override,
             completion_provider: project.clone().map(|project| Box::new(project) as _),
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
@@ -3024,7 +3025,7 @@ impl Editor {
         }
 
         if self.mode == EditorMode::Full {
-            if self.active_diagnostics.is_some() {
+            if self.focused_diagnostic.is_some() {
                 self.dismiss_diagnostics(cx);
                 return true;
             }
@@ -8949,8 +8950,10 @@ impl Editor {
             }
         }
 
-        let mut active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
-            active_diagnostics
+        let mut active_primary_range = self.focused_diagnostic.as_ref().map(|focused_diagnostic| {
+            self.active_diagnostics
+                .get(focused_diagnostic)
+                .unwrap()
                 .primary_range
                 .to_offset(&buffer)
                 .to_inclusive()
@@ -8981,9 +8984,9 @@ impl Editor {
                         Direction::Prev => entry.range.start >= search_start,
                         Direction::Next => entry.range.start <= search_start,
                     }) && self
-                        .active_diagnostics
+                        .focused_diagnostic
                         .as_ref()
-                        .is_some_and(|a| a.group_id != entry.diagnostic.group_id)
+                        .is_some_and(|group_id| *group_id != entry.diagnostic.group_id)
                 })
                 .find_map(|entry| {
                     if entry.diagnostic.is_primary
@@ -8991,7 +8994,7 @@ impl Editor {
                         && !entry.range.is_empty()
                         // if we match with the active diagnostic, skip it
                         && Some(entry.diagnostic.group_id)
-                            != self.active_diagnostics.as_ref().map(|d| d.group_id)
+                            != self.focused_diagnostic
                     {
                         Some((entry.range, entry.diagnostic.group_id))
                     } else {
@@ -10038,22 +10041,23 @@ impl Editor {
     }
 
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
-        if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
+        if let Some(focused_diagnostic) = self.focused_diagnostic.as_mut() {
+            let diagnostic = self.active_diagnostics.get_mut(focused_diagnostic).unwrap();
             let buffer = self.buffer.read(cx).snapshot(cx);
-            let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
+            let primary_range_start = diagnostic.primary_range.start.to_offset(&buffer);
             let is_valid = buffer
-                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone(), false)
+                .diagnostics_in_range::<_, usize>(diagnostic.primary_range.clone(), false)
                 .any(|entry| {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()
                         && entry.range.start == primary_range_start
-                        && entry.diagnostic.message == active_diagnostics.primary_message
+                        && entry.diagnostic.message == diagnostic.primary_message
                 });
 
-            if is_valid != active_diagnostics.is_valid {
-                active_diagnostics.is_valid = is_valid;
+            if is_valid != diagnostic.is_valid {
+                diagnostic.is_valid = is_valid;
                 let mut new_styles = HashMap::default();
-                for (block_id, diagnostic) in &active_diagnostics.blocks {
+                for (block_id, diagnostic) in &diagnostic.blocks {
                     new_styles.insert(
                         *block_id,
                         diagnostic_block_renderer(diagnostic.clone(), None, true, is_valid),
@@ -10069,7 +10073,7 @@ impl Editor {
     fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) -> bool {
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(cx);
-        self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
+        self.focused_diagnostic = self.display_map.update(cx, |display_map, cx| {
             let buffer = self.buffer.read(cx).snapshot(cx);
 
             let mut primary_range = None;
@@ -10119,21 +10123,26 @@ impl Editor {
                 .zip(diagnostic_group.into_iter().map(|entry| entry.diagnostic))
                 .collect();
 
-            Some(ActiveDiagnosticGroup {
-                primary_range,
-                primary_message,
+            self.active_diagnostics.insert(
                 group_id,
-                blocks,
-                is_valid: true,
-            })
+                ActiveDiagnosticGroup {
+                    primary_range,
+                    primary_message,
+                    blocks,
+                    is_valid: true,
+                },
+            );
+
+            Some(group_id)
         });
-        self.active_diagnostics.is_some()
+        self.focused_diagnostic.is_some()
     }
 
     fn dismiss_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(active_diagnostic_group) = self.active_diagnostics.take() {
+        if let Some(group_id) = self.focused_diagnostic.take() {
+            let diagnostic = self.active_diagnostics.remove(&group_id).unwrap();
             self.display_map.update(cx, |display_map, cx| {
-                display_map.remove_blocks(active_diagnostic_group.blocks.into_keys().collect(), cx);
+                display_map.remove_blocks(diagnostic.blocks.into_keys().collect(), cx);
             });
             cx.notify();
         }
@@ -10346,15 +10355,18 @@ impl Editor {
 
             cx.notify();
 
-            if let Some(active_diagnostics) = self.active_diagnostics.take() {
+            if let Some(group_id) = self.focused_diagnostic.take() {
                 // Clear diagnostics block when folding a range that contains it.
+                let idx = self
+                    .active_diagnostics
+                    .get(&group_id)
+                    .unwrap()
+                    .primary_range
+                    .start;
                 let snapshot = self.snapshot(cx);
-                if snapshot.intersects_fold(active_diagnostics.primary_range.start) {
+                if snapshot.intersects_fold(idx) {
                     drop(snapshot);
-                    self.active_diagnostics = Some(active_diagnostics);
                     self.dismiss_diagnostics(cx);
-                } else {
-                    self.active_diagnostics = Some(active_diagnostics);
                 }
             }
 
