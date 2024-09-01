@@ -807,7 +807,6 @@ impl LspStore {
         abs_path: &Path,
         language_server: &Arc<LanguageServer>,
         settings: &LanguageSettings,
-        selections: &[Selection<Point>],
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
         let uri = lsp::Url::from_file_path(abs_path)
@@ -816,6 +815,54 @@ impl LspStore {
         let capabilities = &language_server.capabilities();
 
         let formatting_provider = capabilities.document_formatting_provider.as_ref();
+        let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
+
+        let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
+            language_server
+                .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
+                    text_document,
+                    options: lsp_command::lsp_formatting_options(settings),
+                    work_done_progress_params: Default::default(),
+                })
+                .await?
+        } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
+            let buffer_start = lsp::Position::new(0, 0);
+            let buffer_end = buffer.update(cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
+            language_server
+                .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
+                    text_document: text_document.clone(),
+                    range: lsp::Range::new(buffer_start, buffer_end),
+                    options: lsp_command::lsp_formatting_options(settings),
+                    work_done_progress_params: Default::default(),
+                })
+                .await?
+        } else {
+            None
+        };
+
+        if let Some(lsp_edits) = lsp_edits {
+            this.update(cx, |this, cx| {
+                this.edits_from_lsp(buffer, lsp_edits, language_server.server_id(), None, cx)
+            })?
+            .await
+        } else {
+            Ok(Vec::with_capacity(0))
+        }
+    }
+
+    pub async fn format_range(
+        this: &WeakModel<Self>,
+        buffer: &Model<Buffer>,
+        abs_path: &Path,
+        language_server: &Arc<LanguageServer>,
+        settings: &LanguageSettings,
+        selections: &[Selection<Point>],
+        cx: &mut AsyncAppContext,
+    ) -> Result<Vec<(Range<Anchor>, String)>> {
+        let uri = lsp::Url::from_file_path(abs_path)
+            .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
+        let text_document = lsp::TextDocumentIdentifier::new(uri);
+        let capabilities = &language_server.capabilities();
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
 
         let lsp_edits = if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false))
@@ -828,12 +875,9 @@ impl LspStore {
                 selections
                     .into_iter()
                     .map(|selection| {
-                        let selection_start = selection.start;
-                        let selection_end = selection.end;
-
                         (
-                            lsp::Position::new(selection_start.row, selection_start.column),
-                            lsp::Position::new(selection_end.row, selection_end.column),
+                            lsp::Position::new(selection.start.row, selection.start.column),
+                            lsp::Position::new(selection.end.row, selection.end.column),
                         )
                     })
                     .collect()
@@ -854,18 +898,9 @@ impl LspStore {
                 };
             }
             text_edits
-        } else if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
-            language_server
-                .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
-                    text_document,
-                    options: lsp_command::lsp_formatting_options(settings),
-                    work_done_progress_params: Default::default(),
-                })
-                .await?
         } else {
             None
         };
-
         if let Some(lsp_edits) = lsp_edits {
             this.update(cx, |this, cx| {
                 this.edits_from_lsp(buffer, lsp_edits, language_server.server_id(), None, cx)

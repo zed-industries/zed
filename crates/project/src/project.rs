@@ -3133,19 +3133,34 @@ impl Project {
                     };
 
                     let lsp_store = project.update(cx, |p, _| p.lsp_store.downgrade())?;
-                    Some(FormatOperation::Lsp(
-                        LspStore::format_via_lsp(
-                            &lsp_store,
-                            buffer,
-                            buffer_abs_path,
-                            language_server,
-                            settings,
-                            selections,
-                            cx,
-                        )
-                        .await
-                        .context("failed to format via language server")?,
-                    ))
+                    if selections.is_empty() {
+                        Some(FormatOperation::Lsp(
+                            LspStore::format_via_lsp(
+                                &lsp_store,
+                                buffer,
+                                buffer_abs_path,
+                                language_server,
+                                settings,
+                                cx,
+                            )
+                            .await
+                            .context("failed to format via language server")?,
+                        ))
+                    } else {
+                        Some(FormatOperation::Lsp(
+                            LspStore::format_range(
+                                &lsp_store,
+                                buffer,
+                                buffer_abs_path,
+                                language_server,
+                                settings,
+                                selections,
+                                cx,
+                            )
+                            .await
+                            .context("failed to format range via language server")?,
+                        ))
+                    }
                 } else {
                     None
                 }

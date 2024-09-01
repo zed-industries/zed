@@ -9994,10 +9994,16 @@ impl Editor {
             buffers.retain(|buffer| buffer.read(cx).is_dirty());
         }
 
+        let selections = self
+            .selections
+            .all(cx)
+            .into_iter()
+            .filter(|s| s.start != s.end)
+            .collect();
         let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
 
         let format = project.update(cx, |project, cx| {
-            project.format(buffers, true, trigger, self.selections.all(cx), cx)
+            project.format(buffers, true, trigger, selections, cx)
         });
 
         cx.spawn(|_, mut cx| async move {
