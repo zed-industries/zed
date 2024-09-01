@@ -6,7 +6,8 @@ use gpui::{div, AnyView, AppContext, AsyncAppContext, ModelContext, Subscription
 use http_client::HttpClient;
 use ollama::{
     get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
-    ChatResponseDelta, OllamaToolCall, OLLAMA_API_URL_DEFAULT, OLLAMA_API_URL_VAR,
+    ChatResponseDelta, OllamaToolCall, OLLAMA_API_KEY_VAR, OLLAMA_API_URL_DEFAULT,
+    OLLAMA_API_URL_VAR,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -60,7 +61,6 @@ pub struct State {
     _subscription: Subscription,
     fs: Arc<dyn Fs>,
 }
-const OLLAMA_API_KEY_VAR: &'static str = "OLLAMA_API_KEY";
 
 impl State {
     fn is_authenticated(&self) -> bool {
@@ -149,6 +149,9 @@ impl State {
 
             let mut models: Vec<ollama::Model> = models
                 .into_iter()
+                // Since there is no metadata from the Ollama API
+                // indicating which models are embedding models,
+                // simply filter out models with "-embed" in their name
                 .filter(|model| !model.name.contains("-embed"))
                 .map(|model| ollama::Model::new(&model.name, None, None))
                 .collect();
