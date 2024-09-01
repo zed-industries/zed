@@ -1916,12 +1916,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "calloop-wayland-source"
-version = "0.3.0"
+name = "calloop"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95a66a987056935f7efce4ab5668920b5d0dac4a7c99991a67395f13702ddd20"
+checksum = "c58a38167d6fba8c67cce63c4a91f2a73ca42cbdaf6fb9ba164f1e07b43ecc10"
 dependencies = [
- "calloop",
+ "bitflags 2.6.0",
+ "log",
+ "polling 3.7.3",
+ "rustix 0.38.35",
+ "slab",
+]
+
+[[package]]
+name = "calloop-wayland-source"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "876a7a1dbbe026a55ef47a500b123af5a9a0914520f061d467914cf21be95daf"
+dependencies = [
+ "calloop 0.14.0",
  "rustix 0.38.35",
  "wayland-backend",
  "wayland-client",
@@ -4964,7 +4977,7 @@ dependencies = [
  "blade-util",
  "block",
  "bytemuck",
- "calloop",
+ "calloop 0.13.0",
  "calloop-wayland-source",
  "cbindgen",
  "cocoa 0.26.0",

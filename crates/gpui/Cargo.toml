@@ -115,7 +115,7 @@ bytemuck = "1"
 as-raw-xcb-connection = "1"
 ashpd.workspace = true
 calloop = "0.13.0"
-calloop-wayland-source = "0.3.0"
+calloop-wayland-source = "0.4.0"
 cosmic-text = { git = "https://github.com/pop-os/cosmic-text", rev = "542b20c" }
 flume = "0.11"
 wayland-backend = { version = "0.3.3", features = ["client_system", "dlopen"] }
