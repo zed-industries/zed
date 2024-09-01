@@ -28,8 +28,8 @@ use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use project::{
-    search::SearchQuery, search::SearchResult, DiagnosticSummary, FormatTrigger, HoverBlockKind,
-    Project, ProjectPath,
+    search::SearchQuery, search::SearchResult, DiagnosticSummary, FormatTrigger, FormatType,
+    HoverBlockKind, Project, ProjectPath,
 };
 use rand::prelude::*;
 use serde_json::json;
@@ -4395,7 +4395,7 @@ async fn test_formatting_buffer(
                 HashSet::from_iter([buffer_b.clone()]),
                 true,
                 FormatTrigger::Save,
-                vec![],
+                FormatType::Buffer,
                 cx,
             )
         })
@@ -4429,7 +4429,7 @@ async fn test_formatting_buffer(
                 HashSet::from_iter([buffer_b.clone()]),
                 true,
                 FormatTrigger::Save,
-                vec![],
+                FormatType::Buffer,
                 cx,
             )
         })
@@ -4535,7 +4535,7 @@ async fn test_prettier_formatting_buffer(
                 HashSet::from_iter([buffer_b.clone()]),
                 true,
                 FormatTrigger::Save,
-                vec![],
+                FormatType::Buffer,
                 cx,
             )
         })
@@ -4555,7 +4555,7 @@ async fn test_prettier_formatting_buffer(
                 HashSet::from_iter([buffer_a.clone()]),
                 true,
                 FormatTrigger::Manual,
-                vec![],
+                FormatType::Buffer,
                 cx,
             )
         })

@@ -19,6 +19,7 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, Point, SelectionGoal,
 };
 use multi_buffer::AnchorRangeExt;
+use project::FormatType;
 use project::{
     project_settings::ProjectSettings, search::SearchQuery, FormatTrigger, Item as _, Project,
     ProjectPath,
@@ -723,7 +724,12 @@ impl Item for Editor {
         cx.spawn(|this, mut cx| async move {
             if format {
                 this.update(&mut cx, |editor, cx| {
-                    editor.perform_format(project.clone(), FormatTrigger::Save, cx)
+                    editor.perform_format(
+                        project.clone(),
+                        FormatTrigger::Save,
+                        FormatType::Buffer,
+                        cx,
+                    )
                 })?
                 .await?;
             }
