@@ -1456,16 +1456,32 @@ impl Client {
             user
         };
 
+        let query_params = [
+            ("github_login", &github_user.login),
+            ("github_user_id", &github_user.id.to_string()),
+            (
+                "github_user_created_at",
+                &github_user.created_at.to_rfc3339(),
+            ),
+        ];
+
         // Use the collab server's admin API to retrieve the ID
         // of the impersonated user.
         let mut url = self.rpc_url(http.clone(), None).await?;
         url.set_path("/user");
-        url.set_query(Some(&format!(
-            "github_login={login}&github_user_id={id}&github_user_created_at={created_at}",
-            login = github_user.login,
-            id = github_user.id,
-            created_at = github_user.created_at.to_rfc3339()
-        )));
+        url.set_query(Some(
+            &query_params
+                .iter()
+                .map(|(key, value)| {
+                    format!(
+                        "{}={}",
+                        key,
+                        url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>()
+                    )
+                })
+                .collect::<Vec<String>>()
+                .join("&"),
+        ));
         let request: http_client::Request<AsyncBody> = Request::get(url.as_str())
             .header("Authorization", format!("token {api_token}"))
             .body("".into())?;
