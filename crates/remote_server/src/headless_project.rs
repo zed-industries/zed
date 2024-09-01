@@ -52,7 +52,9 @@ impl HeadlessProject {
         client.add_model_request_handler(Self::handle_add_worktree);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_find_search_candidates);
+
         client.add_model_request_handler(BufferStore::handle_update_buffer);
+        client.add_model_message_handler(BufferStore::handle_close_buffer);
 
         BufferStore::init(&client);
         WorktreeStore::init(&client);
