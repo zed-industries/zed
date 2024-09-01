@@ -9969,6 +9969,19 @@ impl Editor {
         Some(self.perform_format(project, FormatTrigger::Manual, cx))
     }
 
+    fn format_selection(
+        &mut self,
+        _: &FormatSelection,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let project = match &self.project {
+            Some(project) => project.clone(),
+            None => return None,
+        };
+
+        Some(self.perform_format(project, FormatTrigger::Manual, cx))
+    }
+
     fn perform_format(
         &mut self,
         project: Model<Project>,

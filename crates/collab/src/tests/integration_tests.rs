@@ -4395,6 +4395,7 @@ async fn test_formatting_buffer(
                 HashSet::from_iter([buffer_b.clone()]),
                 true,
                 FormatTrigger::Save,
+                vec![],
                 cx,
             )
         })
@@ -4428,6 +4429,7 @@ async fn test_formatting_buffer(
                 HashSet::from_iter([buffer_b.clone()]),
                 true,
                 FormatTrigger::Save,
+                vec![],
                 cx,
             )
         })
@@ -4533,6 +4535,7 @@ async fn test_prettier_formatting_buffer(
                 HashSet::from_iter([buffer_b.clone()]),
                 true,
                 FormatTrigger::Save,
+                vec![],
                 cx,
             )
         })
@@ -4552,6 +4555,7 @@ async fn test_prettier_formatting_buffer(
                 HashSet::from_iter([buffer_a.clone()]),
                 true,
                 FormatTrigger::Manual,
+                vec![],
                 cx,
             )
         })

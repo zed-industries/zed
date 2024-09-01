@@ -524,7 +524,7 @@ tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "7f4a5
 
 [profile.dev]
 split-debuginfo = "unpacked"
-debug = "full"
+debug = "limited"
 codegen-units = 16
 
 [profile.dev.package]

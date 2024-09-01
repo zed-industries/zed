@@ -220,6 +220,7 @@ gpui::actions!(
         Fold,
         FoldSelectedRanges,
         Format,
+        FormatSelection,
         GoToDefinition,
         GoToDefinitionSplit,
         GoToDeclaration,

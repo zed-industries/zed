@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crate::actions::FormatSelection;
 use crate::{
     actions::Format, selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut,
     DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDeclaration,
@@ -156,6 +157,13 @@ pub fn deploy_context_menu(
                 s.set_pending_anchor_range(anchor..anchor, SelectMode::Character);
             });
         }
+        let selections = editor
+            .selections
+            .all::<language::Point>(cx)
+            .iter()
+            .filter(|s| s.start != s.end)
+            .collect::<Vec<_>>()
+            .is_empty();
 
         let focus = cx.focused();
         ui::ContextMenu::build(cx, |menu, _cx| {
@@ -169,6 +177,9 @@ pub fn deploy_context_menu(
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Format Buffer", Box::new(Format))
+                .when(!selections, |builder| {
+                    builder.action("Format Selection", Box::new(FormatSelection))
+                })
                 .action(
                     "Code Actions",
                     Box::new(ToggleCodeActions {
