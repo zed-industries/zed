@@ -331,7 +331,6 @@ fn render_markdown_code_block(
 fn render_markdown_paragraph(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> AnyElement {
     cx.with_common_p(div())
         .child(render_markdown_text(parsed, cx))
-        .child(render_markdown_text_image(parsed, cx))
         .into_any_element()
 }
 
@@ -371,44 +370,6 @@ fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> 
         }
     }
 
-    let workspace = cx.workspace.clone();
-
-    InteractiveText::new(
-        element_id,
-        StyledText::new(parsed.contents.clone()).with_highlights(&cx.text_style, highlights),
-    )
-    .tooltip({
-        let links = links.clone();
-        let link_ranges = link_ranges.clone();
-        move |idx, cx| {
-            for (ix, range) in link_ranges.iter().enumerate() {
-                if range.contains(&idx) {
-                    return Some(LinkPreview::new(&links[ix].to_string(), cx));
-                }
-            }
-            None
-        }
-    })
-    .on_click(
-        link_ranges,
-        move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
-            Link::Web { url } => window_cx.open_url(url),
-            Link::Path {
-                path,
-                display_path: _,
-            } => {
-                if let Some(workspace) = &workspace {
-                    _ = workspace.update(window_cx, |workspace, cx| {
-                        workspace.open_abs_path(path.clone(), false, cx).detach();
-                    });
-                }
-            }
-        },
-    )
-    .into_any_element()
-}
-
-fn render_markdown_text_image(parsed: &ParsedMarkdownText, _: &mut RenderContext) -> AnyElement {
     let mut images = Vec::new();
     let mut image_ranges = Vec::new();
     for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
@@ -417,7 +378,49 @@ fn render_markdown_text_image(parsed: &ParsedMarkdownText, _: &mut RenderContext
             image_ranges.push(range.clone());
         }
     }
-    div().flex().children(images).size_full().into_any()
+
+    let workspace = cx.workspace.clone();
+
+    div()
+        .flex()
+        .child(
+            InteractiveText::new(
+                element_id,
+                StyledText::new(parsed.contents.clone())
+                    .with_highlights(&cx.text_style, highlights),
+            )
+            .tooltip({
+                let links = links.clone();
+                let link_ranges = link_ranges.clone();
+                move |idx, cx| {
+                    for (ix, range) in link_ranges.iter().enumerate() {
+                        if range.contains(&idx) {
+                            return Some(LinkPreview::new(&links[ix].to_string(), cx));
+                        }
+                    }
+                    None
+                }
+            })
+            .on_click(
+                link_ranges,
+                move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
+                    Link::Web { url } => window_cx.open_url(url),
+                    Link::Path {
+                        path,
+                        display_path: _,
+                    } => {
+                        if let Some(workspace) = &workspace {
+                            _ = workspace.update(window_cx, |workspace, cx| {
+                                workspace.open_abs_path(path.clone(), false, cx).detach();
+                            });
+                        }
+                    }
+                },
+            )
+            .into_any_element(),
+        )
+        .children(images)
+        .into_any()
 }
 
 fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
