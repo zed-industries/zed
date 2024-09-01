@@ -114,7 +114,7 @@ bytemuck = "1"
 [target.'cfg(target_os = "linux")'.dependencies]
 as-raw-xcb-connection = "1"
 ashpd.workspace = true
-calloop = "0.13.0"
+calloop = "0.14.0"
 calloop-wayland-source = "0.3.0"
 cosmic-text = { git = "https://github.com/pop-os/cosmic-text", rev = "542b20c" }
 flume = "0.11"
