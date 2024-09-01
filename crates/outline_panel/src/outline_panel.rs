@@ -3614,7 +3614,7 @@ fn cleanup_fs_entries_without_search_children(
                 Some(PanelEntry::Search(_)),
                 PanelEntry::FoldedDirs(_, _) | PanelEntry::Fs(FsEntry::Directory(..)),
             ) => false,
-            (Some(PanelEntry::FoldedDirs(..)), PanelEntry::FoldedDirs(..)) => false,
+            (Some(PanelEntry::FoldedDirs(..)), PanelEntry::FoldedDirs(..)) => true,
             (
                 Some(PanelEntry::Search(_)),
                 PanelEntry::Fs(FsEntry::File(..) | FsEntry::ExternalFile(..)),
@@ -4151,7 +4151,7 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        populate_with_test_project(&fs, "/rust-analyzer").await;
+        populate_with_test_ra_project(&fs, "/rust-analyzer").await;
         let project = Project::test(fs.clone(), ["/rust-analyzer".as_ref()], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(rust_lang()))
@@ -4177,16 +4177,14 @@ mod tests {
             })
             .unwrap();
 
-        perform_project_search(&search_view, "param_names_for_lifetime_elision_hints", cx);
+        let query = "param_names_for_lifetime_elision_hints";
+        perform_project_search(&search_view, query, cx);
         search_view.update(cx, |search_view, cx| {
             search_view
                 .results_editor()
                 .update(cx, |results_editor, cx| {
                     assert_eq!(
-                        results_editor
-                            .display_text(cx)
-                            .match_indices("param_names_for_lifetime_elision_hints")
-                            .count(),
+                        results_editor.display_text(cx).match_indices(query).count(),
                         9
                     );
                 });
@@ -4341,6 +4339,103 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_frontend_repo_structure(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let root = "/frontend-project";
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            root,
+            json!({
+                "public": {
+                    "lottie": {
+                        "syntax-tree.json": r#"{ "something": "static" }"#
+                    }
+                },
+                "src": {
+                    "app": {
+                        "(site)": {
+                            "(about)": {
+                                "jobs": {
+                                    "[slug]": {
+                                        "page.tsx": r#"static"#
+                                    }
+                                }
+                            },
+                            "(blog)": {
+                                "post": {
+                                    "[slug]": {
+                                        "page.tsx": r#"static"#
+                                    }
+                                }
+                            },
+                        }
+                    }
+                }
+
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [root.as_ref()], cx).await;
+        let workspace = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update(cx, |outline_panel, cx| outline_panel.set_active(true, cx));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch::default(), cx)
+            })
+            .unwrap();
+        let search_view = workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<ProjectSearchView>())
+                    .expect("Project search view expected to appear after new search event trigger")
+            })
+            .unwrap();
+
+        let query = "static";
+        perform_project_search(&search_view, query, cx);
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .results_editor()
+                .update(cx, |results_editor, cx| {
+                    assert_eq!(
+                        results_editor.display_text(cx).match_indices(query).count(),
+                        3
+                    );
+                });
+        });
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, _| {
+            assert_eq!(
+                display_entries(
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                r#"/
+  public/lottie/
+    syntax-tree.json
+      search: { "something": "static" }  <==== selected
+  src/app/(site)/
+    (about)/jobs/[slug]/
+      page.tsx
+        search: static
+    (blog)/post/[slug]/
+      page.tsx
+        search: static"#
+            );
+        });
+    }
+
     async fn add_outline_panel(
         project: &Model<Project>,
         cx: &mut TestAppContext,
@@ -4445,7 +4540,7 @@ mod tests {
     }
 
     // Based on https://github.com/rust-lang/rust-analyzer/
-    async fn populate_with_test_project(fs: &FakeFs, root: &str) {
+    async fn populate_with_test_ra_project(fs: &FakeFs, root: &str) {
         fs.insert_tree(
             root,
             json!({
