@@ -20,6 +20,7 @@ doctest = false
 anyhow.workspace = true
 collections.workspace = true
 futures.workspace = true
+parking_lot.workspace = true
 prost.workspace = true
 serde.workspace = true
 gpui.workspace = true

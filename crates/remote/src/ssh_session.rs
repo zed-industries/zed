@@ -8,14 +8,14 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use futures::{
     channel::{mpsc, oneshot},
-    future::{BoxFuture, LocalBoxFuture},
+    future::BoxFuture,
     select_biased, AsyncReadExt as _, AsyncWriteExt as _, Future, FutureExt as _, StreamExt as _,
 };
-use gpui::{AnyModel, AnyWeakModel, AppContext, AsyncAppContext, Model, SemanticVersion};
-use parking_lot::{Mutex, RwLock};
+use gpui::{AppContext, AsyncAppContext, Model, SemanticVersion};
+use parking_lot::Mutex;
 use rpc::proto::{
-    self, build_typed_envelope, AnyProtoClient, AnyTypedEnvelope, Envelope, EnvelopedMessage,
-    PeerId, ProtoClient, ProtoMessageHandler, RequestMessage,
+    self, build_typed_envelope, EntityMessageSubscriber, Envelope, EnvelopedMessage, PeerId,
+    ProtoClient, ProtoMessageHandlerSet, RequestMessage,
 };
 use smol::{
     fs,
@@ -32,33 +32,11 @@ use std::{
     time::Instant,
 };
 use tempfile::TempDir;
-use util::ResultExt as _;
 
 #[derive(Clone)]
 pub struct SshSocket {
     connection_options: SshConnectionOptions,
     socket_path: PathBuf,
-}
-
-#[derive(Default)]
-struct SshSessionState {
-    entity_types_by_message_type: HashMap<TypeId, TypeId>,
-    entities_by_type_and_remote_id: HashMap<(TypeId, u64), AnyWeakModel>,
-    entity_id_extractors: HashMap<TypeId, fn(&dyn AnyTypedEnvelope) -> u64>,
-    models_by_message_type: HashMap<TypeId, AnyWeakModel>,
-    message_handlers: HashMap<
-        TypeId,
-        Arc<
-            dyn Send
-                + Sync
-                + Fn(
-                    AnyModel,
-                    Box<dyn AnyTypedEnvelope>,
-                    AnyProtoClient,
-                    AsyncAppContext,
-                ) -> LocalBoxFuture<'static, Result<()>>,
-        >,
-    >,
 }
 
 pub struct SshSession {
@@ -67,7 +45,7 @@ pub struct SshSession {
     outgoing_tx: mpsc::UnboundedSender<Envelope>,
     spawn_process_tx: mpsc::UnboundedSender<SpawnRequest>,
     client_socket: Option<SshSocket>,
-    state: RwLock<SshSessionState>,
+    state: Mutex<ProtoMessageHandlerSet>,
 }
 
 struct SshClientState {
@@ -357,39 +335,26 @@ impl SshSession {
                     } else if let Some(envelope) =
                         build_typed_envelope(peer_id, Instant::now(), incoming)
                     {
-                        log::debug!(
-                            "ssh message received. name:{}",
-                            envelope.payload_type_name()
-                        );
-                        let type_id = envelope.payload_type_id();
-                        let (handler, entity) = {
-                            let state = this.state.read();
-                            let handler = state.message_handlers.get(&type_id).cloned();
-                            let entity =
-                                if let Some(entity) = state.models_by_message_type.get(&type_id) {
-                                    entity.upgrade()
-                                } else if let Some(entity_type) =
-                                    state.entity_types_by_message_type.get(&type_id).copied()
-                                {
-                                    state.entity_id_extractors.get(&type_id).copied().and_then(
-                                        |id_extractor| {
-                                            let remote_id = id_extractor(&*envelope);
-                                            state
-                                                .entities_by_type_and_remote_id
-                                                .get(&(entity_type, remote_id))?
-                                                .upgrade()
-                                        },
-                                    )
-                                } else {
-                                    None
-                                };
-                            (handler, entity)
-                        };
-
-                        if let Some((handler, entity)) = handler.zip(entity) {
-                            handler(entity, envelope, this.clone().into(), cx.clone())
-                                .await
-                                .log_err();
+                        let type_name = envelope.payload_type_name();
+                        if let Some(future) = ProtoMessageHandlerSet::handle_message(
+                            &this.state,
+                            envelope,
+                            this.clone().into(),
+                            cx.clone(),
+                        ) {
+                            log::debug!("ssh message received. name:{}", type_name);
+                            match future.await {
+                                Ok(_) => {
+                                    log::debug!("ssh message handled. name:{}", type_name);
+                                }
+                                Err(error) => {
+                                    log::error!(
+                                        "error handling message. type:{}, error:{:?}",
+                                        type_name,
+                                        error
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -442,14 +407,17 @@ impl SshSession {
     pub fn subscribe_to_entity<E: 'static>(&self, remote_id: u64, entity: &Model<E>) {
         let id = (TypeId::of::<E>(), remote_id);
 
-        let mut state = self.state.write();
+        let mut state = self.state.lock();
         if state.entities_by_type_and_remote_id.contains_key(&id) {
             panic!("already subscribed to entity");
         }
 
-        state
-            .entities_by_type_and_remote_id
-            .insert(id, entity.downgrade().into());
+        state.entities_by_type_and_remote_id.insert(
+            id,
+            EntityMessageSubscriber::Entity {
+                handle: entity.downgrade().into(),
+            },
+        );
     }
 
     pub async fn spawn_process(&self, command: String) -> process::Child {
@@ -485,39 +453,8 @@ impl ProtoClient for SshSession {
         self.send_dynamic(envelope)
     }
 
-    fn add_message_handler(
-        &self,
-        message_type_id: TypeId,
-        model: gpui::AnyWeakModel,
-        handler: ProtoMessageHandler,
-    ) {
-        let mut state = self.state.write();
-        state.models_by_message_type.insert(message_type_id, model);
-        let prev_handler = state.message_handlers.insert(message_type_id, handler);
-        if prev_handler.is_some() {
-            panic!("registered handler for the same message twice");
-        }
-    }
-
-    fn add_entity_message_handler(
-        &self,
-        message_type_id: TypeId,
-        model_type_id: TypeId,
-        entity_id_extractor: fn(&dyn AnyTypedEnvelope) -> u64,
-        handler: ProtoMessageHandler,
-    ) {
-        let mut state = self.state.write();
-        state
-            .entity_id_extractors
-            .entry(message_type_id)
-            .or_insert(entity_id_extractor);
-        state
-            .entity_types_by_message_type
-            .insert(message_type_id, model_type_id);
-        let prev_handler = state.message_handlers.insert(message_type_id, handler);
-        if prev_handler.is_some() {
-            panic!("registered handler for the same message twice");
-        }
+    fn message_handler_set(&self) -> &Mutex<ProtoMessageHandlerSet> {
+        &self.state
     }
 }
 
