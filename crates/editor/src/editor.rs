@@ -91,8 +91,8 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
-    Point, Selection, SelectionGoal, TransactionId,
+    CursorShape, Diagnostic, DiagnosticEntry, Documentation, IndentKind, IndentSize, Language,
+    OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -500,6 +500,7 @@ pub struct Editor {
     ime_transaction: Option<TransactionId>,
     active_diagnostics: HashMap<usize, ActiveDiagnosticGroup>,
     focused_diagnostic: Option<usize>,
+    show_all_diagnostics: bool,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     project: Option<Model<Project>>,
     completion_provider: Option<Box<dyn CompletionProvider>>,
@@ -1575,7 +1576,6 @@ struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
     primary_message: String,
     blocks: HashMap<CustomBlockId, Diagnostic>,
-    is_valid: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1847,6 +1847,9 @@ impl Editor {
             ime_transaction: Default::default(),
             active_diagnostics: HashMap::default(),
             focused_diagnostic: None,
+            // PJD: Hard coded for now. I'll add a key binding that toggles this
+            // state after I have the always on version working.
+            show_all_diagnostics: true,
             soft_wrap_mode_override,
             completion_provider: project.clone().map(|project| Box::new(project) as _),
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
@@ -1973,6 +1976,7 @@ impl Editor {
             }
         }
 
+        this.refresh_active_diagnostics(cx);
         this.report_editor_event("open", None, cx);
         this
     }
@@ -3026,7 +3030,7 @@ impl Editor {
 
         if self.mode == EditorMode::Full {
             if self.focused_diagnostic.is_some() {
-                self.dismiss_diagnostics(cx);
+                self.unfocus_diagnostics(cx);
                 return true;
             }
         }
@@ -8939,7 +8943,7 @@ impl Editor {
         if direction == Direction::Next {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
                 let (group_id, jump_to) = popover.activation_info();
-                if self.activate_diagnostics(group_id, cx) {
+                if self.focus_diagnostic(group_id, cx) {
                     self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         let mut new_selection = s.newest_anchor().clone();
                         new_selection.collapse_to(jump_to, SelectionGoal::None);
@@ -8950,14 +8954,14 @@ impl Editor {
             }
         }
 
-        let mut active_primary_range = self.focused_diagnostic.as_ref().map(|focused_diagnostic| {
-            self.active_diagnostics
-                .get(focused_diagnostic)
-                .unwrap()
-                .primary_range
-                .to_offset(&buffer)
-                .to_inclusive()
-        });
+        let mut active_primary_range =
+            if let Some(focused_diagnostic) = self.focused_diagnostic.as_ref() {
+                self.active_diagnostics
+                    .get(focused_diagnostic)
+                    .map(|diagnostic| diagnostic.primary_range.to_offset(&buffer).to_inclusive())
+            } else {
+                None
+            };
         let mut search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
             if active_primary_range.contains(&selection.head()) {
                 *active_primary_range.start()
@@ -9003,7 +9007,7 @@ impl Editor {
                 });
 
             if let Some((primary_range, group_id)) = group {
-                if self.activate_diagnostics(group_id, cx) {
+                if self.focus_diagnostic(group_id, cx) {
                     self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select(vec![Selection {
                             id: selection.id,
@@ -10041,46 +10045,67 @@ impl Editor {
     }
 
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
-        if let Some(focused_diagnostic) = self.focused_diagnostic.as_mut() {
-            let diagnostic = self.active_diagnostics.get_mut(focused_diagnostic).unwrap();
-            let buffer = self.buffer.read(cx).snapshot(cx);
-            let primary_range_start = diagnostic.primary_range.start.to_offset(&buffer);
-            let is_valid = buffer
-                .diagnostics_in_range::<_, usize>(diagnostic.primary_range.clone(), false)
-                .any(|entry| {
-                    entry.diagnostic.is_primary
-                        && !entry.range.is_empty()
-                        && entry.range.start == primary_range_start
-                        && entry.diagnostic.message == diagnostic.primary_message
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let mut new_groups = HashMap::default();
+        if self.show_all_diagnostics {
+            buffer
+                .diagnostics_in_range::<_, MultiBufferPoint>(0..buffer.len(), false)
+                .for_each(|entry| {
+                    new_groups
+                        .entry(entry.diagnostic.group_id)
+                        .or_insert(Vec::new())
+                        .push(entry)
                 });
-
-            if is_valid != diagnostic.is_valid {
-                diagnostic.is_valid = is_valid;
-                let mut new_styles = HashMap::default();
-                for (block_id, diagnostic) in &diagnostic.blocks {
-                    new_styles.insert(
-                        *block_id,
-                        diagnostic_block_renderer(diagnostic.clone(), None, true, is_valid),
-                    );
-                }
-                self.display_map.update(cx, |display_map, _cx| {
-                    display_map.replace_blocks(new_styles)
-                });
+        } else {
+            if let Some(group_id) = self.focused_diagnostic {
+                new_groups.insert(
+                    group_id,
+                    buffer
+                        .diagnostic_group::<MultiBufferPoint>(group_id)
+                        .collect::<Vec<_>>(),
+                );
             }
-        }
+        };
+
+        // Remove any ActiveDiagnosticGroup that no longer exists.
+        let mut groups_to_remove = Vec::with_capacity(self.active_diagnostics.len());
+        self.active_diagnostics.keys().for_each(|group_id| {
+            if !new_groups.contains_key(group_id) {
+                groups_to_remove.push(*group_id)
+            }
+        });
+
+        groups_to_remove.iter().for_each(|group_id| {
+            let active_group = self.active_diagnostics.remove(group_id).unwrap();
+            self.display_map.update(cx, |display_map, cx| {
+                display_map.remove_blocks(active_group.blocks.into_keys().collect(), cx);
+            });
+        });
+
+        // I've seen other snapshots dropped manually when we're about to take
+        // a new one so doing this pre-emptively.
+        drop(buffer);
+
+        // Insert or update all new groups
+        new_groups.into_iter().for_each(|(group_id, entries)| {
+            self.insert_or_update_active_diagnostic_group(group_id, entries, cx);
+        });
     }
 
-    fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) -> bool {
-        self.dismiss_diagnostics(cx);
+    fn insert_or_update_active_diagnostic_group(
+        &mut self,
+        group_id: usize,
+        entries: Vec<DiagnosticEntry<Point>>,
+        cx: &mut ViewContext<Self>,
+    ) {
         let snapshot = self.snapshot(cx);
-        self.focused_diagnostic = self.display_map.update(cx, |display_map, cx| {
+        self.display_map.update(cx, |display_map, cx| {
             let buffer = self.buffer.read(cx).snapshot(cx);
 
-            let mut primary_range = None;
-            let mut primary_message = None;
+            let mut primary = None;
             let mut group_end = Point::zero();
-            let diagnostic_group = buffer
-                .diagnostic_group::<MultiBufferPoint>(group_id)
+            let diagnostic_group = entries
+                .into_iter()
                 .filter_map(|entry| {
                     if snapshot.is_line_folded(MultiBufferRow(entry.range.start.row))
                         && (entry.range.start.row == entry.range.end.row
@@ -10092,16 +10117,39 @@ impl Editor {
                         group_end = entry.range.end;
                     }
                     if entry.diagnostic.is_primary {
-                        primary_range = Some(entry.range.clone());
-                        primary_message = Some(entry.diagnostic.message.clone());
+                        primary = Some((entry.range.clone(), entry.diagnostic.message.clone()));
                     }
                     Some(entry)
                 })
                 .collect::<Vec<_>>();
-            let primary_range = primary_range?;
-            let primary_message = primary_message?;
+
+            if primary.is_none() {
+                if let Some(active_group) = self.active_diagnostics.remove(&group_id) {
+                    display_map.remove_blocks(active_group.blocks.into_keys().collect(), cx);
+                }
+                return;
+            }
+
+            let (primary_range, primary_message) = primary.unwrap();
             let primary_range =
                 buffer.anchor_after(primary_range.start)..buffer.anchor_before(primary_range.end);
+
+            if self
+                .active_diagnostics
+                .get(&group_id)
+                .map(|active_group| {
+                    active_group.primary_range == primary_range
+                        && active_group.primary_message == primary_message
+                })
+                .unwrap_or(false)
+            {
+                // The diagnostic hasn't changed so we're done processing it.
+                return;
+            }
+
+            if let Some(active_group) = self.active_diagnostics.get(&group_id) {
+                display_map.remove_blocks(active_group.blocks.keys().cloned().collect(), cx);
+            }
 
             let blocks = display_map
                 .insert_blocks(
@@ -10112,7 +10160,12 @@ impl Editor {
                             style: BlockStyle::Fixed,
                             position: buffer.anchor_after(entry.range.start),
                             height: message_height,
-                            render: diagnostic_block_renderer(diagnostic, None, true, true),
+                            render: diagnostic_block_renderer(
+                                diagnostic,
+                                None,
+                                !self.show_all_diagnostics,
+                                true,
+                            ),
                             disposition: BlockDisposition::Below,
                             priority: 0,
                         }
@@ -10129,23 +10182,28 @@ impl Editor {
                     primary_range,
                     primary_message,
                     blocks,
-                    is_valid: true,
                 },
             );
-
-            Some(group_id)
-        });
-        self.focused_diagnostic.is_some()
+        })
     }
 
-    fn dismiss_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(group_id) = self.focused_diagnostic.take() {
-            let diagnostic = self.active_diagnostics.remove(&group_id).unwrap();
-            self.display_map.update(cx, |display_map, cx| {
-                display_map.remove_blocks(diagnostic.blocks.into_keys().collect(), cx);
-            });
-            cx.notify();
+    fn focus_diagnostic(&mut self, group_id: usize, cx: &mut ViewContext<Self>) -> bool {
+        if let Some(current_group_id) = self.focused_diagnostic.as_ref() {
+            if group_id == *current_group_id {
+                return false;
+            }
         }
+        self.focused_diagnostic = Some(group_id);
+        if !self.show_all_diagnostics {
+            self.refresh_active_diagnostics(cx);
+        }
+        true
+    }
+
+    fn unfocus_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
+        self.focused_diagnostic = None;
+        self.refresh_active_diagnostics(cx);
+        cx.notify();
     }
 
     pub fn set_selections_from_remote(
@@ -10353,22 +10411,10 @@ impl Editor {
                 self.sync_expanded_diff_hunks(buffer, cx);
             }
 
-            cx.notify();
+            // Clear any diagnostics that are now hidden by the new fold
+            self.refresh_active_diagnostics(cx);
 
-            if let Some(group_id) = self.focused_diagnostic.take() {
-                // Clear diagnostics block when folding a range that contains it.
-                let idx = self
-                    .active_diagnostics
-                    .get(&group_id)
-                    .unwrap()
-                    .primary_range
-                    .start;
-                let snapshot = self.snapshot(cx);
-                if snapshot.intersects_fold(idx) {
-                    drop(snapshot);
-                    self.dismiss_diagnostics(cx);
-                }
-            }
+            cx.notify();
 
             self.scrollbar_marker_state.dirty = true;
         }
@@ -11995,6 +12041,8 @@ impl Editor {
     fn handle_focus(&mut self, cx: &mut ViewContext<Self>) {
         cx.emit(EditorEvent::Focused);
 
+        self.refresh_active_diagnostics(cx);
+
         if let Some(descendant) = self
             .last_focused_descendant
             .take()
@@ -13189,6 +13237,8 @@ pub fn diagnostic_block_renderer(
     Box::new(move |cx: &mut BlockContext| {
         let group_id: SharedString = cx.block_id.to_string().into();
 
+        let bg = cx.theme().colors().editor_active_line_background;
+
         let mut text_style = cx.text_style().clone();
         text_style.color = diagnostic_style(diagnostic.severity, cx.theme().status());
         let theme_settings = ThemeSettings::get_global(cx);
@@ -13239,6 +13289,7 @@ pub fn diagnostic_block_renderer(
         h_flex()
             .id(cx.block_id)
             .group(group_id.clone())
+            .bg(bg)
             .relative()
             .size_full()
             .pl(cx.gutter_dimensions.width)
