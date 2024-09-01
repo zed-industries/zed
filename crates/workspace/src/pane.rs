@@ -118,7 +118,7 @@ pub struct RevealInProjectPanel {
     pub entry_id: Option<u64>,
 }
 
-#[derive(PartialEq, Clone, Deserialize)]
+#[derive(Default, PartialEq, Clone, Deserialize)]
 pub struct DeploySearch {
     #[serde(default)]
     pub replace_enabled: bool,
