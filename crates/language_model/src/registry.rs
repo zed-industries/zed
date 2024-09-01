@@ -9,12 +9,17 @@ use crate::{
 };
 use client::{Client, UserStore};
 use collections::BTreeMap;
+use fs::Fs;
 use gpui::{AppContext, EventEmitter, Global, Model, ModelContext};
 use std::sync::Arc;
 use ui::Context;
-use fs::Fs;
 
-pub fn init(user_store: Model<UserStore>, client: Arc<Client>, fs: Arc<dyn Fs>, cx: &mut AppContext) {
+pub fn init(
+    user_store: Model<UserStore>,
+    client: Arc<Client>,
+    fs: Arc<dyn Fs>,
+    cx: &mut AppContext,
+) {
     let registry = cx.new_model(|cx| {
         let mut registry = LanguageModelRegistry::default();
         register_language_model_providers(&mut registry, user_store, client, fs, cx);

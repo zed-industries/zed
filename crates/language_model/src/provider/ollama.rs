@@ -12,7 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
-use ui::{prelude::*, Button, ButtonLike, Indicator, IconName, Color, Tooltip};
+use ui::{prelude::*, Button, ButtonLike, Color, IconName, Indicator, Tooltip};
 use util::ResultExt;
 
 use crate::{
@@ -93,7 +93,11 @@ impl State {
     }
 
     // Common function to update the API URL
-    fn update_api_url(&mut self, api_url: Option<String>, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn update_api_url(
+        &mut self,
+        api_url: Option<String>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
         let api_url_clone = api_url.clone();
         let fs = self.fs.clone();
         cx.spawn(|this, mut cx| async move {
@@ -175,7 +179,8 @@ impl State {
                     if from_env {
                         this.fetch_models(cx).detach();
                     }
-                }).log_err();
+                })
+                .log_err();
             });
             self.fetch_models(cx)
         }
@@ -512,7 +517,7 @@ impl ConfigurationView {
                     } else {
                         format!("{}", OLLAMA_API_URL_DEFAULT)
                     },
-                    cx
+                    cx,
                 );
                 editor.set_text(api_url, cx); // Set the loaded API URL
                 editor
@@ -525,7 +530,7 @@ impl ConfigurationView {
                     } else {
                         "Enter optional API key here".to_string()
                     },
-                    cx
+                    cx,
                 );
                 editor
             }),
@@ -580,10 +585,9 @@ impl ConfigurationView {
     }
 
     fn reset_api_url(&self, cx: &mut ViewContext<Self>) {
-        self.state
-            .update(cx, |state, cx| {
-                state.reset_api_url(cx).detach_and_log_err(cx);
-            });
+        self.state.update(cx, |state, cx| {
+            state.reset_api_url(cx).detach_and_log_err(cx);
+        });
         self.api_url_editor.update(cx, |editor, cx| {
             editor.set_text(OLLAMA_API_URL_DEFAULT, cx);
         });
@@ -596,14 +600,14 @@ impl ConfigurationView {
             .detach_and_log_err(cx);
     }
 
-
     fn render_api_url_editor(&self) -> impl IntoElement {
         v_flex()
             .size_full()
             .child(Label::new("API URL"))
-            .child(h_flex()
-                .w_full()
-                .child(EditorElement::new(&self.api_url_editor, EditorStyle::default())))
+            .child(h_flex().w_full().child(EditorElement::new(
+                &self.api_url_editor,
+                EditorStyle::default(),
+            )))
     }
 
     fn render_api_key_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -619,14 +623,11 @@ impl ConfigurationView {
         });
 
         // Return the label and editor in a vertical layout
-        v_flex()
-            .size_full()
-            .child(Label::new("API Key"))
-            .child(h_flex()
+        v_flex().size_full().child(Label::new("API Key")).child(
+            h_flex()
                 .gap(ui::Pixels(8.0))
-                .child(h_flex()
-                    .w_full()
-                    .child(editor_element)))
+                .child(h_flex().w_full().child(editor_element)),
+        )
     }
 }
 
@@ -670,36 +671,40 @@ impl Render for ConfigurationView {
                         ),
                 )
                 .gap_4()
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(self.render_api_url_editor())
-                        .when(!api_url_from_env, |flex| {
-                            flex.children(vec![
-                                IconButton::new("save-api-url", IconName::Save)
-                                    .on_click(cx.listener(|this, _, cx| this.save_api_url(&menu::Confirm, cx)))
-                                    .tooltip(|cx| Tooltip::text("Save the custom API URL", cx)),
-                                IconButton::new("reset-api-url", IconName::RotateCcw)
-                                    .on_click(cx.listener(|this, _, cx| this.reset_api_url(cx)))
-                                    .tooltip(|cx| Tooltip::text("Reset to the default API URL", cx)),
-                            ])
-                        })
-                )
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(self.render_api_key_editor(cx))
-                        .when(!api_key_from_env, |flex| {
-                            flex.children(vec![
-                                IconButton::new("save-api-key", IconName::Save)
-                                    .on_click(cx.listener(|this, _, cx| this.save_api_key(&menu::Confirm, cx)))
-                                    .tooltip(|cx| Tooltip::text("Save the custom API key", cx)),
-                                IconButton::new("reset-api-key", IconName::RotateCcw)
-                                    .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx)))
-                                    .tooltip(|cx| Tooltip::text("Remove the API key", cx)),
-                            ])
-                        })
-                )
+                .child(h_flex().gap_1().child(self.render_api_url_editor()).when(
+                    !api_url_from_env,
+                    |flex| {
+                        flex.children(vec![
+                            IconButton::new("save-api-url", IconName::Save)
+                                .on_click(
+                                    cx.listener(|this, _, cx| {
+                                        this.save_api_url(&menu::Confirm, cx)
+                                    }),
+                                )
+                                .tooltip(|cx| Tooltip::text("Save the custom API URL", cx)),
+                            IconButton::new("reset-api-url", IconName::RotateCcw)
+                                .on_click(cx.listener(|this, _, cx| this.reset_api_url(cx)))
+                                .tooltip(|cx| Tooltip::text("Reset to the default API URL", cx)),
+                        ])
+                    },
+                ))
+                .child(h_flex().gap_1().child(self.render_api_key_editor(cx)).when(
+                    !api_key_from_env,
+                    |flex| {
+                        flex.children(vec![
+                            IconButton::new("save-api-key", IconName::Save)
+                                .on_click(
+                                    cx.listener(|this, _, cx| {
+                                        this.save_api_key(&menu::Confirm, cx)
+                                    }),
+                                )
+                                .tooltip(|cx| Tooltip::text("Save the custom API key", cx)),
+                            IconButton::new("reset-api-key", IconName::RotateCcw)
+                                .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx)))
+                                .tooltip(|cx| Tooltip::text("Remove the API key", cx)),
+                        ])
+                    },
+                ))
                 .child(
                     h_flex()
                         .w_full()
