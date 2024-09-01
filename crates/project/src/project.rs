@@ -66,7 +66,7 @@ use rpc::{
     proto::{AnyProtoClient, SSH_PROJECT_ID},
     ErrorCode,
 };
-use search::{SearchQuery, SearchResult};
+use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
 use smol::channel::Receiver;
@@ -699,7 +699,6 @@ impl Project {
                 buffers_being_formatted: Default::default(),
                 search_included_history: Self::new_search_included_history(),
                 search_excluded_history: Self::new_search_excluded_history(),
-
             }
         })
     }
@@ -903,8 +902,8 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
-    search_included_history: Self::new_search_included_history(),
-    search_excluded_history: Self::new_search_excluded_history(),
+                search_included_history: Self::new_search_history(),
+                search_excluded_history: Self::new_search_history(),
                 environment: ProjectEnvironment::new(&worktree_store, None, cx),
                 remotely_created_buffers: Arc::new(Mutex::new(RemotelyCreatedBuffers::default())),
                 last_formatting_failure: None,
@@ -996,20 +995,6 @@ impl Project {
     }
 
     fn new_search_history() -> SearchHistory {
-        SearchHistory::new(
-            Some(MAX_PROJECT_SEARCH_HISTORY_SIZE),
-            search_history::QueryInsertionBehavior::AlwaysInsert,
-        )
-    }
-
-    fn new_search_included_history() -> SearchHistory {
-        SearchHistory::new(
-            Some(MAX_PROJECT_SEARCH_HISTORY_SIZE),
-            search_history::QueryInsertionBehavior::AlwaysInsert,
-        )
-    }
-
-    fn new_search_excluded_history() -> SearchHistory {
         SearchHistory::new(
             Some(MAX_PROJECT_SEARCH_HISTORY_SIZE),
             search_history::QueryInsertionBehavior::AlwaysInsert,
@@ -1370,28 +1355,20 @@ impl Project {
         &self.snippets
     }
 
-    pub fn search_history(&self) -> &SearchHistory {
-        &self.search_history
+    pub fn search_history(&self, kind: SearchInputKind) -> &SearchHistory {
+        match kind {
+            SearchInputKind::Query => &self.search_history,
+            SearchInputKind::Include => &self.search_included_history,
+            SearchInputKind::Exclude => &self.search_excluded_history,
+        }
     }
 
-    pub fn search_history_mut(&mut self) -> &mut SearchHistory {
-        &mut self.search_history
-    }
-
-    pub fn search_included_history(&self) -> &SearchHistory {
-        &self.search_included_history
-    }
-
-    pub fn search_included_history_mut(&mut self) -> &mut SearchHistory {
-        &mut self.search_included_history
-    }
-
-    pub fn search_excluded_history(&self) -> &SearchHistory {
-        &self.search_excluded_history
-    }
-
-    pub fn search_excluded_history_mut(&mut self) -> &mut SearchHistory {
-        &mut self.search_excluded_history
+    pub fn search_history_mut(&mut self, kind: SearchInputKind) -> &mut SearchHistory {
+        match kind {
+            SearchInputKind::Query => &mut self.search_history,
+            SearchInputKind::Include => &mut self.search_included_history,
+            SearchInputKind::Exclude => &mut self.search_excluded_history,
+        }
     }
 
     pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {
