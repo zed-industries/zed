@@ -3673,27 +3673,30 @@ fn cleanup_fs_entries_without_search_children(
             }
         };
 
-        let collapsed_entry_to_check = match &entry.entry {
-            PanelEntry::FoldedDirs(worktree_id, entries) => entries
-                .last()
-                .map(|entry| CollapsedEntry::Dir(*worktree_id, entry.id)),
-            PanelEntry::Fs(FsEntry::Directory(worktree_id, entry)) => {
-                Some(CollapsedEntry::Dir(*worktree_id, entry.id))
-            }
-            PanelEntry::Fs(FsEntry::ExternalFile(buffer_id, _)) => {
-                Some(CollapsedEntry::ExternalFile(*buffer_id))
-            }
-            PanelEntry::Fs(FsEntry::File(worktree_id, _, buffer_id, _)) => {
-                Some(CollapsedEntry::File(*worktree_id, *buffer_id))
-            }
-            PanelEntry::Search(_) | PanelEntry::Outline(_) => None,
-        };
-
         if has_search_items {
             previous_entry = Some(&entry.entry);
         } else {
-            if let Some(collapsed_entry_to_check) = collapsed_entry_to_check {
-                if collapsed_entries.contains(&collapsed_entry_to_check) {
+            let collapsed_entries_to_check = match &entry.entry {
+                PanelEntry::FoldedDirs(worktree_id, entries) => entries
+                    .iter()
+                    .map(|entry| CollapsedEntry::Dir(*worktree_id, entry.id))
+                    .collect(),
+                PanelEntry::Fs(FsEntry::Directory(worktree_id, entry)) => {
+                    vec![CollapsedEntry::Dir(*worktree_id, entry.id)]
+                }
+                PanelEntry::Fs(FsEntry::ExternalFile(buffer_id, _)) => {
+                    vec![CollapsedEntry::ExternalFile(*buffer_id)]
+                }
+                PanelEntry::Fs(FsEntry::File(worktree_id, _, buffer_id, _)) => {
+                    vec![CollapsedEntry::File(*worktree_id, *buffer_id)]
+                }
+                PanelEntry::Search(_) | PanelEntry::Outline(_) => Vec::new(),
+            };
+            if !collapsed_entries_to_check.is_empty() {
+                if collapsed_entries_to_check
+                    .iter()
+                    .any(|collapsed_entry| collapsed_entries.contains(collapsed_entry))
+                {
                     previous_entry = Some(&entry.entry);
                     continue;
                 }
@@ -4371,6 +4374,9 @@ mod tests {
                                 }
                             },
                         }
+                    },
+                    "components": {
+                        "ErrorBoundary.tsx": r#"static"#,
                     }
                 }
 
@@ -4407,7 +4413,7 @@ mod tests {
                 .update(cx, |results_editor, cx| {
                     assert_eq!(
                         results_editor.display_text(cx).match_indices(query).count(),
-                        3
+                        4
                     );
                 });
         });
@@ -4425,12 +4431,40 @@ mod tests {
   public/lottie/
     syntax-tree.json
       search: { "something": "static" }  <==== selected
-  src/app/(site)/
-    (about)/jobs/[slug]/
-      page.tsx
-        search: static
-    (blog)/post/[slug]/
-      page.tsx
+  src/
+    app/(site)/
+      (about)/jobs/[slug]/
+        page.tsx
+          search: static
+      (blog)/post/[slug]/
+        page.tsx
+          search: static
+    components/
+      ErrorBoundary.tsx
+        search: static"#
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_next(&SelectNext, cx);
+            outline_panel.select_next(&SelectNext, cx);
+            outline_panel.collapse_selected_entry(&CollapseSelectedEntry, cx);
+        });
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, _| {
+            assert_eq!(
+                display_entries(
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                r#"/
+  public/lottie/
+    syntax-tree.json
+      search: { "something": "static" }
+  src/
+    app/(site)/  <==== selected
+    components/
+      ErrorBoundary.tsx
         search: static"#
             );
         });
