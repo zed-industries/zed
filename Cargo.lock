@@ -14280,6 +14280,7 @@ dependencies = [
  "smol",
  "snippet_provider",
  "supermaven",
+ "sysinfo",
  "tab_switcher",
  "task",
  "tasks_ui",
