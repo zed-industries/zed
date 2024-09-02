@@ -29,14 +29,14 @@ impl Person {
 <edit>
   <path>src/person.rs</path>
   <operation>insert_before</operation>
-  <search>height: f32,</symbol>
+  <search>height: f32,</search>
   <description>Add the age field</description>
 </edit>
 
 <edit>
   <path>src/person.rs</path>
   <operation>insert_after</operation>
-  <search>impl Person {</symbol>
+  <search>impl Person {</search>
   <description>Add the age getter</description>
 </edit>
 </step>
@@ -45,7 +45,7 @@ impl Person {
 
 First, each `<step>` must contain a written description of the change that should be made. The description should begin with a high-level overview, and can contain markdown code blocks as well. The description should be self-contained and actionable.
 
-Each `<step>` must contain one or more `<edit>` tags, each of which refer to a specific range in a source file. Each `<edit>` tag must contain the following child tags:
+After the description, each `<step>` must contain one or more `<edit>` tags, each of which refer to a specific range in a source file. Each `<edit>` tag must contain the following child tags:
 
 ### `<path>` (required)
 
@@ -53,9 +53,7 @@ This tag contains the path to the file that will be changed. It can be an existi
 
 ### `<search>` (optional)
 
-This tag contains a search string to locate in the source file, e.g. `pub fn baz() {`. If not provided, the new content will be inserted at the top of the file.
-Make sure to produce a string that exists in the source file and that isn't ambiguous.
-When there's ambiguity, add more lines to the search to eliminate it.
+This tag contains a search string to locate in the source file, e.g. `pub fn baz() {`. If not provided, the new content will be inserted at the top of the file. Make sure to produce a string that exists in the source file and that isn't ambiguous. When there's ambiguity, add more lines to the search to eliminate it.
 
 ### `<description>` (required)
 
@@ -74,7 +72,7 @@ This tag indicates what type of change should be made, relative to the given loc
 - There's no need to describe *what* to do, just *where* to do it.
 - Only reference locations that actually exist (unless you're creating a file).
 - If creating a file, assume any subsequent updates are included at the time of creation.
-- Don't create and then update a file. Always create new files in shot.
+- Don't create and then update a file. Always create new files in one hot.
 - Prefer multiple edits to smaller regions, as opposed to one big edit to a larger region.
 - Don't produce edits that intersect each other. In that case, merge them into a bigger edit.
 - Never nest an edit with another edit. Never include CDATA. All edits are leaf nodes.
@@ -151,21 +149,20 @@ impl fmt::Display for Rectangle {
 <edit>
   <path>src/rectangle.rs</path>
   <operation>insert_before</operation>
-  <symbol>impl Rectangle {</symbol>
+  <search>impl Rectangle {</search>
   <description>Implement Display trait for Rectangle</description>
 </edit>
 
 <edit>
   <path>src/rectangle.rs</path>
   <operation>insert_before</operation>
-  <symbol>struct Rectangle {</symbol>
+  <search>struct Rectangle {</search>
   <description>Add use statement for fmt</description>
 </edit>
 </step>
 </message>
 
 </example>
-
 
 You should think step by step. When possible, produce smaller, coherent logical steps as opposed to one big step that combines lots of heterogeneous edits.
 
