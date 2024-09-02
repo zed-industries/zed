@@ -100,7 +100,7 @@ async fn test_sharing_an_ssh_remote_project(
         let file = buffer_b.read(cx).file();
         assert_eq!(
             all_language_settings(file, cx)
-                .language(Some(&("Rust".into())))
+                .language(None, Some(&("Rust".into())), cx)
                 .language_servers,
             ["override-rust-analyzer".into()]
         )

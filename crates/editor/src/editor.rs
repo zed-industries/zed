@@ -414,7 +414,7 @@ impl Default for EditorStyle {
 
 pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
     let show_background = all_language_settings(None, cx)
-        .language(None)
+        .language(None, None, cx)
         .inlay_hints
         .show_background;
 
@@ -10790,9 +10790,7 @@ impl Editor {
             settings::SoftWrap::PreferredLineLength => {
                 SoftWrap::Column(settings.preferred_line_length)
             }
-            language_settings::SoftWrap::Bounded => {
-                SoftWrap::Bounded(settings.preferred_line_length)
-            }
+            settings::SoftWrap::Bounded => SoftWrap::Bounded(settings.preferred_line_length),
         }
     }
 
@@ -10830,7 +10828,9 @@ impl Editor {
         } else {
             let soft_wrap = match self.soft_wrap_mode(cx) {
                 SoftWrap::None | SoftWrap::PreferLine => settings::SoftWrap::EditorWidth,
-                SoftWrap::EditorWidth | SoftWrap::Column(_) | SoftWrap::Bounded(_) => settings::SoftWrap::PreferLine,
+                SoftWrap::EditorWidth | SoftWrap::Column(_) | SoftWrap::Bounded(_) => {
+                    settings::SoftWrap::PreferLine
+                }
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
@@ -12674,7 +12674,7 @@ fn inlay_hint_settings(
     let settings = all_language_settings(file, cx);
     settings
         .language(
-            file.and_then(|file| Some((file.worktree_id(), file.abs_path_in_worktree(cx).ok()?))),
+            file.and_then(|file| Some((file.worktree_id(cx), file.abs_path_in_worktree(cx).ok()?))),
             language.map(|l| l.name()).as_ref(),
             cx,
         )

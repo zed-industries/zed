@@ -18,7 +18,7 @@ use serde::{
 use serde_json::Value;
 use settings::{
     add_references_to_properties, EditorConfigContent, Settings, SettingsLocation, SettingsSources,
-    SettingsStore, SoftWrap,
+    SettingsStore, SoftWrap, WorktreeId,
 };
 use std::{
     borrow::Cow,
@@ -41,7 +41,7 @@ pub fn language_settings<'a>(
 ) -> Cow<'a, LanguageSettings> {
     let language_name = language.map(|l| l.name());
     all_language_settings(file, cx).language(
-        file.and_then(|file| Some((file.worktree_id(), file.abs_path_in_worktree(cx).ok()?))),
+        file.and_then(|file| Some((file.worktree_id(cx), file.abs_path_in_worktree(cx).ok()?))),
         language_name.as_ref(),
         cx,
     )
@@ -797,7 +797,8 @@ impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
     pub fn language<'a>(
         &'a self,
-        abs_path_in_worktree: Option<(usize, PathBuf)>,
+        // TODO kb wrong API, store the previous file in the `AllLanguageSettings` instead of requiring it here
+        abs_path_in_worktree: Option<(WorktreeId, PathBuf)>,
         language_name: Option<&LanguageName>,
         cx: &'a AppContext,
     ) -> Cow<'a, LanguageSettings> {
@@ -809,7 +810,7 @@ impl AllLanguageSettings {
             abs_path_in_worktree.and_then(|(worktree_id, file_abs_path)| {
                 cx.global::<SettingsStore>().editorconfig_settings(
                     worktree_id,
-                    language_name.map(ToOwned::to_owned),
+                    language_name.map(|name| name.0.to_string()),
                     &file_abs_path,
                 )
             });
@@ -845,7 +846,7 @@ impl AllLanguageSettings {
         }
 
         self.language(
-            file.and_then(|file| Some((file.worktree_id(), file.abs_path_in_worktree(cx).ok()?))),
+            file.and_then(|file| Some((file.worktree_id(cx), file.abs_path_in_worktree(cx).ok()?))),
             language.map(|l| l.name()).as_ref(),
             cx,
         )

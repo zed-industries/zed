@@ -184,6 +184,8 @@ pub enum SoftWrap {
     EditorWidth,
     /// Soft wrap lines at the preferred line length
     PreferredLineLength,
+    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller)
+    Bounded,
 }
 
 /// A set of strongly-typed setting values defined via multiple JSON files.
@@ -208,7 +210,7 @@ pub struct SettingsStore {
 #[derive(Debug, Eq, PartialEq, Hash)]
 struct EditorConfigKey {
     language_name: Option<String>,
-    worktree_id: usize,
+    worktree_id: WorktreeId,
     editorconfig_chain: SmallVec<[PathBuf; 3]>,
 }
 
@@ -838,7 +840,7 @@ impl SettingsStore {
 
     pub fn editorconfig_settings(
         &self,
-        worktree_id: usize,
+        worktree_id: WorktreeId,
         language_name: Option<String>,
         file_abs_path: &Path,
     ) -> Option<EditorConfigContent> {
