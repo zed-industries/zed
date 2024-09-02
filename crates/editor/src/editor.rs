@@ -13237,7 +13237,7 @@ pub fn diagnostic_block_renderer(
     Box::new(move |cx: &mut BlockContext| {
         let group_id: SharedString = cx.block_id.to_string().into();
 
-        let bg = cx.theme().colors().editor_active_line_background;
+        let diagnostic_bg = diagnostic_background_style(diagnostic.severity, cx.theme().colors());
 
         let mut text_style = cx.text_style().clone();
         text_style.color = diagnostic_style(diagnostic.severity, cx.theme().status());
@@ -13289,7 +13289,7 @@ pub fn diagnostic_block_renderer(
         h_flex()
             .id(cx.block_id)
             .group(group_id.clone())
-            .bg(bg)
+            .bg(diagnostic_bg)
             .relative()
             .size_full()
             .pl(cx.gutter_dimensions.width)
@@ -13393,6 +13393,16 @@ fn diagnostic_style(severity: DiagnosticSeverity, colors: &StatusColors) -> Hsla
         DiagnosticSeverity::INFORMATION => colors.info,
         DiagnosticSeverity::HINT => colors.info,
         _ => colors.ignored,
+    }
+}
+
+fn diagnostic_background_style(severity: DiagnosticSeverity, colors: &ThemeColors) -> Hsla {
+    match severity {
+        DiagnosticSeverity::ERROR => colors.editor_diagnostic_error_background,
+        DiagnosticSeverity::WARNING => colors.editor_diagnostic_warning_background,
+        DiagnosticSeverity::INFORMATION => colors.editor_diagnostic_information_background,
+        DiagnosticSeverity::HINT => colors.editor_diagnostic_hint_background,
+        _ => colors.editor_diagnostic_default_background,
     }
 }
 

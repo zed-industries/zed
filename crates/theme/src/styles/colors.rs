@@ -159,6 +159,15 @@ pub struct ThemeColors {
     pub editor_active_wrap_guide: Hsla,
     pub editor_indent_guide: Hsla,
     pub editor_indent_guide_active: Hsla,
+    /// Diagnostic background colors.
+    ///
+    /// The background for diagnostic blocks displayed inline with code of
+    /// various severity levels.
+    pub editor_diagnostic_error_background: Hsla,
+    pub editor_diagnostic_warning_background: Hsla,
+    pub editor_diagnostic_information_background: Hsla,
+    pub editor_diagnostic_hint_background: Hsla,
+    pub editor_diagnostic_default_background: Hsla,
     /// Read-access of a symbol, like reading a variable.
     ///
     /// A document highlight is a range inside a text document which deserves

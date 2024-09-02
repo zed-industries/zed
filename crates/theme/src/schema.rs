@@ -401,6 +401,25 @@ pub struct ThemeColorsContent {
     #[serde(rename = "editor.indent_guide_active")]
     pub editor_indent_guide_active: Option<String>,
 
+    /// Background colors for rendered diagnostics.
+    ///
+    /// These colors affect the background of diagnostics that are rendered
+    /// inline with code.
+    #[serde(rename = "editor.diagbostic_error_background")]
+    pub editor_diagnostic_error_background: Option<String>,
+
+    #[serde(rename = "editor.diagbostic_warning_background")]
+    pub editor_diagnostic_warning_background: Option<String>,
+
+    #[serde(rename = "editor.diagbostic_information_background")]
+    pub editor_diagnostic_information_background: Option<String>,
+
+    #[serde(rename = "editor.diagbostic_hint_background")]
+    pub editor_diagnostic_hint_background: Option<String>,
+
+    #[serde(rename = "editor.diagbostic_default_background")]
+    pub editor_diagnostic_default_background: Option<String>,
+
     /// Read-access of a symbol, like reading a variable.
     ///
     /// A document highlight is a range inside a text document which deserves
@@ -782,6 +801,26 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             editor_indent_guide_active: self
                 .editor_indent_guide_active
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            editor_diagnostic_error_background: self
+                .editor_diagnostic_error_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            editor_diagnostic_warning_background: self
+                .editor_diagnostic_warning_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            editor_diagnostic_information_background: self
+                .editor_diagnostic_information_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            editor_diagnostic_hint_background: self
+                .editor_diagnostic_hint_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            editor_diagnostic_default_background: self
+                .editor_diagnostic_default_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             editor_document_highlight_read_background: self
