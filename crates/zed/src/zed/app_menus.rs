@@ -128,6 +128,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
                 MenuItem::separator(),
                 MenuItem::action("Diagnostics", diagnostics::Deploy),
+                MenuItem::action("Toggle Show All Diagnostics", editor::actions::ToggleDiagnostics),
                 MenuItem::separator(),
             ],
         },

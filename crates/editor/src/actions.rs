@@ -312,6 +312,7 @@ gpui::actions!(
         Tab,
         TabPrev,
         ToggleAutoSignatureHelp,
+        ToggleDiagnostics,
         ToggleGitBlame,
         ToggleGitBlameInline,
         ToggleSelectionMenu,

@@ -304,6 +304,7 @@ impl EditorElement {
         }
         register_action(view, cx, Editor::go_to_diagnostic);
         register_action(view, cx, Editor::go_to_prev_diagnostic);
+        register_action(view, cx, Editor::toggle_diagnostics);
         register_action(view, cx, Editor::go_to_hunk);
         register_action(view, cx, Editor::go_to_prev_hunk);
         register_action(view, cx, |editor, a, cx| {

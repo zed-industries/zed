@@ -9038,6 +9038,11 @@ impl Editor {
         }
     }
 
+    fn toggle_diagnostics(&mut self, _: &ToggleDiagnostics, cx: &mut ViewContext<Self>) {
+        self.show_all_diagnostics = !self.show_all_diagnostics;
+        self.refresh_active_diagnostics(cx);
+    }
+
     fn go_to_hunk(&mut self, _: &GoToHunk, cx: &mut ViewContext<Self>) {
         let snapshot = self
             .display_map
