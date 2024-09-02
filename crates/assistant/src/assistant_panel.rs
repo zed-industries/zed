@@ -14,7 +14,7 @@ use crate::{
     Assist, CacheStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
     ContextStoreEvent, CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssistId,
     InlineAssistant, InsertIntoEditor, Message, MessageId, MessageMetadata, MessageStatus,
-    ModelPickerDelegate, ModelSelector, PendingSlashCommand, PendingSlashCommandStatus,
+    ModelPickerDelegate, ModelSelector, NewContext, PendingSlashCommand, PendingSlashCommandStatus,
     QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus,
     ToggleModelSelector, WorkflowStepResolution,
 };
@@ -68,6 +68,7 @@ use ui::{
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use util::ResultExt;
+use workspace::searchable::SearchableItemHandle;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::{self, FollowableItem, Item, ItemHandle},
@@ -76,7 +77,6 @@ use workspace::{
     Pane, Save, ShowConfiguration, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
 };
-use workspace::{searchable::SearchableItemHandle, NewFile};
 use zed_actions::InlineAssist;
 
 pub fn init(cx: &mut AppContext) {
@@ -95,7 +95,8 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(AssistantPanel::inline_assist)
                 .register_action(ContextEditor::quote_selection)
                 .register_action(ContextEditor::insert_selection)
-                .register_action(AssistantPanel::show_configuration);
+                .register_action(AssistantPanel::show_configuration)
+                .register_action(AssistantPanel::create_new_context);
         },
     )
     .detach();
@@ -335,7 +336,7 @@ impl AssistantPanel {
                 workspace.project().clone(),
                 Default::default(),
                 None,
-                NewFile.boxed_clone(),
+                NewContext.boxed_clone(),
                 cx,
             );
             pane.set_can_split(false, cx);
@@ -366,9 +367,11 @@ impl AssistantPanel {
                     .child(
                         IconButton::new("new-context", IconName::Plus)
                             .on_click(
-                                cx.listener(|_, _, cx| cx.dispatch_action(NewFile.boxed_clone())),
+                                cx.listener(|_, _, cx| {
+                                    cx.dispatch_action(NewContext.boxed_clone())
+                                }),
                             )
-                            .tooltip(|cx| Tooltip::for_action("New Context", &NewFile, cx)),
+                            .tooltip(|cx| Tooltip::for_action("New Context", &NewContext, cx)),
                     )
                     .child(
                         PopoverMenu::new("assistant-panel-popover-menu")
@@ -384,7 +387,7 @@ impl AssistantPanel {
                                 let focus_handle = _pane.focus_handle(cx);
                                 Some(ContextMenu::build(cx, move |menu, _| {
                                     menu.context(focus_handle.clone())
-                                        .action("New Context", Box::new(NewFile))
+                                        .action("New Context", Box::new(NewContext))
                                         .action("History", Box::new(DeployHistory))
                                         .action("Prompt Library", Box::new(DeployPromptLibrary))
                                         .action("Configure", Box::new(ShowConfiguration))
@@ -851,6 +854,18 @@ impl AssistantPanel {
         }
     }
 
+    pub fn create_new_context(
+        workspace: &mut Workspace,
+        _: &NewContext,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+            panel.update(cx, |panel, cx| {
+                panel.new_context(cx);
+            });
+        }
+    }
+
     fn new_context(&mut self, cx: &mut ViewContext<Self>) -> Option<View<ContextEditor>> {
         if self.project.read(cx).is_via_collab() {
             let task = self
@@ -911,6 +926,15 @@ impl AssistantPanel {
             });
 
             self.show_context(editor.clone(), cx);
+            let workspace = self.workspace.clone();
+            cx.spawn(move |_, mut cx| async move {
+                workspace
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.focus_panel::<AssistantPanel>(cx);
+                    })
+                    .ok();
+            })
+            .detach();
             Some(editor)
         }
     }
@@ -1192,7 +1216,7 @@ impl Render for AssistantPanel {
         v_flex()
             .key_context("AssistantPanel")
             .size_full()
-            .on_action(cx.listener(|this, _: &workspace::NewFile, cx| {
+            .on_action(cx.listener(|this, _: &NewContext, cx| {
                 this.new_context(cx);
             }))
             .on_action(
