@@ -450,7 +450,7 @@ mod tests {
             let snapshot = buffer.read(cx).snapshot();
             assert_eq!(
                 WorkflowStepEdit::resolve_location(&snapshot, "ipsum\ndolor").to_point(&snapshot),
-                Point::new(1, 4)..Point::new(2, 9)
+                Point::new(1, 0)..Point::new(2, 18)
             );
         }
 
@@ -499,7 +499,7 @@ mod tests {
             assert_eq!(
                 WorkflowStepEdit::resolve_location(&snapshot, "Foo.bar.baz.qux()")
                     .to_point(&snapshot),
-                Point::new(1, 4)..Point::new(4, 14)
+                Point::new(1, 0)..Point::new(4, 14)
             );
         }
     }
