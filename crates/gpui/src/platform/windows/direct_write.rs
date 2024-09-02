@@ -1,11 +1,11 @@
 use std::{borrow::Cow, sync::Arc};
 
+use ::util::ResultExt;
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
-use util::ResultExt;
 use windows::{
     core::*,
     Win32::{
@@ -542,7 +542,6 @@ impl DirectWriteState {
                     length: (utf16_end - utf16_start) as u32,
                 };
                 layout.SetTypography(&font_info.features, text_range)?;
-
                 layout
             };
 
