@@ -314,7 +314,26 @@ impl TextLayout {
                     (text.clone(), false)
                 };
                 if truncated {
-                    runs[0].len = text.len();
+                    let mut match_len = text.len();
+                    // let mut drop_unused_run = None;
+                    let mut run_index = 0;
+                    let mut iter = runs.iter_mut().peekable();
+                    while let Some(run) = iter.next() {
+                        if run.len < match_len {
+                            match_len -= run.len;
+                        } else if run.len == match_len {
+                            if iter.peek().is_some() {
+                                run_index += 1;
+                                break;
+                            }
+                        } else {
+                            run.len = match_len;
+                        }
+                        run_index += 1;
+                    }
+                    if run_index < runs.len() {
+                        runs = runs[..run_index].to_vec();
+                    }
                 }
 
                 let Some(lines) = cx
