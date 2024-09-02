@@ -82,8 +82,8 @@
     "jpeg": "image",
     "jpg": "image",
     "js": "javascript",
-    "json": "storage",
-    "jsonc": "storage",
+    "json": "json",
+    "jsonc": "json",
     "jsx": "react",
     "jxl": "image",
     "kt": "kotlin",
@@ -272,6 +272,9 @@
     },
     "javascript": {
       "icon": "icons/file_icons/javascript.svg"
+    },
+    "json": {
+      "icon": "icons/file_icons/json.svg"
     },
     "kotlin": {
       "icon": "icons/file_icons/kotlin.svg"
