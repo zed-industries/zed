@@ -14,10 +14,10 @@ linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [target.aarch64-apple-darwin]
-rustflags = ["-C", "link-args=-Objc"]
+rustflags = ["-C", "link-args=-Objc -all_load"]
 
 [target.x86_64-apple-darwin]
-rustflags = ["-C", "link-args=-Objc"]
+rustflags = ["-C", "link-args=-Objc -all_load"]
 
 # This cfg will reduce the size of `windows::core::Error` from 16 bytes to 4 bytes
 [target.'cfg(target_os = "windows")']
