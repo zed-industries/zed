@@ -1,11 +1,11 @@
 use std::{borrow::Cow, sync::Arc};
 
-use ::util::ResultExt;
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
+use util::ResultExt;
 use windows::{
     core::*,
     Win32::{
@@ -500,8 +500,7 @@ impl DirectWriteState {
             let text_renderer = self.components.text_renderer.clone();
             let text_wide = text.encode_utf16().collect_vec();
 
-            let mut utf8_offset = 0usize;
-            let mut utf16_offset = 0u32;
+            let mut ix_converter = StringIndexConverter::new(text);
             let text_layout = {
                 let first_run = &font_runs[0];
                 let font_info = &self.fonts[first_run.font_id.0];
@@ -533,15 +532,16 @@ impl DirectWriteState {
                     f32::INFINITY,
                     f32::INFINITY,
                 )?;
-                let current_text = &text[utf8_offset..(utf8_offset + first_run.len)];
-                utf8_offset += first_run.len;
-                let current_text_utf16_length = current_text.encode_utf16().count() as u32;
+
+                let utf16_start = ix_converter.utf16_ix;
+                ix_converter.advance_to_utf8_ix(ix_converter.utf8_ix + first_run.len);
+                let utf16_end = ix_converter.utf16_ix;
+
                 let text_range = DWRITE_TEXT_RANGE {
-                    startPosition: utf16_offset,
-                    length: current_text_utf16_length,
+                    startPosition: utf16_start as u32,
+                    length: (utf16_end - utf16_start) as u32,
                 };
                 layout.SetTypography(&font_info.features, text_range)?;
-                utf16_offset += current_text_utf16_length;
 
                 layout
             };
@@ -560,9 +560,10 @@ impl DirectWriteState {
                     continue;
                 }
                 let font_info = &self.fonts[run.font_id.0];
-                let current_text = &text[utf8_offset..(utf8_offset + run.len)];
-                utf8_offset += run.len;
-                let current_text_utf16_length = current_text.encode_utf16().count() as u32;
+
+                let utf16_start = ix_converter.utf16_ix;
+                ix_converter.advance_to_utf8_ix(ix_converter.utf8_ix + run.len);
+                let utf16_end = ix_converter.utf16_ix;
 
                 let collection = if font_info.is_system_font {
                     &self.system_font_collection
@@ -570,10 +571,9 @@ impl DirectWriteState {
                     &self.custom_font_collection
                 };
                 let text_range = DWRITE_TEXT_RANGE {
-                    startPosition: utf16_offset,
-                    length: current_text_utf16_length,
+                    startPosition: utf16_start as u32,
+                    length: (utf16_end - utf16_start) as u32,
                 };
-                utf16_offset += current_text_utf16_length;
                 text_layout.SetFontCollection(collection, text_range)?;
                 text_layout
                     .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)?;
