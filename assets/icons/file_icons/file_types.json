@@ -177,6 +177,7 @@
     "yaml": "settings",
     "yml": "settings",
     "yrl": "erlang",
+    "zig": "zig",
     "zlogin": "terminal",
     "zsh": "terminal",
     "zsh_aliases": "terminal",
@@ -359,6 +360,9 @@
     },
     "vue": {
       "icon": "icons/file_icons/vue.svg"
+    },
+    "zig": {
+      "icon": "icons/file_icons/zig.svg"
     }
   }
 }
