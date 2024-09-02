@@ -9,14 +9,14 @@ CREATE TABLE "users" (
     "connected_once" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "metrics_id" TEXT,
-    "github_user_id" INTEGER,
+    "github_user_id" INTEGER NOT NULL,
     "accepted_tos_at" TIMESTAMP WITHOUT TIME ZONE,
     "github_user_created_at" TIMESTAMP WITHOUT TIME ZONE
 );
 CREATE UNIQUE INDEX "index_users_github_login" ON "users" ("github_login");
 CREATE UNIQUE INDEX "index_invite_code_users" ON "users" ("invite_code");
 CREATE INDEX "index_users_on_email_address" ON "users" ("email_address");
-CREATE INDEX "index_users_on_github_user_id" ON "users" ("github_user_id");
+CREATE UNIQUE INDEX "index_users_on_github_user_id" ON "users" ("github_user_id");
 
 CREATE TABLE "access_tokens" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,6 +86,7 @@ CREATE TABLE "worktree_entries" (
     "is_ignored" BOOL NOT NULL,
     "is_deleted" BOOL NOT NULL,
     "git_status" INTEGER,
+    "is_fifo" BOOL NOT NULL,
     PRIMARY KEY(project_id, worktree_id, id),
     FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );
@@ -295,7 +296,8 @@ CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_channel_id_connection
 
 CREATE TABLE "feature_flags" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "flag" TEXT NOT NULL UNIQUE
+    "flag" TEXT NOT NULL UNIQUE,
+    "enabled_for_all" BOOLEAN NOT NULL DEFAULT false
 );
 
 CREATE INDEX "index_feature_flags" ON "feature_flags" ("id");

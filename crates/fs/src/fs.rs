@@ -9,6 +9,9 @@ use std::{fs::File, os::fd::AsFd};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
+#[cfg(unix)]
+use std::os::unix::fs::FileTypeExt;
+
 use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
 use git::repository::{GitRepository, RealGitRepository};
@@ -149,6 +152,7 @@ pub struct Metadata {
     pub mtime: SystemTime,
     pub is_symlink: bool,
     pub is_dir: bool,
+    pub is_fifo: bool,
 }
 
 #[derive(Default)]
@@ -351,6 +355,16 @@ impl Fs for RealFs {
                 // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
                 // See https://github.com/zed-industries/zed/pull/8437 for more details.
                 NamedTempFile::new_in(path.parent().unwrap_or(&paths::temp_dir()))
+            } else if cfg!(target_os = "windows") {
+                // If temp dir is set to a different drive than the destination,
+                // we receive error:
+                //
+                // failed to persist temporary file:
+                // The system cannot move the file to a different disk drive. (os error 17)
+                //
+                // So we use the directory of the destination as a temp dir to avoid it.
+                // https://github.com/zed-industries/zed/issues/16571
+                NamedTempFile::new_in(path.parent().unwrap_or(&paths::temp_dir()))
             } else {
                 NamedTempFile::new()
             }?;
@@ -418,11 +432,18 @@ impl Fs for RealFs {
         #[cfg(windows)]
         let inode = file_id(path).await?;
 
+        #[cfg(windows)]
+        let is_fifo = false;
+
+        #[cfg(unix)]
+        let is_fifo = metadata.file_type().is_fifo();
+
         Ok(Some(Metadata {
             inode,
             mtime: metadata.modified().unwrap(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
+            is_fifo,
         }))
     }
 
@@ -794,9 +815,8 @@ impl FakeFsState {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-lazy_static::lazy_static! {
-    pub static ref FS_DOT_GIT: &'static OsStr = OsStr::new(".git");
-}
+pub static FS_DOT_GIT: std::sync::LazyLock<&'static OsStr> =
+    std::sync::LazyLock::new(|| OsStr::new(".git"));
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
@@ -824,6 +844,35 @@ impl FakeFs {
     pub fn set_next_mtime(&self, next_mtime: SystemTime) {
         let mut state = self.state.lock();
         state.next_mtime = next_mtime;
+    }
+
+    pub async fn touch_path(&self, path: impl AsRef<Path>) {
+        let mut state = self.state.lock();
+        let path = path.as_ref();
+        let new_mtime = state.next_mtime;
+        let new_inode = state.next_inode;
+        state.next_inode += 1;
+        state.next_mtime += Duration::from_nanos(1);
+        state
+            .write_path(path, move |entry| {
+                match entry {
+                    btree_map::Entry::Vacant(e) => {
+                        e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
+                            inode: new_inode,
+                            mtime: new_mtime,
+                            content: Vec::new(),
+                        })));
+                    }
+                    btree_map::Entry::Occupied(mut e) => match &mut *e.get_mut().lock() {
+                        FakeFsEntry::File { mtime, .. } => *mtime = new_mtime,
+                        FakeFsEntry::Dir { mtime, .. } => *mtime = new_mtime,
+                        FakeFsEntry::Symlink { .. } => {}
+                    },
+                }
+                Ok(())
+            })
+            .unwrap();
+        state.emit_event([path.to_path_buf()]);
     }
 
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
@@ -1528,12 +1577,14 @@ impl Fs for FakeFs {
                     mtime: *mtime,
                     is_dir: false,
                     is_symlink,
+                    is_fifo: false,
                 },
                 FakeFsEntry::Dir { inode, mtime, .. } => Metadata {
                     inode: *inode,
                     mtime: *mtime,
                     is_dir: true,
                     is_symlink,
+                    is_fifo: false,
                 },
                 FakeFsEntry::Symlink { .. } => unreachable!(),
             }))

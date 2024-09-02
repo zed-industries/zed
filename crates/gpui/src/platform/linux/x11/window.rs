@@ -1,5 +1,3 @@
-use anyhow::Context;
-
 use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
     px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
@@ -9,7 +7,9 @@ use crate::{
     X11ClientStatePtr,
 };
 
+use anyhow::Context;
 use blade_graphics as gpu;
+use futures::channel::oneshot;
 use raw_window_handle as rwh;
 use util::{maybe, ResultExt};
 use x11rb::{
@@ -873,8 +873,8 @@ impl X11WindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some(range) = input_handler.selected_text_range() {
-                bounds = input_handler.bounds_for_range(range);
+            if let Some(selection) = input_handler.selected_text_range(true) {
+                bounds = input_handler.bounds_for_range(selection.range);
             }
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);
@@ -1210,9 +1210,10 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    // TODO: on_complete not yet supported for X11 windows
+    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene);
+        inner.renderer.draw(scene, on_complete);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -1395,7 +1396,18 @@ impl PlatformWindow for X11Window {
         }
     }
 
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        let mut state = self.0.state.borrow_mut();
+        let client = state.client.clone();
+        drop(state);
+        client.update_ime_position(bounds);
+    }
+
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         self.0.state.borrow().renderer.gpu_specs().into()
+    }
+
+    fn fps(&self) -> Option<f32> {
+        None
     }
 }

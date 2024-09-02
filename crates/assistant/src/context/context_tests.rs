@@ -1,6 +1,8 @@
+use super::{MessageCacheMetadata, WorkflowStepEdit};
 use crate::{
-    assistant_panel, prompt_library, slash_command::file_command, workflow::tool, Context,
+    assistant_panel, prompt_library, slash_command::file_command, CacheStatus, Context,
     ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
+    WorkflowStepEditKind,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -8,15 +10,13 @@ use assistant_slash_command::{
     SlashCommandRegistry,
 };
 use collections::HashSet;
-use fs::{FakeFs, Fs as _};
+use fs::FakeFs;
 use gpui::{AppContext, Model, SharedString, Task, TestAppContext, WeakView};
-use indoc::indoc;
 use language::{Buffer, LanguageRegistry, LspAdapterDelegate};
-use language_model::{LanguageModelRegistry, Role};
+use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
 use project::Project;
 use rand::prelude::*;
-use rope::Point;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
@@ -27,10 +27,13 @@ use std::{
     rc::Rc,
     sync::{atomic::AtomicBool, Arc},
 };
-use text::{network::Network, OffsetRangeExt as _, ReplicaId, ToPoint as _};
+use text::{network::Network, OffsetRangeExt as _, ReplicaId};
 use ui::{Context as _, WindowContext};
 use unindent::Unindent;
-use util::{test::marked_text_ranges, RandomCharIter};
+use util::{
+    test::{generate_marked_text, marked_text_ranges},
+    RandomCharIter,
+};
 use workspace::Workspace;
 
 #[gpui::test]
@@ -473,32 +476,16 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_edit_step_parsing(cx: &mut TestAppContext) {
+async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     cx.update(prompt_library::init);
     let settings_store = cx.update(SettingsStore::test);
     cx.set_global(settings_store);
+    cx.update(language::init);
     cx.update(Project::init_settings);
     let fs = FakeFs::new(cx.executor());
-    fs.as_fake()
-        .insert_tree(
-            "/root",
-            json!({
-                "hello.rs": r#"
-                    fn hello() {
-                        println!("Hello, World!");
-                    }
-                "#.unindent()
-            }),
-        )
-        .await;
     let project = Project::test(fs, [Path::new("/root")], cx).await;
     cx.update(LanguageModelRegistry::test);
 
-    let model = cx.read(|cx| {
-        LanguageModelRegistry::read_global(cx)
-            .active_model()
-            .unwrap()
-    });
     cx.update(assistant_panel::init);
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
 
@@ -513,151 +500,382 @@ async fn test_edit_step_parsing(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let buffer = context.read_with(cx, |context, _| context.buffer.clone());
 
-    // Simulate user input
-    let user_message = indoc! {r#"
-        Please add unnecessary complexity to this code:
-
-        ```hello.rs
-        fn main() {
-            println!("Hello, World!");
-        }
-        ```
-    "#};
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, user_message)], None, cx);
+    // Insert an assistant message to simulate a response.
+    let assistant_message_id = context.update(cx, |context, cx| {
+        let user_message_id = context.messages(cx).next().unwrap().id;
+        context
+            .insert_message_after(user_message_id, Role::Assistant, MessageStatus::Done, cx)
+            .unwrap()
+            .id
     });
 
-    // Simulate LLM response with edit steps
-    let llm_response = indoc! {r#"
-        Sure, I can help you with that. Here's a step-by-step process:
+    // No edit tags
+    edit(
+        &context,
+        "
 
-        <step>
-        First, let's extract the greeting into a separate function:
+        «one
+        two
+        »",
+        cx,
+    );
+    expect_steps(
+        &context,
+        "
+
+        one
+        two
+        ",
+        &[],
+        cx,
+    );
+
+    // Partial edit step tag is added
+    edit(
+        &context,
+        "
+
+        one
+        two
+        «
+        <step»",
+        cx,
+    );
+    expect_steps(
+        &context,
+        "
+
+        one
+        two
+
+        <step",
+        &[],
+        cx,
+    );
+
+    // The rest of the step tag is added. The unclosed
+    // step is treated as incomplete.
+    edit(
+        &context,
+        "
+
+        one
+        two
+
+        <step«>
+        Add a second function
 
         ```rust
-        fn greet() {
-            println!("Hello, World!");
-        }
-
-        fn main() {
-            greet();
-        }
+        fn two() {}
         ```
-        </step>
 
-        <step>
-        Now, let's make the greeting customizable:
+        <edit>»",
+        cx,
+    );
+    expect_steps(
+        &context,
+        "
+
+        one
+        two
+
+        «<step>
+        Add a second function
 
         ```rust
-        fn greet(name: &str) {
-            println!("Hello, {}!", name);
-        }
-
-        fn main() {
-            greet("World");
-        }
+        fn two() {}
         ```
+
+        <edit>»",
+        &[&[]],
+        cx,
+    );
+
+    // The full suggestion is added
+    edit(
+        &context,
+        "
+
+        one
+        two
+
+        <step>
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+
+        <edit>«
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>fn one</symbol>
+        <description>add a `two` function</description>
+        </edit>
         </step>
 
-        These changes make the code more modular and flexible.
-    "#};
+        also,»",
+        cx,
+    );
+    expect_steps(
+        &context,
+        "
 
-    // Simulate the assist method to trigger the LLM response
-    context.update(cx, |context, cx| context.assist(cx));
-    cx.run_until_parked();
+        one
+        two
 
-    // Retrieve the assistant response message's start from the context
-    let response_start_row = context.read_with(cx, |context, cx| {
-        let buffer = context.buffer.read(cx);
-        context.message_anchors[1].start.to_point(buffer).row
+        «<step>
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+
+        <edit>
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>fn one</symbol>
+        <description>add a `two` function</description>
+        </edit>
+        </step>»
+
+        also,",
+        &[&[WorkflowStepEdit {
+            path: "src/lib.rs".into(),
+            kind: WorkflowStepEditKind::InsertSiblingAfter {
+                symbol: "fn one".into(),
+                description: "add a `two` function".into(),
+            },
+        }]],
+        cx,
+    );
+
+    // The step is manually edited.
+    edit(
+        &context,
+        "
+
+        one
+        two
+
+        <step>
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+
+        <edit>
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>«fn zero»</symbol>
+        <description>add a `two` function</description>
+        </edit>
+        </step>
+
+        also,",
+        cx,
+    );
+    expect_steps(
+        &context,
+        "
+
+        one
+        two
+
+        «<step>
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+
+        <edit>
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>fn zero</symbol>
+        <description>add a `two` function</description>
+        </edit>
+        </step>»
+
+        also,",
+        &[&[WorkflowStepEdit {
+            path: "src/lib.rs".into(),
+            kind: WorkflowStepEditKind::InsertSiblingAfter {
+                symbol: "fn zero".into(),
+                description: "add a `two` function".into(),
+            },
+        }]],
+        cx,
+    );
+
+    // When setting the message role to User, the steps are cleared.
+    context.update(cx, |context, cx| {
+        context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
+        context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
     });
+    expect_steps(
+        &context,
+        "
 
-    // Simulate the LLM completion
-    model
-        .as_fake()
-        .stream_last_completion_response(llm_response.to_string());
-    model.as_fake().end_last_completion_stream();
+        one
+        two
 
-    // Wait for the completion to be processed
-    cx.run_until_parked();
+        <step>
+        Add a second function
 
-    // Verify that the edit steps were parsed correctly
-    context.read_with(cx, |context, cx| {
-        assert_eq!(
-            workflow_steps(context, cx),
-            vec![
-                (
-                    Point::new(response_start_row + 2, 0)..Point::new(response_start_row + 12, 3),
-                    WorkflowStepTestStatus::Pending
-                ),
-                (
-                    Point::new(response_start_row + 14, 0)..Point::new(response_start_row + 24, 3),
-                    WorkflowStepTestStatus::Pending
-                ),
-            ]
-        );
+        ```rust
+        fn two() {}
+        ```
+
+        <edit>
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>fn zero</symbol>
+        <description>add a `two` function</description>
+        </edit>
+        </step>
+
+        also,",
+        &[],
+        cx,
+    );
+
+    // When setting the message role back to Assistant, the steps are reparsed.
+    context.update(cx, |context, cx| {
+        context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
     });
+    expect_steps(
+        &context,
+        "
 
-    model
-        .as_fake()
-        .respond_to_last_tool_use(tool::WorkflowStepResolutionTool {
-            step_title: "Title".into(),
-            suggestions: vec![tool::WorkflowSuggestionTool {
-                path: "/root/hello.rs".into(),
-                // Simulate a symbol name that's slightly different than our outline query
-                kind: tool::WorkflowSuggestionToolKind::Update {
-                    symbol: "fn main()".into(),
-                    description: "Extract a greeting function".into(),
-                },
-            }],
+        one
+        two
+
+        «<step>
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+
+        <edit>
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>fn zero</symbol>
+        <description>add a `two` function</description>
+        </edit>
+        </step>»
+
+        also,",
+        &[&[WorkflowStepEdit {
+            path: "src/lib.rs".into(),
+            kind: WorkflowStepEditKind::InsertSiblingAfter {
+                symbol: "fn zero".into(),
+                description: "add a `two` function".into(),
+            },
+        }]],
+        cx,
+    );
+
+    // Ensure steps are re-parsed when deserializing.
+    let serialized_context = context.read_with(cx, |context, cx| context.serialize(cx));
+    let deserialized_context = cx.new_model(|cx| {
+        Context::deserialize(
+            serialized_context,
+            Default::default(),
+            registry.clone(),
+            prompt_builder.clone(),
+            None,
+            None,
+            cx,
+        )
+    });
+    expect_steps(
+        &deserialized_context,
+        "
+
+        one
+        two
+
+        «<step>
+        Add a second function
+
+        ```rust
+        fn two() {}
+        ```
+
+        <edit>
+        <path>src/lib.rs</path>
+        <operation>insert_sibling_after</operation>
+        <symbol>fn zero</symbol>
+        <description>add a `two` function</description>
+        </edit>
+        </step>»
+
+        also,",
+        &[&[WorkflowStepEdit {
+            path: "src/lib.rs".into(),
+            kind: WorkflowStepEditKind::InsertSiblingAfter {
+                symbol: "fn zero".into(),
+                description: "add a `two` function".into(),
+            },
+        }]],
+        cx,
+    );
+
+    fn edit(context: &Model<Context>, new_text_marked_with_edits: &str, cx: &mut TestAppContext) {
+        context.update(cx, |context, cx| {
+            context.buffer.update(cx, |buffer, cx| {
+                buffer.edit_via_marked_text(&new_text_marked_with_edits.unindent(), None, cx);
+            });
         });
-
-    // Wait for tool use to be processed.
-    cx.run_until_parked();
-
-    // Verify that the first edit step is not pending anymore.
-    context.read_with(cx, |context, cx| {
-        assert_eq!(
-            workflow_steps(context, cx),
-            vec![
-                (
-                    Point::new(response_start_row + 2, 0)..Point::new(response_start_row + 12, 3),
-                    WorkflowStepTestStatus::Resolved
-                ),
-                (
-                    Point::new(response_start_row + 14, 0)..Point::new(response_start_row + 24, 3),
-                    WorkflowStepTestStatus::Pending
-                ),
-            ]
-        );
-    });
-
-    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-    enum WorkflowStepTestStatus {
-        Pending,
-        Resolved,
-        Error,
+        cx.executor().run_until_parked();
     }
 
-    fn workflow_steps(
-        context: &Context,
-        cx: &AppContext,
-    ) -> Vec<(Range<Point>, WorkflowStepTestStatus)> {
-        context
-            .workflow_steps
-            .iter()
-            .map(|step| {
-                let buffer = context.buffer.read(cx);
-                let status = match &step.step.read(cx).resolution {
-                    None => WorkflowStepTestStatus::Pending,
-                    Some(Ok(_)) => WorkflowStepTestStatus::Resolved,
-                    Some(Err(_)) => WorkflowStepTestStatus::Error,
-                };
-                (step.range.to_point(buffer), status)
-            })
-            .collect()
+    fn expect_steps(
+        context: &Model<Context>,
+        expected_marked_text: &str,
+        expected_suggestions: &[&[WorkflowStepEdit]],
+        cx: &mut TestAppContext,
+    ) {
+        context.update(cx, |context, cx| {
+            let expected_marked_text = expected_marked_text.unindent();
+            let (expected_text, expected_ranges) = marked_text_ranges(&expected_marked_text, false);
+            context.buffer.read_with(cx, |buffer, _| {
+                assert_eq!(buffer.text(), expected_text);
+                let ranges = context
+                    .workflow_steps
+                    .iter()
+                    .map(|entry| entry.range.to_offset(buffer))
+                    .collect::<Vec<_>>();
+                let marked = generate_marked_text(&expected_text, &ranges, false);
+                assert_eq!(
+                    marked,
+                    expected_marked_text,
+                    "unexpected suggestion ranges. actual: {ranges:?}, expected: {expected_ranges:?}"
+                );
+                let suggestions = context
+                    .workflow_steps
+                    .iter()
+                    .map(|step| {
+                        step.edits
+                            .iter()
+                            .map(|edit| {
+                                let edit = edit.as_ref().unwrap();
+                                WorkflowStepEdit {
+                                    path: edit.path.clone(),
+                                    kind: edit.kind.clone(),
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+
+                assert_eq!(suggestions, expected_suggestions);
+            });
+        });
     }
 }
 
@@ -891,6 +1109,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             run_commands_in_text: false,
                         })),
                         true,
+                        false,
                         cx,
                     );
                 });
@@ -1001,11 +1220,175 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     });
 }
 
+#[gpui::test]
+fn test_mark_cache_anchors(cx: &mut AppContext) {
+    let settings_store = SettingsStore::test(cx);
+    LanguageModelRegistry::test(cx);
+    cx.set_global(settings_store);
+    assistant_panel::init(cx);
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+    let context =
+        cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
+    let buffer = context.read(cx).buffer.clone();
+
+    // Create a test cache configuration
+    let cache_configuration = &Some(LanguageModelCacheConfiguration {
+        max_cache_anchors: 3,
+        should_speculate: true,
+        min_total_token: 10,
+    });
+
+    let message_1 = context.read(cx).message_anchors[0].clone();
+
+    context.update(cx, |context, cx| {
+        context.mark_cache_anchors(cache_configuration, false, cx)
+    });
+
+    assert_eq!(
+        messages_cache(&context, cx)
+            .iter()
+            .filter(|(_, cache)| cache.as_ref().map_or(false, |cache| cache.is_anchor))
+            .count(),
+        0,
+        "Empty messages should not have any cache anchors."
+    );
+
+    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "aaa")], None, cx));
+    let message_2 = context
+        .update(cx, |context, cx| {
+            context.insert_message_after(message_1.id, Role::User, MessageStatus::Pending, cx)
+        })
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "bbbbbbb")], None, cx));
+    let message_3 = context
+        .update(cx, |context, cx| {
+            context.insert_message_after(message_2.id, Role::User, MessageStatus::Pending, cx)
+        })
+        .unwrap();
+    buffer.update(cx, |buffer, cx| buffer.edit([(12..12, "cccccc")], None, cx));
+
+    context.update(cx, |context, cx| {
+        context.mark_cache_anchors(cache_configuration, false, cx)
+    });
+    assert_eq!(buffer.read(cx).text(), "aaa\nbbbbbbb\ncccccc");
+    assert_eq!(
+        messages_cache(&context, cx)
+            .iter()
+            .filter(|(_, cache)| cache.as_ref().map_or(false, |cache| cache.is_anchor))
+            .count(),
+        0,
+        "Messages should not be marked for cache before going over the token minimum."
+    );
+    context.update(cx, |context, _| {
+        context.token_count = Some(20);
+    });
+
+    context.update(cx, |context, cx| {
+        context.mark_cache_anchors(cache_configuration, true, cx)
+    });
+    assert_eq!(
+        messages_cache(&context, cx)
+            .iter()
+            .map(|(_, cache)| cache.as_ref().map_or(false, |cache| cache.is_anchor))
+            .collect::<Vec<bool>>(),
+        vec![true, true, false],
+        "Last message should not be an anchor on speculative request."
+    );
+
+    context
+        .update(cx, |context, cx| {
+            context.insert_message_after(message_3.id, Role::Assistant, MessageStatus::Pending, cx)
+        })
+        .unwrap();
+
+    context.update(cx, |context, cx| {
+        context.mark_cache_anchors(cache_configuration, false, cx)
+    });
+    assert_eq!(
+        messages_cache(&context, cx)
+            .iter()
+            .map(|(_, cache)| cache.as_ref().map_or(false, |cache| cache.is_anchor))
+            .collect::<Vec<bool>>(),
+        vec![false, true, true, false],
+        "Most recent message should also be cached if not a speculative request."
+    );
+    context.update(cx, |context, cx| {
+        context.update_cache_status_for_completion(cx)
+    });
+    assert_eq!(
+        messages_cache(&context, cx)
+            .iter()
+            .map(|(_, cache)| cache
+                .as_ref()
+                .map_or(None, |cache| Some(cache.status.clone())))
+            .collect::<Vec<Option<CacheStatus>>>(),
+        vec![
+            Some(CacheStatus::Cached),
+            Some(CacheStatus::Cached),
+            Some(CacheStatus::Cached),
+            None
+        ],
+        "All user messages prior to anchor should be marked as cached."
+    );
+
+    buffer.update(cx, |buffer, cx| buffer.edit([(14..14, "d")], None, cx));
+    context.update(cx, |context, cx| {
+        context.mark_cache_anchors(cache_configuration, false, cx)
+    });
+    assert_eq!(
+        messages_cache(&context, cx)
+            .iter()
+            .map(|(_, cache)| cache
+                .as_ref()
+                .map_or(None, |cache| Some(cache.status.clone())))
+            .collect::<Vec<Option<CacheStatus>>>(),
+        vec![
+            Some(CacheStatus::Cached),
+            Some(CacheStatus::Cached),
+            Some(CacheStatus::Pending),
+            None
+        ],
+        "Modifying a message should invalidate it's cache but leave previous messages."
+    );
+    buffer.update(cx, |buffer, cx| buffer.edit([(2..2, "e")], None, cx));
+    context.update(cx, |context, cx| {
+        context.mark_cache_anchors(cache_configuration, false, cx)
+    });
+    assert_eq!(
+        messages_cache(&context, cx)
+            .iter()
+            .map(|(_, cache)| cache
+                .as_ref()
+                .map_or(None, |cache| Some(cache.status.clone())))
+            .collect::<Vec<Option<CacheStatus>>>(),
+        vec![
+            Some(CacheStatus::Pending),
+            Some(CacheStatus::Pending),
+            Some(CacheStatus::Pending),
+            None
+        ],
+        "Modifying a message should invalidate all future messages."
+    );
+}
+
 fn messages(context: &Model<Context>, cx: &AppContext) -> Vec<(MessageId, Role, Range<usize>)> {
     context
         .read(cx)
         .messages(cx)
         .map(|message| (message.id, message.role, message.offset_range))
+        .collect()
+}
+
+fn messages_cache(
+    context: &Model<Context>,
+    cx: &AppContext,
+) -> Vec<(MessageId, Option<MessageCacheMetadata>)> {
+    context
+        .read(cx)
+        .messages(cx)
+        .map(|message| (message.id, message.cache.clone()))
         .collect()
 }
 

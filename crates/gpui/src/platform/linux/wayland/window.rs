@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use blade_graphics as gpu;
 use collections::HashMap;
-use futures::channel::oneshot::Receiver;
+use futures::channel::oneshot;
 
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
@@ -622,8 +622,12 @@ impl WaylandWindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some(range) = input_handler.selected_text_range() {
-                bounds = input_handler.bounds_for_range(range);
+            if let Some(selection) = input_handler.selected_text_range(true) {
+                bounds = input_handler.bounds_for_range(if selection.reversed {
+                    selection.range.start..selection.range.start
+                } else {
+                    selection.range.end..selection.range.end
+                });
             }
             self.state.borrow_mut().input_handler = Some(input_handler);
         }
@@ -827,7 +831,7 @@ impl PlatformWindow for WaylandWindow {
         _msg: &str,
         _detail: Option<&str>,
         _answers: &[&str],
-    ) -> Option<Receiver<usize>> {
+    ) -> Option<oneshot::Receiver<usize>> {
         None
     }
 
@@ -934,9 +938,9 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
         let mut state = self.borrow_mut();
-        state.renderer.draw(scene);
+        state.renderer.draw(scene, on_complete);
     }
 
     fn completed_frame(&self) {
@@ -1006,8 +1010,19 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        let state = self.borrow();
+        let client = state.client.clone();
+        drop(state);
+        client.update_ime_position(bounds);
+    }
+
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         self.borrow().renderer.gpu_specs().into()
+    }
+
+    fn fps(&self) -> Option<f32> {
+        None
     }
 }
 

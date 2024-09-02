@@ -782,7 +782,7 @@ fn editor_with_deleted_text(
         editor.set_show_gutter(false, cx);
         editor.scroll_manager.set_forbid_vertical_scroll(true);
         editor.set_read_only(true);
-        editor.set_show_inline_completions(false);
+        editor.set_show_inline_completions(Some(false), cx);
         editor.highlight_rows::<DiffRowHighlight>(
             Anchor::min()..=Anchor::max(),
             Some(deleted_color),

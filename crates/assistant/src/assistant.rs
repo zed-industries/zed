@@ -9,6 +9,7 @@ mod model_selector;
 mod prompt_library;
 mod prompts;
 mod slash_command;
+pub(crate) mod slash_command_picker;
 pub mod slash_command_settings;
 mod streaming_diff;
 mod terminal_inline_assistant;
@@ -25,7 +26,7 @@ pub use context_store::*;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::Context as _;
-use gpui::{actions, impl_actions, AppContext, Global, SharedString, UpdateGlobal};
+use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 use language_model::{
@@ -33,7 +34,7 @@ use language_model::{
 };
 pub(crate) use model_selector::*;
 pub use prompts::PromptBuilder;
-use prompts::PromptOverrideContext;
+use prompts::PromptLoadingParams;
 use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
@@ -59,22 +60,15 @@ actions!(
         InsertIntoEditor,
         ToggleFocus,
         InsertActivePrompt,
-        ShowConfiguration,
         DeployHistory,
         DeployPromptLibrary,
         ConfirmCommand,
+        NewContext,
         ToggleModelSelector,
     ]
 );
 
 const DEFAULT_CONTEXT_LINES: usize = 50;
-
-#[derive(Clone, Default, Deserialize, PartialEq)]
-pub struct InlineAssist {
-    prompt: Option<String>,
-}
-
-impl_actions!(assistant, [InlineAssist]);
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct MessageId(clock::Lamport);
@@ -184,7 +178,7 @@ impl Assistant {
 pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
-    dev_mode: bool,
+    stdout_is_a_pty: bool,
     cx: &mut AppContext,
 ) -> Arc<PromptBuilder> {
     cx.set_global(Assistant::default());
@@ -216,16 +210,18 @@ pub fn init(
     })
     .detach();
 
-    context_store::init(&client);
+    context_store::init(&client.clone().into());
     prompt_library::init(cx);
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);
     assistant_panel::init(cx);
     context_servers::init(cx);
 
-    let prompt_builder = prompts::PromptBuilder::new(Some(PromptOverrideContext {
-        dev_mode,
+    let prompt_builder = prompts::PromptBuilder::new(Some(PromptLoadingParams {
         fs: fs.clone(),
+        repo_path: stdout_is_a_pty
+            .then(|| std::env::current_dir().log_err())
+            .flatten(),
         cx,
     }))
     .log_err()
@@ -367,7 +363,7 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
 
     if let Some(prompt_builder) = prompt_builder {
         slash_command_registry.register_command(
-            workflow_command::WorkflowSlashCommand::new(prompt_builder),
+            workflow_command::WorkflowSlashCommand::new(prompt_builder.clone()),
             true,
         );
     }

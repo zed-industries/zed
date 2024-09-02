@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandOutput,
+    SlashCommandOutputSection,
 };
 use collections::HashMap;
 use context_servers::{
@@ -8,9 +9,10 @@ use context_servers::{
     protocol::PromptInfo,
 };
 use gpui::{Task, WeakView, WindowContext};
-use language::LspAdapterDelegate;
+use language::{CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use text::LineEnding;
 use ui::{IconName, SharedString};
 use workspace::Workspace;
 
@@ -50,12 +52,57 @@ impl SlashCommand for ContextServerSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _arguments: &[String],
+        arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
-        Task::ready(Ok(Vec::new()))
+        let server_id = self.server_id.clone();
+        let prompt_name = self.prompt.name.clone();
+        let manager = ContextServerManager::global(cx);
+        let manager = manager.read(cx);
+
+        let (arg_name, arg_val) = match completion_argument(&self.prompt, arguments) {
+            Ok(tp) => tp,
+            Err(e) => {
+                return Task::ready(Err(e));
+            }
+        };
+        if let Some(server) = manager.get_server(&server_id) {
+            cx.foreground_executor().spawn(async move {
+                let Some(protocol) = server.client.read().clone() else {
+                    return Err(anyhow!("Context server not initialized"));
+                };
+
+                let completion_result = protocol
+                    .completion(
+                        context_servers::types::CompletionReference::Prompt(
+                            context_servers::types::PromptReference {
+                                r#type: context_servers::types::PromptReferenceType::Prompt,
+                                name: prompt_name,
+                            },
+                        ),
+                        arg_name,
+                        arg_val,
+                    )
+                    .await?;
+
+                let completions = completion_result
+                    .values
+                    .into_iter()
+                    .map(|value| ArgumentCompletion {
+                        label: CodeLabel::plain(value.clone(), None),
+                        new_text: value,
+                        after_completion: AfterCompletion::Continue,
+                        replace_previous_arguments: false,
+                    })
+                    .collect();
+
+                Ok(completions)
+            })
+        } else {
+            Task::ready(Err(anyhow!("Context server not found")))
+        }
     }
 
     fn run(
@@ -67,7 +114,11 @@ impl SlashCommand for ContextServerSlashCommand {
     ) -> Task<Result<SlashCommandOutput>> {
         let server_id = self.server_id.clone();
         let prompt_name = self.prompt.name.clone();
-        let argument = arguments.first().cloned();
+
+        let prompt_args = match prompt_arguments(&self.prompt, arguments) {
+            Ok(args) => args,
+            Err(e) => return Task::ready(Err(e)),
+        };
 
         let manager = ContextServerManager::global(cx);
         let manager = manager.read(cx);
@@ -76,18 +127,23 @@ impl SlashCommand for ContextServerSlashCommand {
                 let Some(protocol) = server.client.read().clone() else {
                     return Err(anyhow!("Context server not initialized"));
                 };
+                let result = protocol.run_prompt(&prompt_name, prompt_args).await?;
+                let mut prompt = result.prompt;
 
-                let result = protocol
-                    .run_prompt(&prompt_name, prompt_arguments(&self.prompt, argument)?)
-                    .await?;
+                // We must normalize the line endings here, since servers might return CR characters.
+                LineEnding::normalize(&mut prompt);
 
                 Ok(SlashCommandOutput {
                     sections: vec![SlashCommandOutputSection {
-                        range: 0..result.len(),
+                        range: 0..(prompt.len()),
                         icon: IconName::ZedAssistant,
-                        label: SharedString::from(format!("Result from {}", prompt_name)),
+                        label: SharedString::from(
+                            result
+                                .description
+                                .unwrap_or(format!("Result from {}", prompt_name)),
+                        ),
                     }],
-                    text: result,
+                    text: prompt,
                     run_commands_in_text: false,
                 })
             })
@@ -97,19 +153,43 @@ impl SlashCommand for ContextServerSlashCommand {
     }
 }
 
-fn prompt_arguments(
-    prompt: &PromptInfo,
-    argument: Option<String>,
-) -> Result<HashMap<String, String>> {
+fn completion_argument(prompt: &PromptInfo, arguments: &[String]) -> Result<(String, String)> {
+    if arguments.is_empty() {
+        return Err(anyhow!("No arguments given"));
+    }
+
     match &prompt.arguments {
-        Some(args) if args.len() >= 2 => Err(anyhow!(
+        Some(args) if args.len() == 1 => {
+            let arg_name = args[0].name.clone();
+            let arg_value = arguments.join(" ");
+            Ok((arg_name, arg_value))
+        }
+        Some(_) => Err(anyhow!("Prompt must have exactly one argument")),
+        None => Err(anyhow!("Prompt has no arguments")),
+    }
+}
+
+fn prompt_arguments(prompt: &PromptInfo, arguments: &[String]) -> Result<HashMap<String, String>> {
+    match &prompt.arguments {
+        Some(args) if args.len() > 1 => Err(anyhow!(
             "Prompt has more than one argument, which is not supported"
         )),
-        Some(args) if args.len() == 1 => match argument {
-            Some(value) => Ok(HashMap::from_iter([(args[0].name.clone(), value)])),
-            None => Err(anyhow!("Prompt expects argument but none given")),
-        },
-        Some(_) | None => Ok(HashMap::default()),
+        Some(args) if args.len() == 1 => {
+            if !arguments.is_empty() {
+                let mut map = HashMap::default();
+                map.insert(args[0].name.clone(), arguments.join(" "));
+                Ok(map)
+            } else {
+                Err(anyhow!("Prompt expects argument but none given"))
+            }
+        }
+        Some(_) | None => {
+            if arguments.is_empty() {
+                Ok(HashMap::default())
+            } else {
+                Err(anyhow!("Prompt expects no arguments but some were given"))
+            }
+        }
     }
 }
 

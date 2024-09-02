@@ -639,14 +639,13 @@ impl Peer {
 
     pub fn respond_with_unhandled_message(
         &self,
-        envelope: Box<dyn AnyTypedEnvelope>,
+        sender_id: ConnectionId,
+        request_message_id: u32,
+        message_type_name: &'static str,
     ) -> Result<()> {
-        let connection = self.connection_state(envelope.sender_id().into())?;
+        let connection = self.connection_state(sender_id)?;
         let response = ErrorCode::Internal
-            .message(format!(
-                "message {} was not handled",
-                envelope.payload_type_name()
-            ))
+            .message(format!("message {} was not handled", message_type_name))
             .to_proto();
         let message_id = connection
             .next_message_id
@@ -655,7 +654,7 @@ impl Peer {
             .outgoing_tx
             .unbounded_send(proto::Message::Envelope(response.into_envelope(
                 message_id,
-                Some(envelope.message_id()),
+                Some(request_message_id),
                 None,
             )))?;
         Ok(())

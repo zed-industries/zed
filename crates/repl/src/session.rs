@@ -1,9 +1,9 @@
 use crate::components::KernelListItem;
+use crate::KernelStatus;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
 };
-use crate::{stdio, KernelStatus};
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -31,10 +31,12 @@ use theme::ActiveTheme;
 use ui::{prelude::*, IconButtonShape, Tooltip};
 
 pub struct Session {
+    fs: Arc<dyn Fs>,
     editor: WeakView<Editor>,
     pub kernel: Kernel,
     blocks: HashMap<String, EditorBlock>,
-    messaging_task: Task<()>,
+    messaging_task: Option<Task<()>>,
+    process_status_task: Option<Task<()>>,
     pub kernel_specification: KernelSpecification,
     telemetry: Arc<Telemetry>,
     _buffer_subscription: Subscription,
@@ -58,7 +60,16 @@ impl EditorBlock {
         on_close: CloseBlockFn,
         cx: &mut ViewContext<Session>,
     ) -> anyhow::Result<Self> {
-        let execution_view = cx.new_view(|cx| ExecutionView::new(status, cx));
+        let editor = editor
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("editor is not open"))?;
+        let workspace = editor
+            .read(cx)
+            .workspace()
+            .ok_or_else(|| anyhow::anyhow!("workspace dropped"))?;
+
+        let execution_view =
+            cx.new_view(|cx| ExecutionView::new(status, workspace.downgrade(), cx));
 
         let (block_id, invalidation_anchor) = editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().clone();
@@ -91,7 +102,7 @@ impl EditorBlock {
 
             let block_id = editor.insert_blocks([block], None, cx)[0];
             (block_id, invalidation_anchor)
-        })?;
+        });
 
         anyhow::Ok(Self {
             code_range,
@@ -113,7 +124,7 @@ impl EditorBlock {
     ) -> RenderBlock {
         let render = move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
-            let text_style = stdio::text_style(cx);
+            let text_style = crate::outputs::plain::text_style(cx);
 
             let gutter = cx.gutter_dimensions;
 
@@ -192,24 +203,50 @@ impl Session {
         kernel_specification: KernelSpecification,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let kernel_language = kernel_specification.kernelspec.language.clone();
+        let subscription = match editor.upgrade() {
+            Some(editor) => {
+                let buffer = editor.read(cx).buffer().clone();
+                cx.subscribe(&buffer, Self::on_buffer_event)
+            }
+            None => Subscription::new(|| {}),
+        };
 
-        telemetry.report_repl_event(
+        let mut session = Self {
+            fs,
+            editor,
+            kernel: Kernel::StartingKernel(Task::ready(()).shared()),
+            messaging_task: None,
+            process_status_task: None,
+            blocks: HashMap::default(),
+            kernel_specification,
+            _buffer_subscription: subscription,
+            telemetry,
+        };
+
+        session.start_kernel(cx);
+        session
+    }
+
+    fn start_kernel(&mut self, cx: &mut ViewContext<Self>) {
+        let kernel_language = self.kernel_specification.kernelspec.language.clone();
+        let entity_id = self.editor.entity_id();
+        let working_directory = self
+            .editor
+            .upgrade()
+            .and_then(|editor| editor.read(cx).working_directory(cx))
+            .unwrap_or_else(temp_dir);
+
+        self.telemetry.report_repl_event(
             kernel_language.clone(),
             KernelStatus::Starting.to_string(),
             cx.entity_id().to_string(),
         );
 
-        let entity_id = editor.entity_id();
-        let working_directory = editor
-            .upgrade()
-            .and_then(|editor| editor.read(cx).working_directory(cx))
-            .unwrap_or_else(temp_dir);
         let kernel = RunningKernel::new(
-            kernel_specification.clone(),
+            self.kernel_specification.clone(),
             entity_id,
             working_directory,
-            fs.clone(),
+            self.fs.clone(),
             cx,
         );
 
@@ -229,6 +266,7 @@ impl Session {
                                 let reader = BufReader::new(stderr.unwrap());
                                 let mut lines = reader.lines();
                                 while let Some(Ok(line)) = lines.next().await {
+                                    // todo!(): Log stdout and stderr to something the session can show
                                     log::error!("kernel: {}", line);
                                 }
                             })
@@ -251,7 +289,7 @@ impl Session {
                             let status = kernel.process.status();
                             session.kernel(Kernel::RunningKernel(kernel), cx);
 
-                            cx.spawn(|session, mut cx| async move {
+                            let process_status_task = cx.spawn(|session, mut cx| async move {
                                 let error_message = match status.await {
                                     Ok(status) => {
                                         if status.success() {
@@ -299,10 +337,11 @@ impl Session {
                                         cx.notify();
                                     })
                                     .ok();
-                            })
-                            .detach();
+                            });
 
-                            session.messaging_task = cx.spawn(|session, mut cx| async move {
+                            session.process_status_task = Some(process_status_task);
+
+                            session.messaging_task = Some(cx.spawn(|session, mut cx| async move {
                                 while let Some(message) = messages_rx.next().await {
                                     session
                                         .update(&mut cx, |session, cx| {
@@ -310,9 +349,9 @@ impl Session {
                                         })
                                         .ok();
                                 }
-                            });
+                            }));
 
-                            // todo!(@rgbkrk): send kernelinforequest once our shell channel read/writes are split
+                            // todo!(@rgbkrk): send KernelInfoRequest once our shell channel read/writes are split
                             // cx.spawn(|this, mut cx| async move {
                             //     cx.background_executor()
                             //         .timer(Duration::from_millis(120))
@@ -336,23 +375,8 @@ impl Session {
             })
             .shared();
 
-        let subscription = match editor.upgrade() {
-            Some(editor) => {
-                let buffer = editor.read(cx).buffer().clone();
-                cx.subscribe(&buffer, Self::on_buffer_event)
-            }
-            None => Subscription::new(|| {}),
-        };
-
-        return Self {
-            editor,
-            kernel: Kernel::StartingKernel(pending_kernel),
-            messaging_task: Task::ready(()),
-            blocks: HashMap::default(),
-            kernel_specification,
-            _buffer_subscription: subscription,
-            telemetry,
-        };
+        self.kernel(Kernel::StartingKernel(pending_kernel), cx);
+        cx.notify();
     }
 
     fn on_buffer_event(
@@ -453,6 +477,7 @@ impl Session {
             .ok();
 
         let status = match &self.kernel {
+            Kernel::Restarting => ExecutionStatus::Restarting,
             Kernel::RunningKernel(_) => ExecutionStatus::Queued,
             Kernel::StartingKernel(_) => ExecutionStatus::ConnectingToKernel,
             Kernel::ErroredLaunch(error) => ExecutionStatus::KernelErrored(error.clone()),
@@ -615,6 +640,12 @@ impl Session {
                     // Give the kernel a bit of time to clean up
                     cx.background_executor().timer(Duration::from_secs(3)).await;
 
+                    this.update(&mut cx, |session, _cx| {
+                        session.messaging_task.take();
+                        session.process_status_task.take();
+                    })
+                    .ok();
+
                     kernel.process.kill().ok();
 
                     this.update(&mut cx, |session, cx| {
@@ -626,11 +657,59 @@ impl Session {
                 })
                 .detach();
             }
-            Kernel::StartingKernel(_kernel) => {
-                self.kernel = Kernel::Shutdown;
+            _ => {
+                self.messaging_task.take();
+                self.process_status_task.take();
+                self.kernel(Kernel::Shutdown, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn restart(&mut self, cx: &mut ViewContext<Self>) {
+        let kernel = std::mem::replace(&mut self.kernel, Kernel::Restarting);
+
+        match kernel {
+            Kernel::Restarting => {
+                // Do nothing if already restarting
+            }
+            Kernel::RunningKernel(mut kernel) => {
+                let mut request_tx = kernel.request_tx.clone();
+
+                cx.spawn(|this, mut cx| async move {
+                    // Send shutdown request with restart flag
+                    log::debug!("restarting kernel");
+                    let message: JupyterMessage = ShutdownRequest { restart: true }.into();
+                    request_tx.try_send(message).ok();
+
+                    this.update(&mut cx, |session, _cx| {
+                        session.messaging_task.take();
+                        session.process_status_task.take();
+                    })
+                    .ok();
+
+                    // Wait for kernel to shutdown
+                    cx.background_executor().timer(Duration::from_secs(1)).await;
+
+                    // Force kill the kernel if it hasn't shut down
+                    kernel.process.kill().ok();
+
+                    // Start a new kernel
+                    this.update(&mut cx, |session, cx| {
+                        // todo!(): Differentiate between restart and restart+clear-outputs
+                        session.clear_outputs(cx);
+                        session.start_kernel(cx);
+                    })
+                    .ok();
+                })
+                .detach();
             }
             _ => {
-                self.kernel = Kernel::Shutdown;
+                // If it's not already running, we can just clean up and start a new kernel
+                self.messaging_task.take();
+                self.process_status_task.take();
+                self.clear_outputs(cx);
+                self.start_kernel(cx);
             }
         }
         cx.notify();
@@ -663,6 +742,7 @@ impl Render for Session {
             Kernel::ErroredLaunch(err) => (Some(format!("Error: {err}")), None),
             Kernel::ShuttingDown => (Some("Shutting Down".into()), None),
             Kernel::Shutdown => (Some("Shutdown".into()), None),
+            Kernel::Restarting => (Some("Restarting".into()), None),
         };
 
         KernelListItem::new(self.kernel_specification.clone())
@@ -675,6 +755,7 @@ impl Render for Session {
                 Kernel::ErroredLaunch(_) => Color::Error,
                 Kernel::ShuttingDown => Color::Modified,
                 Kernel::Shutdown => Color::Disabled,
+                Kernel::Restarting => Color::Modified,
             })
             .child(Label::new(self.kernel_specification.name.clone()))
             .children(status_text.map(|status_text| Label::new(format!("({status_text})"))))

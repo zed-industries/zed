@@ -1,14 +1,17 @@
 mod supported_countries;
 
 use anyhow::{anyhow, Context, Result};
+use chrono::{DateTime, Utc};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
+use isahc::http::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use std::{pin::Pin, str::FromStr};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
+use util::ResultExt as _;
 
 pub use supported_countries::*;
 
@@ -38,10 +41,13 @@ pub enum Model {
     Custom {
         name: String,
         max_tokens: usize,
+        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        display_name: Option<String>,
         /// Override this model with a different Anthropic model for tool calls.
         tool_override: Option<String>,
         /// Indicates whether this custom model supports caching.
         cache_configuration: Option<AnthropicModelCacheConfiguration>,
+        max_output_tokens: Option<u32>,
     },
 }
 
@@ -76,7 +82,9 @@ impl Model {
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
-            Self::Custom { name, .. } => name,
+            Self::Custom {
+                name, display_name, ..
+            } => display_name.as_ref().unwrap_or(name),
         }
     }
 
@@ -102,6 +110,16 @@ impl Model {
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => 200_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
+        }
+    }
+
+    pub fn max_output_tokens(&self) -> u32 {
+        match self {
+            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
+            Self::Claude3_5Sonnet => 8_192,
+            Self::Custom {
+                max_output_tokens, ..
+            } => max_output_tokens.unwrap_or(4_096),
         }
     }
 
@@ -131,7 +149,7 @@ pub async fn complete(
         .header("Anthropic-Version", "2023-06-01")
         .header(
             "Anthropic-Beta",
-            "tools-2024-04-04,prompt-caching-2024-07-31",
+            "tools-2024-04-04,prompt-caching-2024-07-31,max-tokens-3-5-sonnet-2024-07-15",
         )
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
@@ -180,6 +198,66 @@ pub async fn stream_completion(
     request: Request,
     low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<Event, AnthropicError>>, AnthropicError> {
+    stream_completion_with_rate_limit_info(client, api_url, api_key, request, low_speed_timeout)
+        .await
+        .map(|output| output.0)
+}
+
+/// https://docs.anthropic.com/en/api/rate-limits#response-headers
+#[derive(Debug)]
+pub struct RateLimitInfo {
+    pub requests_limit: usize,
+    pub requests_remaining: usize,
+    pub requests_reset: DateTime<Utc>,
+    pub tokens_limit: usize,
+    pub tokens_remaining: usize,
+    pub tokens_reset: DateTime<Utc>,
+}
+
+impl RateLimitInfo {
+    fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+        let tokens_limit = get_header("anthropic-ratelimit-tokens-limit", headers)?.parse()?;
+        let requests_limit = get_header("anthropic-ratelimit-requests-limit", headers)?.parse()?;
+        let tokens_remaining =
+            get_header("anthropic-ratelimit-tokens-remaining", headers)?.parse()?;
+        let requests_remaining =
+            get_header("anthropic-ratelimit-requests-remaining", headers)?.parse()?;
+        let requests_reset = get_header("anthropic-ratelimit-requests-reset", headers)?;
+        let tokens_reset = get_header("anthropic-ratelimit-tokens-reset", headers)?;
+        let requests_reset = DateTime::parse_from_rfc3339(requests_reset)?.to_utc();
+        let tokens_reset = DateTime::parse_from_rfc3339(tokens_reset)?.to_utc();
+
+        Ok(Self {
+            requests_limit,
+            tokens_limit,
+            requests_remaining,
+            tokens_remaining,
+            requests_reset,
+            tokens_reset,
+        })
+    }
+}
+
+fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> Result<&'a str, anyhow::Error> {
+    Ok(headers
+        .get(key)
+        .ok_or_else(|| anyhow!("missing header `{key}`"))?
+        .to_str()?)
+}
+
+pub async fn stream_completion_with_rate_limit_info(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+    low_speed_timeout: Option<Duration>,
+) -> Result<
+    (
+        BoxStream<'static, Result<Event, AnthropicError>>,
+        Option<RateLimitInfo>,
+    ),
+    AnthropicError,
+> {
     let request = StreamingRequest {
         base: request,
         stream: true,
@@ -191,7 +269,7 @@ pub async fn stream_completion(
         .header("Anthropic-Version", "2023-06-01")
         .header(
             "Anthropic-Beta",
-            "tools-2024-04-04,prompt-caching-2024-07-31",
+            "tools-2024-04-04,prompt-caching-2024-07-31,max-tokens-3-5-sonnet-2024-07-15",
         )
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
@@ -209,8 +287,9 @@ pub async fn stream_completion(
         .await
         .context("failed to send request to Anthropic")?;
     if response.status().is_success() {
+        let rate_limits = RateLimitInfo::from_headers(response.headers());
         let reader = BufReader::new(response.into_body());
-        Ok(reader
+        let stream = reader
             .lines()
             .filter_map(|line| async move {
                 match line {
@@ -224,7 +303,8 @@ pub async fn stream_completion(
                     Err(error) => Some(Err(AnthropicError::Other(anyhow!(error)))),
                 }
             })
-            .boxed())
+            .boxed();
+        Ok((stream, rate_limits.log_err()))
     } else {
         let mut body = Vec::new();
         response
@@ -250,26 +330,94 @@ pub async fn stream_completion(
     }
 }
 
-pub fn extract_text_from_events(
-    response: impl Stream<Item = Result<Event, AnthropicError>>,
+pub fn extract_content_from_events(
+    events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
 ) -> impl Stream<Item = Result<String, AnthropicError>> {
-    response.filter_map(|response| async move {
-        match response {
-            Ok(response) => match response {
-                Event::ContentBlockStart { content_block, .. } => match content_block {
-                    Content::Text { text, .. } => Some(Ok(text)),
-                    _ => None,
-                },
-                Event::ContentBlockDelta { delta, .. } => match delta {
-                    ContentDelta::TextDelta { text } => Some(Ok(text)),
-                    _ => None,
-                },
-                Event::Error { error } => Some(Err(AnthropicError::ApiError(error))),
-                _ => None,
-            },
-            Err(error) => Some(Err(error)),
-        }
-    })
+    struct State {
+        events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
+        current_tool_use_index: Option<usize>,
+    }
+
+    const INDENT: &str = "  ";
+    const NEWLINE: char = '\n';
+
+    futures::stream::unfold(
+        State {
+            events,
+            current_tool_use_index: None,
+        },
+        |mut state| async move {
+            while let Some(event) = state.events.next().await {
+                match event {
+                    Ok(event) => match event {
+                        Event::ContentBlockStart {
+                            index,
+                            content_block,
+                        } => match content_block {
+                            ResponseContent::Text { text } => {
+                                return Some((Ok(text), state));
+                            }
+                            ResponseContent::ToolUse { id, name, .. } => {
+                                state.current_tool_use_index = Some(index);
+
+                                let mut text = String::new();
+                                text.push(NEWLINE);
+
+                                text.push_str("<tool_use>");
+                                text.push(NEWLINE);
+
+                                text.push_str(INDENT);
+                                text.push_str("<id>");
+                                text.push_str(&id);
+                                text.push_str("</id>");
+                                text.push(NEWLINE);
+
+                                text.push_str(INDENT);
+                                text.push_str("<name>");
+                                text.push_str(&name);
+                                text.push_str("</name>");
+                                text.push(NEWLINE);
+
+                                text.push_str(INDENT);
+                                text.push_str("<input>");
+
+                                return Some((Ok(text), state));
+                            }
+                        },
+                        Event::ContentBlockDelta { index, delta } => match delta {
+                            ContentDelta::TextDelta { text } => {
+                                return Some((Ok(text), state));
+                            }
+                            ContentDelta::InputJsonDelta { partial_json } => {
+                                if Some(index) == state.current_tool_use_index {
+                                    return Some((Ok(partial_json), state));
+                                }
+                            }
+                        },
+                        Event::ContentBlockStop { index } => {
+                            if Some(index) == state.current_tool_use_index.take() {
+                                let mut text = String::new();
+                                text.push_str("</input>");
+                                text.push(NEWLINE);
+                                text.push_str("</tool_use>");
+
+                                return Some((Ok(text), state));
+                            }
+                        }
+                        Event::Error { error } => {
+                            return Some((Err(AnthropicError::ApiError(error)), state));
+                        }
+                        _ => {}
+                    },
+                    Err(err) => {
+                        return Some((Err(err), state));
+                    }
+                }
+            }
+
+            None
+        },
+    )
 }
 
 pub async fn extract_tool_args_from_events(
@@ -283,7 +431,7 @@ pub async fn extract_tool_args_from_events(
             content_block,
         } = event?
         {
-            if let Content::ToolUse { name, .. } = content_block {
+            if let ResponseContent::ToolUse { name, .. } = content_block {
                 if name == tool_name {
                     tool_use_index = Some(index);
                     break;
@@ -331,7 +479,7 @@ pub struct CacheControl {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
-    pub content: Vec<Content>,
+    pub content: Vec<RequestContent>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -343,7 +491,7 @@ pub enum Role {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum Content {
+pub enum RequestContent {
     #[serde(rename = "text")]
     Text {
         text: String,
@@ -364,12 +512,18 @@ pub enum Content {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
-    #[serde(rename = "tool_result")]
-    ToolResult {
-        tool_use_id: String,
-        content: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cache_control: Option<CacheControl>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ResponseContent {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
     },
 }
 
@@ -445,7 +599,7 @@ pub struct Response {
     #[serde(rename = "type")]
     pub response_type: String,
     pub role: Role,
-    pub content: Vec<Content>,
+    pub content: Vec<ResponseContent>,
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<String>,
@@ -462,7 +616,7 @@ pub enum Event {
     #[serde(rename = "content_block_start")]
     ContentBlockStart {
         index: usize,
-        content_block: Content,
+        content_block: ResponseContent,
     },
     #[serde(rename = "content_block_delta")]
     ContentBlockDelta { index: usize, delta: ContentDelta },

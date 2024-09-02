@@ -266,11 +266,11 @@ pub fn init(cx: &mut AppContext) {
 
             log::trace!("servers_to_add={:?}", servers_to_add);
             for config in servers_to_add {
-                manager.add_server(config, cx).detach();
+                manager.add_server(config, cx).detach_and_log_err(cx);
             }
 
             for id in servers_to_remove {
-                manager.remove_server(&id, cx).detach();
+                manager.remove_server(&id, cx).detach_and_log_err(cx);
             }
         })
     })

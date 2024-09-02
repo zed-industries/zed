@@ -54,6 +54,10 @@ pub struct LanguageModelCacheConfiguration {
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
+    /// If None, falls back to [LanguageModelProvider::icon]
+    fn icon(&self) -> Option<IconName> {
+        None
+    }
     fn provider_id(&self) -> LanguageModelProviderId;
     fn provider_name(&self) -> LanguageModelProviderName;
     fn telemetry_id(&self) -> String;
@@ -64,6 +68,9 @@ pub trait LanguageModel: Send + Sync {
     }
 
     fn max_token_count(&self) -> usize;
+    fn max_output_tokens(&self) -> Option<u32> {
+        None
+    }
 
     fn count_tokens(
         &self,

@@ -180,6 +180,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
         let model = match self.model {
+            CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
             CopilotChatModel::Gpt4 => open_ai::Model::Four,
             CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
         };
@@ -319,7 +320,7 @@ impl Render for ConfigurationView {
                     |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
                 );
 
-            const ERROR_LABEL: &str = "Copilot Chat requires the Copilot plugin to be available and running. Please ensure Copilot is running and try again, or use a different Assistant provider.";
+            const ERROR_LABEL: &str = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different Assistant provider.";
 
             match &self.copilot_status {
                 Some(status) => match status {

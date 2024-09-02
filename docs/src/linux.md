@@ -33,7 +33,7 @@ There are several third-party Zed packages for various Linux distributions and p
 - Arch: [`zed`](https://archlinux.org/packages/extra/x86_64/zed/)
 - Arch (AUR): [`zed-git`](https://aur.archlinux.org/packages/zed-git), [`zed-preview`](https://aur.archlinux.org/packages/zed-preview), [`zed-preview-bin`](https://aur.archlinux.org/packages/zed-preview-bin)
 - Alpine: `zed` ([aarch64](https://pkgs.alpinelinux.org/package/edge/testing/aarch64/zed)) ([x86_64](https://pkgs.alpinelinux.org/package/edge/testing/x86_64/zed))
-- Nix: `zed-editor` ([stable](https://search.nixos.org/packages?show=zed-editor)), ([unstable](https://search.nixos.org/packages?channel=unstable&show=zed-editor))
+- Nix: `zed-editor` ([unstable](https://search.nixos.org/packages?channel=unstable&show=zed-editor))
 - Fedora/Ultramarine (Terra): [`zed`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/stable), [`zed-preview`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/preview), [`zed-nightly`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/nightly)
 - Solus: [`zed`](https://github.com/getsolus/packages/tree/main/packages/z/zed)
 - Parabola: [`zed`](https://www.parabola.nu/packages/extra/x86_64/zed/)

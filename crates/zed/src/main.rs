@@ -8,6 +8,7 @@ mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
 use assistant::PromptBuilder;
+use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, DevServerToken, UserStore};
@@ -44,6 +45,7 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
+use time::UtcOffset;
 use util::{maybe, parse_env_output, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
@@ -266,6 +268,7 @@ fn init_ui(
     welcome::init(cx);
     settings_ui::init(cx);
     extensions_ui::init(cx);
+    performance::init(cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -315,6 +318,7 @@ fn init_ui(
 }
 
 fn main() {
+    let start_time = std::time::Instant::now();
     menu::init();
     zed_actions::init();
 
@@ -326,7 +330,9 @@ fn main() {
     init_logger();
 
     log::info!("========== starting zed ==========");
-    let app = App::new().with_assets(Assets);
+    let app = App::new()
+        .with_assets(Assets)
+        .measure_time_to_first_window_draw(start_time);
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()
@@ -354,9 +360,19 @@ fn main() {
             }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+
+    #[cfg(target_os = "windows")]
     {
-        use zed::only_instance::*;
+        use zed::windows_only_instance::*;
+        if !check_single_instance() {
+            println!("zed is already running");
+            return;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use zed::mac_only_instance::*;
         if ensure_only_instance() != IsOnlyInstance::Yes {
             println!("zed is already running");
             return;
@@ -768,7 +784,7 @@ async fn restore_or_create_workspace(
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {
         cx.update(|cx| {
-            workspace::open_new(app_state, cx, |workspace, cx| {
+            workspace::open_new(Default::default(), app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
         })?
@@ -882,7 +898,10 @@ fn init_logger() {
                 let mut config_builder = ConfigBuilder::new();
 
                 config_builder.set_time_format_rfc3339();
-                config_builder.set_time_offset_to_local().log_err();
+                let local_offset = chrono::Local::now().offset().fix().local_minus_utc();
+                if let Ok(offset) = UtcOffset::from_whole_seconds(local_offset) {
+                    config_builder.set_time_offset(offset);
+                }
 
                 #[cfg(target_os = "linux")]
                 {
@@ -1053,7 +1072,10 @@ struct Args {
 
 fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
     match std::fs::canonicalize(Path::new(&arg)) {
-        Ok(path) => Ok(format!("file://{}", path.to_string_lossy())),
+        Ok(path) => Ok(format!(
+            "file://{}",
+            path.to_string_lossy().trim_start_matches(r#"\\?\"#)
+        )),
         Err(error) => {
             if arg.starts_with("file://")
                 || arg.starts_with("zed-cli://")

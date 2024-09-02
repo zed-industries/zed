@@ -5,7 +5,7 @@ use gpui::{
     HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
     LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
     Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UnderlineStyle, View, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    UTF16Selection, UnderlineStyle, View, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -211,7 +211,7 @@ impl TerminalElement {
         let mut cur_rect: Option<LayoutRect> = None;
         let mut cur_alac_color = None;
 
-        let linegroups = grid.into_iter().group_by(|i| i.point.line);
+        let linegroups = grid.into_iter().chunk_by(|i| i.point.line);
         for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
             for cell in line {
                 let mut fg = cell.fg;
@@ -667,6 +667,7 @@ impl Element for TerminalElement {
                     line_height: line_height.into(),
                     background_color: Some(theme.colors().terminal_background),
                     white_space: WhiteSpace::Normal,
+                    truncate: None,
                     // These are going to be overridden per-cell
                     underline: None,
                     strikethrough: None,
@@ -975,7 +976,11 @@ struct TerminalInputHandler {
 }
 
 impl InputHandler for TerminalInputHandler {
-    fn selected_text_range(&mut self, cx: &mut WindowContext) -> Option<std::ops::Range<usize>> {
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        cx: &mut WindowContext,
+    ) -> Option<UTF16Selection> {
         if self
             .terminal
             .read(cx)
@@ -985,7 +990,10 @@ impl InputHandler for TerminalInputHandler {
         {
             None
         } else {
-            Some(0..0)
+            Some(UTF16Selection {
+                range: 0..0,
+                reversed: false,
+            })
         }
     }
 
@@ -1013,6 +1021,8 @@ impl InputHandler for TerminalInputHandler {
 
         self.workspace
             .update(cx, |this, cx| {
+                cx.invalidate_character_coordinates();
+
                 let telemetry = this.project().read(cx).client().telemetry().clone();
                 telemetry.log_edit_event("terminal");
             })

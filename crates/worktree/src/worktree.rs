@@ -38,10 +38,12 @@ use postage::{
 };
 use rpc::proto::{self, AnyProtoClient};
 use settings::{Settings, SettingsLocation, SettingsStore};
+use smallvec::{smallvec, SmallVec};
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
-    cmp::{self, Ordering},
+    cmp::Ordering,
+    collections::hash_map,
     convert::TryFrom,
     ffi::OsStr,
     fmt,
@@ -123,7 +125,7 @@ pub struct LocalWorktree {
 
 struct ScanRequest {
     relative_paths: Vec<Arc<Path>>,
-    done: barrier::Sender,
+    done: SmallVec<[barrier::Sender; 1]>,
 }
 
 pub struct RemoteWorktree {
@@ -299,7 +301,7 @@ struct BackgroundScannerState {
     /// as part of the current update. These entry ids may be re-used
     /// if the same inode is discovered at a new path, or if the given
     /// path is re-created after being deleted.
-    removed_entry_ids: HashMap<(u64, SystemTime), ProjectEntryId>,
+    removed_entries: HashMap<u64, Entry>,
     changed_paths: Vec<Arc<Path>>,
     prev_snapshot: Snapshot,
 }
@@ -338,7 +340,7 @@ enum ScanState {
     Updated {
         snapshot: LocalSnapshot,
         changes: UpdatedEntriesSet,
-        barrier: Option<barrier::Sender>,
+        barrier: SmallVec<[barrier::Sender; 1]>,
         scanning: bool,
     },
 }
@@ -743,8 +745,29 @@ impl Worktree {
             Worktree::Local(this) => this.delete_entry(entry_id, trash, cx),
             Worktree::Remote(this) => this.delete_entry(entry_id, trash, cx),
         }?;
-        cx.emit(Event::DeletedEntry(entry_id));
+
+        let entry = match self {
+            Worktree::Local(ref this) => this.entry_for_id(entry_id),
+            Worktree::Remote(ref this) => this.entry_for_id(entry_id),
+        }?;
+
+        let mut ids = vec![entry_id];
+        let path = &*entry.path;
+
+        self.get_children_ids_recursive(path, &mut ids);
+
+        for id in ids {
+            cx.emit(Event::DeletedEntry(id));
+        }
         Some(task)
+    }
+
+    fn get_children_ids_recursive(&self, path: &Path, ids: &mut Vec<ProjectEntryId>) {
+        let children_iter = self.child_entries(path);
+        for child in children_iter {
+            ids.push(child.id);
+            self.get_children_ids_recursive(&child.path, ids);
+        }
     }
 
     pub fn rename_entry(
@@ -763,16 +786,26 @@ impl Worktree {
     pub fn copy_entry(
         &mut self,
         entry_id: ProjectEntryId,
+        relative_worktree_source_path: Option<PathBuf>,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Entry>>> {
         let new_path = new_path.into();
         match self {
-            Worktree::Local(this) => this.copy_entry(entry_id, new_path, cx),
+            Worktree::Local(this) => {
+                this.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
+            }
             Worktree::Remote(this) => {
+                let relative_worktree_source_path =
+                    if let Some(relative_worktree_source_path) = relative_worktree_source_path {
+                        Some(relative_worktree_source_path.to_string_lossy().into())
+                    } else {
+                        None
+                    };
                 let response = this.client.request(proto::CopyProjectEntry {
                     project_id: this.project_id,
                     entry_id: entry_id.to_proto(),
+                    relative_worktree_source_path,
                     new_path: new_path.to_string_lossy().into(),
                 });
                 cx.spawn(move |this, mut cx| async move {
@@ -925,10 +958,18 @@ impl Worktree {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
+            let relative_worktree_source_path = if let Some(relative_worktree_source_path) =
+                request.relative_worktree_source_path
+            {
+                Some(PathBuf::from(relative_worktree_source_path))
+            } else {
+                None
+            };
             (
                 this.scan_id(),
                 this.copy_entry(
                     ProjectEntryId::from_proto(request.entry_id),
+                    relative_worktree_source_path,
                     PathBuf::from(request.new_path),
                     cx,
                 ),
@@ -1001,7 +1042,7 @@ impl LocalWorktree {
                         scanned_dirs: Default::default(),
                         path_prefixes_to_scan: Default::default(),
                         paths_to_scan: Default::default(),
-                        removed_entry_ids: Default::default(),
+                        removed_entries: Default::default(),
                         changed_paths: Default::default(),
                     }),
                     phase: BackgroundScannerPhase::InitialScan,
@@ -1506,6 +1547,7 @@ impl LocalWorktree {
     fn copy_entry(
         &self,
         entry_id: ProjectEntryId,
+        relative_worktree_source_path: Option<PathBuf>,
         new_path: impl Into<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Option<Entry>>> {
@@ -1514,7 +1556,12 @@ impl LocalWorktree {
             None => return Task::ready(Ok(None)),
         };
         let new_path = new_path.into();
-        let abs_old_path = self.absolutize(&old_path);
+        let abs_old_path =
+            if let Some(relative_worktree_source_path) = relative_worktree_source_path {
+                Ok(self.abs_path().join(relative_worktree_source_path))
+            } else {
+                self.absolutize(&old_path)
+            };
         let abs_new_path = self.absolutize(&new_path);
         let fs = self.fs.clone();
         let copy = cx.background_executor().spawn(async move {
@@ -1637,7 +1684,7 @@ impl LocalWorktree {
         self.scan_requests_tx
             .try_send(ScanRequest {
                 relative_paths: paths,
-                done: tx,
+                done: smallvec![tx],
             })
             .ok();
         rx
@@ -2616,6 +2663,26 @@ impl LocalSnapshot {
     }
 
     #[cfg(test)]
+    fn check_git_invariants(&self) {
+        let dotgit_paths = self
+            .git_repositories
+            .iter()
+            .map(|repo| repo.1.git_dir_path.clone())
+            .collect::<HashSet<_>>();
+        let work_dir_paths = self
+            .repository_entries
+            .iter()
+            .map(|repo| repo.0.clone().0)
+            .collect::<HashSet<_>>();
+        assert_eq!(dotgit_paths.len(), work_dir_paths.len());
+        assert_eq!(self.repository_entries.iter().count(), work_dir_paths.len());
+        assert_eq!(self.git_repositories.iter().count(), work_dir_paths.len());
+        for (_, entry) in self.repository_entries.iter() {
+            self.git_repositories.get(&entry.work_directory).unwrap();
+        }
+    }
+
+    #[cfg(test)]
     pub fn entries_without_ids(&self, include_ignored: bool) -> Vec<(&Path, u64, bool)> {
         let mut paths = Vec::new();
         for entry in self.entries_by_path.cursor::<()>() {
@@ -2657,7 +2724,7 @@ impl BackgroundScannerState {
                             work_directory: workdir_path,
                             statuses: repo
                                 .repo_ptr
-                                .statuses(&repo_path)
+                                .status(&[repo_path.0])
                                 .log_err()
                                 .unwrap_or_default(),
                         });
@@ -2683,8 +2750,17 @@ impl BackgroundScannerState {
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
         if let Some(mtime) = entry.mtime {
-            if let Some(removed_entry_id) = self.removed_entry_ids.remove(&(entry.inode, mtime)) {
-                entry.id = removed_entry_id;
+            // If an entry with the same inode was removed from the worktree during this scan,
+            // then it *might* represent the same file or directory. But the OS might also have
+            // re-used the inode for a completely different file or directory.
+            //
+            // Conditionally reuse the old entry's id:
+            // * if the mtime is the same, the file was probably been renamed.
+            // * if the path is the same, the file may just have been updated
+            if let Some(removed_entry) = self.removed_entries.remove(&entry.inode) {
+                if removed_entry.mtime == Some(mtime) || removed_entry.path == entry.path {
+                    entry.id = removed_entry.id;
+                }
             } else if let Some(existing_entry) = self.snapshot.entry_for_path(&entry.path) {
                 entry.id = existing_entry.id;
             }
@@ -2776,29 +2852,46 @@ impl BackgroundScannerState {
         }
         self.snapshot.entries_by_path = new_entries;
 
-        let mut entries_by_id_edits = Vec::new();
+        let mut removed_ids = Vec::with_capacity(removed_entries.summary().count);
         for entry in removed_entries.cursor::<()>() {
-            if let Some(mtime) = entry.mtime {
-                let removed_entry_id = self
-                    .removed_entry_ids
-                    .entry((entry.inode, mtime))
-                    .or_insert(entry.id);
-                *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
+            match self.removed_entries.entry(entry.inode) {
+                hash_map::Entry::Occupied(mut e) => {
+                    let prev_removed_entry = e.get_mut();
+                    if entry.id > prev_removed_entry.id {
+                        *prev_removed_entry = entry.clone();
+                    }
+                }
+                hash_map::Entry::Vacant(e) => {
+                    e.insert(entry.clone());
+                }
             }
-            entries_by_id_edits.push(Edit::Remove(entry.id));
-        }
-        self.snapshot.entries_by_id.edit(entries_by_id_edits, &());
 
-        if path.file_name() == Some(&GITIGNORE) {
-            let abs_parent_path = self.snapshot.abs_path.join(path.parent().unwrap());
-            if let Some((_, needs_update)) = self
-                .snapshot
-                .ignores_by_parent_abs_path
-                .get_mut(abs_parent_path.as_path())
-            {
-                *needs_update = true;
+            if entry.path.file_name() == Some(&GITIGNORE) {
+                let abs_parent_path = self.snapshot.abs_path.join(entry.path.parent().unwrap());
+                if let Some((_, needs_update)) = self
+                    .snapshot
+                    .ignores_by_parent_abs_path
+                    .get_mut(abs_parent_path.as_path())
+                {
+                    *needs_update = true;
+                }
+            }
+
+            if let Err(ix) = removed_ids.binary_search(&entry.id) {
+                removed_ids.insert(ix, entry.id);
             }
         }
+
+        self.snapshot.entries_by_id.edit(
+            removed_ids.iter().map(|&id| Edit::Remove(id)).collect(),
+            &(),
+        );
+        self.snapshot
+            .git_repositories
+            .retain(|id, _| removed_ids.binary_search(&id).is_err());
+        self.snapshot
+            .repository_entries
+            .retain(|repo_path, _| !repo_path.0.starts_with(path));
 
         #[cfg(test)]
         self.snapshot.check_invariants(false);
@@ -3165,6 +3258,7 @@ pub struct Entry {
     /// Whether this entry is considered to be a `.env` file.
     pub is_private: bool,
     pub char_bag: CharBag,
+    pub is_fifo: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -3225,6 +3319,7 @@ impl Entry {
             is_private: false,
             git_status: None,
             char_bag,
+            is_fifo: metadata.is_fifo,
         }
     }
 
@@ -3498,7 +3593,7 @@ impl BackgroundScanner {
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
 
-        self.send_status_update(false, None);
+        self.send_status_update(false, SmallVec::new());
 
         // Process any any FS events that occurred while performing the initial scan.
         // For these events, update events cannot be as precise, because we didn't
@@ -3518,7 +3613,7 @@ impl BackgroundScanner {
             select_biased! {
                 // Process any path refresh requests from the worktree. Prioritize
                 // these before handling changes reported by the filesystem.
-                request = self.scan_requests_rx.recv().fuse() => {
+                request = self.next_scan_request().fuse() => {
                     let Ok(request) = request else { break };
                     if !self.process_scan_request(request, false).await {
                         return;
@@ -3599,7 +3694,7 @@ impl BackgroundScanner {
         )
         .await;
 
-        self.send_status_update(scanning, Some(request.done))
+        self.send_status_update(scanning, request.done)
     }
 
     async fn process_events(&mut self, mut abs_paths: Vec<PathBuf>) {
@@ -3699,12 +3794,15 @@ impl BackgroundScanner {
         {
             let mut state = self.state.lock();
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
-            for (_, entry_id) in mem::take(&mut state.removed_entry_ids) {
-                state.scanned_dirs.remove(&entry_id);
+            for (_, entry) in mem::take(&mut state.removed_entries) {
+                state.scanned_dirs.remove(&entry.id);
             }
         }
 
-        self.send_status_update(false, None);
+        #[cfg(test)]
+        self.state.lock().snapshot.check_git_invariants();
+
+        self.send_status_update(false, SmallVec::new());
     }
 
     async fn forcibly_load_paths(&self, paths: &[Arc<Path>]) -> bool {
@@ -3761,7 +3859,7 @@ impl BackgroundScanner {
                             select_biased! {
                                 // Process any path refresh requests before moving on to process
                                 // the scan queue, so that user operations are prioritized.
-                                request = self.scan_requests_rx.recv().fuse() => {
+                                request = self.next_scan_request().fuse() => {
                                     let Ok(request) = request else { break };
                                     if !self.process_scan_request(request, true).await {
                                         return;
@@ -3780,7 +3878,7 @@ impl BackgroundScanner {
                                     ) {
                                         Ok(_) => {
                                             last_progress_update_count += 1;
-                                            self.send_status_update(true, None);
+                                            self.send_status_update(true, SmallVec::new());
                                         }
                                         Err(count) => {
                                             last_progress_update_count = count;
@@ -3806,7 +3904,7 @@ impl BackgroundScanner {
             .await;
     }
 
-    fn send_status_update(&self, scanning: bool, barrier: Option<barrier::Sender>) -> bool {
+    fn send_status_update(&self, scanning: bool, barrier: SmallVec<[barrier::Sender; 1]>) -> bool {
         let mut state = self.state.lock();
         if state.changed_paths.is_empty() && scanning {
             return true;
@@ -3881,7 +3979,7 @@ impl BackgroundScanner {
                 if let Some((work_directory, repository)) = repo {
                     let t0 = Instant::now();
                     let statuses = repository
-                        .statuses(Path::new(""))
+                        .status(&[PathBuf::from("")])
                         .log_err()
                         .unwrap_or_default();
                     log::trace!("computed git status in {:?}", t0.elapsed());
@@ -4094,6 +4192,32 @@ impl BackgroundScanner {
             }
         }
 
+        // Group all relative paths by their git repository.
+        let mut paths_by_git_repo = HashMap::default();
+        for relative_path in relative_paths.iter() {
+            if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(relative_path) {
+                if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, relative_path) {
+                    paths_by_git_repo
+                        .entry(repo.git_dir_path.clone())
+                        .or_insert_with(|| RepoPaths {
+                            repo: repo.repo_ptr.clone(),
+                            repo_paths: Vec::new(),
+                            relative_paths: Vec::new(),
+                        })
+                        .add_paths(&relative_path, repo_path);
+                }
+            }
+        }
+
+        // Now call `git status` once per repository and collect each file's git status.
+        let mut git_statuses_by_relative_path =
+            paths_by_git_repo
+                .into_values()
+                .fold(HashMap::default(), |mut map, repo_paths| {
+                    map.extend(repo_paths.into_git_file_statuses());
+                    map
+                });
+
         for (path, metadata) in relative_paths.iter().zip(metadata.into_iter()) {
             let abs_path: Arc<Path> = root_abs_path.join(&path).into();
             match metadata {
@@ -4116,19 +4240,10 @@ impl BackgroundScanner {
 
                     let is_dir = fs_entry.is_dir();
                     fs_entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, is_dir);
-
                     fs_entry.is_external = is_external;
                     fs_entry.is_private = self.is_path_private(path);
 
-                    if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
-                        if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(path) {
-                            if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, path) {
-                                fs_entry.git_status = repo.repo_ptr.status(&repo_path);
-                            }
-                        }
-                    }
-
-                    if let (Some(scan_queue_tx), true) = (&scan_queue_tx, fs_entry.is_dir()) {
+                    if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
                         if state.should_scan_directory(&fs_entry)
                             || (fs_entry.path.as_os_str().is_empty()
                                 && abs_path.file_name() == Some(*DOT_GIT))
@@ -4139,13 +4254,16 @@ impl BackgroundScanner {
                         }
                     }
 
-                    state.insert_entry(fs_entry, self.fs.as_ref());
+                    if !is_dir && !fs_entry.is_ignored && !fs_entry.is_external {
+                        fs_entry.git_status = git_statuses_by_relative_path.remove(path);
+                    }
+
+                    state.insert_entry(fs_entry.clone(), self.fs.as_ref());
                 }
                 Ok(None) => {
                     self.remove_repo_path(path, &mut state.snapshot);
                 }
                 Err(err) => {
-                    // TODO - create a special 'error' entry in the entries tree to mark this
                     log::error!("error reading file {abs_path:?} on event: {err:#}");
                 }
             }
@@ -4174,9 +4292,6 @@ impl BackgroundScanner {
                 return Some(());
             }
         }
-
-        // TODO statuses
-        // Track when a .git is removed and iterate over the file system there
 
         Some(())
     }
@@ -4242,7 +4357,7 @@ impl BackgroundScanner {
                             select_biased! {
                                 // Process any path refresh requests before moving on to process
                                 // the queue of ignore statuses.
-                                request = self.scan_requests_rx.recv().fuse() => {
+                                request = self.next_scan_request().fuse() => {
                                     let Ok(request) = request else { break };
                                     if !self.process_scan_request(request, true).await {
                                         return;
@@ -4312,7 +4427,12 @@ impl BackgroundScanner {
                 if !entry.is_dir() && !entry.is_ignored && !entry.is_external {
                     if let Some((ref repo_entry, local_repo)) = repo {
                         if let Ok(repo_path) = repo_entry.relativize(&snapshot, &entry.path) {
-                            entry.git_status = local_repo.repo_ptr.status(&repo_path);
+                            let status = local_repo
+                                .repo_ptr
+                                .status(&[repo_path.0.clone()])
+                                .ok()
+                                .and_then(|status| status.get(&repo_path));
+                            entry.git_status = status;
                         }
                     }
                 }
@@ -4451,7 +4571,7 @@ impl BackgroundScanner {
                         select_biased! {
                             // Process any path refresh requests before moving on to process
                             // the queue of git statuses.
-                            request = self.scan_requests_rx.recv().fuse() => {
+                            request = self.next_scan_request().fuse() => {
                                 let Ok(request) = request else { break };
                                 if !self.process_scan_request(request, true).await {
                                     return;
@@ -4469,7 +4589,7 @@ impl BackgroundScanner {
     fn update_git_statuses(&self, job: UpdateGitStatusesJob) {
         log::trace!("updating git statuses for repo {:?}", job.work_directory.0);
         let t0 = Instant::now();
-        let Some(statuses) = job.repository.statuses(Path::new("")).log_err() else {
+        let Some(statuses) = job.repository.status(&[PathBuf::from("")]).log_err() else {
             return;
         };
         log::trace!(
@@ -4658,6 +4778,15 @@ impl BackgroundScanner {
     fn is_path_private(&self, path: &Path) -> bool {
         !self.share_private_files && self.settings.is_path_private(path)
     }
+
+    async fn next_scan_request(&self) -> Result<ScanRequest> {
+        let mut request = self.scan_requests_rx.recv().await?;
+        while let Ok(next_request) = self.scan_requests_rx.try_recv() {
+            request.relative_paths.extend(next_request.relative_paths);
+            request.done.extend(next_request.done);
+        }
+        Ok(request)
+    }
 }
 
 fn swap_to_front(child_paths: &mut Vec<PathBuf>, file: &OsStr) {
@@ -4678,6 +4807,31 @@ fn char_bag_for_path(root_char_bag: CharBag, path: &Path) -> CharBag {
             .map(|c| c.to_ascii_lowercase()),
     );
     result
+}
+
+struct RepoPaths {
+    repo: Arc<dyn GitRepository>,
+    relative_paths: Vec<Arc<Path>>,
+    repo_paths: Vec<PathBuf>,
+}
+
+impl RepoPaths {
+    fn add_paths(&mut self, relative_path: &Arc<Path>, repo_path: RepoPath) {
+        self.relative_paths.push(relative_path.clone());
+        self.repo_paths.push(repo_path.0);
+    }
+
+    fn into_git_file_statuses(self) -> HashMap<Arc<Path>, GitFileStatus> {
+        let mut statuses = HashMap::default();
+        if let Ok(status) = self.repo.status(&self.repo_paths) {
+            for (repo_path, relative_path) in self.repo_paths.into_iter().zip(self.relative_paths) {
+                if let Some(path_status) = status.get(&repo_path) {
+                    statuses.insert(relative_path, path_status);
+                }
+            }
+        }
+        statuses
+    }
 }
 
 struct ScanJob {
@@ -5085,6 +5239,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
             git_status: entry.git_status.map(git_status_to_proto),
+            is_fifo: entry.is_fifo,
         }
     }
 }
@@ -5113,6 +5268,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             is_private: false,
             is_symlink: entry.is_symlink,
             char_bag,
+            is_fifo: entry.is_fifo,
         })
     }
 }

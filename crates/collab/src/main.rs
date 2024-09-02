@@ -1,12 +1,15 @@
 use anyhow::anyhow;
+use axum::headers::HeaderMapExt;
 use axum::{
     extract::MatchedPath,
     http::{Request, Response},
     routing::get,
     Extension, Router,
 };
-use collab::llm::db::LlmDatabase;
+use collab::api::CloudflareIpCountryHeader;
+use collab::llm::{db::LlmDatabase, log_usage_periodically};
 use collab::migrations::run_database_migrations;
+use collab::user_backfiller::spawn_user_backfiller;
 use collab::{api::billing::poll_stripe_events_periodically, llm::LlmState, ServiceMode};
 use collab::{
     api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor,
@@ -95,6 +98,8 @@ async fn main() -> Result<()> {
 
                 let state = LlmState::new(config.clone(), Executor::Production).await?;
 
+                log_usage_periodically(state.clone());
+
                 app = app
                     .merge(collab::llm::routes())
                     .layer(Extension(state.clone()));
@@ -129,6 +134,7 @@ async fn main() -> Result<()> {
                 if mode.is_api() {
                     poll_stripe_events_periodically(state.clone());
                     fetch_extensions_from_blob_store_periodically(state.clone());
+                    spawn_user_backfiller(state.clone());
 
                     app = app
                         .merge(collab::api::events::router())
@@ -146,13 +152,20 @@ async fn main() -> Result<()> {
                             .get::<MatchedPath>()
                             .map(MatchedPath::as_str);
 
+                        let geoip_country_code = request
+                            .headers()
+                            .typed_get::<CloudflareIpCountryHeader>()
+                            .map(|header| header.to_string());
+
                         tracing::info_span!(
                             "http_request",
                             method = ?request.method(),
                             matched_path,
+                            geoip_country_code,
                             user_id = tracing::field::Empty,
                             login = tracing::field::Empty,
-                            authn.jti = tracing::field::Empty
+                            authn.jti = tracing::field::Empty,
+                            is_staff = tracing::field::Empty
                         )
                     })
                     .on_response(
@@ -297,10 +310,7 @@ async fn handle_liveness_probe(
     }
 
     if let Some(llm_state) = llm_state {
-        llm_state
-            .db
-            .get_active_user_count(chrono::Utc::now())
-            .await?;
+        llm_state.db.list_providers().await?;
     }
 
     Ok("ok".to_string())

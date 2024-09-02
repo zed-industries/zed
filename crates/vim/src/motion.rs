@@ -4,20 +4,18 @@ use editor::{
         self, find_boundary, find_preceding_boundary_display_point, FindRange, TextLayoutDetails,
     },
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, RowExt, ToOffset,
+    Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset,
 };
-use gpui::{actions, impl_actions, px, ViewContext, WindowContext};
-use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
+use gpui::{actions, impl_actions, px, ViewContext};
+use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 use std::ops::Range;
-use workspace::Workspace;
 
 use crate::{
-    normal::{mark, normal_motion},
+    normal::mark,
     state::{Mode, Operator},
     surrounds::SurroundsType,
-    visual::visual_motion,
     Vim,
 };
 
@@ -248,214 +246,227 @@ actions!(
     ]
 );
 
-pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-    workspace.register_action(|_: &mut Workspace, _: &Left, cx: _| motion(Motion::Left, cx));
-    workspace
-        .register_action(|_: &mut Workspace, _: &Backspace, cx: _| motion(Motion::Backspace, cx));
-    workspace.register_action(|_: &mut Workspace, action: &Down, cx: _| {
-        motion(
+pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &Left, cx| vim.motion(Motion::Left, cx));
+    Vim::action(editor, cx, |vim, _: &Backspace, cx| {
+        vim.motion(Motion::Backspace, cx)
+    });
+    Vim::action(editor, cx, |vim, action: &Down, cx| {
+        vim.motion(
             Motion::Down {
                 display_lines: action.display_lines,
             },
             cx,
         )
     });
-    workspace.register_action(|_: &mut Workspace, action: &Up, cx: _| {
-        motion(
+    Vim::action(editor, cx, |vim, action: &Up, cx| {
+        vim.motion(
             Motion::Up {
                 display_lines: action.display_lines,
             },
             cx,
         )
     });
-    workspace.register_action(|_: &mut Workspace, _: &Right, cx: _| motion(Motion::Right, cx));
-    workspace.register_action(|_: &mut Workspace, _: &Space, cx: _| motion(Motion::Space, cx));
-    workspace.register_action(|_: &mut Workspace, action: &FirstNonWhitespace, cx: _| {
-        motion(
+    Vim::action(editor, cx, |vim, _: &Right, cx| {
+        vim.motion(Motion::Right, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &Space, cx| {
+        vim.motion(Motion::Space, cx)
+    });
+    Vim::action(editor, cx, |vim, action: &FirstNonWhitespace, cx| {
+        vim.motion(
             Motion::FirstNonWhitespace {
                 display_lines: action.display_lines,
             },
             cx,
         )
     });
-    workspace.register_action(|_: &mut Workspace, action: &StartOfLine, cx: _| {
-        motion(
+    Vim::action(editor, cx, |vim, action: &StartOfLine, cx| {
+        vim.motion(
             Motion::StartOfLine {
                 display_lines: action.display_lines,
             },
             cx,
         )
     });
-    workspace.register_action(|_: &mut Workspace, action: &EndOfLine, cx: _| {
-        motion(
+    Vim::action(editor, cx, |vim, action: &EndOfLine, cx| {
+        vim.motion(
             Motion::EndOfLine {
                 display_lines: action.display_lines,
             },
             cx,
         )
     });
-    workspace.register_action(|_: &mut Workspace, _: &CurrentLine, cx: _| {
-        motion(Motion::CurrentLine, cx)
+    Vim::action(editor, cx, |vim, _: &CurrentLine, cx| {
+        vim.motion(Motion::CurrentLine, cx)
     });
-    workspace.register_action(|_: &mut Workspace, _: &StartOfParagraph, cx: _| {
-        motion(Motion::StartOfParagraph, cx)
+    Vim::action(editor, cx, |vim, _: &StartOfParagraph, cx| {
+        vim.motion(Motion::StartOfParagraph, cx)
     });
-    workspace.register_action(|_: &mut Workspace, _: &EndOfParagraph, cx: _| {
-        motion(Motion::EndOfParagraph, cx)
+    Vim::action(editor, cx, |vim, _: &EndOfParagraph, cx| {
+        vim.motion(Motion::EndOfParagraph, cx)
     });
-    workspace.register_action(|_: &mut Workspace, _: &StartOfDocument, cx: _| {
-        motion(Motion::StartOfDocument, cx)
+    Vim::action(editor, cx, |vim, _: &StartOfDocument, cx| {
+        vim.motion(Motion::StartOfDocument, cx)
     });
-    workspace.register_action(|_: &mut Workspace, _: &EndOfDocument, cx: _| {
-        motion(Motion::EndOfDocument, cx)
+    Vim::action(editor, cx, |vim, _: &EndOfDocument, cx| {
+        vim.motion(Motion::EndOfDocument, cx)
     });
-    workspace
-        .register_action(|_: &mut Workspace, _: &Matching, cx: _| motion(Motion::Matching, cx));
+    Vim::action(editor, cx, |vim, _: &Matching, cx| {
+        vim.motion(Motion::Matching, cx)
+    });
 
-    workspace.register_action(
-        |_: &mut Workspace, &NextWordStart { ignore_punctuation }: &NextWordStart, cx: _| {
-            motion(Motion::NextWordStart { ignore_punctuation }, cx)
+    Vim::action(
+        editor,
+        cx,
+        |vim, &NextWordStart { ignore_punctuation }: &NextWordStart, cx| {
+            vim.motion(Motion::NextWordStart { ignore_punctuation }, cx)
         },
     );
-    workspace.register_action(
-        |_: &mut Workspace, &NextWordEnd { ignore_punctuation }: &NextWordEnd, cx: _| {
-            motion(Motion::NextWordEnd { ignore_punctuation }, cx)
+    Vim::action(
+        editor,
+        cx,
+        |vim, &NextWordEnd { ignore_punctuation }: &NextWordEnd, cx| {
+            vim.motion(Motion::NextWordEnd { ignore_punctuation }, cx)
         },
     );
-    workspace.register_action(
-        |_: &mut Workspace,
-         &PreviousWordStart { ignore_punctuation }: &PreviousWordStart,
-         cx: _| { motion(Motion::PreviousWordStart { ignore_punctuation }, cx) },
-    );
-    workspace.register_action(
-        |_: &mut Workspace, &PreviousWordEnd { ignore_punctuation }, cx: _| {
-            motion(Motion::PreviousWordEnd { ignore_punctuation }, cx)
+    Vim::action(
+        editor,
+        cx,
+        |vim, &PreviousWordStart { ignore_punctuation }: &PreviousWordStart, cx| {
+            vim.motion(Motion::PreviousWordStart { ignore_punctuation }, cx)
         },
     );
-    workspace.register_action(
-        |_: &mut Workspace, &NextSubwordStart { ignore_punctuation }: &NextSubwordStart, cx: _| {
-            motion(Motion::NextSubwordStart { ignore_punctuation }, cx)
+    Vim::action(
+        editor,
+        cx,
+        |vim, &PreviousWordEnd { ignore_punctuation }, cx| {
+            vim.motion(Motion::PreviousWordEnd { ignore_punctuation }, cx)
         },
     );
-    workspace.register_action(
-        |_: &mut Workspace, &NextSubwordEnd { ignore_punctuation }: &NextSubwordEnd, cx: _| {
-            motion(Motion::NextSubwordEnd { ignore_punctuation }, cx)
+    Vim::action(
+        editor,
+        cx,
+        |vim, &NextSubwordStart { ignore_punctuation }: &NextSubwordStart, cx| {
+            vim.motion(Motion::NextSubwordStart { ignore_punctuation }, cx)
         },
     );
-    workspace.register_action(
-        |_: &mut Workspace,
-         &PreviousSubwordStart { ignore_punctuation }: &PreviousSubwordStart,
-         cx: _| { motion(Motion::PreviousSubwordStart { ignore_punctuation }, cx) },
-    );
-    workspace.register_action(
-        |_: &mut Workspace, &PreviousSubwordEnd { ignore_punctuation }, cx: _| {
-            motion(Motion::PreviousSubwordEnd { ignore_punctuation }, cx)
+    Vim::action(
+        editor,
+        cx,
+        |vim, &NextSubwordEnd { ignore_punctuation }: &NextSubwordEnd, cx| {
+            vim.motion(Motion::NextSubwordEnd { ignore_punctuation }, cx)
         },
     );
-    workspace.register_action(|_: &mut Workspace, &NextLineStart, cx: _| {
-        motion(Motion::NextLineStart, cx)
+    Vim::action(
+        editor,
+        cx,
+        |vim, &PreviousSubwordStart { ignore_punctuation }: &PreviousSubwordStart, cx| {
+            vim.motion(Motion::PreviousSubwordStart { ignore_punctuation }, cx)
+        },
+    );
+    Vim::action(
+        editor,
+        cx,
+        |vim, &PreviousSubwordEnd { ignore_punctuation }, cx| {
+            vim.motion(Motion::PreviousSubwordEnd { ignore_punctuation }, cx)
+        },
+    );
+    Vim::action(editor, cx, |vim, &NextLineStart, cx| {
+        vim.motion(Motion::NextLineStart, cx)
     });
-    workspace.register_action(|_: &mut Workspace, &PreviousLineStart, cx: _| {
-        motion(Motion::PreviousLineStart, cx)
+    Vim::action(editor, cx, |vim, &PreviousLineStart, cx| {
+        vim.motion(Motion::PreviousLineStart, cx)
     });
-    workspace.register_action(|_: &mut Workspace, &StartOfLineDownward, cx: _| {
-        motion(Motion::StartOfLineDownward, cx)
+    Vim::action(editor, cx, |vim, &StartOfLineDownward, cx| {
+        vim.motion(Motion::StartOfLineDownward, cx)
     });
-    workspace.register_action(|_: &mut Workspace, &EndOfLineDownward, cx: _| {
-        motion(Motion::EndOfLineDownward, cx)
+    Vim::action(editor, cx, |vim, &EndOfLineDownward, cx| {
+        vim.motion(Motion::EndOfLineDownward, cx)
     });
-    workspace
-        .register_action(|_: &mut Workspace, &GoToColumn, cx: _| motion(Motion::GoToColumn, cx));
+    Vim::action(editor, cx, |vim, &GoToColumn, cx| {
+        vim.motion(Motion::GoToColumn, cx)
+    });
 
-    workspace.register_action(|_: &mut Workspace, _: &RepeatFind, cx: _| {
-        if let Some(last_find) = Vim::read(cx)
-            .workspace_state
-            .last_find
-            .clone()
-            .map(Box::new)
-        {
-            motion(Motion::RepeatFind { last_find }, cx);
+    Vim::action(editor, cx, |vim, _: &RepeatFind, cx| {
+        if let Some(last_find) = Vim::globals(cx).last_find.clone().map(Box::new) {
+            vim.motion(Motion::RepeatFind { last_find }, cx);
         }
     });
 
-    workspace.register_action(|_: &mut Workspace, _: &RepeatFindReversed, cx: _| {
-        if let Some(last_find) = Vim::read(cx)
-            .workspace_state
-            .last_find
-            .clone()
-            .map(Box::new)
-        {
-            motion(Motion::RepeatFindReversed { last_find }, cx);
+    Vim::action(editor, cx, |vim, _: &RepeatFindReversed, cx| {
+        if let Some(last_find) = Vim::globals(cx).last_find.clone().map(Box::new) {
+            vim.motion(Motion::RepeatFindReversed { last_find }, cx);
         }
     });
-    workspace.register_action(|_: &mut Workspace, &WindowTop, cx: _| motion(Motion::WindowTop, cx));
-    workspace.register_action(|_: &mut Workspace, &WindowMiddle, cx: _| {
-        motion(Motion::WindowMiddle, cx)
+    Vim::action(editor, cx, |vim, &WindowTop, cx| {
+        vim.motion(Motion::WindowTop, cx)
     });
-    workspace.register_action(|_: &mut Workspace, &WindowBottom, cx: _| {
-        motion(Motion::WindowBottom, cx)
+    Vim::action(editor, cx, |vim, &WindowMiddle, cx| {
+        vim.motion(Motion::WindowMiddle, cx)
+    });
+    Vim::action(editor, cx, |vim, &WindowBottom, cx| {
+        vim.motion(Motion::WindowBottom, cx)
     });
 }
 
-pub(crate) fn search_motion(m: Motion, cx: &mut WindowContext) {
-    if let Motion::ZedSearchResult {
-        prior_selections, ..
-    } = &m
-    {
-        match Vim::read(cx).state().mode {
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                if !prior_selections.is_empty() {
-                    Vim::update(cx, |vim, cx| {
-                        vim.update_active_editor(cx, |_, editor, cx| {
+impl Vim {
+    pub(crate) fn search_motion(&mut self, m: Motion, cx: &mut ViewContext<Self>) {
+        if let Motion::ZedSearchResult {
+            prior_selections, ..
+        } = &m
+        {
+            match self.mode {
+                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                    if !prior_selections.is_empty() {
+                        self.update_editor(cx, |_, editor, cx| {
                             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                                 s.select_ranges(prior_selections.iter().cloned())
                             })
                         });
-                    });
+                    }
+                }
+                Mode::Normal | Mode::Replace | Mode::Insert => {
+                    if self.active_operator().is_none() {
+                        return;
+                    }
                 }
             }
+        }
+
+        self.motion(m, cx)
+    }
+
+    pub(crate) fn motion(&mut self, motion: Motion, cx: &mut ViewContext<Self>) {
+        if let Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. }) =
+            self.active_operator()
+        {
+            self.pop_operator(cx);
+        }
+
+        let count = self.take_count(cx);
+        let active_operator = self.active_operator();
+        let mut waiting_operator: Option<Operator> = None;
+        match self.mode {
             Mode::Normal | Mode::Replace | Mode::Insert => {
-                if Vim::read(cx).active_operator().is_none() {
-                    return;
+                if active_operator == Some(Operator::AddSurrounds { target: None }) {
+                    waiting_operator = Some(Operator::AddSurrounds {
+                        target: Some(SurroundsType::Motion(motion)),
+                    });
+                } else {
+                    self.normal_motion(motion.clone(), active_operator.clone(), count, cx)
                 }
             }
-        }
-    }
-
-    motion(m, cx)
-}
-
-pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
-    if let Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. }) =
-        Vim::read(cx).active_operator()
-    {
-        Vim::update(cx, |vim, cx| vim.pop_operator(cx));
-    }
-
-    let count = Vim::update(cx, |vim, cx| vim.take_count(cx));
-    let active_operator = Vim::read(cx).active_operator();
-    let mut waiting_operator: Option<Operator> = None;
-    match Vim::read(cx).state().mode {
-        Mode::Normal | Mode::Replace | Mode::Insert => {
-            if active_operator == Some(Operator::AddSurrounds { target: None }) {
-                waiting_operator = Some(Operator::AddSurrounds {
-                    target: Some(SurroundsType::Motion(motion)),
-                });
-            } else {
-                normal_motion(motion.clone(), active_operator.clone(), count, cx)
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                self.visual_motion(motion.clone(), count, cx)
             }
         }
-        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-            visual_motion(motion.clone(), count, cx)
+        self.clear_operator(cx);
+        if let Some(operator) = waiting_operator {
+            self.push_operator(operator, cx);
+            self.pre_count = count
         }
     }
-    Vim::update(cx, |vim, cx| {
-        vim.clear_operator(cx);
-        if let Some(operator) = waiting_operator {
-            vim.push_operator(operator, cx);
-            vim.update_state(|state| state.pre_count = count)
-        }
-    });
 }
 
 // Motion handling is specified here:
@@ -1120,12 +1131,15 @@ pub(crate) fn next_word_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut crossed_newline = false;
         let new_point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+            let left_kind = classifier.kind(left);
+            let right_kind = classifier.kind(right);
             let at_newline = right == '\n';
 
             let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
@@ -1150,7 +1164,10 @@ pub(crate) fn next_word_end(
     times: usize,
     allow_cross_newline: bool,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let new_point = next_char(map, point, allow_cross_newline);
         let mut need_next_char = false;
@@ -1159,8 +1176,8 @@ pub(crate) fn next_word_end(
             new_point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
                 if !allow_cross_newline && at_newline {
@@ -1191,7 +1208,10 @@ fn previous_word_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         // This works even though find_preceding_boundary is called for every character in the line containing
         // cursor because the newline is checked only once.
@@ -1200,8 +1220,8 @@ fn previous_word_start(
             point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
 
                 (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
             },
@@ -1220,7 +1240,10 @@ fn previous_word_end(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
     if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
@@ -1232,8 +1255,8 @@ fn previous_word_end(
             point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
                 match (left_kind, right_kind) {
                     (CharKind::Punctuation, CharKind::Whitespace)
                     | (CharKind::Punctuation, CharKind::Word)
@@ -1258,12 +1281,15 @@ fn next_subword_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut crossed_newline = false;
         let new_point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+            let left_kind = classifier.kind(left);
+            let right_kind = classifier.kind(right);
             let at_newline = right == '\n';
 
             let is_word_start = (left_kind != right_kind) && !left.is_alphanumeric();
@@ -1292,7 +1318,10 @@ pub(crate) fn next_subword_end(
     times: usize,
     allow_cross_newline: bool,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let new_point = next_char(map, point, allow_cross_newline);
 
@@ -1300,8 +1329,8 @@ pub(crate) fn next_subword_end(
         let mut need_backtrack = false;
         let new_point =
             movement::find_boundary(map, new_point, FindRange::MultiLine, |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
                 if !allow_cross_newline && at_newline {
@@ -1339,7 +1368,10 @@ fn previous_subword_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut crossed_newline = false;
         // This works even though find_preceding_boundary is called for every character in the line containing
@@ -1349,8 +1381,8 @@ fn previous_subword_start(
             point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
                 let is_word_start = (left_kind != right_kind) && !left.is_alphanumeric();
@@ -1380,7 +1412,10 @@ fn previous_subword_end(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
     if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
@@ -1392,8 +1427,8 @@ fn previous_subword_end(
             point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
 
                 let is_subword_end =
                     left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
@@ -1424,7 +1459,7 @@ pub(crate) fn first_non_whitespace(
     from: DisplayPoint,
 ) -> DisplayPoint {
     let mut start_offset = start_of_line(map, display_lines, from).to_offset(map, Bias::Left);
-    let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
+    let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
     for (ch, offset) in map.buffer_chars_at(start_offset) {
         if ch == '\n' {
             return from;
@@ -1432,7 +1467,7 @@ pub(crate) fn first_non_whitespace(
 
         start_offset = offset;
 
-        if char_kind(&scope, ch) != CharKind::Whitespace {
+        if classifier.kind(ch) != CharKind::Whitespace {
             break;
         }
     }
@@ -1446,11 +1481,11 @@ pub(crate) fn last_non_whitespace(
     count: usize,
 ) -> DisplayPoint {
     let mut end_of_line = end_of_line(map, false, from, count).to_offset(map, Bias::Left);
-    let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
+    let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
 
     // NOTE: depending on clip_at_line_end we may already be one char back from the end.
     if let Some((ch, _)) = map.buffer_chars_at(end_of_line).next() {
-        if char_kind(&scope, ch) != CharKind::Whitespace {
+        if classifier.kind(ch) != CharKind::Whitespace {
             return end_of_line.to_display_point(map);
         }
     }
@@ -1460,7 +1495,7 @@ pub(crate) fn last_non_whitespace(
             break;
         }
         end_of_line = offset;
-        if char_kind(&scope, ch) != CharKind::Whitespace || ch == '\n' {
+        if classifier.kind(ch) != CharKind::Whitespace || ch == '\n' {
             break;
         }
     }
@@ -1773,14 +1808,6 @@ fn window_bottom(
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
     } else {
         (point, SelectionGoal::None)
-    }
-}
-
-pub fn coerce_punctuation(kind: CharKind, treat_punctuation_as_word: bool) -> CharKind {
-    if treat_punctuation_as_word && kind == CharKind::Punctuation {
-        CharKind::Word
-    } else {
-        kind
     }
 }
 

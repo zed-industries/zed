@@ -7,17 +7,15 @@ use editor::{
     scroll::Autoscroll,
     Bias, DisplayPoint, Editor, ToOffset,
 };
-use gpui::{actions, ViewContext, WindowContext};
+use gpui::{actions, ViewContext};
 use language::{Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use search::BufferSearchBar;
 use util::ResultExt;
-use workspace::{searchable::Direction, Workspace};
+use workspace::searchable::Direction;
 
 use crate::{
     motion::{start_of_line, Motion},
-    normal::yank::{copy_selections_content, yank_selections_content},
-    normal::{mark::create_visual_marks, substitute::substitute},
     object::Object,
     state::{Mode, Operator},
     Vim,
@@ -41,102 +39,87 @@ actions!(
     ]
 );
 
-pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-    workspace.register_action(|_, _: &ToggleVisual, cx: &mut ViewContext<Workspace>| {
-        toggle_mode(Mode::Visual, cx)
+pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &ToggleVisual, cx| {
+        vim.toggle_mode(Mode::Visual, cx)
     });
-    workspace.register_action(|_, _: &ToggleVisualLine, cx: &mut ViewContext<Workspace>| {
-        toggle_mode(Mode::VisualLine, cx)
+    Vim::action(editor, cx, |vim, _: &ToggleVisualLine, cx| {
+        vim.toggle_mode(Mode::VisualLine, cx)
     });
-    workspace.register_action(
-        |_, _: &ToggleVisualBlock, cx: &mut ViewContext<Workspace>| {
-            toggle_mode(Mode::VisualBlock, cx)
-        },
-    );
-    workspace.register_action(other_end);
-    workspace.register_action(|_, _: &VisualDelete, cx| {
-        Vim::update(cx, |vim, cx| {
-            vim.record_current_action(cx);
-            delete(vim, false, cx);
-        });
+    Vim::action(editor, cx, |vim, _: &ToggleVisualBlock, cx| {
+        vim.toggle_mode(Mode::VisualBlock, cx)
     });
-    workspace.register_action(|_, _: &VisualDeleteLine, cx| {
-        Vim::update(cx, |vim, cx| {
-            vim.record_current_action(cx);
-            delete(vim, true, cx);
-        });
+    Vim::action(editor, cx, Vim::other_end);
+    Vim::action(editor, cx, |vim, _: &VisualDelete, cx| {
+        vim.record_current_action(cx);
+        vim.visual_delete(false, cx);
     });
-    workspace.register_action(|_, _: &VisualYank, cx| {
-        Vim::update(cx, |vim, cx| {
-            yank(vim, cx);
-        });
+    Vim::action(editor, cx, |vim, _: &VisualDeleteLine, cx| {
+        vim.record_current_action(cx);
+        vim.visual_delete(true, cx);
+    });
+    Vim::action(editor, cx, |vim, _: &VisualYank, cx| vim.visual_yank(cx));
+
+    Vim::action(editor, cx, Vim::select_next);
+    Vim::action(editor, cx, Vim::select_previous);
+    Vim::action(editor, cx, |vim, _: &SelectNextMatch, cx| {
+        vim.select_match(Direction::Next, cx);
+    });
+    Vim::action(editor, cx, |vim, _: &SelectPreviousMatch, cx| {
+        vim.select_match(Direction::Prev, cx);
     });
 
-    workspace.register_action(select_next);
-    workspace.register_action(select_previous);
-    workspace.register_action(|workspace, _: &SelectNextMatch, cx| {
-        Vim::update(cx, |vim, cx| {
-            select_match(workspace, vim, Direction::Next, cx);
-        });
-    });
-    workspace.register_action(|workspace, _: &SelectPreviousMatch, cx| {
-        Vim::update(cx, |vim, cx| {
-            select_match(workspace, vim, Direction::Prev, cx);
-        });
-    });
+    Vim::action(editor, cx, |vim, _: &RestoreVisualSelection, cx| {
+        let Some((stored_mode, reversed)) = vim.stored_visual_mode.take() else {
+            return;
+        };
+        let Some((start, end)) = vim.marks.get("<").zip(vim.marks.get(">")) else {
+            return;
+        };
+        let ranges = start
+            .into_iter()
+            .zip(end)
+            .zip(reversed)
+            .map(|((start, end), reversed)| (*start, *end, reversed))
+            .collect::<Vec<_>>();
 
-    workspace.register_action(|_, _: &RestoreVisualSelection, cx| {
-        Vim::update(cx, |vim, cx| {
-            let Some((stored_mode, reversed)) =
-                vim.update_state(|state| state.stored_visual_mode.take())
-            else {
-                return;
-            };
-            let Some((start, end)) = vim.state().marks.get("<").zip(vim.state().marks.get(">"))
-            else {
-                return;
-            };
-            let ranges = start
-                .into_iter()
-                .zip(end)
-                .zip(reversed)
-                .map(|((start, end), reversed)| (*start, *end, reversed))
-                .collect::<Vec<_>>();
+        if vim.mode.is_visual() {
+            vim.create_visual_marks(vim.mode, cx);
+        }
 
-            if vim.state().mode.is_visual() {
-                create_visual_marks(vim, vim.state().mode, cx);
-            }
-
-            vim.update_active_editor(cx, |_, editor, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    let map = s.display_map();
-                    let ranges = ranges
-                        .into_iter()
-                        .map(|(start, end, reversed)| {
-                            let new_end =
-                                movement::saturating_right(&map, end.to_display_point(&map));
-                            Selection {
-                                id: s.new_selection_id(),
-                                start: start.to_offset(&map.buffer_snapshot),
-                                end: new_end.to_offset(&map, Bias::Left),
-                                reversed,
-                                goal: SelectionGoal::None,
-                            }
-                        })
-                        .collect();
-                    s.select(ranges);
-                })
-            });
-            vim.switch_mode(stored_mode, true, cx)
+        vim.update_editor(cx, |_, editor, cx| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                let map = s.display_map();
+                let ranges = ranges
+                    .into_iter()
+                    .map(|(start, end, reversed)| {
+                        let new_end = movement::saturating_right(&map, end.to_display_point(&map));
+                        Selection {
+                            id: s.new_selection_id(),
+                            start: start.to_offset(&map.buffer_snapshot),
+                            end: new_end.to_offset(&map, Bias::Left),
+                            reversed,
+                            goal: SelectionGoal::None,
+                        }
+                    })
+                    .collect();
+                s.select(ranges);
+            })
         });
+        vim.switch_mode(stored_mode, true, cx)
     });
 }
 
-pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
-    Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |vim, editor, cx| {
+impl Vim {
+    pub fn visual_motion(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
-            if vim.state().mode == Mode::VisualBlock
+            if vim.mode == Mode::VisualBlock
                 && !matches!(
                     motion,
                     Motion::EndOfLine {
@@ -145,7 +128,7 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                 )
             {
                 let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
-                visual_block_motion(is_up_or_down, editor, cx, |map, point, goal| {
+                vim.visual_block_motion(is_up_or_down, editor, cx, |map, point, goal| {
                     motion.move_point(map, point, goal, times, &text_layout_details)
                 })
             } else {
@@ -183,7 +166,7 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
 
                         // ensure the current character is included in the selection.
                         if !selection.reversed {
-                            let next_point = if vim.state().mode == Mode::VisualBlock {
+                            let next_point = if vim.mode == Mode::VisualBlock {
                                 movement::saturating_right(map, selection.end)
                             } else {
                                 movement::right(map, selection.end)
@@ -206,127 +189,126 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                 });
             }
         });
-    });
-}
+    }
 
-pub fn visual_block_motion(
-    preserve_goal: bool,
-    editor: &mut Editor,
-    cx: &mut ViewContext<Editor>,
-    mut move_selection: impl FnMut(
-        &DisplaySnapshot,
-        DisplayPoint,
-        SelectionGoal,
-    ) -> Option<(DisplayPoint, SelectionGoal)>,
-) {
-    let text_layout_details = editor.text_layout_details(cx);
-    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-        let map = &s.display_map();
-        let mut head = s.newest_anchor().head().to_display_point(map);
-        let mut tail = s.oldest_anchor().tail().to_display_point(map);
+    pub fn visual_block_motion(
+        &mut self,
+        preserve_goal: bool,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
+        mut move_selection: impl FnMut(
+            &DisplaySnapshot,
+            DisplayPoint,
+            SelectionGoal,
+        ) -> Option<(DisplayPoint, SelectionGoal)>,
+    ) {
+        let text_layout_details = editor.text_layout_details(cx);
+        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            let map = &s.display_map();
+            let mut head = s.newest_anchor().head().to_display_point(map);
+            let mut tail = s.oldest_anchor().tail().to_display_point(map);
 
-        let mut head_x = map.x_for_display_point(head, &text_layout_details);
-        let mut tail_x = map.x_for_display_point(tail, &text_layout_details);
+            let mut head_x = map.x_for_display_point(head, &text_layout_details);
+            let mut tail_x = map.x_for_display_point(tail, &text_layout_details);
 
-        let (start, end) = match s.newest_anchor().goal {
-            SelectionGoal::HorizontalRange { start, end } if preserve_goal => (start, end),
-            SelectionGoal::HorizontalPosition(start) if preserve_goal => (start, start),
-            _ => (tail_x.0, head_x.0),
-        };
-        let mut goal = SelectionGoal::HorizontalRange { start, end };
-
-        let was_reversed = tail_x > head_x;
-        if !was_reversed && !preserve_goal {
-            head = movement::saturating_left(map, head);
-        }
-
-        let Some((new_head, _)) = move_selection(&map, head, goal) else {
-            return;
-        };
-        head = new_head;
-        head_x = map.x_for_display_point(head, &text_layout_details);
-
-        let is_reversed = tail_x > head_x;
-        if was_reversed && !is_reversed {
-            tail = movement::saturating_left(map, tail);
-            tail_x = map.x_for_display_point(tail, &text_layout_details);
-        } else if !was_reversed && is_reversed {
-            tail = movement::saturating_right(map, tail);
-            tail_x = map.x_for_display_point(tail, &text_layout_details);
-        }
-        if !is_reversed && !preserve_goal {
-            head = movement::saturating_right(map, head);
-            head_x = map.x_for_display_point(head, &text_layout_details);
-        }
-
-        let positions = if is_reversed {
-            head_x..tail_x
-        } else {
-            tail_x..head_x
-        };
-
-        if !preserve_goal {
-            goal = SelectionGoal::HorizontalRange {
-                start: positions.start.0,
-                end: positions.end.0,
+            let (start, end) = match s.newest_anchor().goal {
+                SelectionGoal::HorizontalRange { start, end } if preserve_goal => (start, end),
+                SelectionGoal::HorizontalPosition(start) if preserve_goal => (start, start),
+                _ => (tail_x.0, head_x.0),
             };
-        }
+            let mut goal = SelectionGoal::HorizontalRange { start, end };
 
-        let mut selections = Vec::new();
-        let mut row = tail.row();
+            let was_reversed = tail_x > head_x;
+            if !was_reversed && !preserve_goal {
+                head = movement::saturating_left(map, head);
+            }
 
-        loop {
-            let laid_out_line = map.layout_row(row, &text_layout_details);
-            let start = DisplayPoint::new(
-                row,
-                laid_out_line.closest_index_for_x(positions.start) as u32,
-            );
-            let mut end =
-                DisplayPoint::new(row, laid_out_line.closest_index_for_x(positions.end) as u32);
-            if end <= start {
-                if start.column() == map.line_len(start.row()) {
-                    end = start;
+            let Some((new_head, _)) = move_selection(&map, head, goal) else {
+                return;
+            };
+            head = new_head;
+            head_x = map.x_for_display_point(head, &text_layout_details);
+
+            let is_reversed = tail_x > head_x;
+            if was_reversed && !is_reversed {
+                tail = movement::saturating_left(map, tail);
+                tail_x = map.x_for_display_point(tail, &text_layout_details);
+            } else if !was_reversed && is_reversed {
+                tail = movement::saturating_right(map, tail);
+                tail_x = map.x_for_display_point(tail, &text_layout_details);
+            }
+            if !is_reversed && !preserve_goal {
+                head = movement::saturating_right(map, head);
+                head_x = map.x_for_display_point(head, &text_layout_details);
+            }
+
+            let positions = if is_reversed {
+                head_x..tail_x
+            } else {
+                tail_x..head_x
+            };
+
+            if !preserve_goal {
+                goal = SelectionGoal::HorizontalRange {
+                    start: positions.start.0,
+                    end: positions.end.0,
+                };
+            }
+
+            let mut selections = Vec::new();
+            let mut row = tail.row();
+
+            loop {
+                let laid_out_line = map.layout_row(row, &text_layout_details);
+                let start = DisplayPoint::new(
+                    row,
+                    laid_out_line.closest_index_for_x(positions.start) as u32,
+                );
+                let mut end =
+                    DisplayPoint::new(row, laid_out_line.closest_index_for_x(positions.end) as u32);
+                if end <= start {
+                    if start.column() == map.line_len(start.row()) {
+                        end = start;
+                    } else {
+                        end = movement::saturating_right(map, start);
+                    }
+                }
+
+                if positions.start <= laid_out_line.width {
+                    let selection = Selection {
+                        id: s.new_selection_id(),
+                        start: start.to_point(map),
+                        end: end.to_point(map),
+                        reversed: is_reversed,
+                        goal,
+                    };
+
+                    selections.push(selection);
+                }
+                if row == head.row() {
+                    break;
+                }
+                if tail.row() > head.row() {
+                    row.0 -= 1
                 } else {
-                    end = movement::saturating_right(map, start);
+                    row.0 += 1
                 }
             }
 
-            if positions.start <= laid_out_line.width {
-                let selection = Selection {
-                    id: s.new_selection_id(),
-                    start: start.to_point(map),
-                    end: end.to_point(map),
-                    reversed: is_reversed,
-                    goal,
-                };
+            s.select(selections);
+        })
+    }
 
-                selections.push(selection);
-            }
-            if row == head.row() {
-                break;
-            }
-            if tail.row() > head.row() {
-                row.0 -= 1
-            } else {
-                row.0 += 1
-            }
-        }
-
-        s.select(selections);
-    })
-}
-
-pub fn visual_object(object: Object, cx: &mut WindowContext) {
-    Vim::update(cx, |vim, cx| {
-        if let Some(Operator::Object { around }) = vim.active_operator() {
-            vim.pop_operator(cx);
-            let current_mode = vim.state().mode;
+    pub fn visual_object(&mut self, object: Object, cx: &mut ViewContext<Vim>) {
+        if let Some(Operator::Object { around }) = self.active_operator() {
+            self.pop_operator(cx);
+            let current_mode = self.mode;
             let target_mode = object.target_visual_mode(current_mode);
             if target_mode != current_mode {
-                vim.switch_mode(target_mode, true, cx);
+                self.switch_mode(target_mode, true, cx);
             }
 
-            vim.update_active_editor(cx, |_, editor, cx| {
+            self.update_editor(cx, |_, editor, cx| {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_with(|map, selection| {
                         let mut mut_selection = selection.clone();
@@ -384,109 +366,103 @@ pub fn visual_object(object: Object, cx: &mut WindowContext) {
                 });
             });
         }
-    });
-}
+    }
 
-fn toggle_mode(mode: Mode, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| {
-        if vim.state().mode == mode {
-            vim.switch_mode(Mode::Normal, false, cx);
+    fn toggle_mode(&mut self, mode: Mode, cx: &mut ViewContext<Self>) {
+        if self.mode == mode {
+            self.switch_mode(Mode::Normal, false, cx);
         } else {
-            vim.switch_mode(mode, false, cx);
+            self.switch_mode(mode, false, cx);
         }
-    })
-}
+    }
 
-pub fn other_end(_: &mut Workspace, _: &OtherEnd, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| {
-        vim.update_active_editor(cx, |_, editor, cx| {
+    pub fn other_end(&mut self, _: &OtherEnd, cx: &mut ViewContext<Self>) {
+        self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(None, cx, |s| {
                 s.move_with(|_, selection| {
                     selection.reversed = !selection.reversed;
                 })
             })
-        })
-    });
-}
+        });
+    }
 
-pub fn delete(vim: &mut Vim, line_mode: bool, cx: &mut WindowContext) {
-    vim.store_visual_marks(cx);
-    vim.update_active_editor(cx, |vim, editor, cx| {
-        let mut original_columns: HashMap<_, _> = Default::default();
-        let line_mode = line_mode || editor.selections.line_mode;
+    pub fn visual_delete(&mut self, line_mode: bool, cx: &mut ViewContext<Self>) {
+        self.store_visual_marks(cx);
+        self.update_editor(cx, |vim, editor, cx| {
+            let mut original_columns: HashMap<_, _> = Default::default();
+            let line_mode = line_mode || editor.selections.line_mode;
 
-        editor.transact(cx, |editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_with(|map, selection| {
-                    if line_mode {
-                        let mut position = selection.head();
-                        if !selection.reversed {
-                            position = movement::left(map, position);
-                        }
-                        original_columns.insert(selection.id, position.to_point(map).column);
-                        if vim.state().mode == Mode::VisualBlock {
-                            *selection.end.column_mut() = map.line_len(selection.end.row())
-                        } else if vim.state().mode != Mode::VisualLine {
-                            selection.start = DisplayPoint::new(selection.start.row(), 0);
-                            if selection.end.row() == map.max_point().row() {
-                                selection.end = map.max_point()
-                            } else {
-                                *selection.end.row_mut() += 1;
-                                *selection.end.column_mut() = 0;
+            editor.transact(cx, |editor, cx| {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_with(|map, selection| {
+                        if line_mode {
+                            let mut position = selection.head();
+                            if !selection.reversed {
+                                position = movement::left(map, position);
+                            }
+                            original_columns.insert(selection.id, position.to_point(map).column);
+                            if vim.mode == Mode::VisualBlock {
+                                *selection.end.column_mut() = map.line_len(selection.end.row())
+                            } else if vim.mode != Mode::VisualLine {
+                                selection.start = DisplayPoint::new(selection.start.row(), 0);
+                                if selection.end.row() == map.max_point().row() {
+                                    selection.end = map.max_point()
+                                } else {
+                                    *selection.end.row_mut() += 1;
+                                    *selection.end.column_mut() = 0;
+                                }
                             }
                         }
-                    }
-                    selection.goal = SelectionGoal::None;
+                        selection.goal = SelectionGoal::None;
+                    });
                 });
-            });
-            copy_selections_content(vim, editor, line_mode, cx);
-            editor.insert("", cx);
+                vim.copy_selections_content(editor, line_mode, cx);
+                editor.insert("", cx);
 
-            // Fixup cursor position after the deletion
-            editor.set_clip_at_line_ends(true, cx);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                // Fixup cursor position after the deletion
+                editor.set_clip_at_line_ends(true, cx);
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_with(|map, selection| {
+                        let mut cursor = selection.head().to_point(map);
+
+                        if let Some(column) = original_columns.get(&selection.id) {
+                            cursor.column = *column
+                        }
+                        let cursor = map.clip_point(cursor.to_display_point(map), Bias::Left);
+                        selection.collapse_to(cursor, selection.goal)
+                    });
+                    if vim.mode == Mode::VisualBlock {
+                        s.select_anchors(vec![s.first_anchor()])
+                    }
+                });
+            })
+        });
+        self.switch_mode(Mode::Normal, true, cx);
+    }
+
+    pub fn visual_yank(&mut self, cx: &mut ViewContext<Self>) {
+        self.store_visual_marks(cx);
+        self.update_editor(cx, |vim, editor, cx| {
+            let line_mode = editor.selections.line_mode;
+            vim.yank_selections_content(editor, line_mode, cx);
+            editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
-                    let mut cursor = selection.head().to_point(map);
-
-                    if let Some(column) = original_columns.get(&selection.id) {
-                        cursor.column = *column
-                    }
-                    let cursor = map.clip_point(cursor.to_display_point(map), Bias::Left);
-                    selection.collapse_to(cursor, selection.goal)
+                    if line_mode {
+                        selection.start = start_of_line(map, false, selection.start);
+                    };
+                    selection.collapse_to(selection.start, SelectionGoal::None)
                 });
-                if vim.state().mode == Mode::VisualBlock {
+                if vim.mode == Mode::VisualBlock {
                     s.select_anchors(vec![s.first_anchor()])
                 }
             });
-        })
-    });
-    vim.switch_mode(Mode::Normal, true, cx);
-}
-
-pub fn yank(vim: &mut Vim, cx: &mut WindowContext) {
-    vim.store_visual_marks(cx);
-    vim.update_active_editor(cx, |vim, editor, cx| {
-        let line_mode = editor.selections.line_mode;
-        yank_selections_content(vim, editor, line_mode, cx);
-        editor.change_selections(None, cx, |s| {
-            s.move_with(|map, selection| {
-                if line_mode {
-                    selection.start = start_of_line(map, false, selection.start);
-                };
-                selection.collapse_to(selection.start, SelectionGoal::None)
-            });
-            if vim.state().mode == Mode::VisualBlock {
-                s.select_anchors(vec![s.first_anchor()])
-            }
         });
-    });
-    vim.switch_mode(Mode::Normal, true, cx);
-}
+        self.switch_mode(Mode::Normal, true, cx);
+    }
 
-pub(crate) fn visual_replace(text: Arc<str>, cx: &mut WindowContext) {
-    Vim::update(cx, |vim, cx| {
-        vim.stop_recording();
-        vim.update_active_editor(cx, |_, editor, cx| {
+    pub(crate) fn visual_replace(&mut self, text: Arc<str>, cx: &mut ViewContext<Self>) {
+        self.stop_recording(cx);
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 let (display_map, selections) = editor.selections.all_adjusted_display(cx);
 
@@ -522,16 +498,14 @@ pub(crate) fn visual_replace(text: Arc<str>, cx: &mut WindowContext) {
                 editor.change_selections(None, cx, |s| s.select_ranges(stable_anchors));
             });
         });
-        vim.switch_mode(Mode::Normal, false, cx);
-    });
-}
+        self.switch_mode(Mode::Normal, false, cx);
+    }
 
-pub fn select_next(_: &mut Workspace, _: &SelectNext, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| {
-        let count =
-            vim.take_count(cx)
-                .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
-        vim.update_active_editor(cx, |_, editor, cx| {
+    pub fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
+        let count = self
+            .take_count(cx)
+            .unwrap_or_else(|| if self.mode.is_visual() { 1 } else { 2 });
+        self.update_editor(cx, |_, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             for _ in 0..count {
                 if editor
@@ -542,16 +516,14 @@ pub fn select_next(_: &mut Workspace, _: &SelectNext, cx: &mut ViewContext<Works
                     break;
                 }
             }
-        })
-    });
-}
+        });
+    }
 
-pub fn select_previous(_: &mut Workspace, _: &SelectPrevious, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| {
-        let count =
-            vim.take_count(cx)
-                .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
-        vim.update_active_editor(cx, |_, editor, cx| {
+    pub fn select_previous(&mut self, _: &SelectPrevious, cx: &mut ViewContext<Self>) {
+        let count = self
+            .take_count(cx)
+            .unwrap_or_else(|| if self.mode.is_visual() { 1 } else { 2 });
+        self.update_editor(cx, |_, editor, cx| {
             for _ in 0..count {
                 if editor
                     .select_previous(&Default::default(), cx)
@@ -561,89 +533,91 @@ pub fn select_previous(_: &mut Workspace, _: &SelectPrevious, cx: &mut ViewConte
                     break;
                 }
             }
-        })
-    });
-}
+        });
+    }
 
-pub fn select_match(
-    workspace: &mut Workspace,
-    vim: &mut Vim,
-    direction: Direction,
-    cx: &mut WindowContext,
-) {
-    let count = vim.take_count(cx).unwrap_or(1);
-    let pane = workspace.active_pane().clone();
-    let vim_is_normal = vim.state().mode == Mode::Normal;
-    let mut start_selection = 0usize;
-    let mut end_selection = 0usize;
+    pub fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
+        let count = self.take_count(cx).unwrap_or(1);
+        let Some(workspace) = self
+            .editor
+            .upgrade()
+            .and_then(|editor| editor.read(cx).workspace())
+        else {
+            return;
+        };
+        let pane = workspace.read(cx).active_pane().clone();
+        let vim_is_normal = self.mode == Mode::Normal;
+        let mut start_selection = 0usize;
+        let mut end_selection = 0usize;
 
-    vim.update_active_editor(cx, |_, editor, _| {
-        editor.set_collapse_matches(false);
-    });
-    if vim_is_normal {
+        self.update_editor(cx, |_, editor, _| {
+            editor.set_collapse_matches(false);
+        });
+        if vim_is_normal {
+            pane.update(cx, |pane, cx| {
+                if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
+                {
+                    search_bar.update(cx, |search_bar, cx| {
+                        if !search_bar.has_active_match() || !search_bar.show(cx) {
+                            return;
+                        }
+                        // without update_match_index there is a bug when the cursor is before the first match
+                        search_bar.update_match_index(cx);
+                        search_bar.select_match(direction.opposite(), 1, cx);
+                    });
+                }
+            });
+        }
+        self.update_editor(cx, |_, editor, cx| {
+            let latest = editor.selections.newest::<usize>(cx);
+            start_selection = latest.start;
+            end_selection = latest.end;
+        });
+
+        let mut match_exists = false;
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
-                    if !search_bar.has_active_match() || !search_bar.show(cx) {
-                        return;
-                    }
-                    // without update_match_index there is a bug when the cursor is before the first match
                     search_bar.update_match_index(cx);
-                    search_bar.select_match(direction.opposite(), 1, cx);
+                    search_bar.select_match(direction, count, cx);
+                    match_exists = search_bar.match_exists(cx);
                 });
             }
         });
-    }
-    vim.update_active_editor(cx, |_, editor, cx| {
-        let latest = editor.selections.newest::<usize>(cx);
-        start_selection = latest.start;
-        end_selection = latest.end;
-    });
-
-    let mut match_exists = false;
-    pane.update(cx, |pane, cx| {
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |search_bar, cx| {
-                search_bar.update_match_index(cx);
-                search_bar.select_match(direction, count, cx);
-                match_exists = search_bar.match_exists(cx);
+        if !match_exists {
+            self.clear_operator(cx);
+            self.stop_replaying(cx);
+            return;
+        }
+        self.update_editor(cx, |_, editor, cx| {
+            let latest = editor.selections.newest::<usize>(cx);
+            if vim_is_normal {
+                start_selection = latest.start;
+                end_selection = latest.end;
+            } else {
+                start_selection = start_selection.min(latest.start);
+                end_selection = end_selection.max(latest.end);
+            }
+            if direction == Direction::Prev {
+                std::mem::swap(&mut start_selection, &mut end_selection);
+            }
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select_ranges([start_selection..end_selection]);
             });
-        }
-    });
-    if !match_exists {
-        vim.clear_operator(cx);
-        vim.stop_replaying(cx);
-        return;
-    }
-    vim.update_active_editor(cx, |_, editor, cx| {
-        let latest = editor.selections.newest::<usize>(cx);
-        if vim_is_normal {
-            start_selection = latest.start;
-            end_selection = latest.end;
-        } else {
-            start_selection = start_selection.min(latest.start);
-            end_selection = end_selection.max(latest.end);
-        }
-        if direction == Direction::Prev {
-            std::mem::swap(&mut start_selection, &mut end_selection);
-        }
-        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            s.select_ranges([start_selection..end_selection]);
+            editor.set_collapse_matches(true);
         });
-        editor.set_collapse_matches(true);
-    });
 
-    match vim.maybe_pop_operator() {
-        Some(Operator::Change) => substitute(vim, None, false, cx),
-        Some(Operator::Delete) => {
-            vim.stop_recording();
-            delete(vim, false, cx)
+        match self.maybe_pop_operator() {
+            Some(Operator::Change) => self.substitute(None, false, cx),
+            Some(Operator::Delete) => {
+                self.stop_recording(cx);
+                self.visual_delete(false, cx)
+            }
+            Some(Operator::Yank) => self.visual_yank(cx),
+            _ => {} // Ignoring other operators
         }
-        Some(Operator::Yank) => yank(vim, cx),
-        _ => {} // Ignoring other operators
     }
 }
-
 #[cfg(test)]
 mod test {
     use indoc::indoc;

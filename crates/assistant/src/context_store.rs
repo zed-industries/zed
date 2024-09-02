@@ -2,6 +2,7 @@ use crate::{
     prompts::PromptBuilder, Context, ContextEvent, ContextId, ContextOperation, ContextVersion,
     SavedContext, SavedContextMetadata,
 };
+use ::proto::AnyProtoClient;
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
@@ -25,7 +26,7 @@ use std::{
 };
 use util::{ResultExt, TryFutureExt};
 
-pub fn init(client: &Arc<Client>) {
+pub fn init(client: &AnyProtoClient) {
     client.add_model_message_handler(ContextStore::handle_advertise_contexts);
     client.add_model_request_handler(ContextStore::handle_open_context);
     client.add_model_request_handler(ContextStore::handle_create_context);
@@ -161,7 +162,7 @@ impl ContextStore {
     ) -> Result<proto::OpenContextResponse> {
         let context_id = ContextId::from_proto(envelope.payload.context_id);
         let operations = this.update(&mut cx, |this, cx| {
-            if this.project.read(cx).is_remote() {
+            if this.project.read(cx).is_via_collab() {
                 return Err(anyhow!("only the host contexts can be opened"));
             }
 
@@ -190,7 +191,7 @@ impl ContextStore {
         mut cx: AsyncAppContext,
     ) -> Result<proto::CreateContextResponse> {
         let (context_id, operations) = this.update(&mut cx, |this, cx| {
-            if this.project.read(cx).is_remote() {
+            if this.project.read(cx).is_via_collab() {
                 return Err(anyhow!("can only create contexts as the host"));
             }
 
@@ -234,7 +235,7 @@ impl ContextStore {
         mut cx: AsyncAppContext,
     ) -> Result<proto::SynchronizeContextsResponse> {
         this.update(&mut cx, |this, cx| {
-            if this.project.read(cx).is_remote() {
+            if this.project.read(cx).is_via_collab() {
                 return Err(anyhow!("only the host can synchronize contexts"));
             }
 
@@ -356,7 +357,7 @@ impl ContextStore {
         let Some(project_id) = project.remote_id() else {
             return Task::ready(Err(anyhow!("project was not remote")));
         };
-        if project.is_local() {
+        if project.is_local_or_ssh() {
             return Task::ready(Err(anyhow!("cannot create remote contexts as the host")));
         }
 
@@ -487,7 +488,7 @@ impl ContextStore {
         let Some(project_id) = project.remote_id() else {
             return Task::ready(Err(anyhow!("project was not remote")));
         };
-        if project.is_local() {
+        if project.is_local_or_ssh() {
             return Task::ready(Err(anyhow!("cannot open remote contexts as the host")));
         }
 
@@ -589,7 +590,7 @@ impl ContextStore {
         };
 
         // For now, only the host can advertise their open contexts.
-        if self.project.read(cx).is_remote() {
+        if self.project.read(cx).is_via_collab() {
             return;
         }
 

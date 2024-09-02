@@ -221,15 +221,23 @@ impl LanguageModelRequestMessage {
     }
 }
 
+#[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
+pub struct LanguageModelRequestTool {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct LanguageModelRequest {
     pub messages: Vec<LanguageModelRequestMessage>,
+    pub tools: Vec<LanguageModelRequestTool>,
     pub stop: Vec<String>,
     pub temperature: f32,
 }
 
 impl LanguageModelRequest {
-    pub fn into_open_ai(self, model: String) -> open_ai::Request {
+    pub fn into_open_ai(self, model: String, max_output_tokens: Option<u32>) -> open_ai::Request {
         open_ai::Request {
             model,
             messages: self
@@ -251,7 +259,7 @@ impl LanguageModelRequest {
             stream: true,
             stop: self.stop,
             temperature: self.temperature,
-            max_tokens: None,
+            max_tokens: max_output_tokens,
             tools: Vec::new(),
             tool_choice: None,
         }
@@ -286,7 +294,7 @@ impl LanguageModelRequest {
         }
     }
 
-    pub fn into_anthropic(self, model: String) -> anthropic::Request {
+    pub fn into_anthropic(self, model: String, max_output_tokens: u32) -> anthropic::Request {
         let mut new_messages: Vec<anthropic::Message> = Vec::new();
         let mut system_message = String::new();
 
@@ -304,17 +312,17 @@ impl LanguageModelRequest {
                     } else {
                         None
                     };
-                    let anthropic_message_content: Vec<anthropic::Content> = message
+                    let anthropic_message_content: Vec<anthropic::RequestContent> = message
                         .content
                         .into_iter()
                         .filter_map(|content| match content {
                             MessageContent::Text(t) if !t.is_empty() => {
-                                Some(anthropic::Content::Text {
+                                Some(anthropic::RequestContent::Text {
                                     text: t,
                                     cache_control,
                                 })
                             }
-                            MessageContent::Image(i) => Some(anthropic::Content::Image {
+                            MessageContent::Image(i) => Some(anthropic::RequestContent::Image {
                                 source: anthropic::ImageSource {
                                     source_type: "base64".to_string(),
                                     media_type: "image/png".to_string(),
@@ -353,9 +361,17 @@ impl LanguageModelRequest {
         anthropic::Request {
             model,
             messages: new_messages,
-            max_tokens: 4092,
+            max_tokens: max_output_tokens,
             system: Some(system_message),
-            tools: Vec::new(),
+            tools: self
+                .tools
+                .into_iter()
+                .map(|tool| anthropic::Tool {
+                    name: tool.name,
+                    description: tool.description,
+                    input_schema: tool.input_schema,
+                })
+                .collect(),
             tool_choice: None,
             metadata: None,
             stop_sequences: Vec::new(),
