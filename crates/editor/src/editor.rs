@@ -1847,9 +1847,7 @@ impl Editor {
             ime_transaction: Default::default(),
             active_diagnostics: HashMap::default(),
             focused_diagnostic: None,
-            // PJD: Hard coded for now. I'll add a key binding that toggles this
-            // state after I have the always on version working.
-            show_all_diagnostics: true,
+            show_all_diagnostics: false,
             soft_wrap_mode_override,
             completion_provider: project.clone().map(|project| Box::new(project) as _),
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
