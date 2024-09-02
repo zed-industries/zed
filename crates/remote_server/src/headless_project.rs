@@ -7,7 +7,7 @@ use project::{
 };
 use remote::SshSession;
 use rpc::{
-    proto::{self, AnyProtoClient, PeerId},
+    proto::{self, AnyProtoClient, SSH_PEER_ID, SSH_PROJECT_ID},
     TypedEnvelope,
 };
 use settings::{Settings as _, SettingsStore};
@@ -17,9 +17,6 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
 };
 use worktree::Worktree;
-
-const PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
-const PROJECT_ID: u64 = 0;
 
 pub struct HeadlessProject {
     pub fs: Arc<dyn Fs>,
@@ -36,48 +33,34 @@ impl HeadlessProject {
     }
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
-        let this = cx.weak_model();
-
         let worktree_store = cx.new_model(|_| WorktreeStore::new(true, fs.clone()));
         let buffer_store = cx.new_model(|cx| {
-            let mut buffer_store = BufferStore::new(worktree_store.clone(), Some(PROJECT_ID), cx);
-            buffer_store.shared(PROJECT_ID, session.clone().into(), cx);
+            let mut buffer_store =
+                BufferStore::new(worktree_store.clone(), Some(SSH_PROJECT_ID), cx);
+            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
 
-        session.add_request_handler(this.clone(), Self::handle_list_remote_directory);
-        session.add_request_handler(this.clone(), Self::handle_add_worktree);
-        session.add_request_handler(this.clone(), Self::handle_open_buffer_by_path);
-        session.add_request_handler(this.clone(), Self::handle_find_search_candidates);
+        let client: AnyProtoClient = session.clone().into();
 
-        session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_blame_buffer);
-        session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_update_buffer);
-        session.add_request_handler(buffer_store.downgrade(), BufferStore::handle_save_buffer);
-        session.add_message_handler(buffer_store.downgrade(), BufferStore::handle_close_buffer);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &worktree_store);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &buffer_store);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
 
-        session.add_request_handler(
-            worktree_store.downgrade(),
-            WorktreeStore::handle_create_project_entry,
-        );
-        session.add_request_handler(
-            worktree_store.downgrade(),
-            WorktreeStore::handle_rename_project_entry,
-        );
-        session.add_request_handler(
-            worktree_store.downgrade(),
-            WorktreeStore::handle_copy_project_entry,
-        );
-        session.add_request_handler(
-            worktree_store.downgrade(),
-            WorktreeStore::handle_delete_project_entry,
-        );
-        session.add_request_handler(
-            worktree_store.downgrade(),
-            WorktreeStore::handle_expand_project_entry,
-        );
+        client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
+
+        client.add_model_request_handler(Self::handle_add_worktree);
+        client.add_model_request_handler(Self::handle_open_buffer_by_path);
+        client.add_model_request_handler(Self::handle_find_search_candidates);
+
+        client.add_model_request_handler(BufferStore::handle_update_buffer);
+        client.add_model_message_handler(BufferStore::handle_close_buffer);
+
+        BufferStore::init(&client);
+        WorktreeStore::init(&client);
 
         HeadlessProject {
-            session: session.into(),
+            session: client,
             fs,
             worktree_store,
             buffer_store,
@@ -144,7 +127,7 @@ impl HeadlessProject {
         let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
         buffer_store.update(&mut cx, |buffer_store, cx| {
             buffer_store
-                .create_buffer_for_peer(&buffer, PEER_ID, cx)
+                .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
                 .detach_and_log_err(cx);
         })?;
 
@@ -181,7 +164,7 @@ impl HeadlessProject {
             response.buffer_ids.push(buffer_id.to_proto());
             buffer_store
                 .update(&mut cx, |buffer_store, cx| {
-                    buffer_store.create_buffer_for_peer(&buffer, PEER_ID, cx)
+                    buffer_store.create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
                 })?
                 .await?;
         }

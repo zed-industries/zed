@@ -1590,6 +1590,7 @@ impl EditorElement {
     fn layout_run_indicators(
         &self,
         line_height: Pixels,
+        range: Range<DisplayRow>,
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
@@ -1613,16 +1614,20 @@ impl EditorElement {
                 } else {
                     None
                 };
+
             editor
                 .tasks
                 .iter()
                 .filter_map(|(_, tasks)| {
                     let multibuffer_point = tasks.offset.0.to_point(&snapshot.buffer_snapshot);
                     let multibuffer_row = MultiBufferRow(multibuffer_point.row);
+                    let display_row = multibuffer_point.to_display_point(snapshot).row();
+                    if range.start > display_row || range.end < display_row {
+                        return None;
+                    }
                     if snapshot.is_line_folded(multibuffer_row) {
                         return None;
                     }
-                    let display_row = multibuffer_point.to_display_point(snapshot).row();
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(display_row) == active_task_indicator_row,
@@ -5489,6 +5494,7 @@ impl Element for EditorElement {
                     let test_indicators = if gutter_settings.runnables {
                         self.layout_run_indicators(
                             line_height,
+                            start_row..end_row,
                             scroll_pixel_position,
                             &gutter_dimensions,
                             &gutter_hitbox,
@@ -5499,7 +5505,6 @@ impl Element for EditorElement {
                     } else {
                         Vec::new()
                     };
-
                     let close_indicators = self.layout_hunk_diff_close_indicators(
                         line_height,
                         scroll_pixel_position,

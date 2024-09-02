@@ -114,7 +114,7 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-struct ProjectSearch {
+pub struct ProjectSearch {
     project: Model<Project>,
     excerpts: Model<MultiBuffer>,
     pending_search: Option<Task<Option<()>>>,
@@ -154,7 +154,7 @@ pub struct ProjectSearchView {
 }
 
 #[derive(Debug, Clone)]
-struct ProjectSearchSettings {
+pub struct ProjectSearchSettings {
     search_options: SearchOptions,
     filters_enabled: bool,
 }
@@ -165,7 +165,7 @@ pub struct ProjectSearchBar {
 }
 
 impl ProjectSearch {
-    fn new(project: Model<Project>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(project: Model<Project>, cx: &mut ModelContext<Self>) -> Self {
         let replica_id = project.read(cx).replica_id();
         let capability = project.read(cx).capability();
 
@@ -612,7 +612,7 @@ impl ProjectSearchView {
         });
     }
 
-    fn new(
+    pub fn new(
         workspace: WeakView<Workspace>,
         model: Model<ProjectSearch>,
         cx: &mut ViewContext<Self>,
@@ -763,9 +763,9 @@ impl ProjectSearchView {
         });
     }
 
-    // Re-activate the most recently activated search in this pane or the most recent if it has been closed.
-    // If no search exists in the workspace, create a new one.
-    fn deploy_search(
+    /// Re-activate the most recently activated search in this pane or the most recent if it has been closed.
+    /// If no search exists in the workspace, create a new one.
+    pub fn deploy_search(
         workspace: &mut Workspace,
         action: &workspace::DeploySearch,
         cx: &mut ViewContext<Workspace>,
@@ -1178,6 +1178,11 @@ impl ProjectSearchView {
             cx.stop_propagation();
             return self.focus_results_editor(cx);
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn results_editor(&self) -> &View<Editor> {
+        &self.results_editor
     }
 }
 
@@ -1823,15 +1828,31 @@ fn register_workspace_action_for_present_search<A: Action>(
     });
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub fn perform_project_search(
+    search_view: &View<ProjectSearchView>,
+    text: impl Into<std::sync::Arc<str>>,
+    cx: &mut gpui::VisualTestContext,
+) {
+    search_view.update(cx, |search_view, cx| {
+        search_view
+            .query_editor
+            .update(cx, |query_editor, cx| query_editor.set_text(text, cx));
+        search_view.search(cx);
+    });
+    cx.run_until_parked();
+}
+
 #[cfg(test)]
 pub mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use editor::{display_map::DisplayRow, DisplayPoint};
     use gpui::{Action, TestAppContext, WindowHandle};
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::sync::Arc;
     use workspace::DeploySearch;
 
     #[gpui::test]

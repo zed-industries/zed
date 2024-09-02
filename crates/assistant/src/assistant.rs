@@ -209,7 +209,7 @@ pub fn init(
     })
     .detach();
 
-    context_store::init(&client);
+    context_store::init(&client.clone().into());
     prompt_library::init(cx);
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);

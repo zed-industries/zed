@@ -65,7 +65,10 @@ use paths::{
 use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use remote::SshSession;
-use rpc::{proto::AnyProtoClient, ErrorCode};
+use rpc::{
+    proto::{AnyProtoClient, SSH_PROJECT_ID},
+    ErrorCode,
+};
 use search::{SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
@@ -574,6 +577,7 @@ impl Project {
         connection_manager::init(client.clone(), cx);
         Self::init_settings(cx);
 
+        let client: AnyProtoClient = client.clone().into();
         client.add_model_message_handler(Self::handle_add_collaborator);
         client.add_model_message_handler(Self::handle_update_project_collaborator);
         client.add_model_message_handler(Self::handle_remove_collaborator);
@@ -594,9 +598,9 @@ impl Project {
         client.add_model_request_handler(Self::handle_task_templates);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
 
-        WorktreeStore::init(client);
-        BufferStore::init(client);
-        LspStore::init(client);
+        WorktreeStore::init(&client);
+        BufferStore::init(&client);
+        LspStore::init(&client);
     }
 
     pub fn local(
@@ -697,15 +701,19 @@ impl Project {
     ) -> Model<Self> {
         let this = Self::local(client, node, user_store, languages, fs, None, cx);
         this.update(cx, |this, cx| {
-            let buffer_store = this.buffer_store.downgrade();
+            let client: AnyProtoClient = ssh.clone().into();
+
             this.worktree_store.update(cx, |store, _cx| {
-                store.set_upstream_client(ssh.clone().into());
+                store.set_upstream_client(client.clone());
             });
 
-            ssh.add_message_handler(cx.weak_model(), Self::handle_update_worktree);
-            ssh.add_message_handler(cx.weak_model(), Self::handle_create_buffer_for_peer);
-            ssh.add_message_handler(buffer_store.clone(), BufferStore::handle_update_buffer_file);
-            ssh.add_message_handler(buffer_store.clone(), BufferStore::handle_update_diff_base);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
+            client.add_model_message_handler(Self::handle_update_worktree);
+            client.add_model_message_handler(Self::handle_create_buffer_for_peer);
+            client.add_model_message_handler(BufferStore::handle_update_buffer_file);
+            client.add_model_message_handler(BufferStore::handle_update_diff_base);
 
             this.ssh_session = Some(ssh);
         });

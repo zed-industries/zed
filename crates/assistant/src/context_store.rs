@@ -2,6 +2,7 @@ use crate::{
     prompts::PromptBuilder, Context, ContextEvent, ContextId, ContextOperation, ContextVersion,
     SavedContext, SavedContextMetadata,
 };
+use ::proto::AnyProtoClient;
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
@@ -25,7 +26,7 @@ use std::{
 };
 use util::{ResultExt, TryFutureExt};
 
-pub fn init(client: &Arc<Client>) {
+pub fn init(client: &AnyProtoClient) {
     client.add_model_message_handler(ContextStore::handle_advertise_contexts);
     client.add_model_request_handler(ContextStore::handle_open_context);
     client.add_model_request_handler(ContextStore::handle_create_context);
