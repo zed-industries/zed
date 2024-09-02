@@ -21,6 +21,7 @@ enum ContextMenuItem {
         icon: Option<IconName>,
         handler: Rc<dyn Fn(Option<&FocusHandle>, &mut WindowContext)>,
         action: Option<Box<dyn Action>>,
+        disabled: bool,
     },
     CustomEntry {
         entry_render: Box<dyn Fn(&mut WindowContext) -> AnyElement>,
@@ -102,6 +103,7 @@ impl ContextMenu {
             handler: Rc::new(move |_, cx| handler(cx)),
             icon: None,
             action,
+            disabled: false,
         });
         self
     }
@@ -120,6 +122,7 @@ impl ContextMenu {
             handler: Rc::new(move |_, cx| handler(cx)),
             icon: None,
             action,
+            disabled: false,
         });
         self
     }
@@ -167,6 +170,29 @@ impl ContextMenu {
                 cx.dispatch_action(action.boxed_clone());
             }),
             icon: None,
+            disabled: false,
+        });
+        self
+    }
+
+    pub fn disabled_action(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Box<dyn Action>,
+    ) -> Self {
+        self.items.push(ContextMenuItem::Entry {
+            toggle: None,
+            label: label.into(),
+            action: Some(action.boxed_clone()),
+
+            handler: Rc::new(move |context, cx| {
+                if let Some(context) = &context {
+                    cx.focus(context);
+                }
+                cx.dispatch_action(action.boxed_clone());
+            }),
+            icon: None,
+            disabled: true,
         });
         self
     }
@@ -179,6 +205,7 @@ impl ContextMenu {
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |_, cx| cx.dispatch_action(action.boxed_clone())),
             icon: Some(IconName::ArrowUpRight),
+            disabled: false,
         });
         self
     }
@@ -187,7 +214,11 @@ impl ContextMenu {
         let context = self.action_context.as_ref();
         match self.selected_index.and_then(|ix| self.items.get(ix)) {
             Some(
-                ContextMenuItem::Entry { handler, .. }
+                ContextMenuItem::Entry {
+                    handler,
+                    disabled: false,
+                    ..
+                }
                 | ContextMenuItem::CustomEntry { handler, .. },
             ) => (handler)(context, cx),
             _ => {}
@@ -259,6 +290,7 @@ impl ContextMenu {
         if let Some(ix) = self.items.iter().position(|item| {
             if let ContextMenuItem::Entry {
                 action: Some(action),
+                disabled: false,
                 ..
             } = item
             {
@@ -298,7 +330,7 @@ impl ContextMenuItem {
             ContextMenuItem::Header(_)
             | ContextMenuItem::Separator
             | ContextMenuItem::Label { .. } => false,
-            ContextMenuItem::Entry { .. } => true,
+            ContextMenuItem::Entry { disabled, .. } => !disabled,
             ContextMenuItem::CustomEntry { selectable, .. } => *selectable,
         }
     }
@@ -328,6 +360,7 @@ impl Render for ContextMenu {
                         for item in self.items.iter() {
                             if let ContextMenuItem::Entry {
                                 action: Some(action),
+                                disabled: false,
                                 ..
                             } = item
                             {
@@ -360,22 +393,30 @@ impl Render for ContextMenu {
                                     handler,
                                     icon,
                                     action,
+                                    disabled,
                                 } => {
                                     let handler = handler.clone();
                                     let menu = cx.view().downgrade();
-
+                                    let color = if *disabled {
+                                        Color::Muted
+                                    } else {
+                                        Color::Default
+                                    };
                                     let label_element = if let Some(icon) = icon {
                                         h_flex()
                                             .gap_1()
-                                            .child(Label::new(label.clone()))
-                                            .child(Icon::new(*icon).size(IconSize::Small))
+                                            .child(Label::new(label.clone()).color(color))
+                                            .child(
+                                                Icon::new(*icon).size(IconSize::Small).color(color),
+                                            )
                                             .into_any_element()
                                     } else {
-                                        Label::new(label.clone()).into_any_element()
+                                        Label::new(label.clone()).color(color).into_any_element()
                                     };
 
                                     ListItem::new(ix)
                                         .inset(true)
+                                        .disabled(*disabled)
                                         .selected(Some(ix) == self.selected_index)
                                         .when_some(*toggle, |list_item, (position, toggled)| {
                                             let contents = if toggled {
