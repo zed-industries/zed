@@ -137,9 +137,78 @@ impl PathWithPosition {
             column: None,
         }
     }
+
     /// Parses a string that possibly has `:row:column` or `(row, column)` suffix.
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
     /// If the suffix parsing fails, the whole string is parsed as a path.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use util::paths::PathWithPosition;
+    /// # use std::path::PathBuf;
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: None,
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:1"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: Some(1),
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:1:2"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: Some(1),
+    ///     column: Some(2),
+    /// });
+    /// ```
+    ///
+    /// # Expected parsing results when encounter ill-formated inputs.
+    /// ```
+    /// # use util::paths::PathWithPosition;
+    /// # use std::path::PathBuf;
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:a"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: None,
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:a:b"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: None,
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs::"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: None,
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs::1"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: None,
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:1::"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: Some(1),
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs::1:2"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: None,
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:1::2"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: Some(1),
+    ///     column: None,
+    /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:1:2:3"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: Some(1),
+    ///     column: Some(2),
+    /// });
+    /// ```
     pub fn parse_str(s: &str) -> Self {
         let trimmed = s.trim();
         let path = Path::new(trimmed);
@@ -350,69 +419,6 @@ mod tests {
                 (Path::new("test_dirs/1.46/bar_2"), true),
             ]
         );
-    }
-
-    #[test]
-    fn path_with_position_parsing_positive() {
-        let input_and_expected = [
-            (
-                "test_file.rs",
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row: None,
-                    column: None,
-                },
-            ),
-            (
-                "test_file.rs:1",
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row: Some(1),
-                    column: None,
-                },
-            ),
-            (
-                "test_file.rs:1:2",
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row: Some(1),
-                    column: Some(2),
-                },
-            ),
-        ];
-
-        for (input, expected) in input_and_expected {
-            let actual = PathWithPosition::parse_str(input);
-            assert_eq!(
-                actual, expected,
-                "For positive case input str '{input}', got a parse mismatch"
-            );
-        }
-    }
-
-    #[test]
-    fn path_with_position_parsing_negative() {
-        for (input, row, column) in [
-            ("test_file.rs:a", None, None),
-            ("test_file.rs:a:b", None, None),
-            ("test_file.rs::", None, None),
-            ("test_file.rs::1", None, None),
-            ("test_file.rs:1::", Some(1), None),
-            ("test_file.rs::1:2", None, None),
-            ("test_file.rs:1::2", Some(1), None),
-            ("test_file.rs:1:2:3", Some(1), Some(2)),
-        ] {
-            let actual = PathWithPosition::parse_str(input);
-            assert_eq!(
-                actual,
-                PathWithPosition {
-                    path: PathBuf::from("test_file.rs"),
-                    row,
-                    column,
-                },
-                "For negative case input str '{input}', got a parse mismatch"
-            );
-        }
     }
 
     // Trim off trailing `:`s for otherwise valid input.
