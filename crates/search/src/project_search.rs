@@ -233,19 +233,17 @@ impl ProjectSearch {
             project
                 .search_history_mut(SearchInputKind::Query)
                 .add(&mut self.search_history_cursor, query.as_str().to_string());
-            let included = query.as_inner().files_to_include().sources();
+            let included = query.as_inner().files_to_include().sources().join(",");
             if included.len() > 0 {
-                project.search_history_mut(SearchInputKind::Include).add(
-                    &mut self.search_included_history_cursor,
-                    included[0].clone(),
-                );
+                project
+                    .search_history_mut(SearchInputKind::Include)
+                    .add(&mut self.search_included_history_cursor, included);
             }
-            let excluded = query.as_inner().files_to_exclude().sources();
+            let excluded = query.as_inner().files_to_exclude().sources().join(",");
             if excluded.len() > 0 {
-                project.search_history_mut(SearchInputKind::Exclude).add(
-                    &mut self.search_excluded_history_cursor,
-                    excluded[0].clone(),
-                );
+                project
+                    .search_history_mut(SearchInputKind::Exclude)
+                    .add(&mut self.search_excluded_history_cursor, excluded);
             }
             project.search(query.clone(), cx)
         });
