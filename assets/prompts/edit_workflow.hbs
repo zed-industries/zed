@@ -55,7 +55,7 @@ This tag contains the path to the file that will be changed. It can be an existi
 
 This tag contains a search string to locate in the source file, e.g. `pub fn baz() {`. If not provided, the new content will be inserted at the top of the file.
 Make sure to produce a string that exists in the source file and that isn't ambiguous.
-When there's ambiguity, add more lines to the search to elimininate it.
+When there's ambiguity, add more lines to the search to eliminate it.
 
 ### `<description>` (required)
 
@@ -66,8 +66,8 @@ This tag contains a single-line description of the edit that should be made at t
 This tag indicates what type of change should be made, relative to the given location. It can be one of the following:
 - `update`: Rewrites the specified string entirely based on the given description.
 - `create`: Creates a new file with the given path based on the provided description.
-- `insert_before`: Inserts new text based on the given description as a sibling before the specified search string.
-- `insert_after`: Inserts new text based on the given description as a sibling after the specified search string.
+- `insert_before`: Inserts new text based on the given description before the specified search string.
+- `insert_after`: Inserts new text based on the given description after the specified search string.
 - `delete`: Deletes the specified string from the containing file.
 
 <guidelines>
@@ -80,7 +80,7 @@ This tag indicates what type of change should be made, relative to the given loc
 - Never nest an edit with another edit. Never include CDATA. All edits are leaf nodes.
 - Descriptions are required for all edits except delete.
 - When generating multiple edits, ensure the descriptions are specific to each individual operation.
-- Avoid referring to the location in the description. Focus on the change to be made, not the location where it's made. That's implicit with the symbol you provide.
+- Avoid referring to the search string in the description. Focus on the change to be made, not the location where it's made. That's implicit with the `search` string you provide.
 - Don't generate multiple edits at the same location. Instead, combine them together in a single edit with a succinct combined description.
 - Always ensure imports are added if you're referencing symbols that are not in scope.
 </guidelines>
