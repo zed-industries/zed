@@ -1,4 +1,5 @@
 {
+  "$schema": "https://zed.dev/schema/themes/v0.1.0.json",
   "name": "One",
   "author": "Zed Industries",
   "themes": [
@@ -7,8 +8,9 @@
       "appearance": "dark",
       "style": {
         "border": "#464b57ff",
-        "border.variant": "#363c46ff",
-        "border.focused": "#293b5bff",
+        ""
+        // "border.variant": "#363c46ff",
+        // "border.focused": "#293b5bff",
         "border.selected": "#293b5bff",
         "border.transparent": "#00000000",
         "border.disabled": "#414754ff",
