@@ -314,20 +314,19 @@ impl TextLayout {
                     (text.clone(), false)
                 };
                 if truncated {
-                    let mut match_len = text.len();
+                    let mut truncate_at = text.len() - 3;
                     // let mut drop_unused_run = None;
                     let mut run_index = 0;
                     let mut iter = runs.iter_mut().peekable();
                     while let Some(run) = iter.next() {
-                        if run.len < match_len {
-                            match_len -= run.len;
-                        } else if run.len == match_len {
+                        if run.len <= truncate_at {
+                            truncate_at -= run.len;
+                        } else {
+                            run.len = truncate_at + 3;
                             if iter.peek().is_some() {
                                 run_index += 1;
                                 break;
                             }
-                        } else {
-                            run.len = match_len;
                         }
                         run_index += 1;
                     }
