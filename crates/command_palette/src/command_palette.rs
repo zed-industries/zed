@@ -1,5 +1,5 @@
 use std::{
-    cmp::{self, Reverse},
+    cmp::{self},
     sync::Arc,
     time::Duration,
 };
@@ -27,7 +27,7 @@ actions!(command_palette, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
     client::init_settings(cx);
-    cx.set_global(HitCounts::default());
+    cx.set_global(Hits::default());
     command_palette_hooks::init(cx);
     cx.observe_new_views(CommandPalette::register).detach();
 }
@@ -54,6 +54,31 @@ fn trim_consecutive_whitespaces(input: &str) -> String {
         }
     }
     result
+}
+
+/// Computes the palette entry scoring based on hits and string similarity.
+/// Uses a basic frecency log-discounting approach.
+fn compute_entry_score(hits: &Vec<Hit>, match_similarity: f64) -> f64 {
+    let mut score = 1.0; // starting from 1 to allow for scaling by match similarity
+    let now = std::time::SystemTime::now();
+
+    for hit in hits {
+        if let Ok(duration) = now.duration_since(hit.timestamp) {
+            // Decay the scores such that half-life is one hour, but decay is constrained by 1/16th
+            // Meaning, hit right now is the same as 2 hits 1h ago, 4 hits 2h ago or 16 hits 4 hours ago
+            let hours_elapsed = (duration.as_secs_f64() / 3600.0).max(0.0);
+            let decay = if hours_elapsed > 4.0 {
+                1.0 / 16.0
+            } else {
+                0.5f64.powf(hours_elapsed)
+            };
+            score += decay;
+        }
+    }
+
+    // Combine with the match similarity, somehow
+    // in general, match similarity is not important, so it is mostly ignored
+    score * (1.0 + match_similarity)
 }
 
 impl CommandPalette {
@@ -157,13 +182,28 @@ impl Clone for Command {
     }
 }
 
-/// Hit count for each command in the palette.
+/// We store not just the hit number, but hit "objects", where each of them stores any properties we wish for.
+/// This way we can later use e.g. timestamps to compute the frecency of commands.
+#[derive(Clone)]
+struct Hit {
+    timestamp: std::time::SystemTime,
+}
+
+impl Hit {
+    fn new() -> Self {
+        Hit {
+            timestamp: std::time::SystemTime::now(),
+        }
+    }
+}
+
+/// Hit storage for each command in the palette.
 /// We only account for commands triggered directly via command palette and not by e.g. keystrokes because
 /// if a user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.
 #[derive(Default, Clone)]
-struct HitCounts(HashMap<String, usize>);
+struct Hits(HashMap<String, Vec<Hit>>);
 
-impl Global for HitCounts {}
+impl Global for Hits {}
 
 impl CommandPaletteDelegate {
     fn new(
@@ -192,6 +232,7 @@ impl CommandPaletteDelegate {
         cx: &mut ViewContext<Picker<Self>>,
     ) {
         self.updating_matches.take();
+        let hits = cx.global::<Hits>().clone();
 
         let mut intercept_result = CommandPaletteInterceptor::try_global(cx)
             .and_then(|interceptor| interceptor.intercept(&query, cx));
@@ -230,6 +271,22 @@ impl CommandPaletteDelegate {
                 },
             )
         }
+
+        matches.sort_by(|a, b| {
+            let score_a = hits
+                .0
+                .get(&a.string)
+                .map_or(0.0, |hits_a| compute_entry_score(hits_a, a.score));
+            let score_b = hits
+                .0
+                .get(&b.string)
+                .map_or(0.0, |hits_b| compute_entry_score(hits_b, b.score));
+            score_b
+                .partial_cmp(&score_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.string.cmp(&b.string))
+        });
+
         self.commands = commands;
         self.matches = matches;
         if self.matches.is_empty() {
@@ -270,18 +327,10 @@ impl PickerDelegate for CommandPaletteDelegate {
         }
         let (mut tx, mut rx) = postage::dispatch::channel(1);
         let task = cx.background_executor().spawn({
-            let mut commands = self.all_commands.clone();
-            let hit_counts = cx.global::<HitCounts>().clone();
+            let commands = self.all_commands.clone();
             let executor = cx.background_executor().clone();
             let query = trim_consecutive_whitespaces(&query.as_str());
             async move {
-                commands.sort_by_key(|action| {
-                    (
-                        Reverse(hit_counts.0.get(&action.name).cloned()),
-                        action.name.clone(),
-                    )
-                });
-
                 let candidates = commands
                     .iter()
                     .enumerate()
@@ -379,8 +428,12 @@ impl PickerDelegate for CommandPaletteDelegate {
 
         self.matches.clear();
         self.commands.clear();
-        HitCounts::update_global(cx, |hit_counts, _cx| {
-            *hit_counts.0.entry(command.name).or_default() += 1;
+        Hits::update_global(cx, |hit_counts, _cx| {
+            hit_counts
+                .0
+                .entry(command.name)
+                .or_default()
+                .push(Hit::new());
         });
         let action = command.action;
         cx.focus(&self.previous_focus_handle);
@@ -511,12 +564,41 @@ mod tests {
 
         palette.update(cx, |palette, _| {
             assert!(palette.delegate.commands.len() > 5);
-            let is_sorted =
-                |actions: &[Command]| actions.windows(2).all(|pair| pair[0].name <= pair[1].name);
-            assert!(is_sorted(&palette.delegate.commands));
         });
 
-        cx.simulate_input("bcksp");
+        cx.simulate_input("b");
+
+        palette.update(cx, |palette, _| {
+            // first match is _not_ "editor: backspace", it could be e.g. pane: go back
+            assert_ne!(palette.delegate.matches[0].string, "editor: backspace");
+        });
+
+        cx.simulate_keystrokes("cksp");
+
+        palette.update(cx, |palette, _| {
+            // now, there is only one thing matching "bcksp" - editor: backspace
+            assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
+        });
+
+        cx.simulate_keystrokes("enter");
+
+        cx.simulate_keystrokes("cmd-shift-p");
+
+        let palette = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<CommandPalette>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        });
+
+        palette.update(cx, |palette, _| {
+            // first match is the editor: backspace, because it was hit already
+            assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
+        });
+
+        cx.simulate_input("bc");
 
         palette.update(cx, |palette, _| {
             assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
@@ -526,7 +608,7 @@ mod tests {
 
         workspace.update(cx, |workspace, cx| {
             assert!(workspace.active_modal::<CommandPalette>(cx).is_none());
-            assert_eq!(editor.read(cx).text(cx), "ab")
+            assert_eq!(editor.read(cx).text(cx), "a")
         });
 
         // Add namespace filter, and redeploy the palette
