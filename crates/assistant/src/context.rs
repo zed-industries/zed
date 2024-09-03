@@ -13,6 +13,7 @@ use assistant_tool::ToolRegistry;
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt};
 use fs::{Fs, RemoveOptions};
 use futures::{
     future::{self, Shared},
@@ -1945,16 +1946,18 @@ impl Context {
 
         let mut request = self.to_completion_request(cx);
 
-        let tool_registry = ToolRegistry::global(cx);
-        request.tools = tool_registry
-            .tools()
-            .into_iter()
-            .map(|tool| LanguageModelRequestTool {
-                name: tool.name(),
-                description: tool.description(),
-                input_schema: tool.input_schema(),
-            })
-            .collect();
+        if cx.has_flag::<ToolUseFeatureFlag>() {
+            let tool_registry = ToolRegistry::global(cx);
+            request.tools = tool_registry
+                .tools()
+                .into_iter()
+                .map(|tool| LanguageModelRequestTool {
+                    name: tool.name(),
+                    description: tool.description(),
+                    input_schema: tool.input_schema(),
+                })
+                .collect();
+        }
 
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
@@ -2799,6 +2802,16 @@ pub enum PendingSlashCommandStatus {
     Idle,
     Running { _task: Shared<Task<()>> },
     Error(String),
+}
+
+pub(crate) struct ToolUseFeatureFlag;
+
+impl FeatureFlag for ToolUseFeatureFlag {
+    const NAME: &'static str = "assistant-tool-use";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone)]
