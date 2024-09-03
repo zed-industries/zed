@@ -1,4 +1,5 @@
 {
+  "hard_tabs": false,
   "languages": {
     "Markdown": {
       "tab_size": 2,
