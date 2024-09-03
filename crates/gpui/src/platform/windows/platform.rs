@@ -406,7 +406,7 @@ impl Platform for WindowsPlatform {
         executor
             .spawn(async move {
                 let _ = std::process::Command::new("cmd")
-                    .args(&["/c", "start", "", path.as_ref()])
+                    .args(&["/c", "start", "", path.to_str().expect("path to string")])
                     .spawn()
                     .expect("Failed to open file");
             })
