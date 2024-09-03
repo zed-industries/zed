@@ -373,6 +373,7 @@ dependencies = [
  "anyhow",
  "assets",
  "assistant_slash_command",
+ "assistant_tool",
  "async-watch",
  "cargo_toml",
  "chrono",
@@ -451,6 +452,22 @@ dependencies = [
  "language",
  "parking_lot",
  "serde",
+ "workspace",
+]
+
+[[package]]
+name = "assistant_tool"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "derive_more",
+ "gpui",
+ "language",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
  "workspace",
 ]
 

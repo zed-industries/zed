@@ -6,6 +6,7 @@ members = [
     "crates/assets",
     "crates/assistant",
     "crates/assistant_slash_command",
+    "crates/assistant_tool",
     "crates/audio",
     "crates/auto_update",
     "crates/breadcrumbs",
@@ -181,6 +182,7 @@ anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
+assistant_tool = { path = "crates/assistant_tool" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 breadcrumbs = { path = "crates/breadcrumbs" }
