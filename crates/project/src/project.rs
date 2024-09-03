@@ -52,7 +52,7 @@ use language::{
     },
     Buffer, CachedLspAdapter, Capability, CodeLabel, ContextProvider, DiagnosticEntry, Diff,
     Documentation, Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName,
-    LocalFile, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{CompletionContext, DocumentHighlightKind, LanguageServer, LanguageServerId};
 use lsp_command::*;
@@ -161,7 +161,6 @@ pub struct Project {
     buffers_needing_diff: HashSet<WeakModel<Buffer>>,
     git_diff_debouncer: DebouncedDelay<Self>,
     remotely_created_buffers: Arc<Mutex<RemotelyCreatedBuffers>>,
-    _maintain_buffer_languages: Task<()>,
     terminals: Terminals,
     node: Option<Arc<dyn NodeRuntime>>,
     default_prettier: DefaultPrettier,
@@ -661,7 +660,6 @@ impl Project {
                     cx.observe_global::<SettingsStore>(Self::on_settings_changed),
                     cx.on_release(Self::release),
                 ],
-                _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 active_entry: None,
                 snippets,
                 languages,
@@ -847,7 +845,6 @@ impl Project {
                 active_entry: None,
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
-                _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 languages,
                 user_store: user_store.clone(),
                 snippets,
@@ -1869,58 +1866,13 @@ impl Project {
         }
 
         self.request_buffer_diff_recalculation(buffer, cx);
-        buffer.update(cx, |buffer, _| {
-            buffer.set_language_registry(self.languages.clone())
-        });
 
         cx.subscribe(buffer, |this, buffer, event, cx| {
             this.on_buffer_event(buffer, event, cx);
         })
         .detach();
 
-        self.detect_language_for_buffer(buffer, cx);
-        self.register_buffer_with_language_servers(buffer, cx);
-        cx.observe_release(buffer, |this, buffer, cx| {
-            if let Some(file) = File::from_dyn(buffer.file()) {
-                if file.is_local() {
-                    let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
-                    for server in this.language_servers_for_buffer(buffer, cx) {
-                        server
-                            .1
-                            .notify::<lsp::notification::DidCloseTextDocument>(
-                                lsp::DidCloseTextDocumentParams {
-                                    text_document: lsp::TextDocumentIdentifier::new(uri.clone()),
-                                },
-                            )
-                            .log_err();
-                    }
-                }
-            }
-        })
-        .detach();
-
         Ok(())
-    }
-
-    fn register_buffer_with_language_servers(
-        &mut self,
-        buffer_handle: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.register_buffer_with_language_servers(buffer_handle, cx)
-        })
-    }
-
-    fn unregister_buffer_from_language_servers(
-        &mut self,
-        buffer: &Model<Buffer>,
-        old_file: &File,
-        cx: &mut AppContext,
-    ) {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.unregister_buffer_from_language_servers(buffer, old_file, cx)
-        })
     }
 
     async fn send_buffer_ordered_messages(
@@ -2041,14 +1993,7 @@ impl Project {
             BufferStoreEvent::BufferAdded(buffer) => {
                 self.register_buffer(buffer, cx).log_err();
             }
-            BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
-                if let Some(old_file) = File::from_dyn(old_file.as_ref()) {
-                    self.unregister_buffer_from_language_servers(&buffer, old_file, cx);
-                }
-
-                self.detect_language_for_buffer(&buffer, cx);
-                self.register_buffer_with_language_servers(&buffer, cx);
-            }
+            BufferStoreEvent::BufferChangedFilePath { .. } => {}
             BufferStoreEvent::BufferDropped(buffer_id) => {
                 if let Some(ref ssh_session) = self.ssh_session {
                     ssh_session
@@ -2085,6 +2030,29 @@ impl Project {
             LspStoreEvent::LanguageServerLog(server_id, log_type, string) => cx.emit(
                 Event::LanguageServerLog(*server_id, log_type.clone(), string.clone()),
             ),
+            LspStoreEvent::LanguageDetected {
+                buffer,
+                new_language,
+            } => {
+                let Some(new_language) = new_language else {
+                    cx.emit(Event::LanguageNotFound(buffer.clone()));
+                    return;
+                };
+                let buffer_file = buffer.read(cx).file().cloned();
+                let settings =
+                    language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
+                let buffer_file = File::from_dyn(buffer_file.as_ref());
+                let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
+                if let Some(prettier_plugins) =
+                    prettier_support::prettier_plugins_for_language(&settings)
+                {
+                    self.install_default_prettier(
+                        worktree,
+                        prettier_plugins.iter().map(|s| Arc::from(s.as_str())),
+                        cx,
+                    );
+                };
+            }
             LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
@@ -2326,19 +2294,6 @@ impl Project {
                 }
             }
 
-            BufferEvent::Edited { .. } => {
-                self.lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_store.on_buffer_edited(buffer, cx);
-                });
-            }
-
-            // NEXT STEP have the lsp_store register for these things!
-            BufferEvent::Saved => {
-                self.lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_store.on_buffer_saved(buffer, cx);
-                });
-            }
-
             _ => {}
         }
 
@@ -2412,134 +2367,15 @@ impl Project {
         })
     }
 
-    fn maintain_buffer_languages(
-        languages: Arc<LanguageRegistry>,
-        cx: &mut ModelContext<Project>,
-    ) -> Task<()> {
-        let mut subscription = languages.subscribe();
-        let mut prev_reload_count = languages.reload_count();
-        cx.spawn(move |project, mut cx| async move {
-            while let Some(()) = subscription.next().await {
-                if let Some(project) = project.upgrade() {
-                    // If the language registry has been reloaded, then remove and
-                    // re-assign the languages on all open buffers.
-                    let reload_count = languages.reload_count();
-                    if reload_count > prev_reload_count {
-                        prev_reload_count = reload_count;
-                        project
-                            .update(&mut cx, |this, cx| {
-                                this.buffer_store.clone().update(cx, |buffer_store, cx| {
-                                    for buffer in buffer_store.buffers() {
-                                        if let Some(f) =
-                                            File::from_dyn(buffer.read(cx).file()).cloned()
-                                        {
-                                            this.unregister_buffer_from_language_servers(
-                                                &buffer, &f, cx,
-                                            );
-                                            buffer.update(cx, |buffer, cx| {
-                                                buffer.set_language(None, cx)
-                                            });
-                                        }
-                                    }
-                                });
-                            })
-                            .ok();
-                    }
-
-                    project
-                        .update(&mut cx, |project, cx| {
-                            let mut plain_text_buffers = Vec::new();
-                            let mut buffers_with_unknown_injections = Vec::new();
-                            for handle in project.buffer_store.read(cx).buffers() {
-                                let buffer = handle.read(cx);
-                                if buffer.language().is_none()
-                                    || buffer.language() == Some(&*language::PLAIN_TEXT)
-                                {
-                                    plain_text_buffers.push(handle);
-                                } else if buffer.contains_unknown_injections() {
-                                    buffers_with_unknown_injections.push(handle);
-                                }
-                            }
-
-                            for buffer in plain_text_buffers {
-                                project.detect_language_for_buffer(&buffer, cx);
-                                project.register_buffer_with_language_servers(&buffer, cx);
-                            }
-
-                            for buffer in buffers_with_unknown_injections {
-                                buffer.update(cx, |buffer, cx| buffer.reparse(cx));
-                            }
-                        })
-                        .ok();
-                }
-            }
-        })
-    }
-
-    fn detect_language_for_buffer(
-        &mut self,
-        buffer_handle: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        // If the buffer has a language, set it and start the language server if we haven't already.
-        let buffer = buffer_handle.read(cx);
-        let Some(file) = buffer.file() else {
-            return;
-        };
-        let content = buffer.as_rope();
-        let Some(new_language_result) = self
-            .languages
-            .language_for_file(file, Some(content), cx)
-            .now_or_never()
-        else {
-            return;
-        };
-
-        match new_language_result {
-            Err(e) => {
-                if e.is::<language::LanguageNotFound>() {
-                    cx.emit(Event::LanguageNotFound(buffer_handle.clone()))
-                }
-            }
-            Ok(new_language) => {
-                self.set_language_for_buffer(buffer_handle, new_language, cx);
-            }
-        };
-    }
-
     pub fn set_language_for_buffer(
         &mut self,
         buffer: &Model<Buffer>,
         new_language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        buffer.update(cx, |buffer, cx| {
-            if buffer.language().map_or(true, |old_language| {
-                !Arc::ptr_eq(old_language, &new_language)
-            }) {
-                buffer.set_language(Some(new_language.clone()), cx);
-            }
-        });
-
-        let buffer_file = buffer.read(cx).file().cloned();
-        let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
-        let buffer_file = File::from_dyn(buffer_file.as_ref());
-        let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
-        if let Some(prettier_plugins) = prettier_support::prettier_plugins_for_language(&settings) {
-            self.install_default_prettier(
-                worktree,
-                prettier_plugins.iter().map(|s| Arc::from(s.as_str())),
-                cx,
-            );
-        };
-        if let Some(file) = buffer_file {
-            let worktree = file.worktree.clone();
-            if worktree.read(cx).is_local() {
-                self.lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_store.start_language_servers(&worktree, new_language, cx);
-                });
-            }
-        }
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.set_language_for_buffer(buffer, new_language, cx)
+        })
     }
 
     pub fn restart_language_servers_for_buffers(
