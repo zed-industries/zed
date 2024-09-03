@@ -657,16 +657,10 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
         }
         if let Some(replacement) = Replacement::parse(query) {
             let range = range.clone().unwrap_or(CommandRange {
-                start: Position::CurrentLine {offset: 0},
+                start: Position::CurrentLine { offset: 0 },
                 end: None,
             });
-            Some(
-                ReplaceCommand {
-                    replacement,
-                    range,
-                }
-                .boxed_clone(),
-            )
+            Some(ReplaceCommand { replacement, range }.boxed_clone())
         } else {
             None
         }
