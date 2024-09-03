@@ -60,6 +60,15 @@ pub trait Action: 'static + Send {
     where
         Self: Sized;
 
+    /// Get the arguments that pass to the new instance if this action
+    /// requires a new instance to perform.
+    ///
+    /// Platform: Windows and Linux only.
+    /// Usage: Dock menu only.
+    fn arguments(&self) -> &str {
+        self.name()
+    }
+
     /// Build this action from a JSON value. This is used to construct actions from the keymap.
     /// A value of `{}` will be passed for actions that don't have any parameters.
     fn build(value: serde_json::Value) -> Result<Box<dyn Action>>
