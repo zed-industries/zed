@@ -19,6 +19,7 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::ResultExt;
 
+use crate::LanguageModelCompletionEvent;
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
@@ -293,10 +294,18 @@ impl LanguageModel for OpenAiLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
+    > {
         let request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
         let completions = self.stream_completion(request, cx);
-        async move { Ok(open_ai::extract_text_from_events(completions.await?).boxed()) }.boxed()
+        async move {
+            Ok(open_ai::extract_text_from_events(completions.await?)
+                .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                .boxed())
+        }
+        .boxed()
     }
 
     fn use_any_tool(

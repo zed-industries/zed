@@ -51,6 +51,20 @@ pub struct LanguageModelCacheConfiguration {
     pub min_total_token: usize,
 }
 
+/// A completion event from a language model.
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum LanguageModelCompletionEvent {
+    Text(String),
+    ToolUse(LanguageModelToolUse),
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct LanguageModelToolUse {
+    pub id: String,
+    pub name: String,
+    pub input: serde_json::Value,
+}
+
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
@@ -82,7 +96,7 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>>;
 
     fn use_any_tool(
         &self,

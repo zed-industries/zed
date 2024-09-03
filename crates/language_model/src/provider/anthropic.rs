@@ -3,6 +3,7 @@ use crate::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
+use crate::{LanguageModelCompletionEvent, LanguageModelToolUse};
 use anthropic::AnthropicError;
 use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
@@ -364,7 +365,7 @@ impl LanguageModel for AnthropicModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let request =
             request.into_anthropic(self.model.id().into(), self.model.max_output_tokens());
         let request = self.stream_completion(request, cx);
@@ -375,7 +376,22 @@ impl LanguageModel for AnthropicModel {
         async move {
             Ok(future
                 .await?
-                .map(|result| result.map_err(|err| anyhow!(err)))
+                .map(|result| {
+                    result
+                        .map(|content| match content {
+                            anthropic::ResponseContent::Text { text } => {
+                                LanguageModelCompletionEvent::Text(text)
+                            }
+                            anthropic::ResponseContent::ToolUse { id, name, input } => {
+                                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                                    id,
+                                    name,
+                                    input,
+                                })
+                            }
+                        })
+                        .map_err(|err| anyhow!(err))
+                })
                 .boxed())
         }
         .boxed()
