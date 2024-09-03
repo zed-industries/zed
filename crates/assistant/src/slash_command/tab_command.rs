@@ -330,15 +330,15 @@ fn create_tab_completion_label(
     path: &std::path::Path,
     comment_id: Option<HighlightId>,
 ) -> CodeLabel {
-    let path_string = path.to_string_lossy();
     let file_name = path
         .file_name()
         .map(|f| f.to_string_lossy())
         .unwrap_or_default();
+    let parent_path = path.parent().map(|p| p.to_string_lossy()).unwrap_or_default();
     let mut label = CodeLabel::default();
     label.push_str(&file_name, None);
     label.push_str(" ", None);
-    label.push_str(&path_string, comment_id);
+    label.push_str(&parent_path, comment_id);
     label.filter_range = 0..file_name.len();
     label
 }
