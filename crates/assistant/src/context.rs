@@ -472,7 +472,7 @@ pub enum XmlTagKind {
     Step,
     Edit,
     Path,
-    Symbol,
+    Search,
     Within,
     Operation,
     Description,
@@ -1518,7 +1518,7 @@ impl Context {
 
                     if tag.kind == XmlTagKind::Edit && tag.is_open_tag {
                         let mut path = None;
-                        let mut symbol = None;
+                        let mut search = None;
                         let mut operation = None;
                         let mut description = None;
 
@@ -1527,7 +1527,7 @@ impl Context {
                                 edits.push(WorkflowStepEdit::new(
                                     path,
                                     operation,
-                                    symbol,
+                                    search,
                                     description,
                                 ));
                                 break;
@@ -1536,7 +1536,7 @@ impl Context {
                             if tag.is_open_tag
                                 && [
                                     XmlTagKind::Path,
-                                    XmlTagKind::Symbol,
+                                    XmlTagKind::Search,
                                     XmlTagKind::Operation,
                                     XmlTagKind::Description,
                                 ]
@@ -1555,8 +1555,8 @@ impl Context {
                                         match kind {
                                             XmlTagKind::Path => path = Some(content),
                                             XmlTagKind::Operation => operation = Some(content),
-                                            XmlTagKind::Symbol => {
-                                                symbol = Some(content).filter(|s| !s.is_empty())
+                                            XmlTagKind::Search => {
+                                                search = Some(content).filter(|s| !s.is_empty())
                                             }
                                             XmlTagKind::Description => {
                                                 description =
