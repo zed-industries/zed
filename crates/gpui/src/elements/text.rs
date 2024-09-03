@@ -314,7 +314,7 @@ impl TextLayout {
                     (text.clone(), false)
                 };
                 if truncated {
-                    let mut truncate_at = text.len() - 3;
+                    let mut truncate_at = text.len() - ELLIPSIS.len();
                     // let mut drop_unused_run = None;
                     let mut run_index = 0;
                     let mut iter = runs.iter_mut().peekable();
@@ -322,7 +322,7 @@ impl TextLayout {
                         if run.len <= truncate_at {
                             truncate_at -= run.len;
                         } else {
-                            run.len = truncate_at + 3;
+                            run.len = truncate_at + ELLIPSIS.len();
                             if iter.peek().is_some() {
                                 run_index += 1;
                                 break;
