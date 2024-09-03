@@ -336,7 +336,7 @@ impl TextLayout {
                     //
                     // Truncate res: abcdefgh… (truncate_at = 8)
                     // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
-                    // 5, ... }, Run2 { string: …, len: 3, ... }
+                    // 4, ... }, Run2 { string: …, len: 3, ... }
                     let mut truncate_at = text.len() - ELLIPSIS.len();
                     let mut run_end = None;
                     for (run_index, run) in runs.iter_mut().enumerate() {
@@ -344,14 +344,12 @@ impl TextLayout {
                             truncate_at -= run.len;
                         } else {
                             run.len = truncate_at + ELLIPSIS.len();
-                            run_end = Some(run_index);
+                            run_end = Some(run_index + 1);
                             break;
                         }
                     }
                     if let Some(run_end) = run_end {
-                        if run_end + 1 < runs.len() {
-                            runs = runs[..run_end + 1].to_vec();
-                        }
+                        runs.truncate(run_end);
                     }
                 }
 
