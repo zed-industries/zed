@@ -8,6 +8,9 @@ use std::{
 
 use ::util::{paths::SanitizedPath, ResultExt};
 use anyhow::{anyhow, Context as _, Result};
+use app_identifier::{
+    get_app_instance_event_identifier, get_app_shared_memory_identifier, APP_SHARED_MEMORY_MAX_SIZE,
+};
 use async_task::Runnable;
 use collections::FxHashMap;
 use futures::channel::oneshot::{self, Receiver};
@@ -23,7 +26,21 @@ use windows::{
             Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
         },
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
+        System::{
+            Com::*,
+            DataExchange::{
+                CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard,
+                RegisterClipboardFormatW, SetClipboardData,
+            },
+            LibraryLoader::*,
+            Memory::{
+                CreateFileMappingW, GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+                PAGE_READWRITE,
+            },
+            Ole::*,
+            SystemInformation::*,
+            Threading::*,
+        },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     UI::{
@@ -48,6 +65,8 @@ pub(crate) struct WindowsPlatform {
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
     validation_number: usize,
     main_thread_id_win32: u32,
+    single_instance_event: Owned<HANDLE>,
+    shared_memory_handle: Owned<HANDLE>,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -111,6 +130,28 @@ impl WindowsPlatform {
         let raw_window_handles = RwLock::new(SmallVec::new());
         let gpu_context = BladeContext::new().expect("Unable to init GPU context");
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
+        let single_instance_event = unsafe {
+            Owned::new(CreateEventW(
+                None,
+                false,
+                false,
+                &HSTRING::from(get_app_instance_event_identifier()),
+            )
+            .expect("Unable to open single instance event, make sure you have called `check_single_instance` first!"))
+        };
+        let shared_memory_handle = unsafe {
+            Owned::new(
+                CreateFileMappingW(
+                    INVALID_HANDLE_VALUE,
+                    None,
+                    PAGE_READWRITE,
+                    0,
+                    APP_SHARED_MEMORY_MAX_SIZE as u32,
+                    &HSTRING::from(get_app_shared_memory_identifier()),
+                )
+                .expect("Unable to create shared memory"),
+            )
+        };
 
         Self {
             state,
@@ -125,6 +166,8 @@ impl WindowsPlatform {
             bitmap_factory,
             validation_number,
             main_thread_id_win32,
+            single_instance_event,
+            shared_memory_handle,
         }
     }
 

@@ -7,6 +7,9 @@ static APP_EVENT_IDENTIFIER: OnceLock<String> = OnceLock::new();
 static APP_SHARED_MEMORY_IDENTIFIER: OnceLock<String> = OnceLock::new();
 
 /// TODO:
+pub const APP_SHARED_MEMORY_MAX_SIZE: usize = 1024;
+
+/// TODO:
 pub fn register_app_identifier(app_identifier: &str) {
     APP_IDENTIFIER.get_or_init(|| app_identifier.to_string());
 }
