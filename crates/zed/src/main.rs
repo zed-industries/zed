@@ -319,6 +319,13 @@ fn init_ui(
 
 fn main() {
     let start_time = std::time::Instant::now();
+
+    #[cfg(target_os = "windows")]
+    {
+        use zed::windows_only_instance::*;
+        register_zed_identifier();
+    }
+
     menu::init();
     zed_actions::init();
 

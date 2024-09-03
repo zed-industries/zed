@@ -10,14 +10,28 @@ static APP_SHARED_MEMORY_IDENTIFIER: OnceLock<String> = OnceLock::new();
 pub const APP_SHARED_MEMORY_MAX_SIZE: usize = 1024;
 
 /// TODO:
-pub fn register_app_identifier(app_identifier: &str) {
-    APP_IDENTIFIER.get_or_init(|| app_identifier.to_string());
+pub fn register_app_identifier(app_identifier: &str) -> &'static str {
+    APP_IDENTIFIER.get_or_init(|| app_identifier.to_string())
+}
+
+fn get_app_identifier() -> &'static str {
+    if let Some(identifier) = APP_IDENTIFIER.get() {
+        identifier
+    } else {
+        let rand_number = rand::random::<u32>();
+        let random_identifier = format!("Gpui-App-Identifier-{}", rand_number);
+        log::error!(
+            "No app identifier is set, call register_app_identifier first. Using {} instead.",
+            random_identifier
+        );
+        register_app_identifier(&random_identifier)
+    }
 }
 
 /// TODO:
 pub fn get_app_instance_event_identifier() -> &'static str {
     APP_EVENT_IDENTIFIER.get_or_init(|| {
-        let identifier = format!("Local\\{}-Instance-Event", APP_EVENT_IDENTIFIER.get().unwrap());
+        let identifier = format!("Local\\{}-Instance-Event", get_app_identifier());
         if identifier.len() as u32 > MAX_PATH {
             panic!("The length of app instance event identifier `{identifier}` is limited to {MAX_PATH} characters.");
         }
@@ -28,7 +42,7 @@ pub fn get_app_instance_event_identifier() -> &'static str {
 /// TODO:
 pub fn get_app_shared_memory_identifier() -> &'static str {
     APP_SHARED_MEMORY_IDENTIFIER.get_or_init(|| {
-        let identifier = format!("Local\\{}-Shared-Memory", APP_EVENT_IDENTIFIER.get().unwrap());
+        let identifier = format!("Local\\{}-Shared-Memory", get_app_identifier());
         if identifier.len() as u32 > MAX_PATH {
             panic!("The length of app shared memory identifier `{identifier}` is limited to {MAX_PATH} characters.");
         }
