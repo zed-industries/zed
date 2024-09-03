@@ -314,6 +314,29 @@ impl TextLayout {
                     (text.clone(), false)
                 };
                 if truncated {
+                    //----------------------------------------------
+                    // Case 0: Normal
+                    // Text: abcdefghijkl
+                    // Runs: Run0 { len: 12, ... }
+                    //
+                    // Truncate res: abcd… (truncate_at = 4)
+                    // Run res: Run0 { string: abcd…, len: 7, ... }
+                    // ---------------------------------------------
+                    // Case 1: Drop some runs
+                    // Text: abcdefghijkl
+                    // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+                    //
+                    // Truncate res: abcdef… (truncate_at = 6)
+                    // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: ef…, len:
+                    // 5, ... }
+                    // ----------------------------------------------
+                    // Case 2: Truncate at start of some run
+                    // Text: abcdefghijkl
+                    // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
+                    //
+                    // Truncate res: abcdefgh… (truncate_at = 8)
+                    // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
+                    // 5, ... }, Run2 { string: …, len: 3, ... }
                     let mut truncate_at = text.len() - ELLIPSIS.len();
                     let mut run_end = None;
                     for (run_index, run) in runs.iter_mut().enumerate() {
