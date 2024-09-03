@@ -23,7 +23,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
   sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
   ```
 
-* Install the Rust wasm toolchain:
+- Install the Rust wasm toolchain:
 
   ```sh
   rustup target add wasm32-wasi
