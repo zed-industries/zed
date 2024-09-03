@@ -1,3 +1,4 @@
+use gpui::app_identifier::{get_app_instance_event_identifier, register_app_identifier};
 use release_channel::ReleaseChannel;
 use windows::{
     core::HSTRING,
@@ -7,12 +8,12 @@ use windows::{
     },
 };
 
-fn retrieve_app_instance_event_identifier() -> &'static str {
+fn register_zed_identifier() {
     match *release_channel::RELEASE_CHANNEL {
-        ReleaseChannel::Dev => "Local\\Zed-Editor-Dev-Instance-Event",
-        ReleaseChannel::Nightly => "Local\\Zed-Editor-Nightly-Instance-Event",
-        ReleaseChannel::Preview => "Local\\Zed-Editor-Preview-Instance-Event",
-        ReleaseChannel::Stable => "Local\\Zed-Editor-Stable-Instance-Event",
+        ReleaseChannel::Dev => register_app_identifier("Zed-Editor-Dev"),
+        ReleaseChannel::Nightly => register_app_identifier("Zed-Editor-Nightly"),
+        ReleaseChannel::Preview => register_app_identifier("Zed-Editor-Preview"),
+        ReleaseChannel::Stable => register_app_identifier("Zed-Editor-Stable"),
     }
 }
 
@@ -21,6 +22,7 @@ pub fn check_single_instance() -> bool {
         return true;
     }
 
+    register_zed_identifier();
     check_single_instance_event()
 }
 
@@ -30,7 +32,7 @@ fn check_single_instance_event() -> bool {
             None,
             false,
             false,
-            &HSTRING::from(retrieve_app_instance_event_identifier()),
+            &HSTRING::from(get_app_instance_event_identifier()),
         )
         .expect("Unable to create instance sync event")
     };
