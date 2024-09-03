@@ -54,6 +54,8 @@ use worktree::CreatedEntry;
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
+type AncestorDepth = usize;
+
 pub struct ProjectPanel {
     project: Model<Project>,
     fs: Arc<dyn Fs>,
@@ -96,7 +98,7 @@ enum ClipboardEntry {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct EntryDetails {
+struct EntryDetails {
     filename: String,
     icon: Option<SharedString>,
     path: Arc<Path>,
@@ -116,13 +118,13 @@ pub struct EntryDetails {
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
-pub struct Delete {
+struct Delete {
     #[serde(default)]
     pub skip_prompt: bool,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
-pub struct Trash {
+struct Trash {
     #[serde(default)]
     pub skip_prompt: bool,
 }
@@ -2556,7 +2558,7 @@ impl Render for ProjectPanel {
                 .child(
                     uniform_list(cx.view().clone(), "entries", items_count, {
                         |this, range, cx| {
-                            let mut items = Vec::new();
+                            let mut items = Vec::with_capacity(range.end - range.start);
                             this.for_each_visible_entry(range, cx, |id, details, cx| {
                                 items.push(this.render_entry(id, details, cx));
                             });
