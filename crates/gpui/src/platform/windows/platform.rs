@@ -8,6 +8,7 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
+use collections::FxHashMap;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -36,7 +37,10 @@ use windows::{
         },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
-    UI::ViewManagement::UISettings,
+    UI::{
+        StartScreen::{JumpList, JumpListItem},
+        ViewManagement::UISettings,
+    },
 };
 
 use crate::*;
@@ -58,6 +62,7 @@ pub(crate) struct WindowsPlatform {
 
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
+    dock_menu_actions: FxHashMap<String, Box<dyn Action>>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: HCURSOR,
 }
@@ -75,10 +80,12 @@ struct PlatformCallbacks {
 impl WindowsPlatformState {
     fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
+        let dock_menu_actions = FxHashMap::default();
         let current_cursor = load_cursor(CursorStyle::Arrow);
 
         Self {
             callbacks,
+            dock_menu_actions,
             current_cursor,
         }
     }
@@ -175,6 +182,32 @@ impl WindowsPlatform {
         lock.remove(index);
 
         lock.is_empty()
+    }
+
+    fn configure_jump_list(&self, menus: Vec<MenuItem>) -> Result<()> {
+        let jump_list = JumpList::LoadCurrentAsync()?.get()?;
+        let items = jump_list.Items()?;
+        items.Clear()?;
+        for item in menus {
+            let item = match item {
+                MenuItem::Separator => JumpListItem::CreateSeparator()?,
+                MenuItem::Submenu(_) => {
+                    log::error!("Set `MenuItemSubmenu` for dock menu on Windows is not supported.");
+                    continue;
+                }
+                MenuItem::Action { name, action, .. } => {
+                    let item_args = HSTRING::from(action.arguments());
+                    self.state
+                        .borrow_mut()
+                        .dock_menu_actions
+                        .insert(action.arguments().to_string(), action);
+                    JumpListItem::CreateWithArguments(&item_args, &HSTRING::from(name.as_ref()))?
+                }
+            };
+            items.Append(&item)?;
+        }
+        jump_list.SaveAsync()?.get()?;
+        Ok(())
     }
 }
 
@@ -410,7 +443,10 @@ impl Platform for WindowsPlatform {
 
     // todo(windows)
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
-    fn set_dock_menu(&self, _menus: Vec<MenuItem>, _keymap: &Keymap) {}
+
+    fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
+        self.configure_jump_list(menus).log_err();
+    }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
@@ -772,8 +808,8 @@ fn read_metadata_from_clipboard(metadata_format: u32) -> Option<String> {
 }
 
 // clipboard
-pub const CLIPBOARD_HASH_FORMAT: PCWSTR = windows::core::w!("zed-text-hash");
-pub const CLIPBOARD_METADATA_FORMAT: PCWSTR = windows::core::w!("zed-metadata");
+const CLIPBOARD_HASH_FORMAT: PCWSTR = windows::core::w!("zed-text-hash");
+const CLIPBOARD_METADATA_FORMAT: PCWSTR = windows::core::w!("zed-metadata");
 
 #[cfg(test)]
 mod tests {
