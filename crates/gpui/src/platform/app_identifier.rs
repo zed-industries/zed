@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 use windows::Win32::Foundation::MAX_PATH;
 
 static APP_IDENTIFIER: OnceLock<String> = OnceLock::new();
+static APP_MUTEX_IDENTIFIER: OnceLock<String> = OnceLock::new();
 static APP_EVENT_IDENTIFIER: OnceLock<String> = OnceLock::new();
 static APP_SHARED_MEMORY_IDENTIFIER: OnceLock<String> = OnceLock::new();
 
@@ -26,6 +27,17 @@ fn get_app_identifier() -> &'static str {
         );
         register_app_identifier(&random_identifier)
     }
+}
+
+/// TODO:
+pub fn get_app_instance_mutex_identifier() -> &'static str {
+    APP_MUTEX_IDENTIFIER.get_or_init(|| {
+        let identifier = format!("Local\\{}-Instance-Mutex", get_app_identifier());
+        if identifier.len() as u32 > MAX_PATH {
+            panic!("The length of app instance mutex identifier `{identifier}` is limited to {MAX_PATH} characters.");
+        }
+        identifier
+    })
 }
 
 /// TODO:

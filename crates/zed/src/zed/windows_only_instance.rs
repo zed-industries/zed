@@ -1,6 +1,6 @@
 use gpui::app_identifier::{
-    get_app_instance_event_identifier, get_app_shared_memory_identifier, register_app_identifier,
-    APP_SHARED_MEMORY_MAX_SIZE,
+    get_app_instance_event_identifier, get_app_instance_mutex_identifier,
+    get_app_shared_memory_identifier, register_app_identifier, APP_SHARED_MEMORY_MAX_SIZE,
 };
 use release_channel::ReleaseChannel;
 use util::ResultExt;
@@ -8,7 +8,6 @@ use windows::{
     core::HSTRING,
     Win32::{
         Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS},
-        Storage::FileSystem::SYNCHRONIZE,
         System::{
             Memory::{MapViewOfFile, OpenFileMappingW, UnmapViewOfFile, FILE_MAP_WRITE},
             Threading::{
@@ -33,7 +32,6 @@ pub fn check_single_instance() -> bool {
     //     return true;
     // }
 
-    // register_zed_identifier();
     check_single_instance_event()
 }
 
@@ -55,15 +53,8 @@ fn check_single_instance_event() -> bool {
         CreateMutexW(
             None,
             true,
-            // &HSTRING::from(get_app_instance_event_identifier()),
-            &HSTRING::from("Zed-Single_instance-Test"),
+            &HSTRING::from(get_app_instance_mutex_identifier()),
         )
-        // CreateEventW(
-        //     None,
-        //     false,
-        //     false,
-        //     &HSTRING::from(get_app_instance_event_identifier()),
-        // )
         .expect("Unable to create instance sync event")
     };
     let last_err = unsafe { GetLastError() };
