@@ -25,6 +25,7 @@ anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 assets.workspace = true
 assistant_slash_command.workspace = true
+assistant_tool.workspace = true
 async-watch.workspace = true
 cargo_toml.workspace = true
 chrono.workspace = true
