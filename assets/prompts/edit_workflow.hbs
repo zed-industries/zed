@@ -27,17 +27,17 @@ impl Person {
 ```
 
 <edit>
-  <path>src/person.rs</path>
-  <operation>insert_before</operation>
-  <search>height: f32,</search>
-  <description>Add the age field</description>
+<path>src/person.rs</path>
+<operation>insert_before</operation>
+<search>height: f32,</search>
+<description>Add the age field</description>
 </edit>
 
 <edit>
-  <path>src/person.rs</path>
-  <operation>insert_after</operation>
-  <search>impl Person {</search>
-  <description>Add the age getter</description>
+<path>src/person.rs</path>
+<operation>insert_after</operation>
+<search>impl Person {</search>
+<description>Add the age getter</description>
 </edit>
 </step>
 
@@ -85,83 +85,226 @@ This tag indicates what type of change should be made, relative to the given loc
 
 Here are some concrete examples.
 
-<example language="rust">
-
+<example>
 <message role="user">
-```rs src/rectangle.rs
-struct Rectangle {
+
+```rs src/shapes.rs
+pub mod rectangle;
+pub mod circle;
+```
+
+```rs src/shapes/rectangle.rs
+pub struct Rectangle {
     width: f64,
     height: f64,
 }
 
 impl Rectangle {
-    fn new(width: f64, height: f64) -> Self {
+    pub fn new(width: f64, height: f64) -> Self {
         Rectangle { width, height }
     }
 }
 ```
 
-We need to add methods to calculate the area and perimeter of the rectangle. Can you help with that?
+```rs src/shapes/circle.rs
+pub struct Circle {
+    radius: f64,
+}
+
+impl Circle {
+    pub fn new(radius: f64) -> Self {
+        Circle { radius }
+    }
+}
+```
+
+Update all shapes to store their origin as an (x, y) tuple and implement Display.
+</message>
+
+<message role="assistant">
+We'll need to update both the rectangle and circle modules.
+
+<step>
+Add origin fields to both shape types.
+
+```rust
+struct Rectangle {
+    // existing fields ...
+    origin: (f64, f64),
+}
+```
+
+```rust
+struct Circle {
+    // existing fields ...
+    origin: (f64, f64),
+}
+```
+
+<edit>
+<path>src/shapes/rectangle.rs</path>
+<operation>insert_before</operation>
+<search>
+    width: f64,
+    height: f64,
+</search>
+<description>Add the origin field to Rectangle</description>
+</edit>
+
+<edit>
+<path>src/shapes/circle.rs</path>
+<operation>insert_before</operation>
+<search>
+    radius: f64,
+</search>
+<description>Add the origin field to Circle</description>
+</edit>
+
+<step>
+Update both shape's constructors to take an origin.
+
+<edit>
+<path>src/shapes/rectangle.rs</path>
+<operation>update</operation>
+<search>
+    fn new(width: f64, height: f64) -> Self {
+        Rectangle { width, height }
+    }
+</search>
+<description>Update the Rectangle new function to take an origin</description>
+</edit>
+
+<edit>
+<path>src/shapes/circle.rs</path>
+<operation>update</operation>
+<search>
+    fn new(radius: f64) -> Self {
+        Circle { radius }
+    }
+</search>
+<description>Update the Circle new function to take an origin</description>
+</edit>
+</step>
+
+<step>
+Implement Display for both shapes
+
+<edit>
+<path>src/shapes/rectangle.rs</path>
+<operation>insert_before</operation>
+<search>
+struct Rectangle {
+</search>
+<description>Add an import for the `std::fmt` module</description>
+</edit>
+
+<edit>
+<path>src/shapes/rectangle.rs</path>
+<operation>insert_after</operation>
+<search>
+        Rectangle { width, height }
+    }
+}
+</search>
+<description>Add a Display implementation for Rectangle</description>
+</edit>
+
+<edit>
+<path>src/shapes/circle.rs</path>
+<operation>insert_before</operation>
+<search>
+struct Circle {
+</search>
+<description>Add an import for the `std::fmt` module</description>
+</edit>
+
+<edit>
+<path>src/shapes/circle.rs</path>
+<operation>insert_after</operation>
+<search>
+        Circle { radius }
+    }
+}
+</search>
+<description>Add a Display implementation for Circle</description>
+</edit>
+</step>
+</message>
+</example>
+
+<example number=2>
+<message role="user">
+
+```rs src/user.rs
+struct User {
+    pub name: String,
+    age: u32,
+    email: String,
+}
+
+impl User {
+    fn new(name: String, age: u32, email: String) -> Self {
+        User { name, age, email }
+    }
+
+    pub fn print_info(&self) {
+        todo!()
+    }
+}
+```
+
+Let's print all the user information and delete the email field.
 </message>
 
 <message role="assistant">
 <step>
-Add methods to calculate the area and perimeter of the rectangle
+Update the 'print_info' method to print user information
 
 ```rust
-impl Rectangle {
-    // existing methods...
+impl User {
+    // ... other methods ...
 
-    fn calculate_area(&self) -> f64 {
-        self.width * self.height
-    }
-
-    fn calculate_perimeter(&self) -> f64 {
-        2.0 * (self.width + self.height)
+    pub fn print_info(&self) {
+        println!("Name: {name}, Age: {age}", name = self.name, age = self.age);
     }
 }
 ```
 
 <edit>
-  <path>src/rectangle.rs</path>
-  <operation>insert_after</operation>
-  <search>
-      Rectangle { width, height }
-  }
-  </search>
-  <description>Add calculate_area and calculate_perimeter methods</description>
+<path>src/user.rs</path>
+<operation>update</operation>
+<search>
+    pub fn print_info(&self) {
+        todo!()
+    }
+</search>
+<description>Print all the user information</description>
 </edit>
 </step>
 
 <step>
-Implement the Display trait for the Rectangle struct
-
-```rust
-use std::fmt;
-
-impl fmt::Display for Rectangle {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Rectangle: {}x{}", self.width, self.height)
-    }
-}
-```
+Remove the 'email' field from the User struct
 
 <edit>
-  <path>src/rectangle.rs</path>
-  <operation>insert_before</operation>
-  <search>impl Rectangle {</search>
-  <description>Implement Display trait for Rectangle</description>
+<path>src/user.rs</path>
+<operation>delete</operation>
+<search>
+email: String,
+</search>
 </edit>
 
 <edit>
-  <path>src/rectangle.rs</path>
-  <operation>insert_before</operation>
-  <search>struct Rectangle {</search>
-  <description>Add use statement for fmt</description>
+<path>src/user.rs</path>
+<operation>update</operation>
+<symbol>
+fn new(name: String, age: u32, email: String) -> Self {
+    User { name, age, email }
+}
+</symbol>
+<description>Remove email parameter from new method</description>
 </edit>
 </step>
 </message>
-
 </example>
 
 You should think step by step. When possible, produce smaller, coherent logical steps as opposed to one big step that combines lots of heterogeneous edits.
