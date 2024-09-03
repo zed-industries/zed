@@ -1794,12 +1794,15 @@ impl PromptEditor {
             CodegenStatus::Pending => {
                 cx.emit(PromptEditorEvent::DismissRequested);
             }
-            CodegenStatus::Done | CodegenStatus::Error(_) => {
+            CodegenStatus::Done => {
                 if self.edited_since_done {
                     cx.emit(PromptEditorEvent::StartRequested);
                 } else {
                     cx.emit(PromptEditorEvent::ConfirmRequested);
                 }
+            }
+            CodegenStatus::Error(_) => {
+                cx.emit(PromptEditorEvent::StartRequested);
             }
         }
     }
