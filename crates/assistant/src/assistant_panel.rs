@@ -1416,6 +1416,7 @@ pub struct ContextEditor {
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
     pending_slash_command_blocks: HashMap<Range<language::Anchor>, CustomBlockId>,
+    pending_tool_use_creases: HashMap<Range<language::Anchor>, CreaseId>,
     _subscriptions: Vec<Subscription>,
     workflow_steps: HashMap<Range<language::Anchor>, WorkflowStepViewState>,
     active_workflow_step: Option<ActiveWorkflowStep>,
@@ -1480,6 +1481,7 @@ impl ContextEditor {
             project,
             pending_slash_command_creases: HashMap::default(),
             pending_slash_command_blocks: HashMap::default(),
+            pending_tool_use_creases: HashMap::default(),
             _subscriptions,
             workflow_steps: HashMap::default(),
             active_workflow_step: None,
@@ -1855,6 +1857,70 @@ impl ContextEditor {
                             cx,
                         );
                     }
+
+                    let new_tool_uses = self
+                        .context
+                        .read(cx)
+                        .pending_tool_uses()
+                        .into_iter()
+                        .filter(|tool_use| {
+                            !self
+                                .pending_tool_use_creases
+                                .contains_key(&tool_use.source_range)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                    dbg!(&new_tool_uses);
+
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
+                    let excerpt_id = *excerpt_id;
+
+                    let crease_ids = editor.insert_creases(
+                        new_tool_uses.iter().map(|tool_use| {
+                            let workspace = self.workspace.clone();
+                            let placeholder = FoldPlaceholder {
+                                render: Arc::new(move |_, _, _| Label::new("TEST").into_any_element()),
+                                constrain_width: false,
+                                merge_adjacent: false,
+                            };
+                            let render_toggle = {
+                                // let confirm_command = confirm_command.clone();
+                                let command = tool_use.clone();
+                                move |row, _, _, _cx: &mut WindowContext| {
+                                    Empty.into_any()
+                                    // render_pending_slash_command_gutter_decoration(
+                                    //     row,
+                                    //     &command.status,
+                                    //     confirm_command.clone(),
+                                    // )
+                                }
+                            };
+                            let render_trailer = {
+                                let command = tool_use.clone();
+                                move |row, _unfold, cx: &mut WindowContext| Empty.into_any()
+                            };
+
+                            let start = buffer
+                                .anchor_in_excerpt(excerpt_id, tool_use.source_range.start)
+                                .unwrap();
+                            let end = buffer
+                                .anchor_in_excerpt(excerpt_id, tool_use.source_range.end)
+                                .unwrap();
+                            Crease::new(start..end, placeholder, render_toggle, render_trailer)
+                        }),
+                        cx,
+                    );
+
+                    dbg!(&crease_ids);
+
+                    self.pending_tool_use_creases.extend(
+                        new_tool_uses
+                            .iter()
+                            .map(|tool_use| tool_use.source_range.clone())
+                            .zip(crease_ids),
+                    );
                 });
             }
             ContextEvent::WorkflowStepsUpdated { removed, updated } => {
