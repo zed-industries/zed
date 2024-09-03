@@ -2038,7 +2038,6 @@ impl Project {
                     cx.emit(Event::LanguageNotFound(buffer.clone()));
                     return;
                 };
-                // todo! ordering changed. is it a problem?
                 let buffer_file = buffer.read(cx).file().cloned();
                 let settings =
                     language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
