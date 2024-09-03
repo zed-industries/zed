@@ -490,6 +490,7 @@ pub struct Context {
     edits_since_last_parse: language::Subscription,
     finished_slash_commands: HashSet<SlashCommandId>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+    pending_tool_uses_by_id: HashMap<String, PendingToolUse>,
     message_anchors: Vec<MessageAnchor>,
     images: HashMap<u64, (Arc<RenderImage>, Shared<Task<Option<LanguageModelImage>>>)>,
     image_anchors: Vec<ImageAnchor>,
@@ -591,6 +592,7 @@ impl Context {
             messages_metadata: Default::default(),
             pending_slash_commands: Vec::new(),
             finished_slash_commands: HashSet::default(),
+            pending_tool_uses_by_id: HashMap::default(),
             slash_command_output_sections: Vec::new(),
             edits_since_last_parse: edits_since_last_slash_command_parse,
             summary: None,
@@ -1002,6 +1004,14 @@ impl Context {
 
     pub fn slash_command_output_sections(&self) -> &[SlashCommandOutputSection<language::Anchor>] {
         &self.slash_command_output_sections
+    }
+
+    pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
+        self.pending_tool_uses_by_id.values().collect()
+    }
+
+    pub fn get_tool_use_by_id(&self, id: &String) -> Option<&PendingToolUse> {
+        self.pending_tool_uses_by_id.get(id)
     }
 
     fn set_language(&mut self, cx: &mut ModelContext<Self>) {
@@ -1984,12 +1994,16 @@ impl Context {
                                         );
                                     }
                                     LanguageModelCompletionEvent::ToolUse(tool_use) => {
+                                        const NEWLINE: char = '\n';
+
                                         let mut text = String::new();
-                                        text.push('\n');
+                                        text.push(NEWLINE);
                                         text.push_str(
                                             &serde_json::to_string_pretty(&tool_use)
                                                 .expect("failed to serialize tool use to JSON"),
                                         );
+                                        text.push(NEWLINE);
+                                        let text_len = text.len();
 
                                         buffer.edit(
                                             [(
@@ -1998,6 +2012,23 @@ impl Context {
                                             )],
                                             None,
                                             cx,
+                                        );
+
+                                        let start_ix = message_old_end_offset + NEWLINE.len_utf8();
+                                        let end_ix =
+                                            message_old_end_offset + text_len - NEWLINE.len_utf8();
+                                        let source_range = buffer.anchor_after(start_ix)
+                                            ..buffer.anchor_after(end_ix);
+
+                                        this.pending_tool_uses_by_id.insert(
+                                            tool_use.id.clone(),
+                                            PendingToolUse {
+                                                id: tool_use.id,
+                                                name: tool_use.name,
+                                                input: tool_use.input,
+                                                status: PendingToolUseStatus::Idle,
+                                                source_range,
+                                            },
                                         );
                                     }
                                 }
@@ -2752,6 +2783,22 @@ pub struct PendingSlashCommand {
 
 #[derive(Debug, Clone)]
 pub enum PendingSlashCommandStatus {
+    Idle,
+    Running { _task: Shared<Task<()>> },
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingToolUse {
+    pub id: String,
+    pub name: String,
+    pub input: serde_json::Value,
+    pub status: PendingToolUseStatus,
+    pub source_range: Range<language::Anchor>,
+}
+
+#[derive(Debug, Clone)]
+pub enum PendingToolUseStatus {
     Idle,
     Running { _task: Shared<Task<()>> },
     Error(String),
