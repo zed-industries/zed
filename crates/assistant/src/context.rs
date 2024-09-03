@@ -1945,7 +1945,7 @@ impl Context {
 
         let task = cx.spawn({
             |this, mut cx| async move {
-                let stream = model.stream_completion(request, &cx);
+                let stream = model.stream_completion_text(request, &cx);
                 let assistant_message_id = assistant_message.id;
                 let mut response_latency = None;
                 let stream_completion = async {
@@ -2406,7 +2406,7 @@ impl Context {
 
             self.pending_summary = cx.spawn(|this, mut cx| {
                 async move {
-                    let stream = model.stream_completion(request, &cx);
+                    let stream = model.stream_completion_text(request, &cx);
                     let mut messages = stream.await?;
 
                     let mut replaced = !replace_old;

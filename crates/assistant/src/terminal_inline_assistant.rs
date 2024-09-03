@@ -1010,7 +1010,7 @@ impl Codegen {
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
         self.generation = cx.spawn(|this, mut cx| async move {
             let model_telemetry_id = model.telemetry_id();
-            let response = model.stream_completion(prompt, &cx).await;
+            let response = model.stream_completion_text(prompt, &cx).await;
             let generate = async {
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 

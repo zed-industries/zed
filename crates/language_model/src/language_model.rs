@@ -8,7 +8,8 @@ pub mod settings;
 
 use anyhow::Result;
 use client::{Client, UserStore};
-use futures::{future::BoxFuture, stream::BoxStream, TryStreamExt as _};
+use futures::FutureExt;
+use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
 use gpui::{
     AnyElement, AnyView, AppContext, AsyncAppContext, Model, SharedString, Task, WindowContext,
 };
@@ -97,6 +98,28 @@ pub trait LanguageModel: Send + Sync {
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>>;
+
+    fn stream_completion_text(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncAppContext,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        let events = self.stream_completion(request, cx);
+
+        async move {
+            Ok(events
+                .await?
+                .filter_map(|result| async move {
+                    match result {
+                        Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
+                        Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
+                        Err(err) => Some(Err(err)),
+                    }
+                })
+                .boxed())
+        }
+        .boxed()
+    }
 
     fn use_any_tool(
         &self,
