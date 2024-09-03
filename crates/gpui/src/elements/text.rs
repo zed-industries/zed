@@ -315,23 +315,20 @@ impl TextLayout {
                 };
                 if truncated {
                     let mut truncate_at = text.len() - ELLIPSIS.len();
-                    // let mut drop_unused_run = None;
-                    let mut run_index = 0;
-                    let mut iter = runs.iter_mut().peekable();
-                    while let Some(run) = iter.next() {
+                    let mut run_end = None;
+                    for (run_index, run) in runs.iter_mut().enumerate() {
                         if run.len <= truncate_at {
                             truncate_at -= run.len;
                         } else {
                             run.len = truncate_at + ELLIPSIS.len();
-                            if iter.peek().is_some() {
-                                run_index += 1;
-                                break;
-                            }
+                            run_end = Some(run_index);
+                            break;
                         }
-                        run_index += 1;
                     }
-                    if run_index < runs.len() {
-                        runs = runs[..run_index].to_vec();
+                    if let Some(run_end) = run_end {
+                        if run_end + 1 < runs.len() {
+                            runs = runs[..run_end + 1].to_vec();
+                        }
                     }
                 }
 
