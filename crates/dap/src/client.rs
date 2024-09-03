@@ -60,6 +60,9 @@ pub struct ThreadState {
     // HashMap<stack_frame_id, <scope, Vec<(depth, Variable)>>>
     pub variables: HashMap<u64, BTreeMap<Scope, Vec<(usize, Variable)>>>,
     pub current_stack_frame_id: u64,
+    // we update this value only once we stopped,
+    // we will use this to indicated if we should show a warning when debugger thread was exited
+    pub stopped: bool,
 }
 
 pub struct DebugAdapterClient {

@@ -14,7 +14,7 @@ use editor::Editor;
 use futures::future::try_join_all;
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
-    Subscription, Task, View, ViewContext, WeakView,
+    FontWeight, Subscription, Task, View, ViewContext, WeakView,
 };
 use serde_json::json;
 use settings::Settings;
@@ -47,6 +47,7 @@ pub struct DebugPanel {
     focus_handle: FocusHandle,
     workspace: WeakView<Workspace>,
     _subscriptions: Vec<Subscription>,
+    show_did_not_stop_warning: bool,
 }
 
 impl DebugPanel {
@@ -131,6 +132,7 @@ impl DebugPanel {
                 size: px(300.),
                 _subscriptions,
                 focus_handle: cx.focus_handle(),
+                show_did_not_stop_warning: false,
                 workspace: workspace.weak_handle(),
             }
         })
@@ -245,7 +247,7 @@ impl DebugPanel {
             Events::Continued(event) => Self::handle_continued_event(client, event, cx),
             Events::Exited(event) => Self::handle_exited_event(client, event, cx),
             Events::Terminated(event) => Self::handle_terminated_event(this, client, event, cx),
-            Events::Thread(event) => Self::handle_thread_event(client, event, cx),
+            Events::Thread(event) => Self::handle_thread_event(this, client, event, cx),
             Events::Output(event) => Self::handle_output_event(client, event, cx),
             Events::Breakpoint(_) => {}
             Events::Module(_) => {}
@@ -508,6 +510,7 @@ impl DebugPanel {
                     thread_state.current_stack_frame_id = current_stack_frame.clone().id;
                     thread_state.stack_frames = stack_trace_response.stack_frames;
                     thread_state.status = ThreadStatus::Stopped;
+                    thread_state.stopped = true;
 
                     client.thread_states().insert(thread_id, thread_state);
 
@@ -570,11 +573,19 @@ impl DebugPanel {
     }
 
     fn handle_thread_event(
+        this: &mut Self,
         client: Arc<DebugAdapterClient>,
         event: &ThreadEvent,
         cx: &mut ViewContext<Self>,
     ) {
         let thread_id = event.thread_id;
+
+        if let Some(thread_state) = client.thread_states().get(&thread_id) {
+            if !thread_state.stopped && event.reason == ThreadEventReason::Exited {
+                this.show_did_not_stop_warning = true;
+                cx.notify();
+            };
+        }
 
         if event.reason == ThreadEventReason::Started {
             client
@@ -656,6 +667,48 @@ impl DebugPanel {
     ) {
         cx.emit(DebugPanelEvent::Output((client.id(), event.clone())));
     }
+
+    fn render_did_not_stop_warning(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        const TITLE: &str = "Debug session exited without hitting any breakpoints";
+        const DESCRIPTION: &str =
+            "Try adding a breakpoint, or define the correct path mapping for your debugger.";
+
+        div()
+            .absolute()
+            .right_3()
+            .bottom_12()
+            .max_w_96()
+            .py_2()
+            .px_3()
+            .elevation_2(cx)
+            .occlude()
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(Icon::new(IconName::ExclamationTriangle).color(Color::Conflict))
+                            .child(Label::new(TITLE).weight(FontWeight::MEDIUM)),
+                    )
+                    .child(
+                        Label::new(DESCRIPTION)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        h_flex().justify_end().mt_1().child(
+                            Button::new("dismiss", "Dismiss")
+                                .color(Color::Muted)
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.show_did_not_stop_warning = false;
+                                    cx.notify();
+                                })),
+                        ),
+                    ),
+            )
+    }
 }
 
 impl EventEmitter<PanelEvent> for DebugPanel {}
@@ -718,6 +771,9 @@ impl Render for DebugPanel {
             .key_context("DebugPanel")
             .track_focus(&self.focus_handle)
             .size_full()
+            .when(self.show_did_not_stop_warning, |this| {
+              this.child(self.render_did_not_stop_warning(cx))
+            })
             .map(|this| {
                 if self.pane.read(cx).items_len() == 0 {
                     this.child(
