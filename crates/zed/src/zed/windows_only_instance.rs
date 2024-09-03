@@ -4,6 +4,7 @@ use anyhow::Context;
 use clap::Parser;
 use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
 use parking_lot::Mutex;
+use gpui::app_identifier::{get_app_instance_event_identifier, register_app_identifier};
 use release_channel::app_identifier;
 use util::ResultExt;
 use windows::{
