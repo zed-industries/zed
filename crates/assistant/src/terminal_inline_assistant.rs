@@ -541,7 +541,7 @@ impl Render for PromptEditor {
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
                             .tooltip(|cx| {
-                                Tooltip::for_action("Accept generated command", &menu::Confirm, cx)
+                                Tooltip::for_action("Accept Generated Command", &menu::Confirm, cx)
                             })
                             .on_click(cx.listener(|_, _, cx| {
                                 cx.emit(PromptEditorEvent::ConfirmRequested { execute: false });
@@ -551,7 +551,7 @@ impl Render for PromptEditor {
                             .shape(IconButtonShape::Square)
                             .tooltip(|cx| {
                                 Tooltip::for_action(
-                                    "Execute generated command",
+                                    "Execute Generated Command",
                                     &menu::SecondaryConfirm,
                                     cx,
                                 )
