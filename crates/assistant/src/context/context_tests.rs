@@ -2,7 +2,7 @@ use super::{MessageCacheMetadata, WorkflowStepEdit};
 use crate::{
     assistant_panel, prompt_library, slash_command::file_command, CacheStatus, Context,
     ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
-    WorkflowStepEditKind,
+    WorkflowStepEditKind, WorkflowStepSearch,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -476,7 +476,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
+async fn test_basic_workflow_step_parsing(cx: &mut TestAppContext) {
     cx.update(prompt_library::init);
     let settings_store = cx.update(SettingsStore::test);
     cx.set_global(settings_store);
@@ -644,7 +644,10 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn one".into(),
+                search: WorkflowStepSearch {
+                    text: "fn one".into(),
+                    ellision_offsets: vec![],
+                },
                 description: "add a `two` function".into(),
             },
         }]],
@@ -703,7 +706,10 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn zero".into(),
+                search: WorkflowStepSearch {
+                    text: "fn zero".into(),
+                    ellision_offsets: Vec::new(),
+                },
                 description: "add a `two` function".into(),
             },
         }]],
@@ -772,7 +778,10 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn zero".into(),
+                search: WorkflowStepSearch {
+                    text: "fn zero".into(),
+                    ellision_offsets: Vec::new(),
+                },
                 description: "add a `two` function".into(),
             },
         }]],
@@ -818,65 +827,150 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
             kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn zero".into(),
+                search: WorkflowStepSearch {
+                    text: "fn zero".into(),
+                    ellision_offsets: Vec::new(),
+                },
                 description: "add a `two` function".into(),
             },
         }]],
         cx,
     );
+}
 
-    fn edit(context: &Model<Context>, new_text_marked_with_edits: &str, cx: &mut TestAppContext) {
-        context.update(cx, |context, cx| {
-            context.buffer.update(cx, |buffer, cx| {
-                buffer.edit_via_marked_text(&new_text_marked_with_edits.unindent(), None, cx);
-            });
+#[gpui::test]
+async fn test_workflow_step_parsing_with_ellisions(cx: &mut TestAppContext) {
+    cx.update(prompt_library::init);
+    let settings_store = cx.update(SettingsStore::test);
+    cx.set_global(settings_store);
+    cx.update(language::init);
+    cx.update(Project::init_settings);
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [Path::new("/root")], cx).await;
+    cx.update(LanguageModelRegistry::test);
+
+    cx.update(assistant_panel::init);
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+
+    // Create a new context
+    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry.clone(),
+            Some(project),
+            None,
+            prompt_builder.clone(),
+            cx,
+        )
+    });
+
+    // Insert an assistant message to simulate a response.
+    context.update(cx, |context, cx| {
+        let user_message_id = context.messages(cx).next().unwrap().id;
+        context
+            .insert_message_after(user_message_id, Role::Assistant, MessageStatus::Done, cx)
+            .unwrap()
+            .id
+    });
+
+    edit(
+        &context,
+        "
+
+        «<step>
+
+        Add a foo getter
+
+        <edit>
+        <path>src/lib.rs</path>
+        <description>Add the foo method</description>
+        <search>fn new(<etc />) -> Self {<etc />}</search>
+        <operation>insert_after</operation>
+        </edit>
+        </step>
+        »",
+        cx,
+    );
+    expect_steps(
+        &context,
+        "
+
+        «<step>
+
+        Add a foo getter
+
+        <edit>
+        <path>src/lib.rs</path>
+        <description>Add the foo method</description>
+        <search>fn new(<etc />) -> Self {<etc />}</search>
+        <operation>insert_after</operation>
+        </edit>
+        </step>»
+        ",
+        &[&[WorkflowStepEdit {
+            path: "src/lib.rs".into(),
+            kind: WorkflowStepEditKind::InsertAfter {
+                search: WorkflowStepSearch {
+                    text: "fn new() -> Self {}".into(),
+                    ellision_offsets: vec![7, 18],
+                },
+                description: "Add the foo method".into(),
+            },
+        }]],
+        cx,
+    );
+}
+
+fn edit(context: &Model<Context>, new_text_marked_with_edits: &str, cx: &mut TestAppContext) {
+    context.update(cx, |context, cx| {
+        context.buffer.update(cx, |buffer, cx| {
+            buffer.edit_via_marked_text(&new_text_marked_with_edits.unindent(), None, cx);
         });
-        cx.executor().run_until_parked();
-    }
+    });
+    cx.executor().run_until_parked();
+}
 
-    fn expect_steps(
-        context: &Model<Context>,
-        expected_marked_text: &str,
-        expected_suggestions: &[&[WorkflowStepEdit]],
-        cx: &mut TestAppContext,
-    ) {
-        context.update(cx, |context, cx| {
-            let expected_marked_text = expected_marked_text.unindent();
-            let (expected_text, expected_ranges) = marked_text_ranges(&expected_marked_text, false);
-            context.buffer.read_with(cx, |buffer, _| {
-                assert_eq!(buffer.text(), expected_text);
-                let ranges = context
-                    .workflow_steps
-                    .iter()
-                    .map(|entry| entry.range.to_offset(buffer))
-                    .collect::<Vec<_>>();
-                let marked = generate_marked_text(&expected_text, &ranges, false);
-                assert_eq!(
-                    marked,
-                    expected_marked_text,
-                    "unexpected suggestion ranges. actual: {ranges:?}, expected: {expected_ranges:?}"
-                );
-                let suggestions = context
-                    .workflow_steps
-                    .iter()
-                    .map(|step| {
-                        step.edits
-                            .iter()
-                            .map(|edit| {
-                                let edit = edit.as_ref().unwrap();
-                                WorkflowStepEdit {
-                                    path: edit.path.clone(),
-                                    kind: edit.kind.clone(),
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>();
+fn expect_steps(
+    context: &Model<Context>,
+    expected_marked_text: &str,
+    expected_suggestions: &[&[WorkflowStepEdit]],
+    cx: &mut TestAppContext,
+) {
+    context.update(cx, |context, cx| {
+        let expected_marked_text = expected_marked_text.unindent();
+        let (expected_text, expected_ranges) = marked_text_ranges(&expected_marked_text, false);
+        context.buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.text(), expected_text);
+            let ranges = context
+                .workflow_steps
+                .iter()
+                .map(|entry| entry.range.to_offset(buffer))
+                .collect::<Vec<_>>();
+            let marked = generate_marked_text(&expected_text, &ranges, false);
+            assert_eq!(
+                marked, expected_marked_text,
+                "unexpected suggestion ranges. actual: {ranges:?}, expected: {expected_ranges:?}"
+            );
+            let suggestions = context
+                .workflow_steps
+                .iter()
+                .map(|step| {
+                    step.edits
+                        .iter()
+                        .map(|edit| {
+                            let edit = edit.as_ref().unwrap();
+                            WorkflowStepEdit {
+                                path: edit.path.clone(),
+                                kind: edit.kind.clone(),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
 
-                assert_eq!(suggestions, expected_suggestions);
-            });
+            assert_eq!(suggestions, expected_suggestions);
         });
-    }
+    });
 }
 
 #[gpui::test]

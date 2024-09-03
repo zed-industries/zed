@@ -55,6 +55,8 @@ This tag contains the path to the file that will be changed. It can be an existi
 
 This tag contains a search string to locate in the source file, e.g. `pub fn baz() {`. If not provided, the new content will be inserted at the top of the file. Make sure to produce a string that exists in the source file and that isn't ambiguous. When there's ambiguity, add more lines to the search to eliminate it.
 
+The search string must match the original file.
+
 ### `<description>` (required)
 
 This tag contains a single-line description of the edit that should be made at the given location.

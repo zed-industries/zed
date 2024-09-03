@@ -3,7 +3,8 @@ mod context_tests;
 
 use crate::{
     prompts::PromptBuilder, slash_command::SlashCommandLine, MessageId, MessageStatus,
-    WorkflowStep, WorkflowStepEdit, WorkflowStepResolution, WorkflowSuggestionGroup,
+    WorkflowStep, WorkflowStepEdit, WorkflowStepResolution, WorkflowStepSearch,
+    WorkflowSuggestionGroup,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -462,8 +463,15 @@ pub struct SlashCommandId(clock::Lamport);
 #[derive(Clone, Debug)]
 pub struct XmlTag {
     pub kind: XmlTagKind,
+    pub side: XmlTagSide,
     pub range: Range<text::Anchor>,
-    pub is_open_tag: bool,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum XmlTagSide {
+    Open,
+    Close,
+    SelfClose,
 }
 
 #[derive(Copy, Clone, Debug, strum::EnumString, PartialEq, Eq, strum::AsRefStr)]
@@ -471,6 +479,7 @@ pub struct XmlTag {
 pub enum XmlTagKind {
     Step,
     Edit,
+    Etc,
     Path,
     Search,
     Within,
@@ -1446,12 +1455,15 @@ impl Context {
                 for (start_ix, _) in line.match_indices('<') {
                     let mut name_start_ix = start_ix + 1;
                     let closing_bracket_ix = line[start_ix..].find('>').map(|i| start_ix + i);
-                    if let Some(closing_bracket_ix) = closing_bracket_ix {
+                    if let Some(mut closing_bracket_ix) = closing_bracket_ix {
                         let end_ix = closing_bracket_ix + 1;
-                        let mut is_open_tag = true;
+                        let mut side = XmlTagSide::Open;
                         if line[name_start_ix..closing_bracket_ix].starts_with('/') {
                             name_start_ix += 1;
-                            is_open_tag = false;
+                            side = XmlTagSide::Close;
+                        } else if line[name_start_ix..closing_bracket_ix].ends_with('/') {
+                            closing_bracket_ix -= 1;
+                            side = XmlTagSide::SelfClose;
                         }
                         let tag_inner = &line[name_start_ix..closing_bracket_ix];
                         let tag_name_len = tag_inner
@@ -1461,7 +1473,7 @@ impl Context {
                             tags.push(XmlTag {
                                 range: buffer.anchor_after(offset + start_ix)
                                     ..buffer.anchor_before(offset + end_ix),
-                                is_open_tag,
+                                side,
                                 kind,
                             });
                         };
@@ -1489,7 +1501,7 @@ impl Context {
                 break;
             }
 
-            if tag.kind == XmlTagKind::Step && tag.is_open_tag {
+            if tag.kind == XmlTagKind::Step && tag.side == XmlTagSide::Open {
                 edit_step_depth += 1;
                 let edit_start = tag.range.start;
                 let mut edits = Vec::new();
@@ -1505,8 +1517,7 @@ impl Context {
                 while let Some(tag) = tags.next() {
                     step.trailing_tag_start.get_or_insert(tag.range.start);
 
-                    if tag.kind == XmlTagKind::Step && !tag.is_open_tag {
-                        // step.trailing_tag_start = Some(tag.range.start);
+                    if tag.kind == XmlTagKind::Step && tag.side == XmlTagSide::Close {
                         edit_step_depth -= 1;
                         if edit_step_depth == 0 {
                             step.range.end = tag.range.end;
@@ -1516,14 +1527,14 @@ impl Context {
                         }
                     }
 
-                    if tag.kind == XmlTagKind::Edit && tag.is_open_tag {
+                    if tag.kind == XmlTagKind::Edit && tag.side == XmlTagSide::Open {
                         let mut path = None;
                         let mut search = None;
                         let mut operation = None;
                         let mut description = None;
 
                         while let Some(tag) = tags.next() {
-                            if tag.kind == XmlTagKind::Edit && !tag.is_open_tag {
+                            if tag.kind == XmlTagKind::Edit && tag.side == XmlTagSide::Close {
                                 edits.push(WorkflowStepEdit::new(
                                     path,
                                     operation,
@@ -1533,21 +1544,20 @@ impl Context {
                                 break;
                             }
 
-                            if tag.is_open_tag
+                            if tag.side == XmlTagSide::Open
                                 && [
                                     XmlTagKind::Path,
-                                    XmlTagKind::Search,
                                     XmlTagKind::Operation,
                                     XmlTagKind::Description,
                                 ]
                                 .contains(&tag.kind)
                             {
                                 let kind = tag.kind;
-                                let content_start = tag.range.end;
+                                let content_start = tag.range.end.to_offset(buffer);
                                 if let Some(tag) = tags.peek() {
-                                    if tag.kind == kind && !tag.is_open_tag {
+                                    if tag.kind == kind && tag.side == XmlTagSide::Close {
                                         let tag = tags.next().unwrap();
-                                        let content_end = tag.range.start;
+                                        let content_end = tag.range.start.to_offset(buffer);
                                         let mut content = buffer
                                             .text_for_range(content_start..content_end)
                                             .collect::<String>();
@@ -1555,15 +1565,49 @@ impl Context {
                                         match kind {
                                             XmlTagKind::Path => path = Some(content),
                                             XmlTagKind::Operation => operation = Some(content),
-                                            XmlTagKind::Search => {
-                                                search = Some(content).filter(|s| !s.is_empty())
-                                            }
                                             XmlTagKind::Description => {
                                                 description =
                                                     Some(content).filter(|s| !s.is_empty())
                                             }
                                             _ => {}
                                         }
+                                    }
+                                }
+                                continue;
+                            }
+
+                            if tag.side == XmlTagSide::Open && tag.kind == XmlTagKind::Search {
+                                let mut text = String::new();
+                                let mut ellision_offsets = Vec::new();
+                                let mut content_start = tag.range.end.to_offset(buffer);
+                                while let Some(tag) = tags.peek() {
+                                    let content_end = tag.range.start.to_offset(buffer);
+
+                                    if tag.kind == XmlTagKind::Search
+                                        && tag.side == XmlTagSide::Close
+                                    {
+                                        text.extend(
+                                            buffer.text_for_range(content_start..content_end),
+                                        );
+                                        if !text.is_empty() {
+                                            search = Some(WorkflowStepSearch {
+                                                text,
+                                                ellision_offsets,
+                                            });
+                                        }
+                                        tags.next().unwrap();
+                                        break;
+                                    } else if tag.kind == XmlTagKind::Etc
+                                        && tag.side == XmlTagSide::SelfClose
+                                    {
+                                        text.extend(
+                                            buffer.text_for_range(content_start..content_end),
+                                        );
+                                        ellision_offsets.push(text.len());
+                                        content_start = tag.range.end.to_offset(buffer);
+                                        tags.next().unwrap();
+                                    } else {
+                                        break;
                                     }
                                 }
                             }

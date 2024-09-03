@@ -6,8 +6,6 @@ use gpui::AsyncAppContext;
 use gpui::{Model, Task, UpdateGlobal as _, View, WeakView, WindowContext};
 use language::{Buffer, BufferSnapshot};
 use project::{Project, ProjectPath};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use std::{ops::Range, path::Path, sync::Arc};
 use text::Bias;
 use workspace::Workspace;
@@ -26,6 +24,12 @@ pub(crate) struct WorkflowStep {
 pub(crate) struct WorkflowStepEdit {
     pub path: String,
     pub kind: WorkflowStepEditKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WorkflowStepSearch {
+    pub text: String,
+    pub ellision_offsets: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -199,7 +203,7 @@ impl WorkflowStepEdit {
     pub fn new(
         path: Option<String>,
         operation: Option<String>,
-        search: Option<String>,
+        search: Option<WorkflowStepSearch>,
         description: Option<String>,
     ) -> Result<Self> {
         let path = path.ok_or_else(|| anyhow!("missing path"))?;
@@ -264,12 +268,12 @@ impl WorkflowStepEdit {
         let suggestion = cx
             .background_executor()
             .spawn(async move {
-                match kind {
+                Some(match kind {
                     WorkflowStepEditKind::Update {
                         search,
                         description,
                     } => {
-                        let range = Self::resolve_location(&snapshot, &search);
+                        let range = Self::resolve_location(&snapshot, &search)?;
                         WorkflowSuggestion::Update { range, description }
                     }
                     WorkflowStepEditKind::Create { description } => {
@@ -279,7 +283,7 @@ impl WorkflowStepEdit {
                         search,
                         description,
                     } => {
-                        let range = Self::resolve_location(&snapshot, &search);
+                        let range = Self::resolve_location(&snapshot, &search)?;
                         WorkflowSuggestion::InsertBefore {
                             position: range.start,
                             description,
@@ -289,24 +293,28 @@ impl WorkflowStepEdit {
                         search,
                         description,
                     } => {
-                        let range = Self::resolve_location(&snapshot, &search);
+                        let range = Self::resolve_location(&snapshot, &search)?;
                         WorkflowSuggestion::InsertAfter {
                             position: range.end,
                             description,
                         }
                     }
                     WorkflowStepEditKind::Delete { search } => {
-                        let range = Self::resolve_location(&snapshot, &search);
+                        let range = Self::resolve_location(&snapshot, &search)?;
                         WorkflowSuggestion::Delete { range }
                     }
-                }
+                })
             })
-            .await;
+            .await
+            .ok_or_else(|| anyhow!("could not find search string"))?;
 
         Ok((buffer, suggestion))
     }
 
-    fn resolve_location(buffer: &text::BufferSnapshot, search_query: &str) -> Range<text::Anchor> {
+    fn resolve_location(
+        buffer: &text::BufferSnapshot,
+        search_query: &WorkflowStepSearch,
+    ) -> Option<Range<text::Anchor>> {
         const INSERTION_SCORE: f64 = -1.0;
         const DELETION_SCORE: f64 = -1.0;
         const REPLACEMENT_SCORE: f64 = -1.0;
@@ -335,10 +343,10 @@ impl WorkflowStepEdit {
         }
 
         let buffer_len = buffer.len();
-        let query_len = search_query.len();
+        let query_len = search_query.text.len();
         let mut matrix = Matrix::new(query_len + 1, buffer_len + 1);
 
-        for (i, query_byte) in search_query.bytes().enumerate() {
+        for (i, query_byte) in search_query.text.bytes().enumerate() {
             for (j, buffer_byte) in buffer.bytes_in_range(0..buffer.len()).flatten().enumerate() {
                 let match_score = if query_byte == *buffer_byte {
                     EQUALITY_SCORE
@@ -346,7 +354,12 @@ impl WorkflowStepEdit {
                     REPLACEMENT_SCORE
                 };
                 let up = matrix.get(i + 1, j) + DELETION_SCORE;
-                let left = matrix.get(i, j + 1) + INSERTION_SCORE;
+                let insertion_score = if search_query.ellision_offsets.contains(&i) {
+                    0.0
+                } else {
+                    INSERTION_SCORE
+                };
+                let left = matrix.get(i, j + 1) + insertion_score;
                 let diagonal = matrix.get(i, j) + match_score;
                 let score = up.max(left.max(diagonal)).max(0.);
                 matrix.set(i + 1, j + 1, score);
@@ -385,18 +398,17 @@ impl WorkflowStepEdit {
         let mut end = buffer.offset_to_point(buffer.clip_offset(best_buffer_end, Bias::Right));
         end.column = buffer.line_len(end.row);
 
-        buffer.anchor_after(start)..buffer.anchor_before(end)
+        Some(buffer.anchor_after(start)..buffer.anchor_before(end))
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "operation")]
-pub enum WorkflowStepEditKind {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum WorkflowStepEditKind {
     /// Rewrites the specified text entirely based on the given description.
     /// This operation completely replaces the given text.
     Update {
         /// A string in the source text to apply the update to.
-        search: String,
+        search: WorkflowStepSearch,
         /// A brief description of the transformation to apply to the symbol.
         description: String,
     },
@@ -409,21 +421,21 @@ pub enum WorkflowStepEditKind {
     /// Inserts text before the specified text in the source file.
     InsertBefore {
         /// A string in the source text to insert text before.
-        search: String,
+        search: WorkflowStepSearch,
         /// A brief description of how the new text should be generated.
         description: String,
     },
     /// Inserts text after the specified text in the source file.
     InsertAfter {
         /// A string in the source text to insert text after.
-        search: String,
+        search: WorkflowStepSearch,
         /// A brief description of how the new text should be generated.
         description: String,
     },
     /// Deletes the specified symbol from the containing file.
     Delete {
         /// A string in the source text to delete.
-        search: String,
+        search: WorkflowStepSearch,
     },
 }
 
@@ -431,76 +443,102 @@ pub enum WorkflowStepEditKind {
 mod tests {
     use super::*;
     use gpui::{AppContext, Context};
-    use text::{OffsetRangeExt, Point};
+    use text::OffsetRangeExt as _;
+    use unindent::Unindent as _;
+    use util::test::{generate_marked_text, marked_text_ranges};
 
     #[gpui::test]
     fn test_resolve_location(cx: &mut AppContext) {
-        {
-            let buffer = cx.new_model(|cx| {
-                Buffer::local(
-                    concat!(
-                        "    Lorem\n",
-                        "    ipsum\n",
-                        "    dolor sit amet\n",
-                        "    consecteur",
-                    ),
-                    cx,
-                )
-            });
-            let snapshot = buffer.read(cx).snapshot();
-            assert_eq!(
-                WorkflowStepEdit::resolve_location(&snapshot, "ipsum\ndolor").to_point(&snapshot),
-                Point::new(1, 0)..Point::new(2, 18)
-            );
+        struct Example {
+            text: String,
+            query: &'static str,
         }
 
-        {
-            let buffer = cx.new_model(|cx| {
-                Buffer::local(
-                    concat!(
-                        "fn foo1(a: usize) -> usize {\n",
-                        "    42\n",
-                        "}\n",
-                        "\n",
-                        "fn foo2(b: usize) -> usize {\n",
-                        "    42\n",
-                        "}\n",
-                    ),
-                    cx,
-                )
-            });
-            let snapshot = buffer.read(cx).snapshot();
-            assert_eq!(
-                WorkflowStepEdit::resolve_location(&snapshot, "fn foo1(b: usize) {\n42\n}")
-                    .to_point(&snapshot),
-                Point::new(0, 0)..Point::new(2, 1)
-            );
-        }
+        let examples = [
+            Example {
+                text: "
+                    Lorem
+                    «ipsum
+                    dolor sit amet»
+                    consecteur
+                "
+                .unindent(),
+                query: "ipsum\ndolor",
+            },
+            Example {
+                text: "
+                    «fn foo1(a: usize) -> usize {
+                        42
+                    }»
 
-        {
-            let buffer = cx.new_model(|cx| {
-                Buffer::local(
-                    concat!(
-                        "fn main() {\n",
-                        "    Foo\n",
-                        "        .bar()\n",
-                        "        .baz()\n",
-                        "        .qux()\n",
-                        "}\n",
-                        "\n",
-                        "fn foo2(b: usize) -> usize {\n",
-                        "    42\n",
-                        "}\n",
-                    ),
-                    cx,
-                )
-            });
-            let snapshot = buffer.read(cx).snapshot();
-            assert_eq!(
-                WorkflowStepEdit::resolve_location(&snapshot, "Foo.bar.baz.qux()")
-                    .to_point(&snapshot),
-                Point::new(1, 0)..Point::new(4, 14)
+                    fn foo2(b: usize) -> usize {
+                        42
+                    }
+                "
+                .unindent(),
+                query: "fn foo1(b: usize) {\n42\n}",
+            },
+            // Nothing in the text is a good enough match.
+            Example {
+                text: "
+                    fn main() {
+                    «    Foo
+                            .bar()
+                            .baz()
+                            .qux()»
+                    }
+
+                    fn foo2(b: usize) -> usize {
+                        42
+                    }
+                "
+                .unindent(),
+                query: "Foo.bar.baz.qux()",
+            },
+            // Nothing in the text is a good enough match.
+            Example {
+                text: "
+                    fn one() {
+                        two || three
+                    }
+
+                    fn four() {
+                        five
+                    }
+                "
+                .unindent(),
+                query: "fn three() { four && five}",
+            },
+        ];
+
+        for test_case in examples {
+            let (text, ranges) = marked_text_ranges(&test_case.text, false);
+            let expected_range = ranges.get(0).cloned();
+            let buffer = cx.new_model(|cx| Buffer::local(text.clone(), cx));
+            let buffer = buffer.read(cx).snapshot();
+            let actual_range = WorkflowStepEdit::resolve_location(
+                &buffer,
+                &WorkflowStepSearch {
+                    text: test_case.query.to_string(),
+                    ellision_offsets: vec![],
+                },
             );
+            if let Some(expected_range) = expected_range {
+                let Some(actual_range) = ranges.get(0).cloned() else {
+                    panic!("expected range");
+                };
+                let actual_marked_text =
+                    generate_marked_text(&text, &[actual_range.to_offset(&buffer)], false);
+                assert_eq!(
+                    actual_marked_text,
+                    test_case.text,
+                    "expected range {:?}\nactual range {:?}",
+                    expected_range.to_point(&buffer),
+                    actual_range.to_point(&buffer)
+                );
+            } else {
+                assert_eq!(actual_range, None);
+            }
         }
     }
 }
