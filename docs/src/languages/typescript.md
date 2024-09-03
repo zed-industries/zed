@@ -10,8 +10,8 @@ TypeScript and TSX support are available natively in Zed.
 TBD: Document the difference between Language servers
 -->
 
-
 ## Language servers
+
 By default Zed uses [vtsls](https://github.com/yioneko/vtsls) for TypeScript, TSX and JavaScript files.
 You can configure the use of [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) per language in your settings file:
 
@@ -30,6 +30,7 @@ You can configure the use of [typescript-language-server](https://github.com/typ
 ```
 
 Prettier will also be used for TypeScript files by default. To disable this:
+
 ```json
 "languages": {
   "TypeScript": {
