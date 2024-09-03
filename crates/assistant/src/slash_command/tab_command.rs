@@ -334,7 +334,10 @@ fn create_tab_completion_label(
         .file_name()
         .map(|f| f.to_string_lossy())
         .unwrap_or_default();
-    let parent_path = path.parent().map(|p| p.to_string_lossy()).unwrap_or_default();
+    let parent_path = path
+        .parent()
+        .map(|p| p.to_string_lossy())
+        .unwrap_or_default();
     let mut label = CodeLabel::default();
     label.push_str(&file_name, None);
     label.push_str(" ", None);
