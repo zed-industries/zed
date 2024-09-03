@@ -170,11 +170,11 @@ impl super::LspAdapter for CLspAdapter {
         match completion.kind {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
-                let text = format!("{} {}", detail, label);
+                let text = format!("{} {}", label, detail);
                 let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
                 let runs = language.highlight_text(&source, 11..11 + text.len());
                 return Some(CodeLabel {
-                    filter_range: detail.len() + 1..text.len(),
+                    filter_range: 0..label.len(),
                     text,
                     runs,
                 });
@@ -183,10 +183,10 @@ impl super::LspAdapter for CLspAdapter {
                 if completion.detail.is_some() =>
             {
                 let detail = completion.detail.as_ref().unwrap();
-                let text = format!("{} {}", detail, label);
+                let text = format!("{} {}", label, detail);
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
                 return Some(CodeLabel {
-                    filter_range: detail.len() + 1..text.len(),
+                    filter_range: 0..label.len(),
                     text,
                     runs,
                 });
@@ -195,15 +195,14 @@ impl super::LspAdapter for CLspAdapter {
                 if completion.detail.is_some() =>
             {
                 let detail = completion.detail.as_ref().unwrap();
-                let text = format!("{} {}", detail, label);
+                let function_arguments = completion
+                    .label_details
+                    .as_ref()
+                    .map_or(None, |details| details.detail.as_ref());
+                let text = format!("{}{} -> {}", label, function_arguments.unwrap(), detail);
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
-                let filter_start = detail.len() + 1;
-                let filter_end =
-                    if let Some(end) = text.rfind('(').filter(|end| *end > filter_start) {
-                        end
-                    } else {
-                        text.len()
-                    };
+                let filter_start = 0;
+                let filter_end = label.len();
 
                 return Some(CodeLabel {
                     filter_range: filter_start..filter_end,
@@ -238,7 +237,17 @@ impl super::LspAdapter for CLspAdapter {
             }
             _ => {}
         }
-        Some(CodeLabel::plain(label.to_string(), None))
+
+        let label_details = completion
+            .label_details
+            .as_ref()
+            .map_or(None, |details| details.detail.as_ref());
+        let text = format!("{label}{}", label_details.unwrap_or(&String::default()));
+        Some(CodeLabel {
+            text,
+            filter_range: 0..label.len(),
+            runs: Vec::default(),
+        })
     }
 
     async fn label_for_symbol(
