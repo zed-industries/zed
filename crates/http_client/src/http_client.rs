@@ -5,6 +5,7 @@ use derive_more::Deref;
 use futures::future::BoxFuture;
 use futures_lite::FutureExt;
 use isahc::config::{Configurable, RedirectPolicy};
+pub use isahc::http;
 pub use isahc::{
     http::{Method, StatusCode, Uri},
     AsyncBody, Error, HttpClient as IsahcHttpClient, Request, Response,
