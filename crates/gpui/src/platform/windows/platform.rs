@@ -34,8 +34,8 @@ use windows::{
             },
             LibraryLoader::*,
             Memory::{
-                CreateFileMappingW, GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
-                PAGE_READWRITE,
+                CreateFileMappingW, GlobalAlloc, GlobalLock, GlobalUnlock, MapViewOfFile,
+                UnmapViewOfFile, FILE_MAP_ALL_ACCESS, GMEM_MOVEABLE, PAGE_READWRITE,
             },
             Ole::*,
             SystemInformation::*,
@@ -294,12 +294,15 @@ impl WindowsPlatform {
                     continue;
                 }
                 MenuItem::Action { name, action, .. } => {
-                    let item_args = HSTRING::from(action.arguments());
+                    let item_args = format!("--new-instance {}", action.arguments());
                     self.state
                         .borrow_mut()
                         .dock_menu_actions
                         .insert(action.arguments().to_string(), action);
-                    JumpListItem::CreateWithArguments(&item_args, &HSTRING::from(name.as_ref()))?
+                    JumpListItem::CreateWithArguments(
+                        &HSTRING::from(item_args),
+                        &HSTRING::from(name.as_ref()),
+                    )?
                 }
             };
             items.Append(&item)?;
@@ -320,18 +323,59 @@ impl WindowsPlatform {
                     continue;
                 }
                 MenuItem::Action { name, action, .. } => {
-                    let item_args = HSTRING::from(action.arguments());
+                    let item_args = format!("--new-instance {}", action.arguments());
                     self.state
                         .borrow_mut()
                         .dock_menu_actions
                         .insert(action.arguments().to_string(), action);
-                    JumpListItem::CreateWithArguments(&item_args, &HSTRING::from(name.as_ref()))?
+                    JumpListItem::CreateWithArguments(
+                        &HSTRING::from(item_args),
+                        &HSTRING::from(name.as_ref()),
+                    )?
                 }
             };
             items.Append(&item)?;
         }
         jump_list.SaveAsync()?.get()?;
         Ok(())
+    }
+
+    fn handle_instance_message(&self) {
+        let msg = unsafe {
+            let memory_addr =
+                MapViewOfFile(*self.shared_memory_handle, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+            let string = String::from_utf8_lossy(std::slice::from_raw_parts(
+                memory_addr.Value as *const _ as _,
+                APP_SHARED_MEMORY_MAX_SIZE,
+            ))
+            .trim_matches('\0')
+            .to_string();
+            let empty_buffer = vec![0u8; string.len()];
+            std::ptr::copy_nonoverlapping(
+                empty_buffer.as_ptr(),
+                memory_addr.Value as _,
+                empty_buffer.len(),
+            );
+            UnmapViewOfFile(memory_addr).log_err();
+            string
+        };
+        println!("-> Single instance event, {},", msg);
+        let mut lock = self.state.borrow_mut();
+        if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
+            let Some(action) = lock
+                .dock_menu_actions
+                .get(&msg)
+                .map(|action| action.boxed_clone())
+            else {
+                lock.callbacks.app_menu_action = Some(callback);
+                log::error!("Dock menu {msg} not found");
+                return;
+            };
+            drop(lock);
+            println!("==> Performing action: {msg}");
+            callback(&*action);
+            self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+        }
     }
 }
 
