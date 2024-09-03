@@ -7,7 +7,7 @@ use crate::{Config, Error, Result};
 pub fn authorize_access_to_language_model(
     config: &Config,
     claims: &LlmTokenClaims,
-    country_code: Option<String>,
+    country_code: Option<&str>,
     provider: LanguageModelProvider,
     model: &str,
 ) -> Result<()> {
@@ -49,7 +49,7 @@ fn authorize_access_to_model(
 
 fn authorize_access_for_country(
     config: &Config,
-    country_code: Option<String>,
+    country_code: Option<&str>,
     provider: LanguageModelProvider,
 ) -> Result<()> {
     // In development we won't have the `CF-IPCountry` header, so we can't check
@@ -62,7 +62,7 @@ fn authorize_access_for_country(
     }
 
     // https://developers.cloudflare.com/fundamentals/reference/http-request-headers/#cf-ipcountry
-    let country_code = match country_code.as_deref() {
+    let country_code = match country_code {
         // `XX` - Used for clients without country code data.
         None | Some("XX") => Err(Error::http(
             StatusCode::BAD_REQUEST,
@@ -128,7 +128,7 @@ mod tests {
             authorize_access_to_language_model(
                 &config,
                 &claims,
-                Some(country_code.into()),
+                Some(country_code),
                 provider,
                 "the-model",
             )
@@ -178,7 +178,7 @@ mod tests {
             let error_response = authorize_access_to_language_model(
                 &config,
                 &claims,
-                Some(country_code.into()),
+                Some(country_code),
                 provider,
                 "the-model",
             )
@@ -223,7 +223,7 @@ mod tests {
             let error_response = authorize_access_to_language_model(
                 &config,
                 &claims,
-                Some(country_code.into()),
+                Some(country_code),
                 provider,
                 "the-model",
             )
@@ -278,13 +278,8 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = authorize_access_to_language_model(
-                &config,
-                &claims,
-                Some("US".into()),
-                provider,
-                model,
-            );
+            let result =
+                authorize_access_to_language_model(&config, &claims, Some("US"), provider, model);
 
             if expected_access {
                 assert!(
@@ -324,13 +319,8 @@ mod tests {
         ];
 
         for (provider, model) in test_cases {
-            let result = authorize_access_to_language_model(
-                &config,
-                &claims,
-                Some("US".into()),
-                provider,
-                model,
-            );
+            let result =
+                authorize_access_to_language_model(&config, &claims, Some("US"), provider, model);
 
             assert!(
                 result.is_ok(),
