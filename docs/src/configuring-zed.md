@@ -893,7 +893,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 {
   "git": {
     "inline_blame": {
-      "enabled": false,
+      "enabled": true,
       "delay_ms": 500
     }
   }
