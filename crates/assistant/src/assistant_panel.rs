@@ -1871,36 +1871,26 @@ impl ContextEditor {
                         .cloned()
                         .collect::<Vec<_>>();
 
-                    dbg!(&new_tool_uses);
-
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
+                    let (excerpt_id, _buffer_id, _) = buffer.as_singleton().unwrap();
                     let excerpt_id = *excerpt_id;
 
-                    let crease_ids = editor.insert_creases(
-                        new_tool_uses.iter().map(|tool_use| {
-                            let workspace = self.workspace.clone();
+                    let mut buffer_rows_to_fold = BTreeSet::new();
+
+                    let creases = new_tool_uses
+                        .iter()
+                        .map(|tool_use| {
                             let placeholder = FoldPlaceholder {
-                                render: Arc::new(move |_, _, _| Label::new("TEST").into_any_element()),
+                                render: render_fold_icon_button(
+                                    cx.view().downgrade(),
+                                    IconName::PocketKnife,
+                                    tool_use.name.clone().into(),
+                                ),
                                 constrain_width: false,
                                 merge_adjacent: false,
                             };
-                            let render_toggle = {
-                                // let confirm_command = confirm_command.clone();
-                                let command = tool_use.clone();
-                                move |row, _, _, _cx: &mut WindowContext| {
-                                    Empty.into_any()
-                                    // render_pending_slash_command_gutter_decoration(
-                                    //     row,
-                                    //     &command.status,
-                                    //     confirm_command.clone(),
-                                    // )
-                                }
-                            };
-                            let render_trailer = {
-                                let command = tool_use.clone();
-                                move |row, _unfold, cx: &mut WindowContext| Empty.into_any()
-                            };
+                            let render_trailer =
+                                move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
 
                             let start = buffer
                                 .anchor_in_excerpt(excerpt_id, tool_use.source_range.start)
@@ -1908,12 +1898,24 @@ impl ContextEditor {
                             let end = buffer
                                 .anchor_in_excerpt(excerpt_id, tool_use.source_range.end)
                                 .unwrap();
-                            Crease::new(start..end, placeholder, render_toggle, render_trailer)
-                        }),
-                        cx,
-                    );
 
-                    dbg!(&crease_ids);
+                            let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                            buffer_rows_to_fold.insert(buffer_row);
+
+                            Crease::new(
+                                start..end,
+                                placeholder,
+                                fold_toggle("tool-use"),
+                                render_trailer,
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                    let crease_ids = editor.insert_creases(creases, cx);
+
+                    for buffer_row in buffer_rows_to_fold.into_iter().rev() {
+                        editor.fold_at(&FoldAt { buffer_row }, cx);
+                    }
 
                     self.pending_tool_use_creases.extend(
                         new_tool_uses

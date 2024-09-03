@@ -1942,30 +1942,7 @@ impl Context {
         // Compute which messages to cache, including the last one.
         self.mark_cache_anchors(&model.cache_configuration(), false, cx);
 
-        let mut request = self.to_completion_request(cx);
-        dbg!("vvvv Remove this before merge vvvv");
-        // TODO: Hard-coded tool.
-        request
-            .tools
-            .push(language_model::LanguageModelRequestTool {
-                name: "get_weather".to_string(),
-                description: "Get the current weather in a given location".to_string(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "location": {
-                            "type": "string",
-                            "description": "The city and state, e.g. San Francisco, CA"
-                        },
-                        "unit": {
-                            "type": "string",
-                            "enum": ["celsius", "fahrenheit"],
-                            "description": "The unit of temperature, either \"celsius\" or \"fahrenheit\""
-                        }
-                    },
-                    "required": ["location"]
-                }),
-            });
+        let request = self.to_completion_request(cx);
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
             .unwrap();
@@ -2017,12 +1994,15 @@ impl Context {
                                         );
                                     }
                                     LanguageModelCompletionEvent::ToolUse(tool_use) => {
+                                        const NEWLINE: char = '\n';
+
                                         let mut text = String::new();
-                                        text.push('\n');
+                                        text.push(NEWLINE);
                                         text.push_str(
                                             &serde_json::to_string_pretty(&tool_use)
                                                 .expect("failed to serialize tool use to JSON"),
                                         );
+                                        text.push(NEWLINE);
                                         let text_len = text.len();
 
                                         buffer.edit(
@@ -2034,8 +2014,9 @@ impl Context {
                                             cx,
                                         );
 
-                                        let start_ix = message_old_end_offset;
-                                        let end_ix = message_old_end_offset + text_len;
+                                        let start_ix = message_old_end_offset + NEWLINE.len_utf8();
+                                        let end_ix =
+                                            message_old_end_offset + text_len - NEWLINE.len_utf8();
                                         let source_range = buffer.anchor_after(start_ix)
                                             ..buffer.anchor_after(end_ix);
 
