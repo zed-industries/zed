@@ -242,6 +242,9 @@ fn main() {
         };
     if failed_single_instance_check {
         println!("zed is already running");
+        if let Some(ref argument) = args.new_instance {
+            send_instance_message(argument);
+        }
         return;
     }
 
@@ -945,6 +948,10 @@ struct Args {
     ///
     /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
     paths_or_urls: Vec<String>,
+
+    /// TODO:
+    #[arg(long)]
+    new_instance: Option<String>,
 
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]

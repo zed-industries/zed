@@ -172,3 +172,25 @@ fn send_args_to_instance() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+fn send_message_to_other_instance(message: &str) {
+    if message.len() > APP_SHARED_MEMORY_MAX_SIZE {
+        log::error!(
+            "The length of the message to send should be less than {APP_SHARED_MEMORY_MAX_SIZE}"
+        );
+        return;
+    }
+    unsafe {
+        let msg = message.as_bytes();
+        let pipe = OpenFileMappingW(
+            FILE_MAP_WRITE.0,
+            false,
+            &HSTRING::from(get_app_shared_memory_identifier()),
+        )
+        .unwrap();
+        let memory_addr = MapViewOfFile(pipe, FILE_MAP_WRITE, 0, 0, 0);
+        std::ptr::copy_nonoverlapping(msg.as_ptr(), memory_addr.Value as _, msg.len());
+        UnmapViewOfFile(memory_addr).log_err();
+        CloseHandle(pipe).log_err();
+    }
+}
