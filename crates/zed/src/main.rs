@@ -134,6 +134,12 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut AppContext) {
 }
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    {
+        use zed::windows_only_instance::*;
+        register_zed_identifier();
+    }
+
     menu::init();
     zed_actions::init();
 

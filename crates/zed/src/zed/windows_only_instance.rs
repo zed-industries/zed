@@ -11,26 +11,29 @@ use windows::{
         Storage::FileSystem::SYNCHRONIZE,
         System::{
             Memory::{MapViewOfFile, OpenFileMappingW, UnmapViewOfFile, FILE_MAP_WRITE},
-            Threading::{CreateEventW, OpenEventW, SetEvent, SYNCHRONIZATION_ACCESS_RIGHTS},
+            Threading::{
+                CreateEventW, CreateMutexW, OpenEventW, SetEvent, EVENT_MODIFY_STATE,
+                SYNCHRONIZATION_ACCESS_RIGHTS,
+            },
         },
     },
 };
 
-fn register_zed_identifier() {
+pub fn register_zed_identifier() {
     match *release_channel::RELEASE_CHANNEL {
         ReleaseChannel::Dev => register_app_identifier("Zed-Editor-Dev"),
         ReleaseChannel::Nightly => register_app_identifier("Zed-Editor-Nightly"),
         ReleaseChannel::Preview => register_app_identifier("Zed-Editor-Preview"),
         ReleaseChannel::Stable => register_app_identifier("Zed-Editor-Stable"),
-    }
+    };
 }
 
 pub fn check_single_instance() -> bool {
-    if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
-        return true;
-    }
+    // if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
+    //     return true;
+    // }
 
-    register_zed_identifier();
+    // register_zed_identifier();
     check_single_instance_event()
 }
 
@@ -38,7 +41,7 @@ pub fn send_instance_message(message: &str) {
     send_message_to_other_instance(message);
     unsafe {
         let event = OpenEventW(
-            SYNCHRONIZATION_ACCESS_RIGHTS(SYNCHRONIZE.0),
+            SYNCHRONIZATION_ACCESS_RIGHTS(EVENT_MODIFY_STATE.0),
             false,
             &HSTRING::from(get_app_instance_event_identifier()),
         )
@@ -49,12 +52,18 @@ pub fn send_instance_message(message: &str) {
 
 fn check_single_instance_event() -> bool {
     unsafe {
-        CreateEventW(
+        CreateMutexW(
             None,
-            false,
-            false,
-            &HSTRING::from(get_app_instance_event_identifier()),
+            true,
+            // &HSTRING::from(get_app_instance_event_identifier()),
+            &HSTRING::from("Zed-Single_instance-Test"),
         )
+        // CreateEventW(
+        //     None,
+        //     false,
+        //     false,
+        //     &HSTRING::from(get_app_instance_event_identifier()),
+        // )
         .expect("Unable to create instance sync event")
     };
     let last_err = unsafe { GetLastError() };
