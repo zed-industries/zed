@@ -59,7 +59,7 @@
 [
   (parameters (identifier) @variable.special)
   (attribute (identifier) @variable.special)
-  (#match? @variable.special "^self$")
+  (#match? @variable.special "^self|cls$")
 ]
 
 (comment) @comment
