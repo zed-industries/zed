@@ -8,6 +8,9 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
+use app_identifier::{
+    get_app_instance_event_identifier, get_app_shared_memory_identifier, APP_SHARED_MEMORY_MAX_SIZE,
+};
 use collections::FxHashMap;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
@@ -30,7 +33,10 @@ use windows::{
                 RegisterClipboardFormatW, SetClipboardData,
             },
             LibraryLoader::*,
-            Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
+            Memory::{
+                CreateFileMappingW, GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+                PAGE_READWRITE,
+            },
             Ole::*,
             SystemInformation::*,
             Threading::*,
@@ -58,6 +64,8 @@ pub(crate) struct WindowsPlatform {
     windows_version: WindowsVersion,
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
     validation_number: usize,
+    single_instance_event: Owned<HANDLE>,
+    shared_memory_handle: Owned<HANDLE>,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -115,6 +123,28 @@ impl WindowsPlatform {
             register_clipboard_format(CLIPBOARD_METADATA_FORMAT).unwrap();
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
         let validation_number = rand::random::<usize>();
+        let single_instance_event = unsafe {
+            Owned::new(CreateEventW(
+                None,
+                false,
+                false,
+                &HSTRING::from(get_app_instance_event_identifier()),
+            )
+            .expect("Unable to open single instance event, make sure you have called `check_single_instance` first!"))
+        };
+        let shared_memory_handle = unsafe {
+            Owned::new(
+                CreateFileMappingW(
+                    INVALID_HANDLE_VALUE,
+                    None,
+                    PAGE_READWRITE,
+                    0,
+                    APP_SHARED_MEMORY_MAX_SIZE as u32,
+                    &HSTRING::from(get_app_shared_memory_identifier()),
+                )
+                .expect("Unable to create shared memory"),
+            )
+        };
 
         Self {
             state,
@@ -128,6 +158,8 @@ impl WindowsPlatform {
             windows_version,
             bitmap_factory,
             validation_number,
+            single_instance_event,
+            shared_memory_handle,
         }
     }
 
