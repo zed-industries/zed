@@ -1,5 +1,5 @@
 use crate::{
-    buffer_store::BufferStore,
+    buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
     lsp_ext_command,
@@ -108,6 +108,7 @@ pub struct LspStore {
         HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     active_entry: Option<ProjectEntryId>,
     _maintain_workspace_config: Task<Result<()>>,
+    _maintain_buffer_languages: Task<()>,
     next_diagnostic_group_id: usize,
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
@@ -134,6 +135,10 @@ pub enum LspStoreEvent {
     },
     LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
     LanguageServerPrompt(LanguageServerPromptRequest),
+    LanguageDetected {
+        buffer: Model<Buffer>,
+        new_language: Option<Arc<Language>>,
+    },
     Notification(String),
     RefreshInlayHints,
     DiagnosticsUpdated {
@@ -218,6 +223,8 @@ impl LspStore {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let yarn = YarnPathStore::new(fs.clone(), cx);
+        cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+            .detach();
 
         Self {
             downstream_client,
@@ -227,7 +234,7 @@ impl LspStore {
             project_id: remote_id.unwrap_or(0),
             buffer_store,
             worktree_store,
-            languages,
+            languages: languages.clone(),
             environment,
             nonce: StdRng::from_entropy().gen(),
             buffer_snapshots: Default::default(),
@@ -244,8 +251,212 @@ impl LspStore {
             active_entry: None,
             yarn,
             _maintain_workspace_config: Self::maintain_workspace_config(cx),
+            _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
             _subscription: cx.on_app_quit(Self::shutdown_language_servers),
         }
+    }
+
+    fn on_buffer_store_event(
+        &mut self,
+        _: Model<BufferStore>,
+        event: &BufferStoreEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            BufferStoreEvent::BufferAdded(buffer) => {
+                self.register_buffer(buffer, cx).log_err();
+            }
+            BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
+                if let Some(old_file) = File::from_dyn(old_file.as_ref()) {
+                    self.unregister_buffer_from_language_servers(&buffer, old_file, cx);
+                }
+
+                self.detect_language_for_buffer(&buffer, cx);
+                self.register_buffer_with_language_servers(&buffer, cx);
+            }
+            BufferStoreEvent::BufferDropped(_) => {}
+        }
+    }
+
+    fn on_buffer_event(
+        &mut self,
+        buffer: Model<Buffer>,
+        event: &language::Event,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            language::Event::Edited { .. } => {
+                self.on_buffer_edited(buffer, cx);
+            }
+
+            language::Event::Saved => {
+                self.on_buffer_saved(buffer, cx);
+            }
+
+            _ => {}
+        }
+    }
+
+    fn register_buffer(
+        &mut self,
+        buffer: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        buffer.update(cx, |buffer, _| {
+            buffer.set_language_registry(self.languages.clone())
+        });
+
+        cx.subscribe(buffer, |this, buffer, event, cx| {
+            this.on_buffer_event(buffer, event, cx);
+        })
+        .detach();
+
+        self.detect_language_for_buffer(buffer, cx);
+        self.register_buffer_with_language_servers(buffer, cx);
+        cx.observe_release(buffer, |this, buffer, cx| {
+            if let Some(file) = File::from_dyn(buffer.file()) {
+                if file.is_local() {
+                    let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                    for server in this.language_servers_for_buffer(buffer, cx) {
+                        server
+                            .1
+                            .notify::<lsp::notification::DidCloseTextDocument>(
+                                lsp::DidCloseTextDocumentParams {
+                                    text_document: lsp::TextDocumentIdentifier::new(uri.clone()),
+                                },
+                            )
+                            .log_err();
+                    }
+                }
+            }
+        })
+        .detach();
+
+        Ok(())
+    }
+
+    fn maintain_buffer_languages(
+        languages: Arc<LanguageRegistry>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<()> {
+        let mut subscription = languages.subscribe();
+        let mut prev_reload_count = languages.reload_count();
+        cx.spawn(move |this, mut cx| async move {
+            while let Some(()) = subscription.next().await {
+                if let Some(this) = this.upgrade() {
+                    // If the language registry has been reloaded, then remove and
+                    // re-assign the languages on all open buffers.
+                    let reload_count = languages.reload_count();
+                    if reload_count > prev_reload_count {
+                        prev_reload_count = reload_count;
+                        this.update(&mut cx, |this, cx| {
+                            this.buffer_store.clone().update(cx, |buffer_store, cx| {
+                                for buffer in buffer_store.buffers() {
+                                    if let Some(f) = File::from_dyn(buffer.read(cx).file()).cloned()
+                                    {
+                                        this.unregister_buffer_from_language_servers(
+                                            &buffer, &f, cx,
+                                        );
+                                        buffer
+                                            .update(cx, |buffer, cx| buffer.set_language(None, cx));
+                                    }
+                                }
+                            });
+                        })
+                        .ok();
+                    }
+
+                    this.update(&mut cx, |this, cx| {
+                        let mut plain_text_buffers = Vec::new();
+                        let mut buffers_with_unknown_injections = Vec::new();
+                        for handle in this.buffer_store.read(cx).buffers() {
+                            let buffer = handle.read(cx);
+                            if buffer.language().is_none()
+                                || buffer.language() == Some(&*language::PLAIN_TEXT)
+                            {
+                                plain_text_buffers.push(handle);
+                            } else if buffer.contains_unknown_injections() {
+                                buffers_with_unknown_injections.push(handle);
+                            }
+                        }
+
+                        for buffer in plain_text_buffers {
+                            this.detect_language_for_buffer(&buffer, cx);
+                            this.register_buffer_with_language_servers(&buffer, cx);
+                        }
+
+                        for buffer in buffers_with_unknown_injections {
+                            buffer.update(cx, |buffer, cx| buffer.reparse(cx));
+                        }
+                    })
+                    .ok();
+                }
+            }
+        })
+    }
+
+    fn detect_language_for_buffer(
+        &mut self,
+        buffer_handle: &Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        // If the buffer has a language, set it and start the language server if we haven't already.
+        let buffer = buffer_handle.read(cx);
+        let Some(file) = buffer.file() else {
+            return;
+        };
+        let content = buffer.as_rope();
+        let Some(new_language_result) = self
+            .languages
+            .language_for_file(file, Some(content), cx)
+            .now_or_never()
+        else {
+            return;
+        };
+
+        match new_language_result {
+            Err(e) => {
+                if e.is::<language::LanguageNotFound>() {
+                    cx.emit(LspStoreEvent::LanguageDetected {
+                        buffer: buffer_handle.clone(),
+                        new_language: None,
+                    });
+                }
+            }
+            Ok(new_language) => {
+                self.set_language_for_buffer(buffer_handle, new_language, cx);
+            }
+        };
+    }
+
+    pub fn set_language_for_buffer(
+        &mut self,
+        buffer: &Model<Buffer>,
+        new_language: Arc<Language>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        buffer.update(cx, |buffer, cx| {
+            if buffer.language().map_or(true, |old_language| {
+                !Arc::ptr_eq(old_language, &new_language)
+            }) {
+                buffer.set_language(Some(new_language.clone()), cx);
+            }
+        });
+
+        let buffer_file = buffer.read(cx).file().cloned();
+        let buffer_file = File::from_dyn(buffer_file.as_ref());
+
+        if let Some(file) = buffer_file {
+            let worktree = file.worktree.clone();
+            if worktree.read(cx).is_local() {
+                self.start_language_servers(&worktree, new_language.clone(), cx)
+            }
+        }
+
+        cx.emit(LspStoreEvent::LanguageDetected {
+            buffer: buffer.clone(),
+            new_language: Some(new_language),
+        })
     }
 
     pub fn buffer_store(&self) -> Model<BufferStore> {
