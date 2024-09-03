@@ -728,11 +728,9 @@ impl Platform for MacPlatform {
                 .background_executor
                 .spawn(async move {
                     std::process::Command::new("open")
-                        .arg(file_path)
+                        .arg(path)
                         .spawn()
                         .expect("Failed to open file");
-                    let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-                    let _: BOOL = msg_send![workspace, openFile: full_path];
                 })
                 .detach();
         }
