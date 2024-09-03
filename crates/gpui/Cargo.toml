@@ -182,5 +182,9 @@ name = "shadow"
 path = "examples/shadow.rs"
 
 [[example]]
+name = "svg"
+path = "examples/svg/svg.rs"
+
+[[example]]
 name = "text_wrapper"
 path = "examples/text_wrapper.rs"
