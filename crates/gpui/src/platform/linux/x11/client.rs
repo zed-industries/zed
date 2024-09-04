@@ -585,8 +585,8 @@ impl X11Client {
         let mut state = self.0.borrow_mut();
         state.composing = false;
         if let Some(mut ximc) = state.ximc.take() {
-            let handler = state.xim_handler.as_ref().unwrap();
-            ximc.reset_ic(handler.im_id, handler.ic_id).ok();
+            let xim_handler = state.xim_handler.as_ref().unwrap();
+            ximc.reset_ic(xim_handler.im_id, xim_handler.ic_id).ok();
             state.ximc = Some(ximc);
         }
     }
