@@ -29,7 +29,8 @@ use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, P
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, MessageContent, Role, StopReason,
+    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role,
+    StopReason,
 };
 use open_ai::Model as OpenAiModel;
 use paths::{context_images_dir, contexts_dir};
@@ -404,6 +405,9 @@ impl Message {
                         content.push(language_model::MessageContent::Image(image));
                     }
                 }
+                ContentAnchorKind::ToolUse(tool_use) => {
+                    content.push(language_model::MessageContent::ToolUse(tool_use.clone()));
+                }
                 ContentAnchorKind::ToolResult {
                     tool_use_id,
                     output,
@@ -458,6 +462,7 @@ pub enum ContentAnchorKind {
         render_image: Arc<RenderImage>,
         image: Shared<Task<Option<LanguageModelImage>>>,
     },
+    ToolUse(LanguageModelToolUse),
     ToolResult {
         tool_use_id: Arc<str>,
         output: String,
@@ -677,7 +682,8 @@ impl Context {
                         .iter()
                         .filter_map(|(offset, kind)| match kind {
                             ContentAnchorKind::Image { image_id, .. } => Some((*offset, *image_id)),
-                            ContentAnchorKind::ToolResult { .. } => None,
+                            ContentAnchorKind::ToolUse(_)
+                            | ContentAnchorKind::ToolResult { .. } => None,
                         })
                         .collect(),
                 })
@@ -1941,6 +1947,25 @@ impl Context {
         }
     }
 
+    pub fn insert_tool_use_anchor(
+        &mut self,
+        id: Arc<str>,
+        anchor: language::Anchor,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(tool_use) = self.pending_tool_uses_by_id.get(&id) {
+            self.insert_content_anchor(
+                anchor,
+                ContentAnchorKind::ToolUse(LanguageModelToolUse {
+                    id: tool_use.id.to_string(),
+                    name: tool_use.name.clone(),
+                    input: tool_use.input.clone(),
+                }),
+                cx,
+            );
+        }
+    }
+
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: Arc<str>,
@@ -1999,25 +2024,14 @@ impl Context {
         anchor: language::Anchor,
         cx: &mut ModelContext<Self>,
     ) {
-        let buffer = self.buffer.read(cx);
-        let insertion_ix = match self
-            .content_anchors
-            .binary_search_by(|existing_anchor| anchor.cmp(&existing_anchor.anchor, buffer))
-        {
-            Ok(ix) => ix,
-            Err(ix) => ix,
-        };
-
         if let Some(output) = self.tool_results_by_tool_use_id.get(&tool_use_id) {
-            self.content_anchors.insert(
-                insertion_ix,
-                ContentAnchor {
-                    anchor,
-                    kind: ContentAnchorKind::ToolResult {
-                        tool_use_id,
-                        output: output.clone(),
-                    },
+            self.insert_content_anchor(
+                anchor,
+                ContentAnchorKind::ToolResult {
+                    tool_use_id,
+                    output: output.clone(),
                 },
+                cx,
             );
         }
     }
@@ -2235,6 +2249,8 @@ impl Context {
             .filter_map(|message| message.to_request_message(&buffer))
             .collect();
 
+        dbg!(&request_messages);
+
         LanguageModelRequest {
             messages: request_messages,
             tools: Vec::new(),
@@ -2384,6 +2400,25 @@ impl Context {
         anchor: language::Anchor,
         cx: &mut ModelContext<Self>,
     ) {
+        if let Some((render_image, image)) = self.images.get(&image_id) {
+            self.insert_content_anchor(
+                anchor,
+                ContentAnchorKind::Image {
+                    image_id,
+                    image: image.clone(),
+                    render_image: render_image.clone(),
+                },
+                cx,
+            );
+        }
+    }
+
+    pub fn insert_content_anchor(
+        &mut self,
+        anchor: language::Anchor,
+        kind: ContentAnchorKind,
+        cx: &mut ModelContext<Self>,
+    ) {
         cx.emit(ContextEvent::MessagesEdited);
 
         let buffer = self.buffer.read(cx);
@@ -2395,19 +2430,8 @@ impl Context {
             Err(ix) => ix,
         };
 
-        if let Some((render_image, image)) = self.images.get(&image_id) {
-            self.content_anchors.insert(
-                insertion_ix,
-                ContentAnchor {
-                    anchor,
-                    kind: ContentAnchorKind::Image {
-                        image_id,
-                        image: image.clone(),
-                        render_image: render_image.clone(),
-                    },
-                },
-            );
-        }
+        self.content_anchors
+            .insert(insertion_ix, ContentAnchor { anchor, kind });
     }
 
     pub fn content_anchors<'a>(

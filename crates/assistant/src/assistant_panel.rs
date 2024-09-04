@@ -1904,6 +1904,14 @@ impl ContextEditor {
                             let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                             buffer_rows_to_fold.insert(buffer_row);
 
+                            self.context.update(cx, |context, cx| {
+                                context.insert_tool_use_anchor(
+                                    tool_use.id.clone(),
+                                    tool_use.source_range.start,
+                                    cx,
+                                );
+                            });
+
                             Crease::new(
                                 start..end,
                                 placeholder,
@@ -3212,7 +3220,7 @@ impl ContextEditor {
                     ContentAnchorKind::Image { render_image, .. } => {
                         Some((anchor.anchor, render_image))
                     }
-                    ContentAnchorKind::ToolResult { .. } => None,
+                    ContentAnchorKind::ToolUse(_) | ContentAnchorKind::ToolResult { .. } => None,
                 })
                 .filter_map(|(anchor, render_image)| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
