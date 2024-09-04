@@ -170,11 +170,26 @@ impl super::LspAdapter for CLspAdapter {
         match completion.kind {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
-                let text = format!("{} {}", label, detail);
+                let fn_ptr_pos = detail.find("(*)");
+                let text = fn_ptr_pos.map_or(format!("{} {}", detail, label), |fn_ptr_pos| {
+                    let mut result = detail.to_owned();
+                    result.insert_str(fn_ptr_pos + 2, label);
+                    result
+                });
                 let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
                 let runs = language.highlight_text(&source, 11..11 + text.len());
+                let filter_start = if let Some(fn_ptr_pos) = fn_ptr_pos {
+                    fn_ptr_pos + 2
+                } else {
+                    detail.len() + 1
+                };
+                let filter_end = if let Some(fn_ptr_pos) = fn_ptr_pos {
+                    fn_ptr_pos + 2 + label.len()
+                } else {
+                    text.len()
+                };
                 return Some(CodeLabel {
-                    filter_range: 0..label.len(),
+                    filter_range: filter_start..filter_end,
                     text,
                     runs,
                 });
@@ -183,10 +198,25 @@ impl super::LspAdapter for CLspAdapter {
                 if completion.detail.is_some() =>
             {
                 let detail = completion.detail.as_ref().unwrap();
-                let text = format!("{} {}", label, detail);
+                let fn_ptr_pos = detail.find("(*)");
+                let text = fn_ptr_pos.map_or(format!("{} {}", detail, label), |fn_ptr_pos| {
+                    let mut result = detail.to_owned();
+                    result.insert_str(fn_ptr_pos + 2, label);
+                    result
+                });
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let filter_start = if let Some(fn_ptr_pos) = fn_ptr_pos {
+                    fn_ptr_pos + 2
+                } else {
+                    detail.len() + 1
+                };
+                let filter_end = if let Some(fn_ptr_pos) = fn_ptr_pos {
+                    fn_ptr_pos + 2 + label.len()
+                } else {
+                    text.len()
+                };
                 return Some(CodeLabel {
-                    filter_range: 0..label.len(),
+                    filter_range: filter_start..filter_end,
                     text,
                     runs,
                 });
@@ -200,15 +230,21 @@ impl super::LspAdapter for CLspAdapter {
                     .as_ref()
                     .map_or(None, |details| details.detail.as_ref());
                 let text = format!(
-                    "{}{} -> {}",
+                    "{} {}{}",
+                    detail,
                     label,
                     function_arguments.unwrap_or(&String::default()),
-                    detail
                 );
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
-
+                let filter_start = detail.len() + 1;
+                let filter_end =
+                    if let Some(end) = text.rfind('(').filter(|end| *end > filter_start) {
+                        end
+                    } else {
+                        text.len()
+                    };
                 return Some(CodeLabel {
-                    filter_range: 0..label.len(),
+                    filter_range: filter_start..filter_end,
                     text,
                     runs,
                 });
