@@ -36,7 +36,6 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         assert_eq!(
             worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
             vec![
-                Path::new(".git"),
                 Path::new("README.md"),
                 Path::new("src"),
                 Path::new("src/lib.rs"),
@@ -87,7 +86,6 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         assert_eq!(
             worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
             vec![
-                Path::new(".git"),
                 Path::new("README.md"),
                 Path::new("src"),
                 Path::new("src/lib.rs"),
