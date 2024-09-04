@@ -250,6 +250,7 @@ impl SettingsObserver {
         for worktree in self.worktree_store.read(cx).worktrees() {
             let worktree_id = worktree.read(cx).id().to_proto();
             for (path, content) in store.local_settings(worktree.entity_id().as_u64() as usize) {
+                dbg!(&path, &content);
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
@@ -273,24 +274,23 @@ impl SettingsObserver {
     ) -> anyhow::Result<()> {
         this.update(&mut cx, |this, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-            if let Some(worktree) = this
+            let Some(worktree) = this
                 .worktree_store
                 .read(cx)
                 .worktree_for_id(worktree_id, cx)
-            {
-                cx.update_global::<SettingsStore, _>(|store, cx| {
-                    store
-                        .set_local_settings(
-                            worktree.entity_id().as_u64() as usize,
-                            PathBuf::from(&envelope.payload.path).into(),
-                            envelope.payload.content.as_deref(),
-                            cx,
-                        )
-                        .log_err();
-                });
-            }
-            Ok(())
-        })?
+            else {
+                return;
+            };
+            this.update_settings(
+                worktree,
+                [(
+                    PathBuf::from(&envelope.payload.path).into(),
+                    envelope.payload.content,
+                )],
+                cx,
+            );
+        })?;
+        Ok(())
     }
 
     pub async fn handle_update_user_settings(
@@ -356,8 +356,6 @@ impl SettingsObserver {
         changes: &UpdatedEntriesSet,
         cx: &mut ModelContext<Self>,
     ) {
-        let worktree_id = worktree.entity_id();
-        let remote_worktree_id = worktree.read(cx).id();
         let SettingsObserverMode::Local(fs) = &self.mode else {
             return;
         };
@@ -397,39 +395,57 @@ impl SettingsObserver {
             return;
         }
 
-        let project_id = self.project_id;
-        let downstream_client = self.downstream_client.clone();
-        cx.spawn(move |_, cx| async move {
+        let worktree = worktree.clone();
+        cx.spawn(move |this, cx| async move {
             let settings_contents: Vec<(Arc<Path>, _)> =
                 futures::future::join_all(settings_contents).await;
             cx.update(|cx| {
-                cx.update_global::<SettingsStore, _>(|store, cx| {
-                    for (directory, file_content) in settings_contents {
-                        let file_content = file_content.and_then(|content| content.log_err());
-                        store
-                            .set_local_settings(
-                                worktree_id.as_u64() as usize,
-                                directory.clone(),
-                                file_content.as_deref(),
-                                cx,
-                            )
-                            .log_err();
-                        dbg!(&file_content);
-                        if let Some(downstream_client) = &downstream_client {
-                            downstream_client
-                                .send(dbg!(proto::UpdateWorktreeSettings {
-                                    project_id,
-                                    worktree_id: remote_worktree_id.to_proto(),
-                                    path: directory.to_string_lossy().into_owned(),
-                                    content: file_content,
-                                }))
-                                .log_err();
-                        }
-                    }
-                });
+                this.update(cx, |this, cx| {
+                    this.update_settings(
+                        worktree,
+                        settings_contents
+                            .into_iter()
+                            .map(|(path, content)| (path, content.and_then(|c| c.log_err()))),
+                        cx,
+                    )
+                })
             })
-            .ok();
         })
         .detach();
+    }
+
+    fn update_settings(
+        &mut self,
+        worktree: Model<Worktree>,
+        settings_contents: impl IntoIterator<Item = (Arc<Path>, Option<String>)>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let worktree_id = worktree.entity_id();
+        let remote_worktree_id = worktree.read(cx).id();
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            for (directory, file_content) in settings_contents {
+                store
+                    .set_local_settings(
+                        worktree_id.as_u64() as usize,
+                        directory.clone(),
+                        file_content.as_deref(),
+                        cx,
+                    )
+                    .log_err();
+                dbg!(&directory, &file_content);
+                if let Some(downstream_client) = &self.downstream_client {
+                    downstream_client
+                        .send(proto::UpdateWorktreeSettings {
+                            project_id: self.project_id,
+                            worktree_id: remote_worktree_id.to_proto(),
+                            path: directory.to_string_lossy().into_owned(),
+                            content: file_content,
+                        })
+                        .log_err();
+                } else {
+                    dbg!("oops");
+                }
+            }
+        })
     }
 }
