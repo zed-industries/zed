@@ -3963,6 +3963,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "evals"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "clap",
+ "client",
+ "clock",
+ "collections",
+ "env_logger",
+ "fs",
+ "futures 0.3.30",
+ "futures-batch",
+ "git",
+ "gpui",
+ "heed",
+ "http_client",
+ "language",
+ "languages",
+ "log",
+ "node_runtime",
+ "open_ai",
+ "parking_lot",
+ "project",
+ "semantic_index",
+ "serde",
+ "serde_json",
+ "settings",
+ "sha2",
+ "smol",
+ "tempfile",
+ "theme",
+ "tree-sitter",
+ "unindent",
+ "util",
+ "workspace",
+ "worktree",
+]
+
+[[package]]
 name = "event-listener"
 version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

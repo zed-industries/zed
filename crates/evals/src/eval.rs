@@ -1,8 +1,17 @@
+use ::fs::RealFs;
 use anyhow::Result;
 use clap::Parser;
+use client::{Client, UserStore};
+use clock::RealSystemClock;
 use collections::BTreeMap;
-use gpui::BackgroundExecutor;
+use git::GitHostingProviderRegistry;
+use gpui::{AsyncAppContext, BackgroundExecutor, Context, Task};
 use http_client::{HttpClient, Method};
+use language::LanguageRegistry;
+use node_runtime::FakeNodeRuntime;
+use open_ai::OpenAiEmbeddingModel;
+use project::Project;
+use semantic_index::{OpenAiEmbeddingProvider, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncReadExt;
 use std::{
@@ -15,9 +24,11 @@ use std::{
         Arc,
     },
 };
+// use tempfile;
 
 const CODESEARCH_NET_DIR: &'static str = "target/datasets/code-search-net";
 const EVAL_REPOS_DIR: &'static str = "target/datasets/eval-repos";
+const EVAL_DB_PATH: &'static str = "target/eval_db";
 
 #[derive(clap::Parser)]
 #[command(author, version, about, long_about = None)]
@@ -29,10 +40,7 @@ struct Cli {
 #[derive(clap::Subcommand)]
 enum Commands {
     Fetch {},
-    Run {
-        #[arg(value_name = "LANGUAGE")]
-        language: String,
-    },
+    Run {},
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -57,10 +65,11 @@ struct EvaluationResult {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Fetch {} => {
-            gpui::App::headless().run(|cx| {
-                let executor = cx.background_executor().clone();
+    gpui::App::headless().run(move |cx| {
+        let executor = cx.background_executor().clone();
+
+        match cli.command {
+            Commands::Fetch {} => {
                 executor
                     .clone()
                     .spawn(async move {
@@ -71,21 +80,19 @@ fn main() -> Result<()> {
                         exit(0);
                     })
                     .detach();
-            });
+            }
+            Commands::Run {} => {
+                cx.spawn(|mut cx| async move {
+                    if let Err(err) = run_evaluation(&executor, &mut cx).await {
+                        eprintln!("Error: {}", err);
+                        exit(1);
+                    }
+                    exit(0);
+                })
+                .detach();
+            }
         }
-        Commands::Run { .. } => {
-            gpui::App::headless().run(|_cx| {
-                // cx.spawn(|mut cx| async move {
-                //     // if let Err(err) = fetch_code_search_net_repos(&mut cx).await {
-                //     //     eprintln!("Error: {}", err);
-                //     //     std::process::exit(1);
-                //     // }
-                //     exit(0);
-                // })
-                // .detach();
-            });
-        }
-    }
+    });
 
     Ok(())
 }
@@ -200,6 +207,77 @@ async fn fetch_code_search_net_resources(http_client: &dyn HttpClient) -> Result
         "Fetched CodeSearchNet evaluations into {}",
         evaluations_path.display()
     );
+
+    Ok(())
+}
+
+async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext) -> Result<()> {
+    let dataset_dir = Path::new(CODESEARCH_NET_DIR);
+    let evaluations_path = dataset_dir.join("evaluations.json");
+    let repos_dir = Path::new(EVAL_REPOS_DIR);
+    let db_path = Path::new(EVAL_DB_PATH);
+    let http_client = http_client::HttpClientWithProxy::new(None, None);
+    let api_key = std::env::var("OPENAI_API_KEY").unwrap();
+    let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
+    let fs = Arc::new(RealFs::new(git_hosting_provider_registry, None));
+    let clock = Arc::new(RealSystemClock);
+    let client = cx
+        .update(|cx| {
+            Client::new(
+                clock,
+                Arc::new(http_client::HttpClientWithUrl::new(
+                    "https://zed.dev",
+                    None,
+                    None,
+                )),
+                cx,
+            )
+        })
+        .unwrap();
+
+    let evaluations = fs::read(&evaluations_path).expect("failed to read evaluations.json");
+    let evaluations: Vec<EvaluationProject> = serde_json::from_slice(&evaluations).unwrap();
+
+    let embedding_provider = Arc::new(OpenAiEmbeddingProvider::new(
+        http_client.clone(),
+        OpenAiEmbeddingModel::TextEmbedding3Small,
+        open_ai::OPEN_AI_API_URL.to_string(),
+        api_key,
+    ));
+
+    let semantic_index = SemanticIndex::new(db_path.into(), embedding_provider, cx).await;
+    let language_registry = Arc::new(LanguageRegistry::new(Task::ready(()), executor.clone()));
+
+    for evaluation in evaluations {
+        let repo_dir = repos_dir.join(&evaluation.repo);
+        if !repo_dir.exists() {
+            eprintln!("Skipping {}: directory not found", evaluation.repo);
+            continue;
+        }
+
+        let project = cx
+            .update(|cx| {
+                Project::local(
+                    client.clone(),
+                    Arc::new(FakeNodeRuntime {}),
+                    cx.new_model(|cx| UserStore::new(client.clone(), cx)),
+                    language_registry.clone(),
+                    fs.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        let (worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(repo_dir, true, cx)
+            })?
+            .await?;
+
+        // TODO: Implement the actual evaluation logic here
+        // This will involve running queries and comparing results
+    }
 
     Ok(())
 }
