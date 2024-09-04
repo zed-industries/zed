@@ -475,7 +475,7 @@ impl ProjectPanel {
             entry_id,
         });
 
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
+        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             let auto_fold_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
             let is_root = Some(entry) == worktree.root_entry();
             let is_dir = entry.is_dir();
@@ -1205,7 +1205,7 @@ impl ProjectPanel {
     }
 
     fn select_parent(&mut self, _: &SelectParent, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
+        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             if let Some(parent) = entry.path.parent() {
                 if let Some(parent_entry) = worktree.entry_for_path(parent) {
                     self.selection = Some(SelectedEntry {
@@ -1491,13 +1491,13 @@ impl ProjectPanel {
     }
 
     fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
+        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             cx.reveal_path(&worktree.abs_path().join(&entry.path));
         }
     }
 
     fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
+        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             let abs_path = worktree.abs_path().join(&entry.path);
             let working_directory = if entry.is_dir() {
                 Some(abs_path)
@@ -1520,7 +1520,7 @@ impl ProjectPanel {
         _: &NewSearchInDirectory,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some((worktree, entry)) = self.selected_entry(cx) {
+        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             if entry.is_dir() {
                 let include_root = self.project.read(cx).visible_worktrees(cx).count() > 1;
                 let dir_path = if include_root {
@@ -1658,6 +1658,30 @@ impl ProjectPanel {
         Some((worktree.read(cx), entry))
     }
 
+    /// Compared to selected_entry, this function resolves to the currently
+    /// selected subentry if dir auto-folding is enabled.
+    fn selected_sub_entry<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> Option<(&'a Worktree, &'a project::Entry)> {
+        let (worktree, mut entry) = self.selected_entry_handle(cx)?;
+
+        let worktree = worktree.read(cx);
+        if let Some(selected_entry_id) = self
+            .ancestors
+            .get(&entry.id)
+            .and_then(|ancestors| {
+                if ancestors.current_ancestor_depth == 0 {
+                    return None;
+                }
+                ancestors.ancestors.get(ancestors.current_ancestor_depth)
+            })
+            .copied()
+        {
+            entry = worktree.entry_for_id(selected_entry_id)?;
+        }
+        Some((worktree, entry))
+    }
     fn selected_entry_handle<'a>(
         &self,
         cx: &'a AppContext,
