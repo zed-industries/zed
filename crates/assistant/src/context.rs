@@ -374,20 +374,6 @@ impl MessageMetadata {
 }
 
 #[derive(Clone, Debug)]
-pub struct MessageImage {
-    image_id: u64,
-    image: Shared<Task<Option<LanguageModelImage>>>,
-}
-
-impl PartialEq for MessageImage {
-    fn eq(&self, other: &Self) -> bool {
-        self.image_id == other.image_id
-    }
-}
-
-impl Eq for MessageImage {}
-
-#[derive(Clone, Debug)]
 pub struct Message {
     pub offset_range: Range<usize>,
     pub index_range: Range<usize>,
@@ -396,8 +382,7 @@ pub struct Message {
     pub role: Role,
     pub status: MessageStatus,
     pub cache: Option<MessageCacheMetadata>,
-    pub image_offsets: SmallVec<[(usize, MessageImage); 1]>,
-    pub tool_result_offsets: SmallVec<[(usize, Arc<str>); 1]>,
+    pub content_offsets: SmallVec<[(usize, ContentAnchorKind); 1]>,
 }
 
 impl Message {
@@ -405,19 +390,27 @@ impl Message {
         let mut content = Vec::new();
 
         let mut range_start = self.offset_range.start;
-        for (image_offset, message_image) in self.image_offsets.iter() {
-            if range_start != *image_offset {
+        for (content_offset, content_kind) in self.content_offsets.iter() {
+            if range_start != *content_offset {
                 content.extend(Self::collect_text_content(
                     buffer,
-                    range_start..*image_offset,
+                    range_start..*content_offset,
                 ));
             }
 
-            if let Some(image) = message_image.image.clone().now_or_never().flatten() {
-                content.push(language_model::MessageContent::Image(image));
+            match content_kind {
+                ContentAnchorKind::Image(image) => {
+                    if let Some(image) = image.image.clone().now_or_never().flatten() {
+                        content.push(language_model::MessageContent::Image(image));
+                    }
+                }
+                ContentAnchorKind::ToolResult(tool_result) => {
+                    // TODO
+                    dbg!(&tool_result);
+                }
             }
 
-            range_start = *image_offset;
+            range_start = *content_offset;
         }
 
         if range_start != self.offset_range.end {
@@ -448,9 +441,20 @@ impl Message {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum ContentAnchorKind {
+    Image(ImageAnchor),
+    ToolResult(ToolResultAnchor),
+}
+
+#[derive(Debug, Clone)]
+pub struct ContentAnchor {
+    pub anchor: language::Anchor,
+    pub kind: ContentAnchorKind,
+}
+
 #[derive(Clone, Debug)]
 pub struct ImageAnchor {
-    pub anchor: language::Anchor,
     pub image_id: u64,
     pub render_image: Arc<RenderImage>,
     pub image: Shared<Task<Option<LanguageModelImage>>>,
@@ -497,10 +501,9 @@ pub struct Context {
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     pending_tool_uses_by_id: HashMap<Arc<str>, PendingToolUse>,
     tool_results_by_tool_use_id: HashMap<Arc<str>, String>,
-    tool_result_anchors: Vec<ToolResultAnchor>,
     message_anchors: Vec<MessageAnchor>,
     images: HashMap<u64, (Arc<RenderImage>, Shared<Task<Option<LanguageModelImage>>>)>,
-    image_anchors: Vec<ImageAnchor>,
+    content_anchors: Vec<ContentAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     summary: Option<ContextSummary>,
     pending_summary: Task<Option<()>>,
@@ -594,14 +597,13 @@ impl Context {
             pending_ops: Vec::new(),
             operations: Vec::new(),
             message_anchors: Default::default(),
-            image_anchors: Default::default(),
+            content_anchors: Default::default(),
             images: Default::default(),
             messages_metadata: Default::default(),
             pending_slash_commands: Vec::new(),
             finished_slash_commands: HashSet::default(),
             pending_tool_uses_by_id: HashMap::default(),
             tool_results_by_tool_use_id: HashMap::default(),
-            tool_result_anchors: Vec::new(),
             slash_command_output_sections: Vec::new(),
             edits_since_last_parse: edits_since_last_slash_command_parse,
             summary: None,
@@ -661,9 +663,12 @@ impl Context {
                     start: message.offset_range.start,
                     metadata: self.messages_metadata[&message.id].clone(),
                     image_offsets: message
-                        .image_offsets
+                        .content_offsets
                         .iter()
-                        .map(|image_offset| (image_offset.0, image_offset.1.image_id))
+                        .filter_map(|(offset, kind)| match kind {
+                            ContentAnchorKind::Image(image) => Some((*offset, image.image_id)),
+                            ContentAnchorKind::ToolResult(_) => None,
+                        })
                         .collect(),
                 })
                 .collect(),
@@ -1986,7 +1991,7 @@ impl Context {
     ) {
         let buffer = self.buffer.read(cx);
         let insertion_ix = match self
-            .tool_result_anchors
+            .content_anchors
             .binary_search_by(|existing_anchor| anchor.cmp(&existing_anchor.anchor, buffer))
         {
             Ok(ix) => ix,
@@ -1994,11 +1999,11 @@ impl Context {
         };
 
         if let Some(_) = self.tool_results_by_tool_use_id.get(&tool_use_id) {
-            self.tool_result_anchors.insert(
+            self.content_anchors.insert(
                 insertion_ix,
-                ToolResultAnchor {
-                    tool_use_id,
+                ContentAnchor {
                     anchor,
+                    kind: ContentAnchorKind::ToolResult(ToolResultAnchor { tool_use_id }),
                 },
             );
         }
@@ -2370,7 +2375,7 @@ impl Context {
 
         let buffer = self.buffer.read(cx);
         let insertion_ix = match self
-            .image_anchors
+            .content_anchors
             .binary_search_by(|existing_anchor| anchor.cmp(&existing_anchor.anchor, buffer))
         {
             Ok(ix) => ix,
@@ -2378,20 +2383,25 @@ impl Context {
         };
 
         if let Some((render_image, image)) = self.images.get(&image_id) {
-            self.image_anchors.insert(
+            self.content_anchors.insert(
                 insertion_ix,
-                ImageAnchor {
+                ContentAnchor {
                     anchor,
-                    image_id,
-                    image: image.clone(),
-                    render_image: render_image.clone(),
+                    kind: ContentAnchorKind::Image(ImageAnchor {
+                        image_id,
+                        image: image.clone(),
+                        render_image: render_image.clone(),
+                    }),
                 },
             );
         }
     }
 
-    pub fn images<'a>(&'a self, _cx: &'a AppContext) -> impl 'a + Iterator<Item = ImageAnchor> {
-        self.image_anchors.iter().cloned()
+    pub fn content_anchors<'a>(
+        &'a self,
+        _cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = ContentAnchor> {
+        self.content_anchors.iter().cloned()
     }
 
     pub fn split_message(
@@ -2669,16 +2679,12 @@ impl Context {
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = Message> {
         let buffer = self.buffer.read(cx);
-        let messages = message_anchors.enumerate();
-        let images = self.image_anchors.iter();
-        let tool_results = self.tool_result_anchors.iter();
 
         Self::messages_from_iters(
             buffer,
             &self.messages_metadata,
-            messages,
-            images,
-            tool_results,
+            message_anchors.enumerate(),
+            self.content_anchors.iter(),
         )
     }
 
@@ -2690,12 +2696,10 @@ impl Context {
         buffer: &'a Buffer,
         metadata: &'a HashMap<MessageId, MessageMetadata>,
         messages: impl Iterator<Item = (usize, &'a MessageAnchor)> + 'a,
-        images: impl Iterator<Item = &'a ImageAnchor> + 'a,
-        tool_results: impl Iterator<Item = &'a ToolResultAnchor> + 'a,
+        content_anchors: impl Iterator<Item = &'a ContentAnchor> + 'a,
     ) -> impl 'a + Iterator<Item = Message> {
         let mut messages = messages.peekable();
-        let mut images = images.peekable();
-        let mut tool_results = tool_results.peekable();
+        let mut content_anchors = content_anchors.peekable();
 
         iter::from_fn(move || {
             if let Some((start_ix, message_anchor)) = messages.next() {
@@ -2716,33 +2720,20 @@ impl Context {
                 let message_end_anchor = message_end.unwrap_or(language::Anchor::MAX);
                 let message_end = message_end_anchor.to_offset(buffer);
 
-                let mut image_offsets = SmallVec::new();
-                while let Some(image_anchor) = images.peek() {
-                    if image_anchor.anchor.cmp(&message_end_anchor, buffer).is_lt() {
-                        image_offsets.push((
-                            image_anchor.anchor.to_offset(buffer),
-                            MessageImage {
-                                image_id: image_anchor.image_id,
-                                image: image_anchor.image.clone(),
-                            },
-                        ));
-                        images.next();
-                    } else {
-                        break;
-                    }
-                }
-
-                let mut tool_result_offsets = SmallVec::new();
-                while let Some(tool_result_anchor) = tool_results.peek() {
-                    if tool_result_anchor
+                let mut content_offsets = SmallVec::new();
+                while let Some(content_anchor) = content_anchors.peek() {
+                    if content_anchor
                         .anchor
                         .cmp(&message_end_anchor, buffer)
                         .is_lt()
                     {
-                        tool_result_offsets.push((
-                            tool_result_anchor.anchor.to_offset(buffer),
-                            tool_result_anchor.tool_use_id.clone(),
-                        ))
+                        content_offsets.push((
+                            content_anchor.anchor.to_offset(buffer),
+                            content_anchor.kind.clone(),
+                        ));
+                        content_anchors.next();
+                    } else {
+                        break;
                     }
                 }
 
@@ -2754,8 +2745,7 @@ impl Context {
                     role: metadata.role,
                     status: metadata.status.clone(),
                     cache: metadata.cache.clone(),
-                    image_offsets,
-                    tool_result_offsets,
+                    content_offsets,
                 });
             }
             None
@@ -2957,7 +2947,6 @@ impl PendingToolUseStatus {
 #[derive(Debug, Clone)]
 pub struct ToolResultAnchor {
     pub tool_use_id: Arc<str>,
-    pub anchor: language::Anchor,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -2965,8 +2954,8 @@ pub struct SavedMessage {
     pub id: MessageId,
     pub start: usize,
     pub metadata: MessageMetadata,
-    #[serde(default)]
     // This is defaulted for backwards compatibility with JSON files created before August 2024. We didn't always have this field.
+    #[serde(default)]
     pub image_offsets: Vec<(usize, u64)>,
 }
 

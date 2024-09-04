@@ -1,3 +1,4 @@
+use crate::ContentAnchorKind;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -3206,10 +3207,14 @@ impl ContextEditor {
             let new_blocks = self
                 .context
                 .read(cx)
-                .images(cx)
-                .filter_map(|image| {
+                .content_anchors(cx)
+                .filter_map(|anchor| match anchor.kind {
+                    ContentAnchorKind::Image(image) => Some((anchor.anchor, image)),
+                    ContentAnchorKind::ToolResult(_) => None,
+                })
+                .filter_map(|(anchor, image)| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
-                    let anchor = buffer.anchor_in_excerpt(excerpt_id, image.anchor).unwrap();
+                    let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();
                     let image = image.render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         position: anchor,
