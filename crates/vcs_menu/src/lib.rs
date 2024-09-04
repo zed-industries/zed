@@ -8,10 +8,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use std::{ops::Not, sync::Arc};
-use ui::{
-    prelude::*, Button, Clickable, Color, HighlightedLabel, Label, LabelCommon, LabelSize,
-    ListItem, ListItemSpacing, Selectable,
-};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::{ModalView, Toast, Workspace};
