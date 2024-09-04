@@ -55,7 +55,7 @@ const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
 type AncestorDepth = usize;
-
+type MaxAncestorDepth = usize;
 pub struct ProjectPanel {
     project: Model<Project>,
     fs: Arc<dyn Fs>,
@@ -65,7 +65,7 @@ pub struct ProjectPanel {
     /// Maps from leaf project entry ID to the currently selected ancestor.
     /// Relevant only for auto-fold dirs, where a single project panel entry may actually consist of several
     /// project entries (and all non-leaf nodes are guaranteed to be directories).
-    ancestors: HashMap<ProjectEntryId, AncestorDepth>,
+    ancestors: HashMap<ProjectEntryId, (AncestorDepth, MaxAncestorDepth)>,
     last_worktree_root_id: Option<ProjectEntryId>,
     last_external_paths_drag_over_entry: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
@@ -591,6 +591,13 @@ impl ProjectPanel {
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
+            if let Some((ancestor_depth, _)) = self.ancestors.get_mut(&entry.id) {
+                if *ancestor_depth > 0 {
+                    *ancestor_depth -= 1;
+                    cx.notify();
+                    return;
+                }
+            }
             if entry.is_dir() {
                 let worktree_id = worktree.id();
                 let entry_id = entry.id;
@@ -619,10 +626,12 @@ impl ProjectPanel {
 
     fn collapse_selected_entry(&mut self, _: &CollapseSelectedEntry, cx: &mut ViewContext<Self>) {
         if let Some((worktree, mut entry)) = self.selected_entry(cx) {
-            if let Some(ancestor_depth) = self.ancestors.get_mut(&entry.id) {
-                *ancestor_depth += 1;
-                cx.notify();
-                return;
+            if let Some((ancestor_depth, max_ancestor_depth)) = self.ancestors.get_mut(&entry.id) {
+                if ancestor_depth < max_ancestor_depth {
+                    *ancestor_depth += 1;
+                    cx.notify();
+                    return;
+                }
             }
             let worktree_id = worktree.id();
             let expanded_dir_ids =
@@ -1670,7 +1679,7 @@ impl ProjectPanel {
             .and_then(|worktree| worktree.read(cx).root_entry())
             .map(|entry| entry.id);
 
-        self.ancestors.clear();
+        let old_ancestors = std::mem::take(&mut self.ancestors);
         self.visible_entries.clear();
         for worktree in project.visible_worktrees(cx) {
             let snapshot = worktree.read(cx).snapshot();
@@ -1704,6 +1713,7 @@ impl ProjectPanel {
 
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(true, 0);
+            let mut max_ancestor_depth = 0;
             while let Some(entry) = entry_iter.entry() {
                 if auto_collapse_dirs && entry.kind.is_dir() {
                     if !self.unfolded_dir_ids.contains(&entry.id) {
@@ -1715,14 +1725,16 @@ impl ProjectPanel {
                                     && child.kind.is_dir()
                                 {
                                     entry_iter.advance();
+                                    max_ancestor_depth += 1;
                                     continue;
                                 }
                             }
                         }
                     }
-                    self.ancestors.insert(entry.id, 0);
+                    let depth = old_ancestors.get(&entry.id).copied().unwrap_or_default().0;
+                    self.ancestors.insert(entry.id, (depth, max_ancestor_depth));
                 }
-
+                max_ancestor_depth = 0;
                 visible_worktree_entries.push(entry.clone());
                 if Some(entry.id) == new_entry_parent_id {
                     visible_worktree_entries.push(Entry {
@@ -2225,7 +2237,7 @@ impl ProjectPanel {
                         } else {
                             h_flex().h_6().map(|this| {
                                 if is_auto_folded && is_active {
-                                    let nesting_level =
+                                    let (nesting_level, _) =
                                         self.ancestors.get(&entry_id).copied().unwrap();
                                     let Some(part_to_highlight) =
                                         Path::new(&file_name).ancestors().nth(nesting_level)
