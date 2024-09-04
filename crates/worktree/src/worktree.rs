@@ -983,6 +983,10 @@ impl Worktree {
 }
 
 impl LocalWorktree {
+    pub fn fs(&self) -> &Arc<dyn Fs> {
+        &self.fs
+    }
+
     pub fn contains_abs_path(&self, path: &Path) -> bool {
         path.starts_with(&self.abs_path)
     }

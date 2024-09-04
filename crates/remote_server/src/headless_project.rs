@@ -1,9 +1,10 @@
 use anyhow::{anyhow, Result};
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
+use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task};
+use language::LanguageRegistry;
 use project::{
-    buffer_store::BufferStore, search::SearchQuery, worktree_store::WorktreeStore, ProjectPath,
-    WorktreeId, WorktreeSettings,
+    buffer_store::BufferStore, search::SearchQuery, worktree_store::WorktreeStore, LspStore,
+    ProjectPath, WorktreeId, WorktreeSettings,
 };
 use remote::SshSession;
 use rpc::{
@@ -23,22 +24,51 @@ pub struct HeadlessProject {
     pub session: AnyProtoClient,
     pub worktree_store: Model<WorktreeStore>,
     pub buffer_store: Model<BufferStore>,
+    pub lsp_store: Model<LspStore>,
     pub next_entry_id: Arc<AtomicUsize>,
 }
 
 impl HeadlessProject {
     pub fn init(cx: &mut AppContext) {
-        cx.set_global(SettingsStore::new(cx));
+        settings::init(cx);
+        language::init(cx);
         WorktreeSettings::register(cx);
     }
 
     pub fn new(session: Arc<SshSession>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
+        // TODO: we should load the env correctly (as we do in login_shell_env_loaded when stdout is not a pty). Can we re-use the ProjectEnvironment for that?
+        let languages = Arc::new(LanguageRegistry::new(
+            Task::ready(()),
+            cx.background_executor().clone(),
+        ));
+
         let worktree_store = cx.new_model(|_| WorktreeStore::new(true, fs.clone()));
         let buffer_store = cx.new_model(|cx| {
             let mut buffer_store =
                 BufferStore::new(worktree_store.clone(), Some(SSH_PROJECT_ID), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
+        });
+        let environment = project::ProjectEnvironment::new(
+            &worktree_store,
+            Some(session.clone().into()),
+            SSH_PROJECT_ID,
+            None,
+            cx,
+        );
+        let lsp_store = cx.new_model(|cx| {
+            LspStore::new(
+                buffer_store.clone(),
+                worktree_store.clone(),
+                Some(environment),
+                languages,
+                None,
+                fs.clone(),
+                Some(session.clone().into()),
+                None,
+                Some(0),
+                cx,
+            )
         });
 
         let client: AnyProtoClient = session.clone().into();
@@ -48,6 +78,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
 
         client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
+        client.add_request_handler(cx.weak_model(), Self::handle_settings_changed);
 
         client.add_model_request_handler(Self::handle_add_worktree);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
@@ -64,6 +95,7 @@ impl HeadlessProject {
             fs,
             worktree_store,
             buffer_store,
+            lsp_store,
             next_entry_id: Default::default(),
         }
     }
@@ -188,5 +220,17 @@ impl HeadlessProject {
             }
         }
         Ok(proto::ListRemoteDirectoryResponse { entries })
+    }
+
+    pub async fn handle_settings_changed(
+        _: Model<Self>,
+        envelope: TypedEnvelope<proto::SettingsChanged>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        cx.update_global(|settings_store: &mut SettingsStore, cx| {
+            settings_store.set_user_settings(&envelope.payload.settings, cx)
+        })??;
+
+        Ok(proto::Ack {})
     }
 }

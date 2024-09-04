@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Context as _, Result};
 use futures::{future::Shared, FutureExt};
+use paths::local_settings_file_relative_path;
+use rpc::proto::{self, AnyProtoClient};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -7,43 +9,182 @@ use std::{
 use util::{parse_env_output, ResultExt};
 
 use collections::HashMap;
-use gpui::{AppContext, Context, Model, ModelContext, Task};
-use settings::Settings as _;
-use worktree::WorktreeId;
+use gpui::{AppContext, BorrowAppContext, Context, Model, ModelContext, Task};
+use settings::{Settings as _, SettingsStore};
+use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
-use crate::project_settings::{DirenvSettings, ProjectSettings};
+use crate::{
+    project_settings::{DirenvSettings, ProjectSettings},
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
+};
 
-pub(crate) struct ProjectEnvironment {
+pub struct ProjectEnvironment {
+    project_id: u64,
+    downstream_client: Option<AnyProtoClient>,
     cli_environment: Option<HashMap<String, String>>,
     get_environment_task: Option<Shared<Task<Option<HashMap<String, String>>>>>,
     cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
 }
 
 impl ProjectEnvironment {
-    pub(crate) fn new(
+    pub fn new(
+        worktree_store: &Model<WorktreeStore>,
+        downstream_client: Option<AnyProtoClient>,
+        project_id: u64,
         cli_environment: Option<HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        cx.new_model(|_| Self {
-            cli_environment,
-            get_environment_task: None,
-            cached_shell_environments: Default::default(),
+        cx.new_model(|cx| {
+            cx.subscribe(worktree_store, Self::on_worktree_store_event)
+                .detach();
+            Self {
+                downstream_client,
+                project_id,
+                cli_environment,
+                get_environment_task: None,
+                cached_shell_environments: Default::default(),
+            }
         })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn test(
-        shell_environments: &[(WorktreeId, HashMap<String, String>)],
-        cx: &mut AppContext,
-    ) -> Model<Self> {
-        cx.new_model(|_| Self {
-            cli_environment: None,
-            get_environment_task: None,
-            cached_shell_environments: shell_environments
-                .iter()
-                .cloned()
-                .collect::<HashMap<_, _>>(),
+    pub fn shared(
+        &mut self,
+        project_id: u64,
+        downstream_client: AnyProtoClient,
+        _: &mut ModelContext<Self>,
+    ) {
+        self.project_id = project_id;
+        self.downstream_client = Some(downstream_client);
+    }
+
+    pub fn unshared(&mut self, _: &mut ModelContext<Self>) {
+        self.downstream_client = None;
+    }
+
+    fn on_worktree_store_event(
+        &mut self,
+        _: Model<WorktreeStore>,
+        event: &WorktreeStoreEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            crate::worktree_store::WorktreeStoreEvent::WorktreeAdded(worktree) => {
+                if worktree.read(cx).is_local() {
+                    cx.subscribe(worktree, Self::on_worktree_event).detach()
+                }
+            }
+            crate::worktree_store::WorktreeStoreEvent::WorktreeRemoved(_, id) => {
+                self.remove_worktree_environment(*id);
+            }
+            _ => {}
+        }
+    }
+
+    fn on_worktree_event(
+        &mut self,
+        worktree: Model<Worktree>,
+        event: &worktree::Event,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            worktree::Event::UpdatedEntries(changes) => {
+                self.update_local_worktree_settings(&worktree, changes, cx)
+            }
+            _ => {}
+        }
+    }
+
+    fn update_local_worktree_settings(
+        &mut self,
+        worktree: &Model<Worktree>,
+        changes: &UpdatedEntriesSet,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let worktree_id = worktree.entity_id();
+        let remote_worktree_id = worktree.read(cx).id();
+        let Some(fs) = worktree.read(cx).as_local().map(|l| l.fs().clone()) else {
+            return;
+        };
+
+        let mut settings_contents = Vec::new();
+        for (path, _, change) in changes.iter() {
+            let removed = change == &PathChange::Removed;
+            let abs_path = match worktree.read(cx).absolutize(path) {
+                Ok(abs_path) => abs_path,
+                Err(e) => {
+                    log::warn!("Cannot absolutize {path:?} received as {change:?} FS change: {e}");
+                    continue;
+                }
+            };
+
+            if path.ends_with(local_settings_file_relative_path()) {
+                let settings_dir = Arc::from(
+                    path.ancestors()
+                        .nth(local_settings_file_relative_path().components().count())
+                        .unwrap(),
+                );
+                let fs = fs.clone();
+                settings_contents.push(async move {
+                    (
+                        settings_dir,
+                        if removed {
+                            None
+                        } else {
+                            Some(async move { fs.load(&abs_path).await }.await)
+                        },
+                    )
+                });
+            }
+        }
+
+        if settings_contents.is_empty() {
+            return;
+        }
+
+        let project_id = self.project_id;
+        let downstream_client = self.downstream_client.clone();
+        cx.spawn(move |_, cx| async move {
+            let settings_contents: Vec<(Arc<Path>, _)> =
+                futures::future::join_all(settings_contents).await;
+            cx.update(|cx| {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    for (directory, file_content) in settings_contents {
+                        let file_content = file_content.and_then(|content| content.log_err());
+                        store
+                            .set_local_settings(
+                                worktree_id.as_u64() as usize,
+                                directory.clone(),
+                                file_content.as_deref(),
+                                cx,
+                            )
+                            .log_err();
+                        if let Some(downstream_client) = &downstream_client {
+                            downstream_client
+                                .send(proto::UpdateWorktreeSettings {
+                                    project_id,
+                                    worktree_id: remote_worktree_id.to_proto(),
+                                    path: directory.to_string_lossy().into_owned(),
+                                    content: file_content,
+                                })
+                                .log_err();
+                        }
+                    }
+                });
+            })
+            .ok();
         })
+        .detach();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_cached(
+        &mut self,
+        shell_environments: &[(WorktreeId, HashMap<String, String>)],
+    ) {
+        self.cached_shell_environments = shell_environments
+            .iter()
+            .cloned()
+            .collect::<HashMap<_, _>>();
     }
 
     pub(crate) fn remove_worktree_environment(&mut self, worktree_id: WorktreeId) {

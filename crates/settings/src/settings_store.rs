@@ -151,7 +151,7 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct SettingsLocation<'a> {
     pub worktree_id: usize,
     pub path: &'a Path,
@@ -309,8 +309,8 @@ impl SettingsStore {
 
     /// Get the user's settings as a raw JSON value.
     ///
-    /// This is only for debugging and reporting. For user-facing functionality,
-    /// use the typed setting interface.
+    /// For user-facing functionality use the typed setting interface.
+    /// (e.g. ProjectSettings::get_global(cx))
     pub fn raw_user_settings(&self) -> &serde_json::Value {
         &self.raw_user_settings
     }
