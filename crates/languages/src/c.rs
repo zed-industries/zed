@@ -245,7 +245,6 @@ impl super::LspAdapter for CLspAdapter {
             }
             _ => {}
         }
-
         Some(CodeLabel::plain(label.to_string(), None))
     }
 
