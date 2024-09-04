@@ -1924,22 +1924,6 @@ impl ContextEditor {
                             .map(|tool_use| tool_use.source_range.clone())
                             .zip(crease_ids),
                     );
-
-                    for tool_use in new_tool_uses {
-                        let tool_registry = ToolRegistry::global(cx);
-                        if let Some(tool) = tool_registry.tool(&tool_use.name) {
-                            let task = tool.run(tool_use.input, self.workspace.clone(), cx);
-
-                            self.context.update(cx, |context, cx| {
-                                context.insert_tool_output(
-                                    tool_use.id.clone(),
-                                    tool_use.source_range,
-                                    task,
-                                    cx,
-                                );
-                            });
-                        }
-                    }
                 });
             }
             ContextEvent::WorkflowStepsUpdated { removed, updated } => {
@@ -2105,6 +2089,32 @@ impl ContextEditor {
                             self.workspace.clone(),
                             cx,
                         );
+                    }
+                }
+            }
+            ContextEvent::UsePendingTools => {
+                let pending_tool_uses = self
+                    .context
+                    .read(cx)
+                    .pending_tool_uses()
+                    .into_iter()
+                    .filter(|tool_use| tool_use.status.is_idle())
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                for tool_use in pending_tool_uses {
+                    let tool_registry = ToolRegistry::global(cx);
+                    if let Some(tool) = tool_registry.tool(&tool_use.name) {
+                        let task = tool.run(tool_use.input, self.workspace.clone(), cx);
+
+                        self.context.update(cx, |context, cx| {
+                            context.insert_tool_output(
+                                tool_use.id.clone(),
+                                tool_use.source_range,
+                                task,
+                                cx,
+                            );
+                        });
                     }
                 }
             }

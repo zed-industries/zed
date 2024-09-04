@@ -29,7 +29,7 @@ use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, P
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, MessageContent, Role,
+    LanguageModelRequestTool, MessageContent, Role, StopReason,
 };
 use open_ai::Model as OpenAiModel;
 use paths::{context_images_dir, contexts_dir};
@@ -306,6 +306,7 @@ pub enum ContextEvent {
         run_commands_in_output: bool,
         expand_result: bool,
     },
+    UsePendingTools,
     Operation(ContextOperation),
 }
 
@@ -2028,7 +2029,7 @@ impl Context {
                                 .message_anchors
                                 .iter()
                                 .position(|message| message.id == assistant_message_id)?;
-                            this.buffer.update(cx, |buffer, cx| {
+                            let event_to_emit = this.buffer.update(cx, |buffer, cx| {
                                 let message_old_end_offset = this.message_anchors[message_ix + 1..]
                                     .iter()
                                     .find(|message| message.start.is_valid(buffer))
@@ -2038,9 +2039,11 @@ impl Context {
 
                                 match event {
                                     LanguageModelCompletionEvent::Stop(reason) => match reason {
-                                        language_model::StopReason::ToolUse => {}
-                                        language_model::StopReason::EndTurn => {}
-                                        language_model::StopReason::MaxTokens => {}
+                                        StopReason::ToolUse => {
+                                            return Some(ContextEvent::UsePendingTools);
+                                        }
+                                        StopReason::EndTurn => {}
+                                        StopReason::MaxTokens => {}
                                     },
                                     LanguageModelCompletionEvent::Text(chunk) => {
                                         buffer.edit(
@@ -2092,9 +2095,14 @@ impl Context {
                                         );
                                     }
                                 }
+
+                                None
                             });
 
                             cx.emit(ContextEvent::StreamedCompletion);
+                            if let Some(event) = event_to_emit {
+                                cx.emit(event);
+                            }
 
                             Some(())
                         })?;
@@ -2872,6 +2880,12 @@ pub enum PendingToolUseStatus {
     Idle,
     Running { _task: Shared<Task<()>> },
     Error(String),
+}
+
+impl PendingToolUseStatus {
+    pub fn is_idle(&self) -> bool {
+        matches!(self, PendingToolUseStatus::Idle)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
