@@ -16,27 +16,32 @@ By default Zed uses [vtsls](https://github.com/yioneko/vtsls) for TypeScript, TS
 You can configure the use of [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) per language in your settings file:
 
 ```json
-"languages": {
-  "TypeScript": {
-    "language_servers": ["typescript-language-server", "!vtsls", "..."],
-  },
-  "TSX": {
-    "language_servers": ["typescript-language-server", "!vtsls", "..."],
-  },
-  "JavaScript": {
-    "language_servers": ["typescript-language-server", "!vtsls", "..."],
+{
+  "languages": {
+    "TypeScript": {
+      "language_servers": ["typescript-language-server", "!vtsls", "..."],
+    },
+    "TSX": {
+      "language_servers": ["typescript-language-server", "!vtsls", "..."],
+    },
+    "JavaScript": {
+      "language_servers": ["typescript-language-server", "!vtsls", "..."],
+    }
   }
 }
 ```
 
 Prettier will also be used for TypeScript files by default. To disable this:
 
-```json
-"languages": {
-  "TypeScript": {
-    "prettier": {"allowed": false}
-  },
-  ...
+```jsonc
+{
+  "languages": {
+    "TypeScript": {
+      "prettier": {"allowed": false}
+    },
+    //...
+  }
+}
 ```
 
 ## Large projects
@@ -44,10 +49,15 @@ Prettier will also be used for TypeScript files by default. To disable this:
 `vtsls` may run out of memory on very large projects. You can configure this limit by passing the following options to the language server:
 
 ```json
-"lsp": {
-  "vtsls": {
-    "initialization_options": {
-      "typescript": { "tsserver": { "maxTsServerMemory": 8092 } }
+{
+  "lsp": {
+    "vtsls": {
+      "initialization_options": {
+        // For TypeScript:
+        "typescript": { "tsserver": { "maxTsServerMemory": 8092 } },
+        // For JavaScript:
+        "javascript": { "tsserver": { "maxTsServerMemory": 8092 } },
+      }
     }
   }
 }
