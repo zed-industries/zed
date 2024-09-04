@@ -389,7 +389,6 @@ impl Eq for MessageImage {}
 
 #[derive(Clone, Debug)]
 pub struct Message {
-    pub image_offsets: SmallVec<[(usize, MessageImage); 1]>,
     pub offset_range: Range<usize>,
     pub index_range: Range<usize>,
     pub anchor_range: Range<language::Anchor>,
@@ -397,6 +396,8 @@ pub struct Message {
     pub role: Role,
     pub status: MessageStatus,
     pub cache: Option<MessageCacheMetadata>,
+    pub image_offsets: SmallVec<[(usize, MessageImage); 1]>,
+    pub tool_result_offsets: SmallVec<[(usize, Arc<str>); 1]>,
 }
 
 impl Message {
@@ -495,6 +496,8 @@ pub struct Context {
     finished_slash_commands: HashSet<SlashCommandId>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     pending_tool_uses_by_id: HashMap<Arc<str>, PendingToolUse>,
+    tool_results_by_tool_use_id: HashMap<Arc<str>, String>,
+    tool_result_anchors: Vec<ToolResultAnchor>,
     message_anchors: Vec<MessageAnchor>,
     images: HashMap<u64, (Arc<RenderImage>, Shared<Task<Option<LanguageModelImage>>>)>,
     image_anchors: Vec<ImageAnchor>,
@@ -597,6 +600,8 @@ impl Context {
             pending_slash_commands: Vec::new(),
             finished_slash_commands: HashSet::default(),
             pending_tool_uses_by_id: HashMap::default(),
+            tool_results_by_tool_use_id: HashMap::default(),
+            tool_result_anchors: Vec::new(),
             slash_command_output_sections: Vec::new(),
             edits_since_last_parse: edits_since_last_slash_command_parse,
             summary: None,
@@ -1923,12 +1928,12 @@ impl Context {
 
     pub fn insert_tool_output(
         &mut self,
-        tool_id: Arc<str>,
+        tool_use_id: Arc<str>,
         output: Task<Result<String>>,
         cx: &mut ModelContext<Self>,
     ) {
         let insert_output_task = cx.spawn(|this, mut cx| {
-            let tool_id = tool_id.clone();
+            let tool_use_id = tool_use_id.clone();
             async move {
                 let output = output.await;
                 this.update(&mut cx, |this, cx| match output {
@@ -1937,14 +1942,27 @@ impl Context {
                             output.push('\n');
                         }
 
-                        this.buffer.update(cx, |buffer, cx| {
-                            let buffer_end = buffer.len().to_offset(buffer);
+                        this.tool_results_by_tool_use_id
+                            .insert(tool_use_id.clone(), output.clone());
 
-                            buffer.edit([(buffer_end..buffer_end, output)], None, cx);
+                        let anchor_range = this.buffer.update(cx, |buffer, cx| {
+                            let insert_start = buffer.len().to_offset(buffer);
+                            let insert_end = insert_start;
+
+                            let start = insert_start;
+                            let end = start + output.len();
+
+                            buffer.edit([(insert_start..insert_end, output)], None, cx);
+
+                            let output_range = buffer.anchor_after(start)..buffer.anchor_after(end);
+
+                            output_range
                         });
+
+                        this.insert_tool_result_anchor(tool_use_id, anchor_range.start, cx);
                     }
                     Err(err) => {
-                        if let Some(tool_use) = this.pending_tool_uses_by_id.get_mut(&tool_id) {
+                        if let Some(tool_use) = this.pending_tool_uses_by_id.get_mut(&tool_use_id) {
                             tool_use.status = PendingToolUseStatus::Error(err.to_string());
                         }
                     }
@@ -1953,10 +1971,36 @@ impl Context {
             }
         });
 
-        if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_id) {
+        if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
             tool_use.status = PendingToolUseStatus::Running {
                 _task: insert_output_task.shared(),
             };
+        }
+    }
+
+    pub fn insert_tool_result_anchor(
+        &mut self,
+        tool_use_id: Arc<str>,
+        anchor: language::Anchor,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let buffer = self.buffer.read(cx);
+        let insertion_ix = match self
+            .tool_result_anchors
+            .binary_search_by(|existing_anchor| anchor.cmp(&existing_anchor.anchor, buffer))
+        {
+            Ok(ix) => ix,
+            Err(ix) => ix,
+        };
+
+        if let Some(_) = self.tool_results_by_tool_use_id.get(&tool_use_id) {
+            self.tool_result_anchors.insert(
+                insertion_ix,
+                ToolResultAnchor {
+                    tool_use_id,
+                    anchor,
+                },
+            );
         }
     }
 
@@ -2321,7 +2365,7 @@ impl Context {
         image_id: u64,
         anchor: language::Anchor,
         cx: &mut ModelContext<Self>,
-    ) -> bool {
+    ) {
         cx.emit(ContextEvent::MessagesEdited);
 
         let buffer = self.buffer.read(cx);
@@ -2343,10 +2387,6 @@ impl Context {
                     render_image: render_image.clone(),
                 },
             );
-
-            true
-        } else {
-            false
         }
     }
 
@@ -2631,8 +2671,15 @@ impl Context {
         let buffer = self.buffer.read(cx);
         let messages = message_anchors.enumerate();
         let images = self.image_anchors.iter();
+        let tool_results = self.tool_result_anchors.iter();
 
-        Self::messages_from_iters(buffer, &self.messages_metadata, messages, images)
+        Self::messages_from_iters(
+            buffer,
+            &self.messages_metadata,
+            messages,
+            images,
+            tool_results,
+        )
     }
 
     pub fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
@@ -2644,9 +2691,11 @@ impl Context {
         metadata: &'a HashMap<MessageId, MessageMetadata>,
         messages: impl Iterator<Item = (usize, &'a MessageAnchor)> + 'a,
         images: impl Iterator<Item = &'a ImageAnchor> + 'a,
+        tool_results: impl Iterator<Item = &'a ToolResultAnchor> + 'a,
     ) -> impl 'a + Iterator<Item = Message> {
         let mut messages = messages.peekable();
         let mut images = images.peekable();
+        let mut tool_results = tool_results.peekable();
 
         iter::from_fn(move || {
             if let Some((start_ix, message_anchor)) = messages.next() {
@@ -2683,6 +2732,20 @@ impl Context {
                     }
                 }
 
+                let mut tool_result_offsets = SmallVec::new();
+                while let Some(tool_result_anchor) = tool_results.peek() {
+                    if tool_result_anchor
+                        .anchor
+                        .cmp(&message_end_anchor, buffer)
+                        .is_lt()
+                    {
+                        tool_result_offsets.push((
+                            tool_result_anchor.anchor.to_offset(buffer),
+                            tool_result_anchor.tool_use_id.clone(),
+                        ))
+                    }
+                }
+
                 return Some(Message {
                     index_range: start_ix..end_ix,
                     offset_range: message_start..message_end,
@@ -2692,6 +2755,7 @@ impl Context {
                     status: metadata.status.clone(),
                     cache: metadata.cache.clone(),
                     image_offsets,
+                    tool_result_offsets,
                 });
             }
             None
@@ -2888,6 +2952,12 @@ impl PendingToolUseStatus {
     pub fn is_idle(&self) -> bool {
         matches!(self, PendingToolUseStatus::Idle)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolResultAnchor {
+    pub tool_use_id: Arc<str>,
+    pub anchor: language::Anchor,
 }
 
 #[derive(Serialize, Deserialize)]
