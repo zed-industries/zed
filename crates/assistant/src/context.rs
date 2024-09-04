@@ -29,7 +29,7 @@ use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, P
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, MessageContent, Role, StopReason,
+    LanguageModelRequestTool, LanguageModelToolResult, MessageContent, Role, StopReason,
 };
 use open_ai::Model as OpenAiModel;
 use paths::{context_images_dir, contexts_dir};
@@ -399,14 +399,22 @@ impl Message {
             }
 
             match content_kind {
-                ContentAnchorKind::Image(image) => {
-                    if let Some(image) = image.image.clone().now_or_never().flatten() {
+                ContentAnchorKind::Image { image, .. } => {
+                    if let Some(image) = image.clone().now_or_never().flatten() {
                         content.push(language_model::MessageContent::Image(image));
                     }
                 }
-                ContentAnchorKind::ToolResult(tool_result) => {
-                    // TODO
-                    dbg!(&tool_result);
+                ContentAnchorKind::ToolResult {
+                    tool_use_id,
+                    output,
+                } => {
+                    content.push(language_model::MessageContent::ToolResult(
+                        LanguageModelToolResult {
+                            tool_use_id: tool_use_id.to_string(),
+                            is_error: false,
+                            content: output.clone(),
+                        },
+                    ));
                 }
             }
 
@@ -423,6 +431,8 @@ impl Message {
         if content.is_empty() {
             return None;
         }
+
+        dbg!(&content);
 
         Some(LanguageModelRequestMessage {
             role: self.role,
@@ -443,21 +453,21 @@ impl Message {
 
 #[derive(Debug, Clone)]
 pub enum ContentAnchorKind {
-    Image(ImageAnchor),
-    ToolResult(ToolResultAnchor),
+    Image {
+        image_id: u64,
+        render_image: Arc<RenderImage>,
+        image: Shared<Task<Option<LanguageModelImage>>>,
+    },
+    ToolResult {
+        tool_use_id: Arc<str>,
+        output: String,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct ContentAnchor {
     pub anchor: language::Anchor,
     pub kind: ContentAnchorKind,
-}
-
-#[derive(Clone, Debug)]
-pub struct ImageAnchor {
-    pub image_id: u64,
-    pub render_image: Arc<RenderImage>,
-    pub image: Shared<Task<Option<LanguageModelImage>>>,
 }
 
 struct PendingCompletion {
@@ -666,8 +676,8 @@ impl Context {
                         .content_offsets
                         .iter()
                         .filter_map(|(offset, kind)| match kind {
-                            ContentAnchorKind::Image(image) => Some((*offset, image.image_id)),
-                            ContentAnchorKind::ToolResult(_) => None,
+                            ContentAnchorKind::Image { image_id, .. } => Some((*offset, *image_id)),
+                            ContentAnchorKind::ToolResult { .. } => None,
                         })
                         .collect(),
                 })
@@ -1998,12 +2008,15 @@ impl Context {
             Err(ix) => ix,
         };
 
-        if let Some(_) = self.tool_results_by_tool_use_id.get(&tool_use_id) {
+        if let Some(output) = self.tool_results_by_tool_use_id.get(&tool_use_id) {
             self.content_anchors.insert(
                 insertion_ix,
                 ContentAnchor {
                     anchor,
-                    kind: ContentAnchorKind::ToolResult(ToolResultAnchor { tool_use_id }),
+                    kind: ContentAnchorKind::ToolResult {
+                        tool_use_id,
+                        output: output.clone(),
+                    },
                 },
             );
         }
@@ -2387,11 +2400,11 @@ impl Context {
                 insertion_ix,
                 ContentAnchor {
                     anchor,
-                    kind: ContentAnchorKind::Image(ImageAnchor {
+                    kind: ContentAnchorKind::Image {
                         image_id,
                         image: image.clone(),
                         render_image: render_image.clone(),
-                    }),
+                    },
                 },
             );
         }
@@ -2942,11 +2955,6 @@ impl PendingToolUseStatus {
     pub fn is_idle(&self) -> bool {
         matches!(self, PendingToolUseStatus::Idle)
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct ToolResultAnchor {
-    pub tool_use_id: Arc<str>,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -3209,13 +3209,15 @@ impl ContextEditor {
                 .read(cx)
                 .content_anchors(cx)
                 .filter_map(|anchor| match anchor.kind {
-                    ContentAnchorKind::Image(image) => Some((anchor.anchor, image)),
-                    ContentAnchorKind::ToolResult(_) => None,
+                    ContentAnchorKind::Image { render_image, .. } => {
+                        Some((anchor.anchor, render_image))
+                    }
+                    ContentAnchorKind::ToolResult { .. } => None,
                 })
-                .filter_map(|(anchor, image)| {
+                .filter_map(|(anchor, render_image)| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
                     let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();
-                    let image = image.render_image.clone();
+                    let image = render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         position: anchor,
                         height: MAX_HEIGHT_IN_LINES,
