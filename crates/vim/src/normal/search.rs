@@ -42,7 +42,7 @@ pub struct FindCommand {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ReplaceCommand {
-    pub(crate) range: Option<CommandRange>,
+    pub(crate) range: CommandRange,
     pub(crate) replacement: Replacement,
 }
 
@@ -338,20 +338,18 @@ impl Vim {
         else {
             return;
         };
-        if let Some(range) = &action.range {
-            if let Some(result) = self.update_editor(cx, |vim, editor, cx| {
-                let range = range.buffer_range(vim, editor, cx)?;
-                let snapshot = &editor.snapshot(cx).buffer_snapshot;
-                let end_point = Point::new(range.end.0, snapshot.line_len(range.end));
-                let range = snapshot.anchor_before(Point::new(range.start.0, 0))
-                    ..snapshot.anchor_after(end_point);
-                editor.set_search_within_ranges(&[range], cx);
-                anyhow::Ok(())
-            }) {
-                workspace.update(cx, |workspace, cx| {
-                    result.notify_err(workspace, cx);
-                })
-            }
+        if let Some(result) = self.update_editor(cx, |vim, editor, cx| {
+            let range = action.range.buffer_range(vim, editor, cx)?;
+            let snapshot = &editor.snapshot(cx).buffer_snapshot;
+            let end_point = Point::new(range.end.0, snapshot.line_len(range.end));
+            let range = snapshot.anchor_before(Point::new(range.start.0, 0))
+                ..snapshot.anchor_after(end_point);
+            editor.set_search_within_ranges(&[range], cx);
+            anyhow::Ok(())
+        }) {
+            workspace.update(cx, |workspace, cx| {
+                result.notify_err(workspace, cx);
+            })
         }
         let vim = cx.view().clone();
         pane.update(cx, |pane, cx| {
