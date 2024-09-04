@@ -170,21 +170,22 @@ impl super::LspAdapter for CLspAdapter {
         match completion.kind {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
-                let fn_ptr_pos = detail.find("(*)");
-                let text = fn_ptr_pos.map_or(format!("{} {}", detail, label), |fn_ptr_pos| {
+                let fn_ptr_begin = detail.find("(*");
+                let fn_ptr_end = detail[fn_ptr_begin.unwrap_or(detail.len())..].find(')');
+                let text = fn_ptr_begin.map_or(format!("{} {}", detail, label), |fn_ptr_begin| {
                     let mut result = detail.to_owned();
-                    result.insert_str(fn_ptr_pos + 2, label);
+                    result.insert_str(fn_ptr_begin + fn_ptr_end.unwrap(), label);
                     result
                 });
                 let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
                 let runs = language.highlight_text(&source, 11..11 + text.len());
-                let filter_start = if let Some(fn_ptr_pos) = fn_ptr_pos {
-                    fn_ptr_pos + 2
+                let filter_start = if let Some(fn_ptr_begin) = fn_ptr_begin {
+                    fn_ptr_begin + fn_ptr_end.unwrap()
                 } else {
                     detail.len() + 1
                 };
-                let filter_end = if let Some(fn_ptr_pos) = fn_ptr_pos {
-                    fn_ptr_pos + 2 + label.len()
+                let filter_end = if let Some(fn_ptr_begin) = fn_ptr_begin {
+                    fn_ptr_begin + fn_ptr_end.unwrap() + label.len()
                 } else {
                     text.len()
                 };
@@ -198,20 +199,21 @@ impl super::LspAdapter for CLspAdapter {
                 if completion.detail.is_some() =>
             {
                 let detail = completion.detail.as_ref().unwrap();
-                let fn_ptr_pos = detail.find("(*)");
-                let text = fn_ptr_pos.map_or(format!("{} {}", detail, label), |fn_ptr_pos| {
+                let fn_ptr_begin = detail.find("(*");
+                let fn_ptr_end = detail[fn_ptr_begin.unwrap_or(detail.len())..].find(')');
+                let text = fn_ptr_begin.map_or(format!("{} {}", detail, label), |fn_ptr_begin| {
                     let mut result = detail.to_owned();
-                    result.insert_str(fn_ptr_pos + 2, label);
+                    result.insert_str(fn_ptr_begin + fn_ptr_end.unwrap(), label);
                     result
                 });
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
-                let filter_start = if let Some(fn_ptr_pos) = fn_ptr_pos {
-                    fn_ptr_pos + 2
+                let filter_start = if let Some(fn_ptr_begin) = fn_ptr_begin {
+                    fn_ptr_begin + fn_ptr_end.unwrap()
                 } else {
                     detail.len() + 1
                 };
-                let filter_end = if let Some(fn_ptr_pos) = fn_ptr_pos {
-                    fn_ptr_pos + 2 + label.len()
+                let filter_end = if let Some(fn_ptr_begin) = fn_ptr_begin {
+                    fn_ptr_begin + fn_ptr_end.unwrap() + label.len()
                 } else {
                     text.len()
                 };
