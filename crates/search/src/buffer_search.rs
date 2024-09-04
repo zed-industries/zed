@@ -730,7 +730,7 @@ impl BufferSearchBar {
         cx.notify();
     }
 
-    pub fn should_search_option(&mut self, search_option: SearchOptions) -> bool {
+    pub fn has_search_option(&mut self, search_option: SearchOptions) -> bool {
         self.search_options.contains(search_option)
     }
 
@@ -1175,7 +1175,7 @@ impl BufferSearchBar {
             let query = self.query(cx);
             if !query.is_empty() {
                 let is_case = self.is_contains_uppercase(&query);
-                if self.should_search_option(SearchOptions::CASE_SENSITIVE) != is_case {
+                if self.has_search_option(SearchOptions::CASE_SENSITIVE) != is_case {
                     self.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                 }
             }
