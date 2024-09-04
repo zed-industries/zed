@@ -762,7 +762,6 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
-        dbg!("IN ROOM");
         client.authenticate_and_connect(true, &cx).await?;
 
         let subscriptions = [

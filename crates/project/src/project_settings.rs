@@ -242,7 +242,6 @@ impl SettingsObserver {
         downstream_client: AnyProtoClient,
         cx: &mut ModelContext<Self>,
     ) {
-        dbg!("SHARED");
         self.project_id = project_id;
         self.downstream_client = Some(downstream_client.clone());
 
@@ -250,7 +249,6 @@ impl SettingsObserver {
         for worktree in self.worktree_store.read(cx).worktrees() {
             let worktree_id = worktree.read(cx).id().to_proto();
             for (path, content) in store.local_settings(worktree.entity_id().as_u64() as usize) {
-                dbg!(&path, &content);
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
@@ -432,7 +430,6 @@ impl SettingsObserver {
                         cx,
                     )
                     .log_err();
-                dbg!(&directory, &file_content);
                 if let Some(downstream_client) = &self.downstream_client {
                     downstream_client
                         .send(proto::UpdateWorktreeSettings {
@@ -442,8 +439,6 @@ impl SettingsObserver {
                             content: file_content,
                         })
                         .log_err();
-                } else {
-                    dbg!("oops");
                 }
             }
         })
