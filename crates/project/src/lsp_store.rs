@@ -5715,11 +5715,10 @@ impl LspStore {
                                 }
                             }
                             if !snippet_edits.is_empty() {
-                                if let Some(buffer_version) = op.text_document.version {
-                                    let buffer_id = buffer_to_edit.read(cx).remote_id();
-                                    // Check if the edit that triggered that edit has been made by this participant.
-                                    let most_recent_edit = this
-                                        .buffer_snapshots
+                                let buffer_id = buffer_to_edit.read(cx).remote_id();
+                                let version = if let Some(buffer_version) = op.text_document.version
+                                {
+                                    this.buffer_snapshots
                                         .get(&buffer_id)
                                         .and_then(|server_to_snapshots| {
                                             let all_snapshots = server_to_snapshots
@@ -5731,17 +5730,22 @@ impl LspStore {
                                                 .ok()
                                                 .and_then(|index| all_snapshots.get(index))
                                         })
-                                        .and_then(|lsp_snapshot| {
-                                            let version = lsp_snapshot.snapshot.version();
-                                            version.iter().max_by_key(|timestamp| timestamp.value)
-                                        });
-                                    if let Some(most_recent_edit) = most_recent_edit {
-                                        cx.emit(LspStoreEvent::SnippetEdit {
-                                            buffer_id,
-                                            edits: snippet_edits,
-                                            most_recent_edit,
-                                        });
-                                    }
+                                        .map(|lsp_snapshot| lsp_snapshot.snapshot.version())
+                                } else {
+                                    Some(buffer_to_edit.read(cx).saved_version())
+                                };
+
+                                let most_recent_edit = version.and_then(|version| {
+                                    version.iter().max_by_key(|timestamp| timestamp.value)
+                                });
+                                // Check if the edit that triggered that edit has been made by this participant.
+
+                                if let Some(most_recent_edit) = most_recent_edit {
+                                    cx.emit(LspStoreEvent::SnippetEdit {
+                                        buffer_id,
+                                        edits: snippet_edits,
+                                        most_recent_edit,
+                                    });
                                 }
                             }
 
