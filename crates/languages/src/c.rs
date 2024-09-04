@@ -208,6 +208,16 @@ impl super::LspAdapter for CLspAdapter {
                     runs,
                 });
             }
+            Some(lsp::CompletionItemKind::SNIPPET) if completion.label_details.is_some() => {
+                let label_details = completion.label_details.as_ref().unwrap().detail.as_ref();
+                let text = format!("{label}{}", label_details.unwrap_or(&String::default()));
+                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                return Some(CodeLabel {
+                    filter_range: 0..label.len(),
+                    text,
+                    runs,
+                });
+            }
             Some(kind) => {
                 let highlight_name = match kind {
                     lsp::CompletionItemKind::STRUCT
@@ -236,17 +246,7 @@ impl super::LspAdapter for CLspAdapter {
             _ => {}
         }
 
-        // Label details are useful for code snippets provided by the LSP
-        let label_details = completion
-            .label_details
-            .as_ref()
-            .map_or(None, |details| details.detail.as_ref());
-        let text = format!("{label}{}", label_details.unwrap_or(&String::default()));
-        Some(CodeLabel {
-            text,
-            filter_range: 0..label.len(),
-            runs: Vec::default(),
-        })
+        Some(CodeLabel::plain(label.to_string(), None))
     }
 
     async fn label_for_symbol(
