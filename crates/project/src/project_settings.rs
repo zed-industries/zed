@@ -240,10 +240,26 @@ impl SettingsObserver {
         &mut self,
         project_id: u64,
         downstream_client: AnyProtoClient,
-        _: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) {
+        dbg!("SHARED");
         self.project_id = project_id;
-        self.downstream_client = Some(downstream_client);
+        self.downstream_client = Some(downstream_client.clone());
+
+        let store = cx.global::<SettingsStore>();
+        for worktree in self.worktree_store.read(cx).worktrees() {
+            let worktree_id = worktree.read(cx).id().to_proto();
+            for (path, content) in store.local_settings(worktree.entity_id().as_u64() as usize) {
+                downstream_client
+                    .send(proto::UpdateWorktreeSettings {
+                        project_id,
+                        worktree_id,
+                        path: path.to_string_lossy().into(),
+                        content: Some(content),
+                    })
+                    .log_err();
+            }
+        }
     }
 
     pub fn unshared(&mut self, _: &mut ModelContext<Self>) {
@@ -398,14 +414,15 @@ impl SettingsObserver {
                                 cx,
                             )
                             .log_err();
+                        dbg!(&file_content);
                         if let Some(downstream_client) = &downstream_client {
                             downstream_client
-                                .send(proto::UpdateWorktreeSettings {
+                                .send(dbg!(proto::UpdateWorktreeSettings {
                                     project_id,
                                     worktree_id: remote_worktree_id.to_proto(),
                                     path: directory.to_string_lossy().into_owned(),
                                     content: file_content,
-                                })
+                                }))
                                 .log_err();
                         }
                     }

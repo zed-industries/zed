@@ -503,6 +503,14 @@ impl FormatTrigger {
     }
 }
 
+enum EntitySubscription {
+    Project(PendingEntitySubscription<Project>),
+    BufferStore(PendingEntitySubscription<BufferStore>),
+    WorktreeStore(PendingEntitySubscription<WorktreeStore>),
+    LspStore(PendingEntitySubscription<LspStore>),
+    SettingsObserver(PendingEntitySubscription<SettingsObserver>),
+}
+
 #[derive(Clone)]
 pub enum DirectoryLister {
     Project(Model<Project>),
@@ -754,15 +762,20 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
+        dbg!("IN ROOM");
         client.authenticate_and_connect(true, &cx).await?;
 
-        let subscriptions = (
-            client.subscribe_to_entity::<Self>(remote_id)?,
-            client.subscribe_to_entity::<BufferStore>(remote_id)?,
-            client.subscribe_to_entity::<WorktreeStore>(remote_id)?,
-            client.subscribe_to_entity::<LspStore>(remote_id)?,
-            client.subscribe_to_entity::<SettingsObserver>(remote_id)?,
-        );
+        let subscriptions = [
+            EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id)?),
+            EntitySubscription::BufferStore(client.subscribe_to_entity::<BufferStore>(remote_id)?),
+            EntitySubscription::WorktreeStore(
+                client.subscribe_to_entity::<WorktreeStore>(remote_id)?,
+            ),
+            EntitySubscription::LspStore(client.subscribe_to_entity::<LspStore>(remote_id)?),
+            EntitySubscription::SettingsObserver(
+                client.subscribe_to_entity::<SettingsObserver>(remote_id)?,
+            ),
+        ];
         let response = client
             .request_envelope(proto::JoinProject {
                 project_id: remote_id,
@@ -782,13 +795,7 @@ impl Project {
 
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
-        subscription: (
-            PendingEntitySubscription<Project>,
-            PendingEntitySubscription<BufferStore>,
-            PendingEntitySubscription<WorktreeStore>,
-            PendingEntitySubscription<LspStore>,
-            PendingEntitySubscription<SettingsObserver>,
-        ),
+        subscriptions: [EntitySubscription; 5],
         client: Arc<Client>,
         user_store: Model<UserStore>,
         languages: Arc<LanguageRegistry>,
@@ -826,6 +833,9 @@ impl Project {
             lsp_store
         })?;
 
+        let settings_observer =
+            cx.new_model(|cx| SettingsObserver::new_remote(worktree_store.clone(), cx))?;
+
         let this = cx.new_model(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
             let tasks = Inventory::new(cx);
@@ -848,9 +858,6 @@ impl Project {
                 .detach();
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let settings_observer =
-                cx.new_model(|cx| SettingsObserver::new_remote(worktree_store.clone(), cx));
-
             let mut this = Self {
                 buffer_ordered_messages_tx: tx,
                 buffer_store: buffer_store.clone(),
@@ -865,7 +872,7 @@ impl Project {
                 snippets,
                 fs,
                 ssh_session: None,
-                settings_observer,
+                settings_observer: settings_observer.clone(),
                 client_subscriptions: Default::default(),
                 _subscriptions: vec![cx.on_release(Self::release)],
                 client: client.clone(),
@@ -904,12 +911,24 @@ impl Project {
             this
         })?;
 
-        let subscriptions = [
-            subscription.0.set_model(&this, &mut cx),
-            subscription.1.set_model(&buffer_store, &mut cx),
-            subscription.2.set_model(&worktree_store, &mut cx),
-            subscription.3.set_model(&lsp_store, &mut cx),
-        ];
+        let subscriptions = subscriptions
+            .into_iter()
+            .map(|s| match s {
+                EntitySubscription::BufferStore(subscription) => {
+                    subscription.set_model(&buffer_store, &mut cx)
+                }
+                EntitySubscription::WorktreeStore(subscription) => {
+                    subscription.set_model(&worktree_store, &mut cx)
+                }
+                EntitySubscription::SettingsObserver(subscription) => {
+                    subscription.set_model(&settings_observer, &mut cx)
+                }
+                EntitySubscription::Project(subscription) => subscription.set_model(&this, &mut cx),
+                EntitySubscription::LspStore(subscription) => {
+                    subscription.set_model(&lsp_store, &mut cx)
+                }
+            })
+            .collect::<Vec<_>>();
 
         let user_ids = response
             .payload
@@ -940,13 +959,19 @@ impl Project {
     ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
-        let subscriptions = (
-            client.subscribe_to_entity::<Self>(remote_id.0)?,
-            client.subscribe_to_entity::<BufferStore>(remote_id.0)?,
-            client.subscribe_to_entity::<WorktreeStore>(remote_id.0)?,
-            client.subscribe_to_entity::<LspStore>(remote_id.0)?,
-            client.subscribe_to_entity::<SettingsObserver>(remote_id.0)?,
-        );
+        let subscriptions = [
+            EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id.0)?),
+            EntitySubscription::BufferStore(
+                client.subscribe_to_entity::<BufferStore>(remote_id.0)?,
+            ),
+            EntitySubscription::WorktreeStore(
+                client.subscribe_to_entity::<WorktreeStore>(remote_id.0)?,
+            ),
+            EntitySubscription::LspStore(client.subscribe_to_entity::<LspStore>(remote_id.0)?),
+            EntitySubscription::SettingsObserver(
+                client.subscribe_to_entity::<SettingsObserver>(remote_id.0)?,
+            ),
+        ];
         let response = client
             .request_envelope(proto::JoinHostedProject {
                 project_id: remote_id.0,
@@ -1531,24 +1556,9 @@ impl Project {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.shared(project_id, self.client.clone().into(), cx)
         });
-        self.settings_observer.update(cx, |lsp_store, cx| {
-            lsp_store.shared(project_id, self.client.clone().into(), cx)
+        self.settings_observer.update(cx, |settings_observer, cx| {
+            settings_observer.shared(project_id, self.client.clone().into(), cx)
         });
-
-        let store = cx.global::<SettingsStore>();
-        for worktree in self.worktrees(cx) {
-            let worktree_id = worktree.read(cx).id().to_proto();
-            for (path, content) in store.local_settings(worktree.entity_id().as_u64() as usize) {
-                self.client
-                    .send(proto::UpdateWorktreeSettings {
-                        project_id,
-                        worktree_id,
-                        path: path.to_string_lossy().into(),
-                        content: Some(content),
-                    })
-                    .log_err();
-            }
-        }
 
         self.client_state = ProjectClientState::Shared {
             remote_id: project_id,
