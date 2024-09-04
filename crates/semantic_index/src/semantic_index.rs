@@ -750,14 +750,7 @@ impl WorktreeIndex {
                         cx.spawn(async {
                             while let Ok((entry, handle)) = entries.recv().await {
                                 let entry_abs_path = worktree_abs_path.join(&entry.path);
-                                let Some(text) = fs
-                                    .load(&entry_abs_path)
-                                    .await
-                                    .with_context(|| {
-                                        format!("failed to read path {entry_abs_path:?}")
-                                    })
-                                    .log_err()
-                                else {
+                                let Ok(text) = fs.load(&entry_abs_path).await else {
                                     continue;
                                 };
                                 let language = language_registry

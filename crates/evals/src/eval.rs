@@ -4,15 +4,17 @@ use clap::Parser;
 use client::{Client, UserStore};
 use clock::RealSystemClock;
 use collections::BTreeMap;
+use futures::channel::oneshot;
 use git::GitHostingProviderRegistry;
-use gpui::{AsyncAppContext, BackgroundExecutor, Context, Task};
+use gpui::{AsyncAppContext, BackgroundExecutor, Context, Model, Task};
 use http_client::{HttpClient, Method};
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
 use open_ai::OpenAiEmbeddingModel;
 use project::Project;
-use semantic_index::{OpenAiEmbeddingProvider, SemanticIndex};
+use semantic_index::{OpenAiEmbeddingProvider, ProjectIndex, SemanticIndex, Status};
 use serde::{Deserialize, Serialize};
+use settings::SettingsStore;
 use smol::io::AsyncReadExt;
 use std::{
     fs,
@@ -24,11 +26,11 @@ use std::{
         Arc,
     },
 };
-// use tempfile;
 
 const CODESEARCH_NET_DIR: &'static str = "target/datasets/code-search-net";
 const EVAL_REPOS_DIR: &'static str = "target/datasets/eval-repos";
 const EVAL_DB_PATH: &'static str = "target/eval_db";
+const SEARCH_RESULT_LIMIT: usize = 10;
 
 #[derive(clap::Parser)]
 #[command(author, version, about, long_about = None)]
@@ -50,13 +52,13 @@ struct EvaluationProject {
     queries: Vec<EvaluationQuery>,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct EvaluationQuery {
     query: String,
     results: Vec<EvaluationResult>,
 }
 
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 struct EvaluationResult {
     file: String,
     lines: Range<usize>,
@@ -64,6 +66,7 @@ struct EvaluationResult {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    env_logger::init();
 
     gpui::App::headless().run(move |cx| {
         let executor = cx.background_executor().clone();
@@ -212,6 +215,16 @@ async fn fetch_code_search_net_resources(http_client: &dyn HttpClient) -> Result
 }
 
 async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext) -> Result<()> {
+    cx.update(|cx| {
+        let mut store = SettingsStore::new(cx);
+        store.set_default_settings(settings::default_settings().as_ref(), cx);
+        cx.set_global(store);
+        client::init_settings(cx);
+        language::init(cx);
+        Project::init_settings(cx);
+    })
+    .unwrap();
+
     let dataset_dir = Path::new(CODESEARCH_NET_DIR);
     let evaluations_path = dataset_dir.join("evaluations.json");
     let repos_dir = Path::new(EVAL_REPOS_DIR);
@@ -234,6 +247,10 @@ async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext)
             )
         })
         .unwrap();
+    let user_store = cx
+        .new_model(|cx| UserStore::new(client.clone(), cx))
+        .unwrap();
+    let node_runtime = Arc::new(FakeNodeRuntime {});
 
     let evaluations = fs::read(&evaluations_path).expect("failed to read evaluations.json");
     let evaluations: Vec<EvaluationProject> = serde_json::from_slice(&evaluations).unwrap();
@@ -245,13 +262,17 @@ async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext)
         api_key,
     ));
 
-    let semantic_index = SemanticIndex::new(db_path.into(), embedding_provider, cx).await;
+    let mut semantic_index = SemanticIndex::new(db_path.into(), embedding_provider, cx)
+        .await
+        .unwrap();
     let language_registry = Arc::new(LanguageRegistry::new(Task::ready(()), executor.clone()));
 
-    for evaluation in evaluations {
-        let repo_dir = repos_dir.join(&evaluation.repo);
+    for evaluation_project in evaluations {
+        eprintln!("Running eval for repo {}...", evaluation_project.repo);
+
+        let repo_dir = repos_dir.join(&evaluation_project.repo);
         if !repo_dir.exists() {
-            eprintln!("Skipping {}: directory not found", evaluation.repo);
+            eprintln!("Skipping {}: directory not found", evaluation_project.repo);
             continue;
         }
 
@@ -259,8 +280,8 @@ async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext)
             .update(|cx| {
                 Project::local(
                     client.clone(),
-                    Arc::new(FakeNodeRuntime {}),
-                    cx.new_model(|cx| UserStore::new(client.clone(), cx)),
+                    node_runtime.clone(),
+                    user_store.clone(),
                     language_registry.clone(),
                     fs.clone(),
                     None,
@@ -275,11 +296,55 @@ async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext)
             })?
             .await?;
 
-        // TODO: Implement the actual evaluation logic here
-        // This will involve running queries and comparing results
+        worktree
+            .update(cx, |worktree, cx| {
+                worktree.as_local().unwrap().scan_complete()
+            })
+            .unwrap()
+            .await;
+
+        let project_index = cx
+            .update(|cx| semantic_index.project_index(project.clone(), cx))
+            .unwrap();
+
+        wait_for_indexing_complete(&project_index, cx).await;
+
+        for query in &evaluation_project.queries {
+            let results = cx
+                .update(|cx| {
+                    let project_index = project_index.read(cx);
+                    project_index.search(query.query.clone(), SEARCH_RESULT_LIMIT, cx)
+                })
+                .unwrap()
+                .await
+                .unwrap();
+
+            let results = results
+                .into_iter()
+                .map(|result| (result.path, result.range))
+                .collect::<Vec<_>>();
+
+            dbg!(query, results);
+        }
     }
 
     Ok(())
+}
+
+async fn wait_for_indexing_complete(project_index: &Model<ProjectIndex>, cx: &mut AsyncAppContext) {
+    let (tx, rx) = oneshot::channel();
+    let mut tx = Some(tx);
+    let subscription = cx.update(|cx| {
+        cx.subscribe(project_index, move |_, event, _| {
+            if let Status::Idle = event {
+                if let Some(tx) = tx.take() {
+                    _ = tx.send(*event);
+                }
+            }
+        })
+    });
+    rx.await.expect("no event emitted");
+    drop(subscription);
 }
 
 async fn fetch_eval_repos(
