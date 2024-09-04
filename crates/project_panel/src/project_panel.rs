@@ -62,6 +62,10 @@ pub struct ProjectPanel {
     scroll_handle: UniformListScrollHandle,
     focus_handle: FocusHandle,
     visible_entries: Vec<(WorktreeId, Vec<Entry>, OnceCell<HashSet<Arc<Path>>>)>,
+    /// Maps from leaf project entry ID to the currently selected ancestor.
+    /// Relevant only for auto-fold dirs, where a single project panel entry may actually consist of several
+    /// project entries (and all non-leaf nodes are guaranteed to be directories).
+    ancestors: HashMap<ProjectEntryId, AncestorDepth>,
     last_worktree_root_id: Option<ProjectEntryId>,
     last_external_paths_drag_over_entry: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
@@ -113,6 +117,7 @@ struct EntryDetails {
     is_cut: bool,
     git_status: Option<GitFileStatus>,
     is_private: bool,
+    is_auto_folded: bool,
     worktree_id: WorktreeId,
     canonical_path: Option<Box<Path>>,
 }
@@ -279,6 +284,7 @@ impl ProjectPanel {
                 scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
                 visible_entries: Default::default(),
+                ancestors: Default::default(),
                 last_worktree_root_id: Default::default(),
                 last_external_paths_drag_over_entry: None,
                 expanded_dir_ids: Default::default(),
@@ -613,6 +619,11 @@ impl ProjectPanel {
 
     fn collapse_selected_entry(&mut self, _: &CollapseSelectedEntry, cx: &mut ViewContext<Self>) {
         if let Some((worktree, mut entry)) = self.selected_entry(cx) {
+            if let Some(ancestor_depth) = self.ancestors.get_mut(&entry.id) {
+                *ancestor_depth += 1;
+                cx.notify();
+                return;
+            }
             let worktree_id = worktree.id();
             let expanded_dir_ids =
                 if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
@@ -1659,6 +1670,7 @@ impl ProjectPanel {
             .and_then(|worktree| worktree.read(cx).root_entry())
             .map(|entry| entry.id);
 
+        self.ancestors.clear();
         self.visible_entries.clear();
         for worktree in project.visible_worktrees(cx) {
             let snapshot = worktree.read(cx).snapshot();
@@ -1693,22 +1705,22 @@ impl ProjectPanel {
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(true, 0);
             while let Some(entry) = entry_iter.entry() {
-                if auto_collapse_dirs
-                    && entry.kind.is_dir()
-                    && !self.unfolded_dir_ids.contains(&entry.id)
-                {
-                    if let Some(root_path) = snapshot.root_entry() {
-                        let mut child_entries = snapshot.child_entries(&entry.path);
-                        if let Some(child) = child_entries.next() {
-                            if entry.path != root_path.path
-                                && child_entries.next().is_none()
-                                && child.kind.is_dir()
-                            {
-                                entry_iter.advance();
-                                continue;
+                if auto_collapse_dirs && entry.kind.is_dir() {
+                    if !self.unfolded_dir_ids.contains(&entry.id) {
+                        if let Some(root_path) = snapshot.root_entry() {
+                            let mut child_entries = snapshot.child_entries(&entry.path);
+                            if let Some(child) = child_entries.next() {
+                                if entry.path != root_path.path
+                                    && child_entries.next().is_none()
+                                    && child.kind.is_dir()
+                                {
+                                    entry_iter.advance();
+                                    continue;
+                                }
                             }
                         }
                     }
+                    self.ancestors.insert(entry.id, 0);
                 }
 
                 visible_worktree_entries.push(entry.clone());
@@ -2006,6 +2018,7 @@ impl ProjectPanel {
                             .map_or(false, |e| e.is_cut() && e.items().contains(&selection)),
                         git_status: status,
                         is_private: entry.is_private,
+                        is_auto_folded: difference > 1,
                         worktree_id: *worktree_id,
                         canonical_path: entry.canonical_path.clone(),
                     };
@@ -2109,6 +2122,7 @@ impl ProjectPanel {
             active_selection: selection,
             marked_selections: selections,
         };
+        let is_auto_folded = details.is_auto_folded;
         div()
             .id(entry_id.to_proto() as usize)
             .on_drag_move::<ExternalPaths>(cx.listener(
@@ -2209,11 +2223,78 @@ impl ProjectPanel {
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                             h_flex().h_6().w_full().child(editor.clone())
                         } else {
-                            h_flex().h_6().child(
-                                Label::new(file_name)
-                                    .single_line()
-                                    .color(filename_text_color),
-                            )
+                            h_flex().h_6().map(|this| {
+                                if is_auto_folded && is_active {
+                                    let nesting_level =
+                                        self.ancestors.get(&entry_id).copied().unwrap();
+                                    let Some(part_to_highlight) =
+                                        Path::new(&file_name).ancestors().nth(nesting_level)
+                                    else {
+                                        return this;
+                                    };
+
+                                    let suffix = Path::new(&file_name)
+                                        .strip_prefix(part_to_highlight)
+                                        .ok()
+                                        .filter(|suffix| !suffix.as_os_str().is_empty());
+                                    let prefix = part_to_highlight
+                                        .parent()
+                                        .filter(|prefix| !prefix.as_os_str().is_empty());
+                                    let Some(part_to_highlight) = part_to_highlight
+                                        .file_name()
+                                        .and_then(|name| name.to_str().map(String::from))
+                                    else {
+                                        return this;
+                                    };
+
+                                    this.children(prefix.and_then(|prefix| {
+                                        Some(
+                                            h_flex()
+                                                .child(
+                                                    Label::new(prefix.to_str().map(String::from)?)
+                                                        .single_line()
+                                                        .color(filename_text_color),
+                                                )
+                                                .child(
+                                                    Label::new(std::path::MAIN_SEPARATOR_STR)
+                                                        .single_line()
+                                                        .color(filename_text_color),
+                                                ),
+                                        )
+                                    }))
+                                    .child(
+                                        Label::new(part_to_highlight)
+                                            .single_line()
+                                            .color(filename_text_color)
+                                            .underline(true),
+                                    )
+                                    .children(
+                                        suffix.and_then(|suffix| {
+                                            Some(
+                                                h_flex()
+                                                    .child(
+                                                        Label::new(std::path::MAIN_SEPARATOR_STR)
+                                                            .single_line()
+                                                            .color(filename_text_color),
+                                                    )
+                                                    .child(
+                                                        Label::new(
+                                                            suffix.to_str().map(String::from)?,
+                                                        )
+                                                        .single_line()
+                                                        .color(filename_text_color),
+                                                    ),
+                                            )
+                                        }),
+                                    )
+                                } else {
+                                    this.child(
+                                        Label::new(file_name)
+                                            .single_line()
+                                            .color(filename_text_color),
+                                    )
+                                }
+                            })
                         }
                         .ml_1(),
                     )
