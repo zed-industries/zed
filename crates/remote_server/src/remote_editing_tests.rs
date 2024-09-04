@@ -189,7 +189,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
 
 #[gpui::test]
 async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let (project, _headless, fs) = init_test(cx, server_cx).await;
+    let (project, headless, fs) = init_test(cx, server_cx).await;
 
     cx.update_global(|settings_store: &mut SettingsStore, cx| {
         settings_store.set_user_settings(
@@ -231,18 +231,8 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
         .unwrap();
     cx.run_until_parked();
 
-    cx.read(|cx| {
-        let file = buffer.read(cx).file();
-        assert_eq!(
-            all_language_settings(file, cx)
-                .language(Some("Rust"))
-                .language_servers,
-            ["override-rust-analyzer".into()]
-        )
-    });
-
     server_cx.read(|cx| {
-        let worktree_id = _headless
+        let worktree_id = headless
             .read(cx)
             .worktree_store
             .read(cx)
@@ -261,6 +251,16 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             )
             .language(Some("Rust"))
             .language_servers,
+            ["override-rust-analyzer".into()]
+        )
+    });
+
+    cx.read(|cx| {
+        let file = buffer.read(cx).file();
+        assert_eq!(
+            all_language_settings(file, cx)
+                .language(Some("Rust"))
+                .language_servers,
             ["override-rust-analyzer".into()]
         )
     });

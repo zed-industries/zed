@@ -366,7 +366,7 @@ messages!(
     (FindSearchCandidates, Background),
     (FindSearchCandidatesResponse, Background),
     (CloseBuffer, Foreground),
-    (SettingsChanged, Foreground)
+    (UpdateUserSettings, Foreground)
 );
 
 request_messages!(
@@ -490,7 +490,6 @@ request_messages!(
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
-    (SettingsChanged, Ack)
 );
 
 entity_messages!(
@@ -562,7 +561,8 @@ entity_messages!(
     CreateContext,
     UpdateContext,
     SynchronizeContexts,
-    LspExtSwitchSourceHeader
+    LspExtSwitchSourceHeader,
+    UpdateUserSettings
 );
 
 entity_messages!(

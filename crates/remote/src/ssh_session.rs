@@ -32,6 +32,7 @@ use std::{
     time::Instant,
 };
 use tempfile::TempDir;
+use util::debug_panic;
 
 #[derive(Clone)]
 pub struct SshSocket {
@@ -354,6 +355,7 @@ impl SshSession {
                                 }
                             }
                         } else {
+                            debug_panic!("unhandled ssh message name:{type_name}");
                             log::error!("unhandled ssh message name:{type_name}");
                         }
                     }

@@ -60,7 +60,7 @@ use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 use paths::{local_tasks_file_relative_path, local_vscode_tasks_file_relative_path};
 use prettier_support::{DefaultPrettier, PrettierInstance};
-use project_settings::{LspSettings, ProjectSettings};
+use project_settings::{LspSettings, ProjectSettings, SettingsObserver};
 use remote::SshSession;
 use rpc::{
     proto::{AnyProtoClient, SSH_PROJECT_ID},
@@ -171,6 +171,7 @@ pub struct Project {
     last_formatting_failure: Option<String>,
     buffers_being_formatted: HashSet<BufferId>,
     environment: Model<ProjectEnvironment>,
+    settings_observer: Model<SettingsObserver>,
 }
 
 #[derive(Default)]
@@ -581,7 +582,6 @@ impl Project {
         client.add_model_message_handler(Self::handle_unshare_project);
         client.add_model_request_handler(Self::handle_update_buffer);
         client.add_model_message_handler(Self::handle_update_worktree);
-        client.add_model_message_handler(Self::handle_update_worktree_settings);
         client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_synchronize_buffers);
         client.add_model_request_handler(Self::handle_format_buffers);
@@ -597,6 +597,7 @@ impl Project {
         WorktreeStore::init(&client);
         BufferStore::init(&client);
         LspStore::init(&client);
+        SettingsObserver::init(&client);
     }
 
     pub fn local(
@@ -626,7 +627,11 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
-            let environment = ProjectEnvironment::new(&worktree_store, None, 0, env, cx);
+            let settings_observer = cx.new_model(|cx| {
+                SettingsObserver::new_local(fs.clone(), worktree_store.clone(), cx)
+            });
+
+            let environment = ProjectEnvironment::new(&worktree_store, env, cx);
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new(
                     buffer_store.clone(),
@@ -662,6 +667,7 @@ impl Project {
                 languages,
                 client,
                 user_store,
+                settings_observer,
                 fs,
                 ssh_session: None,
                 buffers_needing_diff: Default::default(),
@@ -701,52 +707,25 @@ impl Project {
             this.worktree_store.update(cx, |store, _cx| {
                 store.set_upstream_client(client.clone());
             });
+            this.settings_observer = cx.new_model(|cx| {
+                SettingsObserver::new_ssh(ssh.clone().into(), this.worktree_store.clone(), cx)
+            });
 
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
             client.add_model_message_handler(Self::handle_update_worktree);
-            client.add_model_message_handler(Self::handle_update_worktree_settings);
             client.add_model_message_handler(Self::handle_create_buffer_for_peer);
             client.add_model_message_handler(BufferStore::handle_update_buffer_file);
             client.add_model_message_handler(BufferStore::handle_update_diff_base);
+            LspStore::init(&client);
+            SettingsObserver::init(&client);
 
-            this.maintain_ssh_settings(ssh.clone(), cx);
             this.ssh_session = Some(ssh);
         });
         this
-    }
-
-    pub fn maintain_ssh_settings(&self, ssh: Arc<SshSession>, cx: &mut ModelContext<Self>) {
-        let mut settings = cx.global::<SettingsStore>().raw_user_settings().clone();
-        cx.background_executor()
-            .spawn({
-                let ssh = ssh.clone();
-                let settings = settings.clone();
-                async move {
-                    let settings = serde_json::to_string(&settings)?;
-                    ssh.request(proto::SettingsChanged { settings }).await
-                }
-            })
-            .detach_and_log_err(cx);
-
-        cx.observe_global::<SettingsStore>(move |_, cx| {
-            let new_settings = cx.global::<SettingsStore>().raw_user_settings();
-            if &settings != new_settings {
-                settings = new_settings.clone()
-            }
-            cx.background_executor()
-                .spawn({
-                    let ssh = ssh.clone();
-                    let settings = settings.clone();
-                    async move {
-                        let settings = serde_json::to_string(&settings)?;
-                        ssh.request(proto::SettingsChanged { settings }).await
-                    }
-                })
-                .detach_and_log_err(cx)
-        })
-        .detach();
     }
 
     pub async fn remote(
@@ -782,6 +761,7 @@ impl Project {
             client.subscribe_to_entity::<BufferStore>(remote_id)?,
             client.subscribe_to_entity::<WorktreeStore>(remote_id)?,
             client.subscribe_to_entity::<LspStore>(remote_id)?,
+            client.subscribe_to_entity::<SettingsObserver>(remote_id)?,
         );
         let response = client
             .request_envelope(proto::JoinProject {
@@ -807,6 +787,7 @@ impl Project {
             PendingEntitySubscription<BufferStore>,
             PendingEntitySubscription<WorktreeStore>,
             PendingEntitySubscription<LspStore>,
+            PendingEntitySubscription<SettingsObserver>,
         ),
         client: Arc<Client>,
         user_store: Model<UserStore>,
@@ -867,6 +848,9 @@ impl Project {
                 .detach();
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
+            let settings_observer =
+                cx.new_model(|cx| SettingsObserver::new_remote(worktree_store.clone(), cx));
+
             let mut this = Self {
                 buffer_ordered_messages_tx: tx,
                 buffer_store: buffer_store.clone(),
@@ -881,6 +865,7 @@ impl Project {
                 snippets,
                 fs,
                 ssh_session: None,
+                settings_observer,
                 client_subscriptions: Default::default(),
                 _subscriptions: vec![cx.on_release(Self::release)],
                 client: client.clone(),
@@ -907,7 +892,7 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
-                environment: ProjectEnvironment::new(&worktree_store, None, remote_id, None, cx),
+                environment: ProjectEnvironment::new(&worktree_store, None, cx),
                 remotely_created_buffers: Arc::new(Mutex::new(RemotelyCreatedBuffers::default())),
                 last_formatting_failure: None,
                 buffers_being_formatted: Default::default(),
@@ -960,6 +945,7 @@ impl Project {
             client.subscribe_to_entity::<BufferStore>(remote_id.0)?,
             client.subscribe_to_entity::<WorktreeStore>(remote_id.0)?,
             client.subscribe_to_entity::<LspStore>(remote_id.0)?,
+            client.subscribe_to_entity::<SettingsObserver>(remote_id.0)?,
         );
         let response = client
             .request_envelope(proto::JoinHostedProject {
@@ -1531,6 +1517,9 @@ impl Project {
             self.client
                 .subscribe_to_entity(project_id)?
                 .set_model(&self.lsp_store, &mut cx.to_async()),
+            self.client
+                .subscribe_to_entity(project_id)?
+                .set_model(&self.settings_observer, &mut cx.to_async()),
         ]);
 
         self.buffer_store.update(cx, |buffer_store, cx| {
@@ -1542,8 +1531,8 @@ impl Project {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.shared(project_id, self.client.clone().into(), cx)
         });
-        self.environment.update(cx, |environment, cx| {
-            environment.shared(project_id, self.client.clone().into(), cx)
+        self.settings_observer.update(cx, |lsp_store, cx| {
+            lsp_store.shared(project_id, self.client.clone().into(), cx)
         });
 
         let store = cx.global::<SettingsStore>();
@@ -1643,8 +1632,8 @@ impl Project {
                 buffer_store.forget_shared_buffers();
                 buffer_store.unshared(cx)
             });
-            self.environment.update(cx, |environment, cx| {
-                environment.unshared(cx);
+            self.settings_observer.update(cx, |settings_observer, cx| {
+                settings_observer.unshared(cx);
             });
             self.client
                 .send(proto::UnshareProject {
@@ -4201,29 +4190,6 @@ impl Project {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
                     worktree.update_from_remote(envelope.payload);
-                });
-            }
-            Ok(())
-        })?
-    }
-
-    async fn handle_update_worktree_settings(
-        this: Model<Self>,
-        envelope: TypedEnvelope<proto::UpdateWorktreeSettings>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-            if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
-                cx.update_global::<SettingsStore, _>(|store, cx| {
-                    store
-                        .set_local_settings(
-                            worktree.entity_id().as_u64() as usize,
-                            PathBuf::from(&envelope.payload.path).into(),
-                            envelope.payload.content.as_deref(),
-                            cx,
-                        )
-                        .log_err();
                 });
             }
             Ok(())

@@ -3,15 +3,15 @@ use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task};
 use language::LanguageRegistry;
 use project::{
-    buffer_store::BufferStore, search::SearchQuery, worktree_store::WorktreeStore, LspStore,
-    ProjectPath, WorktreeId, WorktreeSettings,
+    buffer_store::BufferStore, project_settings::SettingsObserver, search::SearchQuery,
+    worktree_store::WorktreeStore, LspStore, ProjectPath, WorktreeId, WorktreeSettings,
 };
 use remote::SshSession;
 use rpc::{
     proto::{self, AnyProtoClient, SSH_PEER_ID, SSH_PROJECT_ID},
     TypedEnvelope,
 };
-use settings::{Settings as _, SettingsStore};
+use settings::Settings as _;
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -25,6 +25,7 @@ pub struct HeadlessProject {
     pub worktree_store: Model<WorktreeStore>,
     pub buffer_store: Model<BufferStore>,
     pub lsp_store: Model<LspStore>,
+    pub settings_observer: Model<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
 }
 
@@ -49,13 +50,12 @@ impl HeadlessProject {
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
-        let environment = project::ProjectEnvironment::new(
-            &worktree_store,
-            Some(session.clone().into()),
-            SSH_PROJECT_ID,
-            None,
-            cx,
-        );
+        let settings_observer = cx.new_model(|cx| {
+            let mut observer = SettingsObserver::new_local(fs.clone(), worktree_store.clone(), cx);
+            observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            observer
+        });
+        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let lsp_store = cx.new_model(|cx| {
             LspStore::new(
                 buffer_store.clone(),
@@ -76,9 +76,10 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &worktree_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &buffer_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
+        session.subscribe_to_entity(SSH_PROJECT_ID, &lsp_store);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
 
         client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
-        client.add_request_handler(cx.weak_model(), Self::handle_settings_changed);
 
         client.add_model_request_handler(Self::handle_add_worktree);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
@@ -89,9 +90,11 @@ impl HeadlessProject {
 
         BufferStore::init(&client);
         WorktreeStore::init(&client);
+        SettingsObserver::init(&client);
 
         HeadlessProject {
             session: client,
+            settings_observer,
             fs,
             worktree_store,
             buffer_store,
@@ -220,17 +223,5 @@ impl HeadlessProject {
             }
         }
         Ok(proto::ListRemoteDirectoryResponse { entries })
-    }
-
-    pub async fn handle_settings_changed(
-        _: Model<Self>,
-        envelope: TypedEnvelope<proto::SettingsChanged>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::Ack> {
-        cx.update_global(|settings_store: &mut SettingsStore, cx| {
-            settings_store.set_user_settings(&envelope.payload.settings, cx)
-        })??;
-
-        Ok(proto::Ack {})
     }
 }

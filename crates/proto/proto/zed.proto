@@ -281,7 +281,7 @@ message Envelope {
         FindSearchCandidatesResponse find_search_candidates_response = 244;
 
         CloseBuffer close_buffer = 245;
-        SettingsChanged settings_changed = 246; // current max
+        UpdateUserSettings update_user_settings = 246; // current max
     }
 
     reserved 158 to 161;
@@ -2493,6 +2493,7 @@ message AddWorktreeResponse {
     uint64 worktree_id = 1;
 }
 
-message SettingsChanged {
-    string settings = 1;
+message UpdateUserSettings {
+    uint64 project_id = 1;
+    string content = 2;
 }
