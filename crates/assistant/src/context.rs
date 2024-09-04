@@ -406,9 +406,10 @@ impl Message {
         let mut range_start = self.offset_range.start;
         for (image_offset, message_image) in self.image_offsets.iter() {
             if *image_offset != range_start {
-                if let Some(text) = Self::collect_text_content(buffer, range_start..*image_offset) {
-                    content.push(text);
-                }
+                content.extend(Self::collect_text_content(
+                    buffer,
+                    range_start..*image_offset,
+                ));
             }
 
             if let Some(image) = message_image.image.clone().now_or_never().flatten() {
@@ -419,11 +420,10 @@ impl Message {
         }
 
         if range_start != self.offset_range.end {
-            if let Some(text) =
-                Self::collect_text_content(buffer, range_start..self.offset_range.end)
-            {
-                content.push(text);
-            }
+            content.extend(Self::collect_text_content(
+                buffer,
+                range_start..self.offset_range.end,
+            ));
         }
 
         if content.is_empty() {
