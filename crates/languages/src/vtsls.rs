@@ -221,40 +221,38 @@ impl LspAdapter for VtslsLspAdapter {
         adapter: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         let tsdk_path = Self::tsdk_path(&adapter).await;
-        Ok(Some(json!({
-            "typescript": {
-                "tsdk": tsdk_path,
-                "suggest": {
-                    "completeFunctionCalls": true
+        let config = serde_json::json!({
+            "tsdk": tsdk_path,
+            "suggest": {
+                "completeFunctionCalls": true
+            },
+            "inlayHints": {
+                "parameterNames": {
+                    "enabled": "all",
+                    "suppressWhenArgumentMatchesName": false
                 },
-                "inlayHints": {
-                    "parameterNames": {
-                        "enabled": "all",
-                        "suppressWhenArgumentMatchesName": false,
-                    },
-                    "parameterTypes": {
-                        "enabled": true
-                    },
-                    "variableTypes": {
-                        "enabled": true,
-                        "suppressWhenTypeMatchesName": false,
-                    },
-                    "propertyDeclarationTypes": {
-                        "enabled": true,
-                    },
-                    "functionLikeReturnTypes": {
-                        "enabled": true,
-                    },
-                    "enumMemberValues": {
-                        "enabled": true,
-                    }
+                "parameterTypes": {
+                    "enabled": true
+                },
+                "variableTypes": {
+                    "enabled": true,
+                    "suppressWhenTypeMatchesName": false
+                },
+                "propertyDeclarationTypes": {
+                    "enabled": true
+                },
+                "functionLikeReturnTypes": {
+                    "enabled": true
+                },
+                "enumMemberValues": {
+                    "enabled": true
                 }
-            },
-            "javascript": {
-                "suggest": {
-                    "completeFunctionCalls": true
-                }
-            },
+            }
+        });
+
+        Ok(Some(json!({
+            "typescript": config,
+            "javascript": config,
             "vtsls": {
                 "experimental": {
                     "completion": {

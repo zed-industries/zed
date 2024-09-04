@@ -13,11 +13,13 @@ pub(crate) mod slash_command_picker;
 pub mod slash_command_settings;
 mod streaming_diff;
 mod terminal_inline_assistant;
+mod tools;
 mod workflow;
 
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
+use assistant_tool::ToolRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
@@ -63,6 +65,7 @@ actions!(
         DeployHistory,
         DeployPromptLibrary,
         ConfirmCommand,
+        NewContext,
         ToggleModelSelector,
     ]
 );
@@ -209,10 +212,11 @@ pub fn init(
     })
     .detach();
 
-    context_store::init(&client);
+    context_store::init(&client.clone().into());
     prompt_library::init(cx);
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);
+    assistant_tool::init(cx);
     assistant_panel::init(cx);
     context_servers::init(cx);
 
@@ -227,6 +231,7 @@ pub fn init(
     .map(Arc::new)
     .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
     register_slash_commands(Some(prompt_builder.clone()), cx);
+    register_tools(cx);
     inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),
@@ -362,7 +367,7 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
 
     if let Some(prompt_builder) = prompt_builder {
         slash_command_registry.register_command(
-            workflow_command::WorkflowSlashCommand::new(prompt_builder),
+            workflow_command::WorkflowSlashCommand::new(prompt_builder.clone()),
             true,
         );
     }
@@ -398,6 +403,11 @@ fn update_slash_commands_from_settings(cx: &mut AppContext) {
     } else {
         slash_command_registry.unregister_command(project_command::ProjectSlashCommand);
     }
+}
+
+fn register_tools(cx: &mut AppContext) {
+    let tool_registry = ToolRegistry::global(cx);
+    tool_registry.register_tool(tools::now_tool::NowTool);
 }
 
 pub fn humanize_token_count(count: usize) -> String {

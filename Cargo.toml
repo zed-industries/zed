@@ -6,6 +6,7 @@ members = [
     "crates/assets",
     "crates/assistant",
     "crates/assistant_slash_command",
+    "crates/assistant_tool",
     "crates/audio",
     "crates/auto_update",
     "crates/breadcrumbs",
@@ -181,6 +182,7 @@ anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
+assistant_tool = { path = "crates/assistant_tool" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 breadcrumbs = { path = "crates/breadcrumbs" }
@@ -315,22 +317,22 @@ async-dispatcher = "0.1"
 async-fs = "1.6"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
-async-tar = "0.4.2"
+async-tar = "0.5.0"
 async-trait = "0.1"
 async-tungstenite = "0.23"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "b37a9a994709d256f4634efd29281c78ba89071a" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "b37a9a994709d256f4634efd29281c78ba89071a" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "b37a9a994709d256f4634efd29281c78ba89071a" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
 cargo_metadata = "0.18"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = "0.11.6"
-cocoa = "0.25"
+cocoa = "0.26"
 core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
 ctor = "0.2.6"
@@ -340,7 +342,7 @@ dirs = "4.0"
 emojis = "0.6.1"
 env_logger = "0.11"
 exec = "0.3.1"
-fork = "0.1.23"
+fork = "0.2.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
@@ -358,7 +360,7 @@ indoc = "2"
 isahc = { version = "1.7.2", default-features = false, features = [
     "text-decoding",
 ] }
-itertools = "0.11.0"
+itertools = "0.13.0"
 jsonwebtoken = "9.3"
 libc = "0.2"
 linkify = "0.10.0"

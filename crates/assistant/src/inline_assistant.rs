@@ -1136,7 +1136,7 @@ impl InlineAssistant {
                     editor.set_show_gutter(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
                     editor.set_read_only(true);
-                    editor.set_show_inline_completions(false);
+                    editor.set_show_inline_completions(Some(false), cx);
                     editor.highlight_rows::<DeletedLines>(
                         Anchor::min()..=Anchor::max(),
                         Some(cx.theme().status().deleted_background),
@@ -1200,9 +1200,11 @@ impl InlineAssistStatus {
     pub(crate) fn is_pending(&self) -> bool {
         matches!(self, Self::Pending)
     }
+
     pub(crate) fn is_confirmed(&self) -> bool {
         matches!(self, Self::Confirmed)
     }
+
     pub(crate) fn is_done(&self) -> bool {
         matches!(self, Self::Done)
     }
@@ -1792,12 +1794,15 @@ impl PromptEditor {
             CodegenStatus::Pending => {
                 cx.emit(PromptEditorEvent::DismissRequested);
             }
-            CodegenStatus::Done | CodegenStatus::Error(_) => {
+            CodegenStatus::Done => {
                 if self.edited_since_done {
                     cx.emit(PromptEditorEvent::StartRequested);
                 } else {
                     cx.emit(PromptEditorEvent::ConfirmRequested);
                 }
+            }
+            CodegenStatus::Error(_) => {
+                cx.emit(PromptEditorEvent::StartRequested);
             }
         }
     }
@@ -2339,7 +2344,7 @@ impl Codegen {
                 self.build_request(user_prompt, assistant_panel_context, edit_range.clone(), cx)?;
 
             let chunks =
-                cx.spawn(|_, cx| async move { model.stream_completion(request, &cx).await });
+                cx.spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await });
             async move { Ok(chunks.await?.boxed()) }.boxed_local()
         };
         self.handle_stream(telemetry_id, edit_range, chunks, cx);
@@ -2411,6 +2416,7 @@ impl Codegen {
 
         Ok(LanguageModelRequest {
             messages,
+            tools: Vec::new(),
             stop: vec!["|END|>".to_string()],
             temperature,
         })

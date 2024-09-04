@@ -1,17 +1,19 @@
 mod supported_countries;
 
+use std::time::Duration;
+use std::{pin::Pin, str::FromStr};
+
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
+use collections::HashMap;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use isahc::config::Configurable;
 use isahc::http::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-use std::{pin::Pin, str::FromStr};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
-use util::ResultExt as _;
+use util::{maybe, ResultExt as _};
 
 pub use supported_countries::*;
 
@@ -330,26 +332,92 @@ pub async fn stream_completion_with_rate_limit_info(
     }
 }
 
-pub fn extract_text_from_events(
-    response: impl Stream<Item = Result<Event, AnthropicError>>,
-) -> impl Stream<Item = Result<String, AnthropicError>> {
-    response.filter_map(|response| async move {
-        match response {
-            Ok(response) => match response {
-                Event::ContentBlockStart { content_block, .. } => match content_block {
-                    Content::Text { text, .. } => Some(Ok(text)),
-                    _ => None,
-                },
-                Event::ContentBlockDelta { delta, .. } => match delta {
-                    ContentDelta::TextDelta { text } => Some(Ok(text)),
-                    _ => None,
-                },
-                Event::Error { error } => Some(Err(AnthropicError::ApiError(error))),
-                _ => None,
-            },
-            Err(error) => Some(Err(error)),
-        }
-    })
+pub fn extract_content_from_events(
+    events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
+) -> impl Stream<Item = Result<ResponseContent, AnthropicError>> {
+    struct RawToolUse {
+        id: String,
+        name: String,
+        input_json: String,
+    }
+
+    struct State {
+        events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
+        tool_uses_by_index: HashMap<usize, RawToolUse>,
+    }
+
+    futures::stream::unfold(
+        State {
+            events,
+            tool_uses_by_index: HashMap::default(),
+        },
+        |mut state| async move {
+            while let Some(event) = state.events.next().await {
+                match event {
+                    Ok(event) => match event {
+                        Event::ContentBlockStart {
+                            index,
+                            content_block,
+                        } => match content_block {
+                            ResponseContent::Text { text } => {
+                                return Some((Some(Ok(ResponseContent::Text { text })), state));
+                            }
+                            ResponseContent::ToolUse { id, name, .. } => {
+                                state.tool_uses_by_index.insert(
+                                    index,
+                                    RawToolUse {
+                                        id,
+                                        name,
+                                        input_json: String::new(),
+                                    },
+                                );
+
+                                return Some((None, state));
+                            }
+                        },
+                        Event::ContentBlockDelta { index, delta } => match delta {
+                            ContentDelta::TextDelta { text } => {
+                                return Some((Some(Ok(ResponseContent::Text { text })), state));
+                            }
+                            ContentDelta::InputJsonDelta { partial_json } => {
+                                if let Some(tool_use) = state.tool_uses_by_index.get_mut(&index) {
+                                    tool_use.input_json.push_str(&partial_json);
+                                    return Some((None, state));
+                                }
+                            }
+                        },
+                        Event::ContentBlockStop { index } => {
+                            if let Some(tool_use) = state.tool_uses_by_index.remove(&index) {
+                                return Some((
+                                    Some(maybe!({
+                                        Ok(ResponseContent::ToolUse {
+                                            id: tool_use.id,
+                                            name: tool_use.name,
+                                            input: serde_json::Value::from_str(
+                                                &tool_use.input_json,
+                                            )
+                                            .map_err(|err| anyhow!(err))?,
+                                        })
+                                    })),
+                                    state,
+                                ));
+                            }
+                        }
+                        Event::Error { error } => {
+                            return Some((Some(Err(AnthropicError::ApiError(error))), state));
+                        }
+                        _ => {}
+                    },
+                    Err(err) => {
+                        return Some((Some(Err(err)), state));
+                    }
+                }
+            }
+
+            None
+        },
+    )
+    .filter_map(|event| async move { event })
 }
 
 pub async fn extract_tool_args_from_events(
@@ -363,7 +431,7 @@ pub async fn extract_tool_args_from_events(
             content_block,
         } = event?
         {
-            if let Content::ToolUse { name, .. } = content_block {
+            if let ResponseContent::ToolUse { name, .. } = content_block {
                 if name == tool_name {
                     tool_use_index = Some(index);
                     break;
@@ -411,7 +479,7 @@ pub struct CacheControl {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
-    pub content: Vec<Content>,
+    pub content: Vec<RequestContent>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -423,7 +491,7 @@ pub enum Role {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum Content {
+pub enum RequestContent {
     #[serde(rename = "text")]
     Text {
         text: String,
@@ -444,12 +512,18 @@ pub enum Content {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
-    #[serde(rename = "tool_result")]
-    ToolResult {
-        tool_use_id: String,
-        content: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cache_control: Option<CacheControl>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ResponseContent {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
     },
 }
 
@@ -525,7 +599,7 @@ pub struct Response {
     #[serde(rename = "type")]
     pub response_type: String,
     pub role: Role,
-    pub content: Vec<Content>,
+    pub content: Vec<ResponseContent>,
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<String>,
@@ -542,7 +616,7 @@ pub enum Event {
     #[serde(rename = "content_block_start")]
     ContentBlockStart {
         index: usize,
-        content_block: Content,
+        content_block: ResponseContent,
     },
     #[serde(rename = "content_block_delta")]
     ContentBlockDelta { index: usize, delta: ContentDelta },

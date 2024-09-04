@@ -489,7 +489,7 @@
     }
   },
   {
-    "context": "OutlinePanel",
+    "context": "OutlinePanel && not_editing",
     "bindings": {
       "j": "menu::SelectNext",
       "k": "menu::SelectPrev",

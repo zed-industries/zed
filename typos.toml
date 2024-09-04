@@ -3,6 +3,10 @@ ignore-files = true
 ignore-hidden = false
 extend-exclude = [
     ".git/",
+
+    # Contributor names aren't typos.
+    ".mailmap",
+
     # File suffixes aren't typos
     "assets/icons/file_icons/file_types.json",
     "crates/extensions_ui/src/extension_suggest.rs",

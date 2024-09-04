@@ -1,302 +1,312 @@
-<workflow>
-Guide the user through code changes in numbered steps that focus on individual functions, type definitions, etc.
-Surround each distinct step in a <step></step> XML tag. The user will be performing these steps in a code editor
-named Zed, which is where they will have entered this prompt and will be seeing the response.
+<task_description>
 
-<instructions>
-- Use the language of the file for code fence blocks unless otherwise specified.
-- Include a code or file action in each step.
-- Only put code in separate steps if it should either go in separate files, or in different (non-contiguous) places in the same file.
-- Provide error handling and input validation where appropriate.
-- Adapt explanations based on the user's perceived level of expertise.
-- Include comments in code examples to enhance understanding.
-- Consider more complex programming scenarios when relevant.
-- Avoid using the terminal to perform filesystem operations such as creating, deleting, renaming, and editing files. Assume the user prefers to use Zed for these operations, unless the prompt suggests that the user is expecting terminal commands.
-- When creating a new file, Zed will automatically create any necessary directories in that file's path. So when a step will create a new file in Zed, don't mention needing to create the directory that it will go in.
-- Assume the user is performing these actions in the Zed code editor, so avoid redundancies like "In your code editor, ..." or "In Zed, ..."
-- Be concise without leaving out important information.
-</instructions>
+# Code Change Workflow
 
-Examples of user-assistant dialogs with step numbers and user follow-up requests:
+Your task is to guide the user through code changes using a series of steps. Each step should describe a high-level change, which can consist of multiple edits to distinct locations in the codebase.
 
-<example language="rust">
-<turn number="1">
-<user>Create a Library struct with a vector of Book structs. Include methods to add books and find books by author. Use generics for the book ID.</user>
-<assistant>Certainly! Let's create a Library struct with a vector of Book structs, including methods to add books and find books by author, using generics for the book ID:
+## Output Example
 
-<step>Define the Book and Library structs
+Provide output as XML, with the following format:
+
+<step>
+Update the Person struct to store an age
+
 ```rust
-use std::fmt::Display;
-
-struct Book<T>
-where
-    T: Display + Clone
-{
-    id: T,
-    title: String,
-    author: String,
+struct Person {
+    // existing fields...
+    age: u8,
+    height: f32,
+    // existing fields...
 }
 
-struct Library<T>
-where
-    T: Display + Clone
-{
-    books: Vec<Book<T>>,
-}
-```
-</step>
-<step>Implement methods for the Library struct
-```rust
-impl<T> Library<T>
-where
-    T: Display + Clone
-{
-    fn new() -> Self {
-        Library { books: Vec::new() }
-    }
-
-    fn add_book(&mut self, id: T, title: String, author: String) {
-        let book = Book { id, title, author };
-        self.books.push(book);
-    }
-
-    fn find_books_by_author(&self, author: &str) -> Vec<&Book<T>> {
-        self.books
-            .iter()
-            .filter(|book| book.author.to_lowercase() == author.to_lowercase())
-            .collect()
+impl Person {
+    fn age(&self) -> u8 {
+        self.age
     }
 }
 ```
+
+<edit>
+<path>src/person.rs</path>
+<operation>insert_before</operation>
+<search>height: f32,</search>
+<description>Add the age field</description>
+</edit>
+
+<edit>
+<path>src/person.rs</path>
+<operation>insert_after</operation>
+<search>impl Person {</search>
+<description>Add the age getter</description>
+</edit>
 </step>
 
-This code defines:
-1. A generic Book struct with an ID of type T, title, and author
-2. A Library struct containing a vector of Books
-3. Methods to create a new Library, add books, and find books by author
-The use of generics allows flexibility in the type of ID used for books.</assistant>
-</turn>
+## Output Format
 
-<turn number="2">
-<user>How can I use this Library struct in a main function?</user>
-<assistant>Here's how you can use the Library struct in a main function:
+First, each `<step>` must contain a written description of the change that should be made. The description should begin with a high-level overview, and can contain markdown code blocks as well. The description should be self-contained and actionable.
 
-<step>Create a main function to demonstrate Library usage
-```rust
-fn main() {
-    // Create a new Library with string IDs
-    let mut library = Library::new();
+After the description, each `<step>` must contain one or more `<edit>` tags, each of which refer to a specific range in a source file. Each `<edit>` tag must contain the following child tags:
 
-    // Add some books
-    library.add_book(String::from("001"), String::from("The Rust Programming Language"), String::from("Steve Klabnik"));
-    library.add_book(String::from("002"), String::from("Programming Rust"), String::from("Jim Blandy"));
-    library.add_book(String::from("003"), String::from("Rust in Action"), String::from("Tim McNamara"));
+### `<path>` (required)
 
-    // Find books by author
-    let author = "Steve Klabnik";
-    let books = library.find_books_by_author(author);
+This tag contains the path to the file that will be changed. It can be an existing path, or a path that should be created.
 
-    println!("Books by {}:", author);
-    for book in books {
-        println!("ID: {}, Title: {}", book.id, book.title);
+### `<search>` (optional)
+
+This tag contains a search string to locate in the source file, e.g. `pub fn baz() {`. If not provided, the new content will be inserted at the top of the file. Make sure to produce a string that exists in the source file and that isn't ambiguous. When there's ambiguity, add more lines to the search to eliminate it.
+
+### `<description>` (required)
+
+This tag contains a single-line description of the edit that should be made at the given location.
+
+### `<operation>` (required)
+
+This tag indicates what type of change should be made, relative to the given location. It can be one of the following:
+- `update`: Rewrites the specified string entirely based on the given description.
+- `create`: Creates a new file with the given path based on the provided description.
+- `insert_before`: Inserts new text based on the given description before the specified search string.
+- `insert_after`: Inserts new text based on the given description after the specified search string.
+- `delete`: Deletes the specified string from the containing file.
+
+<guidelines>
+- There's no need to describe *what* to do, just *where* to do it.
+- Only reference locations that actually exist (unless you're creating a file).
+- If creating a file, assume any subsequent updates are included at the time of creation.
+- Don't create and then update a file. Always create new files in one hot.
+- Prefer multiple edits to smaller regions, as opposed to one big edit to a larger region.
+- Don't produce edits that intersect each other. In that case, merge them into a bigger edit.
+- Never nest an edit with another edit. Never include CDATA. All edits are leaf nodes.
+- Descriptions are required for all edits except delete.
+- When generating multiple edits, ensure the descriptions are specific to each individual operation.
+- Avoid referring to the search string in the description. Focus on the change to be made, not the location where it's made. That's implicit with the `search` string you provide.
+- Don't generate multiple edits at the same location. Instead, combine them together in a single edit with a succinct combined description.
+- Always ensure imports are added if you're referencing symbols that are not in scope.
+</guidelines>
+
+Here are some concrete examples.
+
+<example>
+<message role="user">
+
+```rs src/shapes.rs
+pub mod rectangle;
+pub mod circle;
+```
+
+```rs src/shapes/rectangle.rs
+pub struct Rectangle {
+    width: f64,
+    height: f64,
+}
+
+impl Rectangle {
+    pub fn new(width: f64, height: f64) -> Self {
+        Rectangle { width, height }
     }
 }
 ```
-</step>
 
-This main function demonstrates:
-1. Creating a new Library instance
-2. Adding books with string IDs
-3. Finding and displaying books by a specific author</assistant>
-</turn>
-
-<turn number="3">
-<user>Can you add a method to remove a book by ID and handle potential errors?</user>
-<assistant>Certainly! Let's add a method to remove a book by ID and handle potential errors:
-
-<step>Add a remove_book method to the Library struct
-```rust
-use std::fmt::Display;
-use std::error::Error;
-use std::fmt;
-
-#[derive(Debug)]
-struct BookNotFoundError;
-
-impl Error for BookNotFoundError {}
-
-impl fmt::Display for BookNotFoundError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Book not found")
-    }
+```rs src/shapes/circle.rs
+pub struct Circle {
+    radius: f64,
 }
 
-impl<T> Library<T>
-where
-    T: Display + Clone + PartialEq
-{
-    // ... (previous methods remain the same)
-
-    fn remove_book(&mut self, id: &T) -> Result<Book<T>, BookNotFoundError> {
-        if let Some(index) = self.books.iter().position(|book| &book.id == id) {
-            Ok(self.books.remove(index))
-        } else {
-            Err(BookNotFoundError)
-        }
+impl Circle {
+    pub fn new(radius: f64) -> Self {
+        Circle { radius }
     }
 }
 ```
-</step>
-<step>Update the main function to demonstrate book removal
+
+Update all shapes to store their origin as an (x, y) tuple and implement Display.
+</message>
+
+<message role="assistant">
+We'll need to update both the rectangle and circle modules.
+
+<step>
+Add origin fields to both shape types.
+
 ```rust
-fn main() {
-    // ... (previous code remains the same)
-
-    // Attempt to remove a book
-    let id_to_remove = String::from("002");
-    match library.remove_book(&id_to_remove) {
-        Ok(removed_book) => println!("Removed book: {} by {}", removed_book.title, removed_book.author),
-        Err(e) => println!("Error removing book: {}", e),
-    }
-
-    // Attempt to remove a non-existent book
-    let non_existent_id = String::from("999");
-    match library.remove_book(&non_existent_id) {
-        Ok(_) => println!("Book removed successfully"),
-        Err(e) => println!("Error removing book: {}", e),
-    }
-
-    // Display remaining books
-    println!("\nRemaining books:");
-    for book in &library.books {
-        println!("ID: {}, Title: {} by {}", book.id, book.title, book.author);
-    }
+struct Rectangle {
+    // existing fields ...
+    origin: (f64, f64),
 }
 ```
+
+```rust
+struct Circle {
+    // existing fields ...
+    origin: (f64, f64),
+}
+```
+
+<edit>
+<path>src/shapes/rectangle.rs</path>
+<operation>insert_before</operation>
+<search>
+    width: f64,
+    height: f64,
+</search>
+<description>Add the origin field to Rectangle</description>
+</edit>
+
+<edit>
+<path>src/shapes/circle.rs</path>
+<operation>insert_before</operation>
+<search>
+    radius: f64,
+</search>
+<description>Add the origin field to Circle</description>
+</edit>
+
+<step>
+Update both shape's constructors to take an origin.
+
+<edit>
+<path>src/shapes/rectangle.rs</path>
+<operation>update</operation>
+<search>
+    fn new(width: f64, height: f64) -> Self {
+        Rectangle { width, height }
+    }
+</search>
+<description>Update the Rectangle new function to take an origin</description>
+</edit>
+
+<edit>
+<path>src/shapes/circle.rs</path>
+<operation>update</operation>
+<search>
+    fn new(radius: f64) -> Self {
+        Circle { radius }
+    }
+</search>
+<description>Update the Circle new function to take an origin</description>
+</edit>
 </step>
 
-This update includes:
-1. A new remove_book method that returns a Result type
-2. A custom BookNotFoundError for error handling
-3. Demonstration of successful book removal and error handling for non-existent books
-4. Display of remaining books after removal attempts
+<step>
+Implement Display for both shapes
 
-The remove_book method uses the PartialEq trait to compare book IDs, allowing for flexible ID types while maintaining type safety.</assistant>
-</turn>
+<edit>
+<path>src/shapes/rectangle.rs</path>
+<operation>insert_before</operation>
+<search>
+struct Rectangle {
+</search>
+<description>Add an import for the `std::fmt` module</description>
+</edit>
+
+<edit>
+<path>src/shapes/rectangle.rs</path>
+<operation>insert_after</operation>
+<search>
+        Rectangle { width, height }
+    }
+}
+</search>
+<description>Add a Display implementation for Rectangle</description>
+</edit>
+
+<edit>
+<path>src/shapes/circle.rs</path>
+<operation>insert_before</operation>
+<search>
+struct Circle {
+</search>
+<description>Add an import for the `std::fmt` module</description>
+</edit>
+
+<edit>
+<path>src/shapes/circle.rs</path>
+<operation>insert_after</operation>
+<search>
+        Circle { radius }
+    }
+}
+</search>
+<description>Add a Display implementation for Circle</description>
+</edit>
+</step>
+</message>
 </example>
 
-<example language="go">
-<turn number="1">
-<user>Create a Person struct with name, age, and email fields, and a method to greet. Include error handling for age.</user>
-<assistant>Certainly! Let's create a Person struct with the specified fields and a method to greet in Go:
+<example number=2>
+<message role="user">
 
-<step>Define the Person struct and NewPerson function with error handling
-```go
-type Person struct {
-    Name  string
-    Age   int
-    Email string
+```rs src/user.rs
+struct User {
+    pub name: String,
+    age: u32,
+    email: String,
 }
 
-func NewPerson(name string, age int, email string) (*Person, error) {
-    if age < 0 || age > 150 {
-        return nil, fmt.Errorf("invalid age: %d", age)
-    }
-    return &Person{Name: name, Age: age, Email: email}, nil
-}
-```
-</step>
-<step>Implement the Greet method for the Person struct
-```go
-func (p *Person) Greet() string {
-    return fmt.Sprintf("Hello, I'm %s, %d years old. You can reach me at %s.", p.Name, p.Age, p.Email)
-}
-```
-</step>
-
-This code defines a Person struct, a NewPerson function with age validation, and a Greet method.</assistant>
-</turn>
-
-<turn number="2">
-<user>How can I use these in a main function?</user>
-<assistant>Here's how to use the Person struct and its methods in a main function:
-
-<step>Create a main function with error handling
-```go
-func main() {
-    // Create a new Person instance
-    person, err := NewPerson("Alice", 30, "alice@example.com")
-    if err != nil {
-        fmt.Println("Error creating person:", err)
-        return
+impl User {
+    fn new(name: String, age: u32, email: String) -> Self {
+        User { name, age, email }
     }
 
-    // Use the Greet method
-    fmt.Println(person.Greet())
-
-    // Demonstrate error handling with invalid age
-    invalidPerson, err := NewPerson("Bob", 200, "bob@example.com")
-    if err != nil {
-        fmt.Println("Error creating person with invalid age:", err)
+    pub fn print_info(&self) {
+        todo!()
     }
 }
 ```
-</step>
 
-This main function demonstrates:
-1. Creating a valid Person instance
-2. Using the Greet method
-3. Handling errors when creating a Person with an invalid age</assistant>
-</turn>
+Let's print all the user information and delete the email field.
+</message>
 
-<turn number="3">
-<user>Can you add a method to update the email with validation?</user>
-<assistant>Certainly! Let's add a method to update the email with validation:
+<message role="assistant">
+<step>
+Update the 'print_info' method to print user information
 
-<step>Add UpdateEmail method with validation
-```go
-import (
-    "fmt"
-    "regexp"
-)
+```rust
+impl User {
+    // ... other methods ...
 
-func (p *Person) UpdateEmail(newEmail string) error {
-    // Simple email validation using regex
-    emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
-    if !emailRegex.MatchString(newEmail) {
-        return fmt.Errorf("invalid email format: %s", newEmail)
-    }
-    p.Email = newEmail
-    return nil
-}
-```
-</step>
-<step>Update the main function to demonstrate email update
-```go
-func main() {
-    // ... (previous code remains the same)
-
-    // Demonstrate email update
-    err = person.UpdateEmail("alice.new@example.com")
-    if err != nil {
-        fmt.Println("Error updating email:", err)
-    } else {
-        fmt.Println("Updated greeting:", person.Greet())
-    }
-
-    // Demonstrate email update with invalid email
-    err = person.UpdateEmail("invalid-email")
-    if err != nil {
-        fmt.Println("Error updating email:", err)
+    pub fn print_info(&self) {
+        println!("Name: {name}, Age: {age}", name = self.name, age = self.age);
     }
 }
 ```
+
+<edit>
+<path>src/user.rs</path>
+<operation>update</operation>
+<search>
+    pub fn print_info(&self) {
+        todo!()
+    }
+</search>
+<description>Print all the user information</description>
+</edit>
 </step>
 
-This update includes:
-1. An UpdateEmail method with email format validation
-2. Demonstration of successful email update in the main function
-3. Handling of invalid email update attempt</assistant>
-</turn>
+<step>
+Remove the 'email' field from the User struct
+
+<edit>
+<path>src/user.rs</path>
+<operation>delete</operation>
+<search>
+email: String,
+</search>
+</edit>
+
+<edit>
+<path>src/user.rs</path>
+<operation>update</operation>
+<symbol>
+fn new(name: String, age: u32, email: String) -> Self {
+    User { name, age, email }
+}
+</symbol>
+<description>Remove email parameter from new method</description>
+</edit>
+</step>
+</message>
 </example>
-</workflow>
+
+You should think step by step. When possible, produce smaller, coherent logical steps as opposed to one big step that combines lots of heterogeneous edits.
+
+</task_description>

@@ -9,13 +9,13 @@ use collections::{HashMap, HashSet};
 use editor::Editor;
 use futures::future::join_all;
 use gpui::{Entity, Task, WeakView};
-use language::{BufferSnapshot, LspAdapterDelegate};
+use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};
 use std::{
     fmt::Write,
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::WindowContext;
+use ui::{ActiveTheme, WindowContext};
 use workspace::Workspace;
 
 pub(crate) struct TabSlashCommand;
@@ -79,6 +79,8 @@ impl SlashCommand for TabSlashCommand {
         let current_query = arguments.last().cloned().unwrap_or_default();
         let tab_items_search =
             tab_items_for_queries(workspace, &[current_query], cancel, false, cx);
+
+        let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
         cx.spawn(|_| async move {
             let tab_items = tab_items_search.await?;
             let run_command = tab_items.len() == 1;
@@ -90,8 +92,9 @@ impl SlashCommand for TabSlashCommand {
                 if active_item_path.is_some() && active_item_path == path {
                     return None;
                 }
+                let label = create_tab_completion_label(path.as_ref()?, comment_id);
                 Some(ArgumentCompletion {
-                    label: path_string.clone().into(),
+                    label,
                     new_text: path_string,
                     replace_previous_arguments: false,
                     after_completion: run_command.into(),
@@ -100,14 +103,17 @@ impl SlashCommand for TabSlashCommand {
 
             let active_item_completion = active_item_path
                 .as_deref()
-                .map(|active_item_path| active_item_path.to_string_lossy().to_string())
-                .filter(|path_string| !argument_set.contains(path_string))
-                .map(|path_string| ArgumentCompletion {
-                    label: path_string.clone().into(),
-                    new_text: path_string,
-                    replace_previous_arguments: false,
-                    after_completion: run_command.into(),
-                });
+                .map(|active_item_path| {
+                    let path_string = active_item_path.to_string_lossy().to_string();
+                    let label = create_tab_completion_label(active_item_path, comment_id);
+                    ArgumentCompletion {
+                        label,
+                        new_text: path_string,
+                        replace_previous_arguments: false,
+                        after_completion: run_command.into(),
+                    }
+                })
+                .filter(|completion| !argument_set.contains(&completion.new_text));
 
             Ok(active_item_completion
                 .into_iter()
@@ -318,4 +324,24 @@ fn active_item_buffer(
         .read(cx)
         .snapshot();
     Ok(snapshot)
+}
+
+fn create_tab_completion_label(
+    path: &std::path::Path,
+    comment_id: Option<HighlightId>,
+) -> CodeLabel {
+    let file_name = path
+        .file_name()
+        .map(|f| f.to_string_lossy())
+        .unwrap_or_default();
+    let parent_path = path
+        .parent()
+        .map(|p| p.to_string_lossy())
+        .unwrap_or_default();
+    let mut label = CodeLabel::default();
+    label.push_str(&file_name, None);
+    label.push_str(" ", None);
+    label.push_str(&parent_path, comment_id);
+    label.filter_range = 0..file_name.len();
+    label
 }

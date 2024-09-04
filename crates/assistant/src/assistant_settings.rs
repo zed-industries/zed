@@ -1,11 +1,17 @@
 use std::sync::Arc;
 
+use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use fs::Fs;
 use gpui::{AppContext, Pixels};
+use language_model::provider::open_ai;
+use language_model::settings::{
+    AnthropicSettingsContent, AnthropicSettingsContentV1, OllamaSettingsContent,
+    OpenAiSettingsContent, OpenAiSettingsContentV1, VersionedAnthropicSettingsContent,
+    VersionedOpenAiSettingsContent,
+};
 use language_model::{settings::AllLanguageModelSettings, CloudModel, LanguageModel};
 use ollama::Model as OllamaModel;
-use open_ai::Model as OpenAiModel;
 use schemars::{schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsSources};
@@ -109,16 +115,15 @@ impl AssistantSettingsContent {
                             cx,
                             move |content, _| {
                                 if content.anthropic.is_none() {
-                                    content.anthropic =
-                                        Some(language_model::settings::AnthropicSettingsContent::Versioned(
-                                            language_model::settings::VersionedAnthropicSettingsContent::V1(
-                                                language_model::settings::AnthropicSettingsContentV1 {
-                                                    api_url,
-                                                    low_speed_timeout_in_seconds,
-                                                    available_models: None
-                                                }
-                                            )
-                                        ));
+                                    content.anthropic = Some(AnthropicSettingsContent::Versioned(
+                                        VersionedAnthropicSettingsContent::V1(
+                                            AnthropicSettingsContentV1 {
+                                                api_url,
+                                                low_speed_timeout_in_seconds,
+                                                available_models: None,
+                                            },
+                                        ),
+                                    ));
                                 }
                             },
                         ),
@@ -131,11 +136,11 @@ impl AssistantSettingsContent {
                             cx,
                             move |content, _| {
                                 if content.ollama.is_none() {
-                                    content.ollama =
-                                        Some(language_model::settings::OllamaSettingsContent {
-                                            api_url,
-                                            low_speed_timeout_in_seconds,
-                                        });
+                                    content.ollama = Some(OllamaSettingsContent {
+                                        api_url,
+                                        low_speed_timeout_in_seconds,
+                                        available_models: None,
+                                    });
                                 }
                             },
                         ),
@@ -153,23 +158,28 @@ impl AssistantSettingsContent {
                                         models
                                             .into_iter()
                                             .filter_map(|model| match model {
-                                                open_ai::Model::Custom { name, max_tokens,max_output_tokens } => {
-                                                    Some(language_model::provider::open_ai::AvailableModel { name, max_tokens,max_output_tokens })
-                                                }
+                                                OpenAiModel::Custom {
+                                                    name,
+                                                    max_tokens,
+                                                    max_output_tokens,
+                                                } => Some(open_ai::AvailableModel {
+                                                    name,
+                                                    max_tokens,
+                                                    max_output_tokens,
+                                                }),
                                                 _ => None,
                                             })
                                             .collect::<Vec<_>>()
                                     });
-                                    content.openai =
-                                        Some(language_model::settings::OpenAiSettingsContent::Versioned(
-                                            language_model::settings::VersionedOpenAiSettingsContent::V1(
-                                                language_model::settings::OpenAiSettingsContentV1 {
-                                                    api_url,
-                                                    low_speed_timeout_in_seconds,
-                                                    available_models
-                                                }
-                                            )
-                                        ));
+                                    content.openai = Some(OpenAiSettingsContent::Versioned(
+                                        VersionedOpenAiSettingsContent::V1(
+                                            OpenAiSettingsContentV1 {
+                                                api_url,
+                                                low_speed_timeout_in_seconds,
+                                                available_models,
+                                            },
+                                        ),
+                                    ));
                                 }
                             },
                         ),
@@ -295,7 +305,7 @@ impl AssistantSettingsContent {
                             _ => (None, None),
                         };
                         settings.provider = Some(AssistantProviderContentV1::Ollama {
-                            default_model: Some(ollama::Model::new(&model)),
+                            default_model: Some(ollama::Model::new(&model, None, None)),
                             api_url,
                             low_speed_timeout_in_seconds,
                         });
@@ -316,7 +326,7 @@ impl AssistantSettingsContent {
                                 _ => (None, None, None),
                             };
                         settings.provider = Some(AssistantProviderContentV1::OpenAi {
-                            default_model: open_ai::Model::from_id(&model).ok(),
+                            default_model: OpenAiModel::from_id(&model).ok(),
                             api_url,
                             low_speed_timeout_in_seconds,
                             available_models,
@@ -329,7 +339,7 @@ impl AssistantSettingsContent {
                 }
             },
             AssistantSettingsContent::Legacy(settings) => {
-                if let Ok(model) = open_ai::Model::from_id(&language_model.id().0) {
+                if let Ok(model) = OpenAiModel::from_id(&language_model.id().0) {
                     settings.default_open_ai_model = Some(model);
                 }
             }

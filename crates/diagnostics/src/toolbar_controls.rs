@@ -22,7 +22,7 @@ impl Render for ToolbarControls {
                 || editor
                     .project
                     .read(cx)
-                    .language_servers_running_disk_based_diagnostics()
+                    .language_servers_running_disk_based_diagnostics(cx)
                     .next()
                     .is_some();
         }

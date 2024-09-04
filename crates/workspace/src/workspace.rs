@@ -1061,6 +1061,7 @@ impl Workspace {
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
         requesting_window: Option<WindowHandle<Workspace>>,
+        env: Option<HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Task<
         anyhow::Result<(
@@ -1074,6 +1075,7 @@ impl Workspace {
             app_state.user_store.clone(),
             app_state.languages.clone(),
             app_state.fs.clone(),
+            env,
             cx,
         );
 
@@ -1579,7 +1581,8 @@ impl Workspace {
         if self.project.read(cx).is_local_or_ssh() {
             Task::Ready(Some(Ok(callback(self, cx))))
         } else {
-            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, cx);
+            let env = self.project.read(cx).cli_environment(cx);
+            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, cx);
             cx.spawn(|_vh, mut cx| async move {
                 let (workspace, _) = task.await?;
                 workspace.update(&mut cx, callback)
@@ -2798,10 +2801,17 @@ impl Workspace {
         .unwrap_or(Origin::Center);
 
         let get_last_active_pane = || {
-            self.last_active_center_pane.as_ref().and_then(|p| {
-                let p = p.upgrade()?;
-                (p.read(cx).items_len() != 0).then_some(p)
-            })
+            let pane = self
+                .last_active_center_pane
+                .clone()
+                .unwrap_or_else(|| {
+                    self.panes
+                        .first()
+                        .expect("There must be an active pane")
+                        .downgrade()
+                })
+                .upgrade()?;
+            (pane.read(cx).items_len() != 0).then_some(pane)
         };
 
         let try_dock =
@@ -2921,6 +2931,10 @@ impl Workspace {
             self.last_active_center_pane = Some(pane.downgrade());
         }
 
+        if self.last_active_center_pane.is_none() {
+            self.last_active_center_pane = Some(pane.downgrade());
+        }
+
         self.dismiss_zoomed_items_to_reveal(None, cx);
         if pane.read(cx).is_zoomed() {
             self.zoomed = Some(pane.downgrade().into());
@@ -2960,6 +2974,10 @@ impl Workspace {
                 self.remove_pane(pane, focus_on_pane.clone(), cx)
             }
             pane::Event::ActivateItem { local } => {
+                cx.on_next_frame(|_, cx| {
+                    cx.invalidate_character_coordinates();
+                });
+
                 pane.model.update(cx, |pane, _| {
                     pane.track_alternate_file_items();
                 });
@@ -2993,6 +3011,9 @@ impl Workspace {
                 }
             }
             pane::Event::Focus => {
+                cx.on_next_frame(|_, cx| {
+                    cx.invalidate_character_coordinates();
+                });
                 self.handle_pane_focused(pane.clone(), cx);
             }
             pane::Event::ZoomIn => {
@@ -5198,7 +5219,7 @@ pub fn join_channel(
             // no open workspaces, make one to show the error in (blergh)
             let (window_handle, _) = cx
                 .update(|cx| {
-                    Workspace::new_local(vec![], app_state.clone(), requesting_window, cx)
+                    Workspace::new_local(vec![], app_state.clone(), requesting_window, None, cx)
                 })?
                 .await?;
 
@@ -5256,7 +5277,7 @@ pub async fn get_any_active_workspace(
     // find an existing workspace to focus and show call controls
     let active_window = activate_any_workspace_window(&mut cx);
     if active_window.is_none() {
-        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, cx))?
+        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, cx))?
             .await?;
     }
     activate_any_workspace_window(&mut cx).context("could not open zed")
@@ -5301,6 +5322,7 @@ pub fn local_workspace_windows(cx: &AppContext) -> Vec<WindowHandle<Workspace>> 
 pub struct OpenOptions {
     pub open_new_workspace: Option<bool>,
     pub replace_window: Option<WindowHandle<Workspace>>,
+    pub env: Option<HashMap<String, String>>,
 }
 
 #[allow(clippy::type_complexity)]
@@ -5378,6 +5400,7 @@ pub fn open_paths(
                     abs_paths,
                     app_state.clone(),
                     open_options.replace_window,
+                    open_options.env,
                     cx,
                 )
             })?
@@ -5387,11 +5410,12 @@ pub fn open_paths(
 }
 
 pub fn open_new(
+    open_options: OpenOptions,
     app_state: Arc<AppState>,
     cx: &mut AppContext,
     init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static + Send,
 ) -> Task<anyhow::Result<()>> {
-    let task = Workspace::new_local(Vec::new(), app_state, None, cx);
+    let task = Workspace::new_local(Vec::new(), app_state, None, open_options.env, cx);
     cx.spawn(|mut cx| async move {
         let (workspace, opened_paths) = task.await?;
         workspace.update(&mut cx, |workspace, cx| {

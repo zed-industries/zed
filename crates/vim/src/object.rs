@@ -1,10 +1,6 @@
 use std::ops::Range;
 
-use crate::{
-    motion::{coerce_punctuation, right},
-    state::Mode,
-    Vim,
-};
+use crate::{motion::right, state::Mode, Vim};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
@@ -14,7 +10,7 @@ use editor::{
 use itertools::Itertools;
 
 use gpui::{actions, impl_actions, ViewContext};
-use language::{char_kind, BufferSnapshot, CharKind, Point, Selection};
+use language::{BufferSnapshot, CharKind, Point, Selection};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 
@@ -248,22 +244,19 @@ fn in_word(
     ignore_punctuation: bool,
 ) -> Option<Range<DisplayPoint>> {
     // Use motion::right so that we consider the character under the cursor when looking for the start
-    let scope = map
+    let classifier = map
         .buffer_snapshot
-        .language_scope_at(relative_to.to_point(map));
+        .char_classifier_at(relative_to.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     let start = movement::find_preceding_boundary_display_point(
         map,
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
-        |left, right| {
-            coerce_punctuation(char_kind(&scope, left), ignore_punctuation)
-                != coerce_punctuation(char_kind(&scope, right), ignore_punctuation)
-        },
+        |left, right| classifier.kind(left) != classifier.kind(right),
     );
 
     let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        coerce_punctuation(char_kind(&scope, left), ignore_punctuation)
-            != coerce_punctuation(char_kind(&scope, right), ignore_punctuation)
+        classifier.kind(left) != classifier.kind(right)
     });
 
     Some(start..end)
@@ -362,11 +355,14 @@ fn around_word(
     ignore_punctuation: bool,
 ) -> Option<Range<DisplayPoint>> {
     let offset = relative_to.to_offset(map, Bias::Left);
-    let scope = map.buffer_snapshot.language_scope_at(offset);
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(offset)
+        .ignore_punctuation(ignore_punctuation);
     let in_word = map
         .buffer_chars_at(offset)
         .next()
-        .map(|(c, _)| char_kind(&scope, c) != CharKind::Whitespace)
+        .map(|(c, _)| !classifier.is_whitespace(c))
         .unwrap_or(false);
 
     if in_word {
@@ -390,24 +386,22 @@ fn around_next_word(
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
 ) -> Option<Range<DisplayPoint>> {
-    let scope = map
+    let classifier = map
         .buffer_snapshot
-        .language_scope_at(relative_to.to_point(map));
+        .char_classifier_at(relative_to.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     // Get the start of the word
     let start = movement::find_preceding_boundary_display_point(
         map,
         right(map, relative_to, 1),
         FindRange::SingleLine,
-        |left, right| {
-            coerce_punctuation(char_kind(&scope, left), ignore_punctuation)
-                != coerce_punctuation(char_kind(&scope, right), ignore_punctuation)
-        },
+        |left, right| classifier.kind(left) != classifier.kind(right),
     );
 
     let mut word_found = false;
     let end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right| {
-        let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-        let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+        let left_kind = classifier.kind(left);
+        let right_kind = classifier.kind(right);
 
         let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
 

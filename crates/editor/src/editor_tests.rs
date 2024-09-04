@@ -7507,6 +7507,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
                 resolve_provider: Some(true),
                 ..Default::default()
             }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
             ..Default::default()
         },
         cx,
@@ -7534,6 +7535,37 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+
+    let _handler = handle_signature_help_request(
+        &mut cx,
+        lsp::SignatureHelp {
+            signatures: vec![lsp::SignatureInformation {
+                label: "test signature".to_string(),
+                documentation: None,
+                parameters: Some(vec![lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("foo: u8".to_string()),
+                    documentation: None,
+                }]),
+                active_parameter: None,
+            }],
+            active_signature: None,
+            active_parameter: None,
+        },
+    );
+    cx.update_editor(|editor, cx| {
+        assert!(
+            !editor.signature_help_state.is_shown(),
+            "No signature help was called for"
+        );
+        editor.show_signature_help(&ShowSignatureHelp, cx);
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, _| {
+        assert!(
+            !editor.signature_help_state.is_shown(),
+            "No signature help should be shown when completions menu is open"
+        );
+    });
 
     let apply_additional_edits = cx.update_editor(|editor, cx| {
         editor.context_menu_next(&Default::default(), cx);

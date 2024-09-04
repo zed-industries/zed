@@ -2,7 +2,7 @@ use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
 use gpui::Model;
-use language::{char_kind, Buffer, BufferSnapshot};
+use language::{Buffer, BufferSnapshot};
 use regex::{Captures, Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{
@@ -30,6 +30,7 @@ pub struct SearchInputs {
     query: Arc<str>,
     files_to_include: PathMatcher,
     files_to_exclude: PathMatcher,
+    buffers: Option<Vec<Model<Buffer>>>,
 }
 
 impl SearchInputs {
@@ -41,6 +42,9 @@ impl SearchInputs {
     }
     pub fn files_to_exclude(&self) -> &PathMatcher {
         &self.files_to_exclude
+    }
+    pub fn buffers(&self) -> &Option<Vec<Model<Buffer>>> {
+        &self.buffers
     }
 }
 #[derive(Clone, Debug)]
@@ -73,6 +77,7 @@ impl SearchQuery {
         include_ignored: bool,
         files_to_include: PathMatcher,
         files_to_exclude: PathMatcher,
+        buffers: Option<Vec<Model<Buffer>>>,
     ) -> Result<Self> {
         let query = query.to_string();
         let search = AhoCorasickBuilder::new()
@@ -82,6 +87,7 @@ impl SearchQuery {
             query: query.into(),
             files_to_exclude,
             files_to_include,
+            buffers,
         };
         Ok(Self::Text {
             search: Arc::new(search),
@@ -100,6 +106,7 @@ impl SearchQuery {
         include_ignored: bool,
         files_to_include: PathMatcher,
         files_to_exclude: PathMatcher,
+        buffers: Option<Vec<Model<Buffer>>>,
     ) -> Result<Self> {
         let mut query = query.to_string();
         let initial_query = Arc::from(query.as_str());
@@ -120,6 +127,7 @@ impl SearchQuery {
             query: initial_query,
             files_to_exclude,
             files_to_include,
+            buffers,
         };
         Ok(Self::Regex {
             regex,
@@ -141,6 +149,7 @@ impl SearchQuery {
                 message.include_ignored,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
+                None,
             )
         } else {
             Self::text(
@@ -150,6 +159,7 @@ impl SearchQuery {
                 message.include_ignored,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
+                None,
             )
         }
     }
@@ -163,6 +173,7 @@ impl SearchQuery {
                 message.include_ignored,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
+                None, // search opened only don't need search remote
             )
         } else {
             Self::text(
@@ -172,6 +183,7 @@ impl SearchQuery {
                 message.include_ignored,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
+                None, // search opened only don't need search remote
             )
         }
     }
@@ -319,13 +331,17 @@ impl SearchQuery {
 
                     let mat = mat.unwrap();
                     if *whole_word {
-                        let scope = buffer.language_scope_at(range_offset + mat.start());
-                        let kind = |c| char_kind(&scope, c);
+                        let classifier = buffer.char_classifier_at(range_offset + mat.start());
 
-                        let prev_kind = rope.reversed_chars_at(mat.start()).next().map(kind);
-                        let start_kind = kind(rope.chars_at(mat.start()).next().unwrap());
-                        let end_kind = kind(rope.reversed_chars_at(mat.end()).next().unwrap());
-                        let next_kind = rope.chars_at(mat.end()).next().map(kind);
+                        let prev_kind = rope
+                            .reversed_chars_at(mat.start())
+                            .next()
+                            .map(|c| classifier.kind(c));
+                        let start_kind =
+                            classifier.kind(rope.chars_at(mat.start()).next().unwrap());
+                        let end_kind =
+                            classifier.kind(rope.reversed_chars_at(mat.end()).next().unwrap());
+                        let next_kind = rope.chars_at(mat.end()).next().map(|c| classifier.kind(c));
                         if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
                             continue;
                         }
@@ -420,23 +436,31 @@ impl SearchQuery {
         self.as_inner().files_to_exclude()
     }
 
-    pub fn file_matches(&self, file_path: Option<&Path>) -> bool {
-        match file_path {
-            Some(file_path) => {
-                let mut path = file_path.to_path_buf();
-                loop {
-                    if self.files_to_exclude().is_match(&path) {
-                        return false;
-                    } else if self.files_to_include().sources().is_empty()
-                        || self.files_to_include().is_match(&path)
-                    {
-                        return true;
-                    } else if !path.pop() {
-                        return false;
-                    }
-                }
+    pub fn buffers(&self) -> Option<&Vec<Model<Buffer>>> {
+        self.as_inner().buffers.as_ref()
+    }
+
+    pub fn is_opened_only(&self) -> bool {
+        self.as_inner().buffers.is_some()
+    }
+
+    pub fn filters_path(&self) -> bool {
+        !(self.files_to_exclude().sources().is_empty()
+            && self.files_to_include().sources().is_empty())
+    }
+
+    pub fn file_matches(&self, file_path: &Path) -> bool {
+        let mut path = file_path.to_path_buf();
+        loop {
+            if self.files_to_exclude().is_match(&path) {
+                return false;
+            } else if self.files_to_include().sources().is_empty()
+                || self.files_to_include().is_match(&path)
+            {
+                return true;
+            } else if !path.pop() {
+                return false;
             }
-            None => self.files_to_include().sources().is_empty(),
         }
     }
     pub fn as_inner(&self) -> &SearchInputs {

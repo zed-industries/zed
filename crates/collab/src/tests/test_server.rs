@@ -301,7 +301,7 @@ impl TestServer {
             dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
             language_model::LanguageModelRegistry::test(cx);
-            assistant::context_store::init(&client);
+            assistant::context_store::init(&client.clone().into());
         });
 
         client
@@ -916,6 +916,7 @@ impl TestClient {
                 self.app_state.user_store.clone(),
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
+                None,
                 cx,
             )
         })
