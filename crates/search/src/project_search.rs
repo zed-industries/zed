@@ -114,15 +114,11 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-<<<<<<< HEAD
-pub fn is_contains_uppercase(str: &str) -> bool {
+fn is_contains_uppercase(str: &str) -> bool {
     str.chars().any(|c| c.is_uppercase())
 }
 
-struct ProjectSearch {
-=======
 pub struct ProjectSearch {
->>>>>>> main
     project: Model<Project>,
     excerpts: Model<MultiBuffer>,
     pending_search: Option<Task<Option<()>>>,
