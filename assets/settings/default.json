@@ -289,6 +289,7 @@
   // 3. Never populate the search query
   //    "never"
   "seed_search_query_from_cursor": "always",
+  "use_smartcase_search": false,
   // Inlay hint related settings
   "inlay_hints": {
     // Global switch to toggle hints on and off, switched off by default.

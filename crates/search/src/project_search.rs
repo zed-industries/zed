@@ -114,6 +114,10 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
+fn is_contains_uppercase(str: &str) -> bool {
+    str.chars().any(|c| c.is_uppercase())
+}
+
 pub struct ProjectSearch {
     project: Model<Project>,
     excerpts: Model<MultiBuffer>,
@@ -651,7 +655,22 @@ impl ProjectSearchView {
         });
         // Subscribe to query_editor in order to reraise editor events for workspace item activation purposes
         subscriptions.push(
-            cx.subscribe(&query_editor, |_, _, event: &EditorEvent, cx| {
+            cx.subscribe(&query_editor, |this, _, event: &EditorEvent, cx| {
+                match event {
+                    EditorEvent::Edited { .. } => {
+                        if EditorSettings::get_global(cx).use_smartcase_search {
+                            let query = this.search_query_text(cx);
+                            if !query.is_empty() {
+                                if this.search_options.contains(SearchOptions::CASE_SENSITIVE)
+                                    != is_contains_uppercase(&query)
+                                {
+                                    this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
                 cx.emit(ViewEvent::EditorEvent(event.clone()))
             }),
         );
@@ -1055,6 +1074,15 @@ impl ProjectSearchView {
     fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
         self.query_editor
             .update(cx, |query_editor, cx| query_editor.set_text(query, cx));
+        if EditorSettings::get_global(cx).use_smartcase_search {
+            if !query.is_empty() {
+                if self.search_options.contains(SearchOptions::CASE_SENSITIVE)
+                    != is_contains_uppercase(query)
+                {
+                    self.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx)
+                }
+            }
+        }
     }
 
     fn focus_results_editor(&mut self, cx: &mut ViewContext<Self>) {

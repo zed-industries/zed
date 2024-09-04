@@ -20,6 +20,7 @@ pub struct EditorSettings {
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
+    pub use_smartcase_search: bool,
     pub multi_cursor_modifier: MultiCursorModifier,
     pub redact_private_values: bool,
     pub expand_excerpt_lines: u32,
@@ -218,6 +219,7 @@ pub struct EditorSettingsContent {
     ///
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
+    pub use_smartcase_search: Option<bool>,
     /// The key to use for adding multiple cursors
     ///
     /// Default: alt

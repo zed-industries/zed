@@ -302,11 +302,15 @@ impl Vim {
                         query = search_bar.query(cx);
                     };
 
-                    Some(search_bar.search(
-                        &query,
-                        Some(SearchOptions::CASE_SENSITIVE | SearchOptions::REGEX),
-                        cx,
-                    ))
+                    let mut options = SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE;
+                    if search_bar.should_use_smartcase_search(cx) {
+                        options.set(
+                            SearchOptions::CASE_SENSITIVE,
+                            search_bar.is_contains_uppercase(&query),
+                        );
+                    }
+
+                    Some(search_bar.search(&query, Some(options), cx))
                 });
                 let Some(search) = search else { return };
                 let search_bar = search_bar.downgrade();
@@ -368,7 +372,12 @@ impl Vim {
                 } else {
                     replacement.search
                 };
-
+                if search_bar.should_use_smartcase_search(cx) {
+                    options.set(
+                        SearchOptions::CASE_SENSITIVE,
+                        search_bar.is_contains_uppercase(&search),
+                    );
+                }
                 search_bar.set_replacement(Some(&replacement.replacement), cx);
                 Some(search_bar.search(&search, Some(options), cx))
             });
