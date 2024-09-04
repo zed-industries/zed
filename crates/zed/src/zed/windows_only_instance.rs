@@ -11,7 +11,7 @@ use windows::{
         System::{
             Memory::{MapViewOfFile, OpenFileMappingW, UnmapViewOfFile, FILE_MAP_WRITE},
             Threading::{
-                CreateEventW, CreateMutexW, OpenEventW, SetEvent, EVENT_MODIFY_STATE,
+                CreateMutexW, OpenEventW, SetEvent, EVENT_MODIFY_STATE,
                 SYNCHRONIZATION_ACCESS_RIGHTS,
             },
         },
@@ -28,14 +28,14 @@ pub fn register_zed_identifier() {
 }
 
 pub fn check_single_instance() -> bool {
-    // if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
-    //     return true;
-    // }
+    if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
+        return true;
+    }
 
     check_single_instance_event()
 }
 
-pub fn send_instance_message(message: &str) {
+pub(crate) fn send_instance_message(message: &str) {
     send_message_to_other_instance(message);
     unsafe {
         let event = OpenEventW(

@@ -123,13 +123,15 @@ impl WindowsPlatform {
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
         let validation_number = rand::random::<usize>();
         let single_instance_event = unsafe {
-            Owned::new(CreateEventW(
-                None,
-                false,
-                false,
-                &HSTRING::from(get_app_instance_event_identifier()),
+            Owned::new(
+                CreateEventW(
+                    None,
+                    false,
+                    false,
+                    &HSTRING::from(get_app_instance_event_identifier()),
+                )
+                .expect("Unable to create single instance event."),
             )
-            .expect("Unable to open single instance event, make sure you have called `check_single_instance` first!"))
         };
         let shared_memory_handle = unsafe {
             Owned::new(
