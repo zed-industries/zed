@@ -243,7 +243,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "collections",
  "futures 0.3.30",
  "http_client",
  "isahc",
