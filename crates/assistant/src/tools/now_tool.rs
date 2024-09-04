@@ -44,6 +44,7 @@ impl Tool for NowTool {
         _workspace: WeakView<workspace::Workspace>,
         _cx: &mut WindowContext,
     ) -> Task<Result<String>> {
+        dbg!("running now tool");
         let input: FileToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),

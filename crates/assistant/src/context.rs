@@ -492,7 +492,7 @@ pub struct Context {
     edits_since_last_parse: language::Subscription,
     finished_slash_commands: HashSet<SlashCommandId>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
-    pending_tool_uses_by_id: HashMap<String, PendingToolUse>,
+    pending_tool_uses_by_id: HashMap<Arc<str>, PendingToolUse>,
     message_anchors: Vec<MessageAnchor>,
     images: HashMap<u64, (Arc<RenderImage>, Shared<Task<Option<LanguageModelImage>>>)>,
     image_anchors: Vec<ImageAnchor>,
@@ -1012,7 +1012,7 @@ impl Context {
         self.pending_tool_uses_by_id.values().collect()
     }
 
-    pub fn get_tool_use_by_id(&self, id: &String) -> Option<&PendingToolUse> {
+    pub fn get_tool_use_by_id(&self, id: &Arc<str>) -> Option<&PendingToolUse> {
         self.pending_tool_uses_by_id.get(id)
     }
 
@@ -1919,6 +1919,44 @@ impl Context {
         }
     }
 
+    pub fn insert_tool_output(
+        &mut self,
+        tool_id: Arc<str>,
+        tool_range: Range<language::Anchor>,
+        output: Task<Result<String>>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let insert_output_task = cx.spawn(|this, mut cx| {
+            let tool_id = tool_id.clone();
+            async move {
+                let output = output.await;
+                this.update(&mut cx, |this, cx| match output {
+                    Ok(output) => {
+                        this.buffer.update(cx, |buffer, cx| {
+                            let start = tool_range.start.to_offset(buffer);
+                            let end = tool_range.end.to_offset(buffer);
+                            // let end = start + output.len();
+
+                            buffer.edit([(end..end, output)], None, cx);
+                        });
+                    }
+                    Err(err) => {
+                        if let Some(tool_use) = this.pending_tool_uses_by_id.get_mut(&tool_id) {
+                            tool_use.status = PendingToolUseStatus::Error(err.to_string());
+                        }
+                    }
+                })
+                .ok();
+            }
+        });
+
+        if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_id) {
+            tool_use.status = PendingToolUseStatus::Running {
+                _task: insert_output_task.shared(),
+            };
+        }
+    }
+
     pub fn completion_provider_changed(&mut self, cx: &mut ModelContext<Self>) {
         self.count_remaining_tokens(cx);
     }
@@ -2036,10 +2074,11 @@ impl Context {
                                         let source_range = buffer.anchor_after(start_ix)
                                             ..buffer.anchor_after(end_ix);
 
+                                        let tool_use_id: Arc<str> = tool_use.id.into();
                                         this.pending_tool_uses_by_id.insert(
-                                            tool_use.id.clone(),
+                                            tool_use_id.clone(),
                                             PendingToolUse {
-                                                id: tool_use.id,
+                                                id: tool_use_id,
                                                 name: tool_use.name,
                                                 input: tool_use.input,
                                                 status: PendingToolUseStatus::Idle,
@@ -2816,7 +2855,7 @@ impl FeatureFlag for ToolUseFeatureFlag {
 
 #[derive(Debug, Clone)]
 pub struct PendingToolUse {
-    pub id: String,
+    pub id: Arc<str>,
     pub name: String,
     pub input: serde_json::Value,
     pub status: PendingToolUseStatus,
