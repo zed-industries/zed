@@ -14499,7 +14499,7 @@ dependencies = [
 
 [[package]]
 name = "zed_svelte"
-version = "0.0.3"
+version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
