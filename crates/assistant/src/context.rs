@@ -405,7 +405,7 @@ impl Message {
 
         let mut range_start = self.offset_range.start;
         for (image_offset, message_image) in self.image_offsets.iter() {
-            if *image_offset != range_start {
+            if range_start != *image_offset {
                 content.extend(Self::collect_text_content(
                     buffer,
                     range_start..*image_offset,
