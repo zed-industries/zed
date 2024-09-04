@@ -20,6 +20,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
+use assistant_tool::ToolRegistry;
 use client::{proto, Client, Status};
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
@@ -2088,6 +2089,27 @@ impl ContextEditor {
                             self.workspace.clone(),
                             cx,
                         );
+                    }
+                }
+            }
+            ContextEvent::UsePendingTools => {
+                let pending_tool_uses = self
+                    .context
+                    .read(cx)
+                    .pending_tool_uses()
+                    .into_iter()
+                    .filter(|tool_use| tool_use.status.is_idle())
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                for tool_use in pending_tool_uses {
+                    let tool_registry = ToolRegistry::global(cx);
+                    if let Some(tool) = tool_registry.tool(&tool_use.name) {
+                        let task = tool.run(tool_use.input, self.workspace.clone(), cx);
+
+                        self.context.update(cx, |context, cx| {
+                            context.insert_tool_output(tool_use.id.clone(), task, cx);
+                        });
                     }
                 }
             }
