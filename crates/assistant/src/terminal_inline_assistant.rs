@@ -623,7 +623,7 @@ impl Render for PromptEditor {
             .child(div().flex_1().child(self.render_prompt_editor(cx)))
             .child(
                 h_flex()
-                    .gap_2()
+                    .gap_1()
                     .pr_4()
                     .children(self.render_token_count(cx))
                     .children(buttons),
