@@ -1,69 +1,85 @@
-use anyhow::{Context as _, Result};
-use clap::{Parser, Subcommand};
-use gpui::AsyncAppContext;
-use http_client::http;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use anyhow::Result;
+use clap::Parser;
+use collections::BTreeMap;
+use gpui::BackgroundExecutor;
+use http_client::Method;
 use serde::{Deserialize, Serialize};
-use smol::io::{AsyncReadExt, BufReader};
+use smol::io::AsyncReadExt;
 use std::{
-    collections::BTreeSet,
     fs,
+    ops::Range,
     path::Path,
     process::{exit, Command, Stdio},
+    sync::{atomic::AtomicUsize, Arc},
 };
 
-#[derive(Parser)]
+const CODESEARCH_NET_DIR: &'static str = "target/datasets/code-search-net";
+const EVAL_REPOS_DIR: &'static str = "target/datasets/eval-repos";
+
+#[derive(clap::Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
 
-const DATASETS_DIR: &'static str = "target/datasets";
-const CODESEARCH_NET: &'static str = "code-search-net";
-const GITHUB_URL: &str = "https://github.com";
-
-const CODE_SEARCH_NET_LANGUAGES: &[&str] = &[
-    "python",
-    "javascript",
-    "go",
-    // "java", "ruby", "php",
-];
-
-#[derive(Subcommand)]
+#[derive(clap::Subcommand)]
 enum Commands {
-    Install {},
+    Fetch {},
     Run {
         #[arg(value_name = "LANGUAGE")]
         language: String,
     },
 }
+
+#[derive(Clone, Deserialize, Serialize)]
+struct EvaluationProject {
+    repo: String,
+    sha: String,
+    queries: Vec<EvaluationQuery>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct EvaluationQuery {
+    query: String,
+    results: Vec<EvaluationResult>,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+struct EvaluationResult {
+    file: String,
+    lines: Range<usize>,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Install {} => {
+        Commands::Fetch {} => {
             gpui::App::headless().run(|cx| {
-                cx.spawn(|mut cx| async move {
-                    if let Err(err) = install(&mut cx).await {
-                        eprintln!("Error: {}", err);
-                        exit(1);
-                    }
-                    exit(0);
-                })
-                .detach();
+                let executor = cx.background_executor().clone();
+                executor
+                    .clone()
+                    .spawn(async move {
+                        if let Err(err) = fetch_evaluation_resources(&executor).await {
+                            eprintln!("Error: {}", err);
+                            exit(1);
+                        }
+                        exit(0);
+                    })
+                    .detach();
             });
         }
-        Commands::Run { language } => {
-            gpui::App::headless().run(|cx| {
-                cx.spawn(|mut cx| async move {
-                    // if let Err(err) = fetch_code_search_net_repos(&mut cx).await {
-                    //     eprintln!("Error: {}", err);
-                    //     std::process::exit(1);
-                    // }
-                    exit(0);
-                })
-                .detach();
+        Commands::Run { .. } => {
+            gpui::App::headless().run(|_cx| {
+                // cx.spawn(|mut cx| async move {
+                //     // if let Err(err) = fetch_code_search_net_repos(&mut cx).await {
+                //     //     eprintln!("Error: {}", err);
+                //     //     std::process::exit(1);
+                //     // }
+                //     exit(0);
+                // })
+                // .detach();
             });
         }
     }
@@ -71,327 +87,226 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-async fn install(cx: &mut AsyncAppContext) -> Result<()> {
-    fetch_code_search_net_resources(cx).await?;
-    fetch_code_search_net_repos(cx).await?;
+async fn fetch_evaluation_resources(executor: &BackgroundExecutor) -> Result<()> {
+    fetch_code_search_net_resources().await?;
+    fetch_eval_repos(executor).await?;
     Ok(())
 }
 
-async fn fetch_code_search_net_resources(cx: &mut AsyncAppContext) -> Result<()> {
-    let destination_dir = Path::new(DATASETS_DIR).join(CODESEARCH_NET);
-    fs::create_dir_all(&destination_dir).with_context(|| {
-        format!(
-            "Failed to create destination directory: {:?}",
-            destination_dir
-        )
-    })?;
+async fn fetch_code_search_net_resources() -> Result<()> {
+    eprintln!("Fetching CodeSearchNet evaluations...");
 
+    let annotations_url = "https://raw.githubusercontent.com/github/CodeSearchNet/master/resources/annotationStore.csv";
+
+    let dataset_dir = Path::new(CODESEARCH_NET_DIR);
+    fs::create_dir_all(&dataset_dir).expect("failed to create CodeSearchNet directory");
+
+    // Fetch the annotations CSV, which contains the human-annotated search relevances
     let http_client = http_client::HttpClientWithProxy::new(None, None);
+    let annotations_path = dataset_dir.join("annotations.csv");
+    let annotations_csv_content = if annotations_path.exists() {
+        fs::read_to_string(&annotations_path).expect("failed to read annotations")
+    } else {
+        let response = http_client
+            .get(annotations_url, Default::default(), true)
+            .await
+            .expect("failed to fetch annotations csv");
+        let mut body = String::new();
+        response
+            .into_body()
+            .read_to_string(&mut body)
+            .await
+            .expect("failed to read annotations.csv response");
+        fs::write(annotations_path, &body).expect("failed to write annotations.csv");
+        body
+    };
 
-    let multi_progress = MultiProgress::new();
-    let sty = ProgressStyle::default_bar()
-        .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
-        .unwrap()
-        .progress_chars("##-");
+    // Parse the annotations CSV. Skip over queries with zero relevance.
+    let rows = annotations_csv_content.lines().filter_map(|line| {
+        let mut values = line.split(',');
+        let _language = values.next()?;
+        let query = values.next()?;
+        let github_url = values.next()?;
+        let score = values.next()?;
 
-    let urls = vec![
-        ("annotation_store.csv", "https://raw.githubusercontent.com/github/CodeSearchNet/master/resources/annotationStore.csv"),
-        ("queries.csv", "https://raw.githubusercontent.com/github/CodeSearchNet/master/resources/queries.csv"),
-    ];
-    for (filename, url) in urls {
-        let file_path = destination_dir.join(filename);
-        if file_path.exists() {
-            println!("{} already exists, skipping download...", filename);
-            continue;
+        if score == "0" {
+            return None;
         }
 
-        cx.background_executor()
-            .spawn({
-                let file_path = file_path.clone();
-                let http_client = http_client.clone();
-                async move {
-                    let mut response = http_client
-                        .get(url, Default::default(), true)
-                        .await?
-                        .into_body();
-                    let mut buf = Vec::new();
-                    response.read_to_end(&mut buf).await?;
-                    fs::write(file_path, &buf)
-                        .with_context(|| format!("Failed to write {}", filename))?;
-                    anyhow::Ok(())
-                }
-            })
-            .await
-            .with_context(|| format!("Failed to download from URL: {}", url))?;
-    }
-
-    for language in CODE_SEARCH_NET_LANGUAGES {
-        let language_dir = destination_dir.join(language);
-        let language_zip_path = destination_dir.join(format!("{language}.zip"));
-        if language_dir.exists() && language_dir.is_dir() {
-            println!("Directory for {} already exists, skipping...", language);
-            continue;
-        }
-
-        let url = format!(
-            "https://huggingface.co/datasets/code-search-net/code_search_net/resolve/main/data/{language}.zip"
-        );
-
-        let response = cx
-            .background_executor()
-            .spawn({
-                let http_client = http_client.clone();
-                let url = url.clone();
-                async move { http_client.get(&url, Default::default(), true).await }
-            })
-            .await
-            .with_context(|| format!("Failed to download dataset from URL: {}", url))?;
-
-        let total_size = response
-            .headers()
-            .get(http::header::CONTENT_LENGTH)
-            .and_then(|h| h.to_str().ok()?.parse().ok())
-            .context("No valid Content-Length header found")?;
-
-        let should_download = match fs::metadata(&language_zip_path) {
-            Ok(metadata) => metadata.len() != total_size,
-            Err(_) => true,
+        let url_path = github_url.strip_prefix("https://github.com/")?;
+        let (url_path, hash) = url_path.split_once('#')?;
+        let (repo_name, url_path) = url_path.split_once("/blob/")?;
+        let (sha, file_path) = url_path.split_once('/')?;
+        let line_range = if let Some((start, end)) = hash.split_once('-') {
+            start.strip_prefix("L")?.parse::<usize>().ok()?..end.strip_prefix("L")?.parse().ok()?
+        } else {
+            let row = hash.strip_prefix("L")?.parse().ok()?;
+            row..row + 1
         };
+        Some((repo_name, sha, query, file_path, line_range))
+    });
 
-        if should_download {
-            let pb = multi_progress.add(ProgressBar::new(total_size));
-            pb.set_style(sty.clone());
-            pb.set_message(format!("Downloading {}", language));
+    // Group the annotations by repo and sha.
+    let mut evaluations_by_repo = BTreeMap::new();
+    for (repo_name, sha, query, file_path, lines) in rows {
+        let evaluation_project = evaluations_by_repo
+            .entry((repo_name, sha))
+            .or_insert_with(|| EvaluationProject {
+                repo: repo_name.to_string(),
+                sha: sha.to_string(),
+                queries: Vec::new(),
+            });
 
-            let mut body = response.into_body();
-            let mut zip_content = Vec::new();
-            let mut buffer = [0; 8192];
-
-            while let Ok(n) = body.read(&mut buffer).await {
-                if n == 0 {
-                    break;
-                }
-                zip_content.extend_from_slice(&buffer[..n]);
-                pb.inc(n as u64);
-            }
-
-            pb.finish_with_message(format!("{} downloaded", language));
-
-            fs::write(&language_zip_path, &zip_content).with_context(|| {
-                format!("Failed to write zip file: {}", language_zip_path.display())
-            })?;
+        let ix = evaluation_project
+            .queries
+            .iter()
+            .position(|entry| entry.query == query)
+            .unwrap_or_else(|| {
+                evaluation_project.queries.push(EvaluationQuery {
+                    query: query.to_string(),
+                    results: Vec::new(),
+                });
+                evaluation_project.queries.len() - 1
+            });
+        let results = &mut evaluation_project.queries[ix].results;
+        let result = EvaluationResult {
+            file: file_path.to_string(),
+            lines,
+        };
+        if !results.contains(&result) {
+            results.push(result);
         }
-
-        let file = fs::File::open(&language_zip_path)
-            .with_context(|| format!("Failed to open zip file: {}", language_zip_path.display()))?;
-        let mut archive = zip::ZipArchive::new(file).with_context(|| {
-            format!(
-                "Failed to read zip archive: {}",
-                language_zip_path.display()
-            )
-        })?;
-
-        let pb = multi_progress.add(ProgressBar::new(archive.len() as u64));
-        pb.set_style(sty.clone());
-        pb.set_message(format!("Extracting {}", language));
-
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i).unwrap();
-            let path = match file.enclosed_name() {
-                Some(path) => destination_dir.join(path),
-                None => continue,
-            };
-
-            if file.is_dir() {
-                fs::create_dir_all(path).unwrap();
-            } else {
-                if let Some(p) = path.parent() {
-                    if !p.exists() {
-                        fs::create_dir_all(p).unwrap();
-                    }
-                }
-
-                let mut outfile = fs::File::create(&path).unwrap();
-                std::io::copy(&mut file, &mut outfile).unwrap();
-            }
-
-            pb.inc(1);
-        }
-
-        pb.finish_with_message(format!("{} extracted", language));
-
-        // fs::remove_file(&language_zip_path).with_context(|| {
-        //     format!("Failed to remove zip file: {}", language_zip_path.display())
-        // })?;
     }
 
-    println!(
-        "Datasets installed successfully in {}",
-        destination_dir.display()
+    eprint!("Checking repositories...");
+    let mut evaluations = Vec::new();
+    let len = evaluations_by_repo.len();
+    for (ix, ((repo, _), evaluation)) in evaluations_by_repo.into_iter().enumerate() {
+        eprint!("\rChecking repositories ({ix}/{len})...",);
+        let repo_response = http_client
+            .send(
+                http_client::Request::builder()
+                    .method(Method::HEAD)
+                    .uri(format!("https://github.com/{}", repo))
+                    .body(Default::default())
+                    .expect(""),
+            )
+            .await
+            .expect("failed to check github repo");
+        if !repo_response.status().is_success() && !repo_response.status().is_redirection() {
+            eprintln!(
+                "Repo {repo} is no longer public ({:?}). Skipping",
+                repo_response.status()
+            );
+            continue;
+        }
+        evaluations.push(evaluation);
+    }
+
+    let evaluations_path = dataset_dir.join("evaluations.json");
+    fs::write(
+        &evaluations_path,
+        serde_json::to_vec_pretty(&evaluations).unwrap(),
+    )
+    .unwrap();
+
+    eprintln!(
+        "Fetched CodeSearchNet evaluations into {}",
+        evaluations_path.display()
     );
+
     Ok(())
 }
 
-#[derive(Deserialize, Serialize, PartialOrd, Ord, PartialEq, Eq)]
-struct RepoInfo {
-    repo: String,
-    sha: String,
-}
+async fn fetch_eval_repos(executor: &BackgroundExecutor) -> Result<()> {
+    let dataset_dir = Path::new(CODESEARCH_NET_DIR);
+    let evaluations_path = dataset_dir.join("evaluations.json");
+    let repos_dir = Path::new(EVAL_REPOS_DIR);
 
-async fn fetch_code_search_net_repos(cx: &mut AsyncAppContext) -> Result<()> {
-    for language in CODE_SEARCH_NET_LANGUAGES {
-        let dataset_dir = Path::new(DATASETS_DIR).join(CODESEARCH_NET);
-        let language_dir = dataset_dir.join(&language);
-        let mut repos = BTreeSet::new();
+    let evaluations = fs::read(&evaluations_path).expect("failed to read evaluations.json");
+    let evaluations: Vec<EvaluationProject> = serde_json::from_slice(&evaluations).unwrap();
 
-        let pickle_file = dataset_dir.join(format!("{}_dedupe_definitions_v2.pkl", language));
-        if !pickle_file.exists() {
-            return Err(anyhow::anyhow!("Pickle file for {} not found", language));
-        }
+    eprint!("Fetching evaluation repositories...");
 
-        let pickle_path = pickle_file.to_str().unwrap();
-        let output = Command::new("python3")
-            .args(&[
-                "-c",
-                r#"
-import pickle
-import sys
+    executor
+        .scoped(move |scope| {
+            let done_count = Arc::new(AtomicUsize::new(0));
+            let len = evaluations.len();
+            for chunk in evaluations.chunks(evaluations.len() / 8) {
+                let chunk = chunk.to_vec();
+                let done_count = done_count.clone();
+                scope.spawn(async move {
+                    for EvaluationProject { repo, sha, .. } in chunk {
+                        eprint!(
+                            "\rFetching evaluation repositories ({}/{})...",
+                            done_count.load(std::sync::atomic::Ordering::SeqCst),
+                            len,
+                        );
 
-with open(sys.argv[1], 'rb') as f:
-    data = pickle.load(f)
-    for item in data:
-        print(f"{item['nwo']},{item['sha']}")
-        "#,
-                pickle_path,
-            ])
-            .output()?;
+                        let repo_dir = repos_dir.join(&repo.replace("/", "__"));
+                        if !repo_dir.join(".git").exists() {
+                            fs::create_dir_all(&repo_dir).unwrap();
 
-        if !output.status.success() {
-            return Err(anyhow::anyhow!(
-                "Failed to run Python script: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+                            let init_output = Command::new("git")
+                                .current_dir(&repo_dir)
+                                .args(&["init"])
+                                .output()
+                                .unwrap();
+                            if !init_output.status.success() {
+                                eprintln!(
+                                    "Failed to initialize git repository for {}: {}",
+                                    repo,
+                                    String::from_utf8_lossy(&init_output.stderr)
+                                );
+                                continue;
+                            }
+                        }
 
-        let output_str = String::from_utf8(output.stdout)?;
+                        let url = format!("https://github.com/{}.git", repo);
+                        Command::new("git")
+                            .current_dir(&repo_dir)
+                            .args(&["remote", "add", "-f", "origin", &url])
+                            .stdin(Stdio::null())
+                            .output()
+                            .unwrap();
 
-        for line in output_str.lines() {
-            let parts: Vec<&str> = line.split(',').collect();
-            if parts.len() == 2 {
-                repos.insert(RepoInfo {
-                    repo: parts[0].to_string(),
-                    sha: parts[1].to_string(),
+                        let fetch_output = Command::new("git")
+                            .current_dir(&repo_dir)
+                            .args(&["fetch", "--depth", "1", "origin", &sha])
+                            .stdin(Stdio::null())
+                            .output()
+                            .unwrap();
+                        if !fetch_output.status.success() {
+                            eprintln!(
+                                "Failed to fetch {} for {}: {}",
+                                sha,
+                                repo,
+                                String::from_utf8_lossy(&fetch_output.stderr)
+                            );
+                            continue;
+                        }
+
+                        let checkout_output = Command::new("git")
+                            .current_dir(&repo_dir)
+                            .args(&["checkout", &sha])
+                            .output()
+                            .unwrap();
+                        if !checkout_output.status.success() {
+                            eprintln!(
+                                "Failed to checkout {} for {}: {}",
+                                sha,
+                                repo,
+                                String::from_utf8_lossy(&checkout_output.stderr)
+                            );
+                            continue;
+                        }
+
+                        done_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
                 });
             }
-        }
+        })
+        .await;
 
-        let repos_json_path = dataset_dir.join(format!("{language}_repos.json"));
-        fs::write(&repos_json_path, serde_json::to_vec_pretty(&repos).unwrap()).unwrap();
-
-        return Ok(());
-
-        // let test_file = language_dir
-        //     .join("final/jsonl/test")
-        //     .join(format!("{}_test_0.jsonl.gz", language));
-
-        // if !test_file.exists() {
-        //     return Err(anyhow::anyhow!("Test file for {} not found", language));
-        // }
-
-        // let file = smol::fs::File::open(&test_file).await?;
-        // let reader = BufReader::new(file);
-        // let gz = BufReader::new(GzipDecoder::new(reader));
-        // let mut lines = gz.lines();
-
-        // while let Some(line) = lines.next().await {
-        //     let line = line?;
-        //     if let Ok(repo_info) = serde_json::from_str::<RepoInfo>(&line) {
-        //         repos.insert((repo_info.repo, repo_info.sha));
-        //     }
-        // }
-
-        let repos_dir = dataset_dir.join("repos");
-        fs::create_dir_all(&repos_dir)?;
-
-        let multi_progress = MultiProgress::new();
-        let sty = ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
-            .unwrap()
-            .progress_chars("##-");
-
-        let pb = multi_progress.add(ProgressBar::new(repos.len() as u64));
-        pb.set_style(sty);
-        pb.set_message(format!("Cloning repositories for {}", language));
-
-        for RepoInfo { repo, sha } in repos {
-            let repo_dir = repos_dir.join(&repo);
-            if !repo_dir.exists() {
-                fs::create_dir_all(&repo_dir)?;
-                let url = format!("https://github.com/{}.git", repo);
-
-                let init_output = Command::new("git")
-                    .current_dir(&repo_dir)
-                    .args(&["init"])
-                    .output()?;
-                if !init_output.status.success() {
-                    eprintln!(
-                        "Failed to initialize git repository for {}: {}",
-                        repo,
-                        String::from_utf8_lossy(&init_output.stderr)
-                    );
-                    continue;
-                }
-
-                let remote_output = Command::new("git")
-                    .current_dir(&repo_dir)
-                    .args(&["remote", "add", "origin", &url])
-                    .stdin(Stdio::null())
-                    .output()?;
-                if !remote_output.status.success() {
-                    eprintln!(
-                        "Failed to add remote for {}: {}",
-                        repo,
-                        String::from_utf8_lossy(&remote_output.stderr)
-                    );
-                    continue;
-                }
-
-                let fetch_output = Command::new("git")
-                    .current_dir(&repo_dir)
-                    .args(&["fetch", "--depth", "1", "origin", &sha])
-                    .stdin(Stdio::null())
-                    .output()?;
-                if !fetch_output.status.success() {
-                    eprintln!(
-                        "Failed to fetch {} for {}: {}",
-                        sha,
-                        repo,
-                        String::from_utf8_lossy(&fetch_output.stderr)
-                    );
-                    continue;
-                }
-
-                let checkout_output = Command::new("git")
-                    .current_dir(&repo_dir)
-                    .args(&["checkout", &sha])
-                    .output()?;
-                if !checkout_output.status.success() {
-                    eprintln!(
-                        "Failed to checkout {} for {}: {}",
-                        sha,
-                        repo,
-                        String::from_utf8_lossy(&checkout_output.stderr)
-                    );
-                    continue;
-                }
-            }
-
-            pb.inc(1);
-        }
-
-        pb.finish_with_message(format!("Finished cloning repositories for {}", language));
-
-        break;
-    }
     Ok(())
 }

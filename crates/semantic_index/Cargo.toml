@@ -22,15 +22,8 @@ name = "eval"
 path = "src/bin/eval.rs"
 
 [dependencies]
-
-indicatif = "0.17"
-
 clap.workspace = true
 tokio.workspace = true
-
-reqwest = { version = "0.11", features = ["json"] }
-zip = "0.6"
-
 async-compression.workspace = true
 anyhow.workspace = true
 client.workspace = true
