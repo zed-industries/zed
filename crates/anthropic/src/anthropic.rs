@@ -423,6 +423,14 @@ pub enum RequestContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        is_error: bool,
+        content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
