@@ -417,6 +417,7 @@ impl Message {
 
             range_start = *image_offset;
         }
+
         if range_start != self.offset_range.end {
             if let Some(text) =
                 Self::collect_text_content(buffer, range_start..self.offset_range.end)
@@ -1923,7 +1924,6 @@ impl Context {
     pub fn insert_tool_output(
         &mut self,
         tool_id: Arc<str>,
-        tool_range: Range<language::Anchor>,
         output: Task<Result<String>>,
         cx: &mut ModelContext<Self>,
     ) {
@@ -1932,13 +1932,15 @@ impl Context {
             async move {
                 let output = output.await;
                 this.update(&mut cx, |this, cx| match output {
-                    Ok(output) => {
-                        this.buffer.update(cx, |buffer, cx| {
-                            let start = tool_range.start.to_offset(buffer);
-                            let end = tool_range.end.to_offset(buffer);
-                            // let end = start + output.len();
+                    Ok(mut output) => {
+                        if !output.ends_with('\n') {
+                            output.push('\n');
+                        }
 
-                            buffer.edit([(end..end, output)], None, cx);
+                        this.buffer.update(cx, |buffer, cx| {
+                            let buffer_end = buffer.len().to_offset(buffer);
+
+                            buffer.edit([(buffer_end..buffer_end, output)], None, cx);
                         });
                     }
                     Err(err) => {

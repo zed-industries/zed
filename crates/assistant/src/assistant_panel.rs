@@ -2108,12 +2108,7 @@ impl ContextEditor {
                         let task = tool.run(tool_use.input, self.workspace.clone(), cx);
 
                         self.context.update(cx, |context, cx| {
-                            context.insert_tool_output(
-                                tool_use.id.clone(),
-                                tool_use.source_range,
-                                task,
-                                cx,
-                            );
+                            context.insert_tool_output(tool_use.id.clone(), task, cx);
                         });
                     }
                 }
