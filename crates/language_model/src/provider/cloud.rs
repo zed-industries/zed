@@ -1,4 +1,5 @@
 use super::open_ai::count_open_ai_tokens;
+use crate::provider::anthropic::map_to_language_model_completion_events;
 use crate::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
@@ -33,10 +34,7 @@ use std::{
 use strum::IntoEnumIterator;
 use ui::{prelude::*, TintColor};
 
-use crate::{
-    LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider,
-    LanguageModelToolUse,
-};
+use crate::{LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider};
 
 use super::anthropic::count_anthropic_tokens;
 
@@ -518,30 +516,11 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    Ok(anthropic::extract_content_from_events(Box::pin(
+                    Ok(map_to_language_model_completion_events(Box::pin(
                         response_lines(response).map_err(AnthropicError::Other),
                     )))
                 });
-                async move {
-                    Ok(future
-                        .await?
-                        .map(|result| {
-                            result
-                                .map(|content| match content {
-                                    anthropic::ResponseContent::Text { text } => {
-                                        LanguageModelCompletionEvent::Text(text)
-                                    }
-                                    anthropic::ResponseContent::ToolUse { id, name, input } => {
-                                        LanguageModelCompletionEvent::ToolUse(
-                                            LanguageModelToolUse { id, name, input },
-                                        )
-                                    }
-                                })
-                                .map_err(|err| anyhow!(err))
-                        })
-                        .boxed())
-                }
-                .boxed()
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();

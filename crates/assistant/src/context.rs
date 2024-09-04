@@ -2037,6 +2037,11 @@ impl Context {
                                     });
 
                                 match event {
+                                    LanguageModelCompletionEvent::Stop(reason) => match reason {
+                                        language_model::StopReason::ToolUse => {}
+                                        language_model::StopReason::EndTurn => {}
+                                        language_model::StopReason::MaxTokens => {}
+                                    },
                                     LanguageModelCompletionEvent::Text(chunk) => {
                                         buffer.edit(
                                             [(

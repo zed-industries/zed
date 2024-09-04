@@ -15,6 +15,7 @@
 [
   (text)
   (raw_text_expr)
+  (raw_text_each)
 ] @none
 
 [
