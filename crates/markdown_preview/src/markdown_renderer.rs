@@ -16,13 +16,14 @@ use std::{
 use theme::{ActiveTheme, SyntaxTheme};
 use ui::{
     h_flex, v_flex, Checkbox, FluentBuilder, InteractiveElement, LinkPreview, Selection,
-    StatefulInteractiveElement, Tooltip,
+    StatefulInteractiveElement, StyledTypography, Tooltip,
 };
 use workspace::Workspace;
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut WindowContext)>>;
 
-pub struct RenderContext {
+pub struct RenderContext<'a> {
+    window_cx: &'a WindowContext<'a>,
     workspace: Option<WeakView<Workspace>>,
     next_id: usize,
     text_style: TextStyle,
@@ -36,11 +37,15 @@ pub struct RenderContext {
     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
 }
 
-impl RenderContext {
-    pub fn new(workspace: Option<WeakView<Workspace>>, cx: &WindowContext) -> RenderContext {
+impl<'a> RenderContext<'a> {
+    pub fn new(
+        workspace: Option<WeakView<Workspace>>,
+        cx: &'a WindowContext<'a>,
+    ) -> RenderContext<'a> {
         let theme = cx.theme().clone();
 
         RenderContext {
+            window_cx: cx,
             workspace,
             next_id: 0,
             indent: 0,
@@ -88,6 +93,14 @@ impl RenderContext {
         } else {
             element
         }
+    }
+}
+
+impl<'a> std::ops::Deref for RenderContext<'a> {
+    type Target = WindowContext<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.window_cx
     }
 }
 
@@ -320,6 +333,7 @@ fn render_markdown_code_block(
     };
 
     cx.with_common_p(div())
+        .font_buffer(cx)
         .px_3()
         .py_3()
         .bg(cx.code_block_background_color)
