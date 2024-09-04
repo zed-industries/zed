@@ -176,17 +176,6 @@ pub enum MessageContent {
     ToolResult(LanguageModelToolResult),
 }
 
-// impl MessageContent {
-//     pub fn as_string(&self) -> &str {
-//         match self {
-//             MessageContent::Text(text) => text.as_str(),
-//             MessageContent::Image(_) => "",
-//             MessageContent::ToolUse(tool_use) => "",
-//             MessageContent::ToolResult(tool_result) => tool_result.content.as_str(),
-//         }
-//     }
-// }
-
 impl From<String> for MessageContent {
     fn from(value: String) -> Self {
         MessageContent::Text(value)
