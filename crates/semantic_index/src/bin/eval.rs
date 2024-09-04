@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use collections::BTreeMap;
 use gpui::BackgroundExecutor;
-use http_client::Method;
+use http_client::{HttpClient, Method};
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncReadExt;
 use std::{
@@ -10,7 +10,10 @@ use std::{
     ops::Range,
     path::Path,
     process::{exit, Command, Stdio},
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
 };
 
 const CODESEARCH_NET_DIR: &'static str = "target/datasets/code-search-net";
@@ -88,12 +91,13 @@ fn main() -> Result<()> {
 }
 
 async fn fetch_evaluation_resources(executor: &BackgroundExecutor) -> Result<()> {
-    fetch_code_search_net_resources().await?;
-    fetch_eval_repos(executor).await?;
+    let http_client = http_client::HttpClientWithProxy::new(None, None);
+    fetch_code_search_net_resources(&http_client).await?;
+    fetch_eval_repos(executor, &http_client).await?;
     Ok(())
 }
 
-async fn fetch_code_search_net_resources() -> Result<()> {
+async fn fetch_code_search_net_resources(http_client: &dyn HttpClient) -> Result<()> {
     eprintln!("Fetching CodeSearchNet evaluations...");
 
     let annotations_url = "https://raw.githubusercontent.com/github/CodeSearchNet/master/resources/annotationStore.csv";
@@ -102,7 +106,6 @@ async fn fetch_code_search_net_resources() -> Result<()> {
     fs::create_dir_all(&dataset_dir).expect("failed to create CodeSearchNet directory");
 
     // Fetch the annotations CSV, which contains the human-annotated search relevances
-    let http_client = http_client::HttpClientWithProxy::new(None, None);
     let annotations_path = dataset_dir.join("annotations.csv");
     let annotations_csv_content = if annotations_path.exists() {
         fs::read_to_string(&annotations_path).expect("failed to read annotations")
@@ -178,30 +181,13 @@ async fn fetch_code_search_net_resources() -> Result<()> {
         }
     }
 
-    eprint!("Checking repositories...");
-    let mut evaluations = Vec::new();
-    let len = evaluations_by_repo.len();
-    for (ix, ((repo, _), evaluation)) in evaluations_by_repo.into_iter().enumerate() {
-        eprint!("\rChecking repositories ({ix}/{len})...",);
-        let repo_response = http_client
-            .send(
-                http_client::Request::builder()
-                    .method(Method::HEAD)
-                    .uri(format!("https://github.com/{}", repo))
-                    .body(Default::default())
-                    .expect(""),
-            )
-            .await
-            .expect("failed to check github repo");
-        if !repo_response.status().is_success() && !repo_response.status().is_redirection() {
-            eprintln!(
-                "Repo {repo} is no longer public ({:?}). Skipping",
-                repo_response.status()
-            );
-            continue;
-        }
-        evaluations.push(evaluation);
-    }
+    // eprint!("Checking repositories...");
+    let evaluations = evaluations_by_repo.into_values().collect::<Vec<_>>();
+    // let len = evaluations_by_repo.len();
+    // for (ix, ((repo, _), evaluation)) in evaluations_by_repo.into_iter().enumerate() {
+    //     // eprint!("\rChecking repositories ({ix}/{len})...",);
+    //     evaluations.push(evaluation);
+    // }
 
     let evaluations_path = dataset_dir.join("evaluations.json");
     fs::write(
@@ -218,7 +204,10 @@ async fn fetch_code_search_net_resources() -> Result<()> {
     Ok(())
 }
 
-async fn fetch_eval_repos(executor: &BackgroundExecutor) -> Result<()> {
+async fn fetch_eval_repos(
+    executor: &BackgroundExecutor,
+    http_client: &dyn HttpClient,
+) -> Result<()> {
     let dataset_dir = Path::new(CODESEARCH_NET_DIR);
     let evaluations_path = dataset_dir.join("evaluations.json");
     let repos_dir = Path::new(EVAL_REPOS_DIR);
@@ -239,69 +228,12 @@ async fn fetch_eval_repos(executor: &BackgroundExecutor) -> Result<()> {
                     for EvaluationProject { repo, sha, .. } in chunk {
                         eprint!(
                             "\rFetching evaluation repositories ({}/{})...",
-                            done_count.load(std::sync::atomic::Ordering::SeqCst),
+                            done_count.load(SeqCst),
                             len,
                         );
 
-                        let repo_dir = repos_dir.join(&repo.replace("/", "__"));
-                        if !repo_dir.join(".git").exists() {
-                            fs::create_dir_all(&repo_dir).unwrap();
-
-                            let init_output = Command::new("git")
-                                .current_dir(&repo_dir)
-                                .args(&["init"])
-                                .output()
-                                .unwrap();
-                            if !init_output.status.success() {
-                                eprintln!(
-                                    "Failed to initialize git repository for {}: {}",
-                                    repo,
-                                    String::from_utf8_lossy(&init_output.stderr)
-                                );
-                                continue;
-                            }
-                        }
-
-                        let url = format!("https://github.com/{}.git", repo);
-                        Command::new("git")
-                            .current_dir(&repo_dir)
-                            .args(&["remote", "add", "-f", "origin", &url])
-                            .stdin(Stdio::null())
-                            .output()
-                            .unwrap();
-
-                        let fetch_output = Command::new("git")
-                            .current_dir(&repo_dir)
-                            .args(&["fetch", "--depth", "1", "origin", &sha])
-                            .stdin(Stdio::null())
-                            .output()
-                            .unwrap();
-                        if !fetch_output.status.success() {
-                            eprintln!(
-                                "Failed to fetch {} for {}: {}",
-                                sha,
-                                repo,
-                                String::from_utf8_lossy(&fetch_output.stderr)
-                            );
-                            continue;
-                        }
-
-                        let checkout_output = Command::new("git")
-                            .current_dir(&repo_dir)
-                            .args(&["checkout", &sha])
-                            .output()
-                            .unwrap();
-                        if !checkout_output.status.success() {
-                            eprintln!(
-                                "Failed to checkout {} for {}: {}",
-                                sha,
-                                repo,
-                                String::from_utf8_lossy(&checkout_output.stderr)
-                            );
-                            continue;
-                        }
-
-                        done_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        fetch_eval_repo(repo, sha, repos_dir, http_client).await;
+                        done_count.fetch_add(1, SeqCst);
                     }
                 });
             }
@@ -309,4 +241,95 @@ async fn fetch_eval_repos(executor: &BackgroundExecutor) -> Result<()> {
         .await;
 
     Ok(())
+}
+
+async fn fetch_eval_repo(
+    repo: String,
+    sha: String,
+    repos_dir: &Path,
+    http_client: &dyn HttpClient,
+) {
+    let Some((owner, repo_name)) = repo.split_once('/') else {
+        return;
+    };
+    let repo_dir = repos_dir.join(owner).join(repo_name);
+    fs::create_dir_all(&repo_dir).unwrap();
+    let skip_eval_path = repo_dir.join(".skip-eval");
+    if skip_eval_path.exists() {
+        return;
+    }
+    if let Ok(head_content) = fs::read_to_string(&repo_dir.join(".git").join("HEAD")) {
+        if head_content.trim() == sha {
+            return;
+        }
+    }
+    let repo_response = http_client
+        .send(
+            http_client::Request::builder()
+                .method(Method::HEAD)
+                .uri(format!("https://github.com/{}", repo))
+                .body(Default::default())
+                .expect(""),
+        )
+        .await
+        .expect("failed to check github repo");
+    if !repo_response.status().is_success() && !repo_response.status().is_redirection() {
+        fs::write(&skip_eval_path, "").unwrap();
+        eprintln!(
+            "Repo {repo} is no longer public ({:?}). Skipping",
+            repo_response.status()
+        );
+        return;
+    }
+    if !repo_dir.join(".git").exists() {
+        let init_output = Command::new("git")
+            .current_dir(&repo_dir)
+            .args(&["init"])
+            .output()
+            .unwrap();
+        if !init_output.status.success() {
+            eprintln!(
+                "Failed to initialize git repository for {}: {}",
+                repo,
+                String::from_utf8_lossy(&init_output.stderr)
+            );
+            return;
+        }
+    }
+    let url = format!("https://github.com/{}.git", repo);
+    Command::new("git")
+        .current_dir(&repo_dir)
+        .args(&["remote", "add", "-f", "origin", &url])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let fetch_output = Command::new("git")
+        .current_dir(&repo_dir)
+        .args(&["fetch", "--depth", "1", "origin", &sha])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    if !fetch_output.status.success() {
+        eprintln!(
+            "Failed to fetch {} for {}: {}",
+            sha,
+            repo,
+            String::from_utf8_lossy(&fetch_output.stderr)
+        );
+        return;
+    }
+    let checkout_output = Command::new("git")
+        .current_dir(&repo_dir)
+        .args(&["checkout", &sha])
+        .output()
+        .unwrap();
+
+    if !checkout_output.status.success() {
+        eprintln!(
+            "Failed to checkout {} for {}: {}",
+            sha,
+            repo,
+            String::from_utf8_lossy(&checkout_output.stderr)
+        );
+    }
 }
