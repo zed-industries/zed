@@ -261,11 +261,14 @@ pub fn count_anthropic_tokens(
 
                 for content in message.content {
                     match content {
-                        MessageContent::Text(string) => {
-                            string_contents.push_str(&string);
+                        MessageContent::Text(text) => {
+                            string_contents.push_str(&text);
                         }
                         MessageContent::Image(image) => {
                             tokens_from_images += image.estimate_tokens();
+                        }
+                        MessageContent::ToolResult(tool_result) => {
+                            string_contents.push_str(&tool_result.content);
                         }
                     }
                 }
