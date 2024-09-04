@@ -199,7 +199,12 @@ impl super::LspAdapter for CLspAdapter {
                     .label_details
                     .as_ref()
                     .map_or(None, |details| details.detail.as_ref());
-                let text = format!("{}{} -> {}", label, function_arguments.unwrap(), detail);
+                let text = format!(
+                    "{}{} -> {}",
+                    label,
+                    function_arguments.unwrap_or(&String::default()),
+                    detail
+                );
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
 
                 return Some(CodeLabel {
