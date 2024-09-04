@@ -644,6 +644,10 @@ impl X11Client {
                 window.set_active(true);
                 let mut state = self.0.borrow_mut();
                 state.keyboard_focused_window = Some(event.event);
+                state
+                    .xim_handler
+                    .as_mut()
+                    .map(|handler| handler.window = event.event);
                 drop(state);
                 self.enable_ime();
             }
@@ -966,10 +970,6 @@ impl X11Client {
                 window.set_hovered(true);
                 let mut state = self.0.borrow_mut();
                 state.mouse_focused_window = Some(event.event);
-                state
-                    .xim_handler
-                    .as_mut()
-                    .map(|handler| handler.window = event.event);
             }
             Event::XinputLeave(event) if event.mode == xinput::NotifyMode::NORMAL => {
                 self.0.borrow_mut().scroll_x = None; // Set last scroll to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
