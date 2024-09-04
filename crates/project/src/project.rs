@@ -641,16 +641,13 @@ impl Project {
 
             let environment = ProjectEnvironment::new(&worktree_store, env, cx);
             let lsp_store = cx.new_model(|cx| {
-                LspStore::new(
+                LspStore::new_local(
                     buffer_store.clone(),
                     worktree_store.clone(),
-                    Some(environment.clone()),
+                    environment.clone(),
                     languages.clone(),
                     Some(client.http_client()),
                     fs.clone(),
-                    None,
-                    None,
-                    None,
                     cx,
                 )
             });
@@ -736,16 +733,12 @@ impl Project {
 
             let environment = ProjectEnvironment::new(&worktree_store, None, cx);
             let lsp_store = cx.new_model(|cx| {
-                LspStore::new(
+                LspStore::new_remote(
                     buffer_store.clone(),
                     worktree_store.clone(),
-                    Some(environment.clone()),
                     languages.clone(),
-                    Some(client.http_client()),
-                    fs.clone(),
-                    None,
-                    Some(ssh.clone().into()),
-                    None,
+                    ssh.clone().into(),
+                    0,
                     cx,
                 )
             });
@@ -890,16 +883,12 @@ impl Project {
             cx.new_model(|cx| BufferStore::new(worktree_store.clone(), Some(remote_id), cx))?;
 
         let lsp_store = cx.new_model(|cx| {
-            let mut lsp_store = LspStore::new(
+            let mut lsp_store = LspStore::new_remote(
                 buffer_store.clone(),
                 worktree_store.clone(),
-                None,
                 languages.clone(),
-                Some(client.http_client()),
-                fs.clone(),
-                None,
-                Some(client.clone().into()),
-                Some(remote_id),
+                client.clone().into(),
+                remote_id,
                 cx,
             );
             lsp_store.set_language_server_statuses_from_proto(response.payload.language_servers);
