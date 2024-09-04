@@ -267,6 +267,9 @@ pub fn count_anthropic_tokens(
                         MessageContent::Image(image) => {
                             tokens_from_images += image.estimate_tokens();
                         }
+                        MessageContent::ToolUse(_tool_use) => {
+                            // TODO: Estimate token usage from tool uses.
+                        }
                         MessageContent::ToolResult(tool_result) => {
                             string_contents.push_str(&tool_result.content);
                         }

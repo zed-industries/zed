@@ -68,7 +68,7 @@ pub enum StopReason {
     ToolUse,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct LanguageModelToolUse {
     pub id: String,
     pub name: String,
