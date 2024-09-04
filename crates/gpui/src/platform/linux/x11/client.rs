@@ -644,10 +644,9 @@ impl X11Client {
                 window.set_active(true);
                 let mut state = self.0.borrow_mut();
                 state.keyboard_focused_window = Some(event.event);
-                state
-                    .xim_handler
-                    .as_mut()
-                    .map(|handler| handler.window = event.event);
+                if let Some(handler) = state.xim_handler.as_mut() {
+                    handler.window = event.event;
+                }
                 drop(state);
                 self.enable_ime();
             }
