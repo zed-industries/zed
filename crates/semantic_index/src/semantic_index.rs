@@ -100,6 +100,50 @@ impl SemanticIndex {
             })
             .clone()
     }
+
+    pub async fn load_results(
+        results: Vec<SearchResult>,
+        fs: &Arc<dyn Fs>,
+        cx: &AsyncAppContext,
+    ) -> Result<Vec<LoadedSearchResult>> {
+        let mut loaded_results = Vec::new();
+        for result in results {
+            let (full_path, file_content) = result.worktree.read_with(cx, |worktree, _cx| {
+                let entry_abs_path = worktree.abs_path().join(&result.path);
+                let mut entry_full_path = PathBuf::from(worktree.root_name());
+                entry_full_path.push(&result.path);
+                let file_content = async {
+                    let entry_abs_path = entry_abs_path;
+                    fs.load(&entry_abs_path).await
+                };
+                (entry_full_path, file_content)
+            })?;
+            if let Some(file_content) = file_content.await.log_err() {
+                let range_start = result.range.start.min(file_content.len());
+                let range_end = result.range.end.min(file_content.len());
+
+                let start_row = file_content[0..range_start].matches('\n').count() as u32;
+                let end_row = file_content[0..range_end].matches('\n').count() as u32;
+                let start_line_byte_offset = file_content[0..range_start]
+                    .rfind('\n')
+                    .map(|pos| pos + 1)
+                    .unwrap_or_default();
+                let end_line_byte_offset = file_content[range_end..]
+                    .find('\n')
+                    .map(|pos| range_end + pos)
+                    .unwrap_or_else(|| file_content.len());
+
+                loaded_results.push(LoadedSearchResult {
+                    path: result.path,
+                    range: start_line_byte_offset..end_line_byte_offset,
+                    full_path,
+                    file_content,
+                    row_range: start_row..end_row,
+                });
+            }
+        }
+        Ok(loaded_results)
+    }
 }
 
 pub struct ProjectIndex {
@@ -463,6 +507,14 @@ pub struct SearchResult {
     pub path: Arc<Path>,
     pub range: Range<usize>,
     pub score: f32,
+}
+
+pub struct LoadedSearchResult {
+    pub path: Arc<Path>,
+    pub range: Range<usize>,
+    pub full_path: PathBuf,
+    pub file_content: String,
+    pub row_range: Range<u32>,
 }
 
 pub struct WorktreeSearchResult {

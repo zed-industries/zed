@@ -1,4 +1,4 @@
-use ::fs::RealFs;
+use ::fs::{Fs, RealFs};
 use anyhow::Result;
 use clap::Parser;
 use client::{Client, UserStore};
@@ -30,7 +30,8 @@ use std::{
 const CODESEARCH_NET_DIR: &'static str = "target/datasets/code-search-net";
 const EVAL_REPOS_DIR: &'static str = "target/datasets/eval-repos";
 const EVAL_DB_PATH: &'static str = "target/eval_db";
-const SEARCH_RESULT_LIMIT: usize = 10;
+const SEARCH_RESULT_LIMIT: usize = 8;
+const SKIP_EVAL_PATH: &'static str = ".skip_eval";
 
 #[derive(clap::Parser)]
 #[command(author, version, about, long_about = None)]
@@ -55,13 +56,29 @@ struct EvaluationProject {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct EvaluationQuery {
     query: String,
-    results: Vec<EvaluationResult>,
+    expected_results: Vec<EvaluationSearchResult>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-struct EvaluationResult {
+struct EvaluationSearchResult {
     file: String,
-    lines: Range<usize>,
+    lines: Range<u32>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct EvaluationProjectOutcome {
+    repo: String,
+    sha: String,
+    queries: Vec<EvaluationQueryOutcome>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct EvaluationQueryOutcome {
+    query: String,
+    expected_results: Vec<EvaluationSearchResult>,
+    actual_results: Vec<EvaluationSearchResult>,
+    covered_result_count: usize,
+    total_result_count: usize,
 }
 
 fn main() -> Result<()> {
@@ -151,7 +168,7 @@ async fn fetch_code_search_net_resources(http_client: &dyn HttpClient) -> Result
         let (repo_name, url_path) = url_path.split_once("/blob/")?;
         let (sha, file_path) = url_path.split_once('/')?;
         let line_range = if let Some((start, end)) = hash.split_once('-') {
-            start.strip_prefix("L")?.parse::<usize>().ok()?..end.strip_prefix("L")?.parse().ok()?
+            start.strip_prefix("L")?.parse::<u32>().ok()?..end.strip_prefix("L")?.parse().ok()?
         } else {
             let row = hash.strip_prefix("L")?.parse().ok()?;
             row..row + 1
@@ -177,12 +194,12 @@ async fn fetch_code_search_net_resources(http_client: &dyn HttpClient) -> Result
             .unwrap_or_else(|| {
                 evaluation_project.queries.push(EvaluationQuery {
                     query: query.to_string(),
-                    results: Vec::new(),
+                    expected_results: Vec::new(),
                 });
                 evaluation_project.queries.len() - 1
             });
-        let results = &mut evaluation_project.queries[ix].results;
-        let result = EvaluationResult {
+        let results = &mut evaluation_project.queries[ix].expected_results;
+        let result = EvaluationSearchResult {
             file: file_path.to_string(),
             lines,
         };
@@ -191,14 +208,7 @@ async fn fetch_code_search_net_resources(http_client: &dyn HttpClient) -> Result
         }
     }
 
-    // eprint!("Checking repositories...");
     let evaluations = evaluations_by_repo.into_values().collect::<Vec<_>>();
-    // let len = evaluations_by_repo.len();
-    // for (ix, ((repo, _), evaluation)) in evaluations_by_repo.into_iter().enumerate() {
-    //     // eprint!("\rChecking repositories ({ix}/{len})...",);
-    //     evaluations.push(evaluation);
-    // }
-
     let evaluations_path = dataset_dir.join("evaluations.json");
     fs::write(
         &evaluations_path,
@@ -217,7 +227,9 @@ async fn fetch_code_search_net_resources(http_client: &dyn HttpClient) -> Result
 async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext) -> Result<()> {
     cx.update(|cx| {
         let mut store = SettingsStore::new(cx);
-        store.set_default_settings(settings::default_settings().as_ref(), cx);
+        store
+            .set_default_settings(settings::default_settings().as_ref(), cx)
+            .unwrap();
         cx.set_global(store);
         client::init_settings(cx);
         language::init(cx);
@@ -232,7 +244,7 @@ async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext)
     let http_client = http_client::HttpClientWithProxy::new(None, None);
     let api_key = std::env::var("OPENAI_API_KEY").unwrap();
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    let fs = Arc::new(RealFs::new(git_hosting_provider_registry, None));
+    let fs = Arc::new(RealFs::new(git_hosting_provider_registry, None)) as Arc<dyn Fs>;
     let clock = Arc::new(RealSystemClock);
     let client = cx
         .update(|cx| {
@@ -262,16 +274,27 @@ async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext)
         api_key,
     ));
 
+    let language_registry = Arc::new(LanguageRegistry::new(Task::ready(()), executor.clone()));
+
+    cx.update(|cx| languages::init(language_registry.clone(), node_runtime.clone(), cx))
+        .unwrap();
+
     let mut semantic_index = SemanticIndex::new(db_path.into(), embedding_provider, cx)
         .await
         .unwrap();
-    let language_registry = Arc::new(LanguageRegistry::new(Task::ready(()), executor.clone()));
+
+    let mut covered_result_count = 0;
+    let mut total_result_count = 0;
+    eprint!("Running evals.");
 
     for evaluation_project in evaluations {
-        eprintln!("Running eval for repo {}...", evaluation_project.repo);
+        eprint!(
+            "\rRunning evals. {}/{} covered. Project: {}...",
+            covered_result_count, total_result_count, evaluation_project.repo
+        );
 
         let repo_dir = repos_dir.join(&evaluation_project.repo);
-        if !repo_dir.exists() {
+        if !repo_dir.exists() || repo_dir.join(SKIP_EVAL_PATH).exists() {
             eprintln!("Skipping {}: directory not found", evaluation_project.repo);
             continue;
         }
@@ -297,7 +320,7 @@ async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext)
             .await?;
 
         worktree
-            .update(cx, |worktree, cx| {
+            .update(cx, |worktree, _| {
                 worktree.as_local().unwrap().scan_complete()
             })
             .unwrap()
@@ -309,7 +332,7 @@ async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext)
 
         wait_for_indexing_complete(&project_index, cx).await;
 
-        for query in &evaluation_project.queries {
+        for query in evaluation_project.queries {
             let results = cx
                 .update(|cx| {
                     let project_index = project_index.read(cx);
@@ -319,14 +342,47 @@ async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext)
                 .await
                 .unwrap();
 
-            let results = results
-                .into_iter()
-                .map(|result| (result.path, result.range))
-                .collect::<Vec<_>>();
+            let results = SemanticIndex::load_results(results, &fs.clone(), &cx)
+                .await
+                .unwrap();
 
-            dbg!(query, results);
+            let mut project_covered_result_count = 0;
+            for expected_result in &query.expected_results {
+                let was_covered = results.iter().any(|result| {
+                    result.path.as_ref() == Path::new(&expected_result.file)
+                        && result.row_range.contains(&expected_result.lines.start)
+                        && result.row_range.contains(&expected_result.lines.end)
+                });
+                if was_covered {
+                    project_covered_result_count += 1
+                };
+            }
+
+            let query_results = EvaluationQueryOutcome {
+                query: query.query,
+                total_result_count: query.expected_results.len(),
+                covered_result_count: project_covered_result_count,
+                expected_results: query.expected_results,
+                actual_results: results
+                    .iter()
+                    .map(|result| EvaluationSearchResult {
+                        file: result.path.to_string_lossy().to_string(),
+                        lines: result.row_range.clone(),
+                    })
+                    .collect(),
+            };
+
+            covered_result_count += query_results.covered_result_count;
+            total_result_count += query_results.total_result_count;
+
+            println!("{}", serde_json::to_string(&query_results).unwrap());
         }
     }
+
+    eprint!(
+        "\rRan evals. {}/{} covered.",
+        covered_result_count, total_result_count
+    );
 
     Ok(())
 }
@@ -397,7 +453,7 @@ async fn fetch_eval_repo(
     };
     let repo_dir = repos_dir.join(owner).join(repo_name);
     fs::create_dir_all(&repo_dir).unwrap();
-    let skip_eval_path = repo_dir.join(".skip-eval");
+    let skip_eval_path = repo_dir.join(SKIP_EVAL_PATH);
     if skip_eval_path.exists() {
         return;
     }
