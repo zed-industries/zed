@@ -201,11 +201,9 @@ impl super::LspAdapter for CLspAdapter {
                     .map_or(None, |details| details.detail.as_ref());
                 let text = format!("{}{} -> {}", label, function_arguments.unwrap(), detail);
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
-                let filter_start = 0;
-                let filter_end = label.len();
 
                 return Some(CodeLabel {
-                    filter_range: filter_start..filter_end,
+                    filter_range: 0..label.len(),
                     text,
                     runs,
                 });
@@ -238,6 +236,7 @@ impl super::LspAdapter for CLspAdapter {
             _ => {}
         }
 
+        // Label details are useful for code snippets provided by the LSP
         let label_details = completion
             .label_details
             .as_ref()
