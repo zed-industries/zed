@@ -19,13 +19,13 @@ You can configure the use of [typescript-language-server](https://github.com/typ
 {
   "languages": {
     "TypeScript": {
-      "language_servers": ["typescript-language-server", "!vtsls", "..."],
+      "language_servers": ["typescript-language-server", "!vtsls", "..."]
     },
     "TSX": {
-      "language_servers": ["typescript-language-server", "!vtsls", "..."],
+      "language_servers": ["typescript-language-server", "!vtsls", "..."]
     },
     "JavaScript": {
-      "language_servers": ["typescript-language-server", "!vtsls", "..."],
+      "language_servers": ["typescript-language-server", "!vtsls", "..."]
     }
   }
 }
@@ -37,10 +37,10 @@ Prettier will also be used for TypeScript files by default. To disable this:
 {
   "languages": {
     "TypeScript": {
-      "prettier": {"allowed": false}
+      "prettier": { "allowed": false },
     },
     //...
-  }
+  },
 }
 ```
 
@@ -56,7 +56,7 @@ Prettier will also be used for TypeScript files by default. To disable this:
         // For TypeScript:
         "typescript": { "tsserver": { "maxTsServerMemory": 8092 } },
         // For JavaScript:
-        "javascript": { "tsserver": { "maxTsServerMemory": 8092 } },
+        "javascript": { "tsserver": { "maxTsServerMemory": 8092 } }
       }
     }
   }
