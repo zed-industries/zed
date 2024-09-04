@@ -7,39 +7,82 @@ TypeScript and TSX support are available natively in Zed.
 - Alternate Language Server: [typescript-language-server/typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
 
 <!--
-TBD: Add some english prose Typescript documentation instead of starting with JSON inlayHints
 TBD: Document the difference between Language servers
-TBD: Add vtsls configuration instructions.
-TBD: Document TSX support / configuration
 -->
 
-## Inlay Hints
+## Language servers
 
-Zed sets the following initialization options for inlay hints:
+By default Zed uses [vtsls](https://github.com/yioneko/vtsls) for TypeScript, TSX and JavaScript files.
+You can configure the use of [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) per language in your settings file:
 
 ```json
-"preferences": {
-    "includeInlayParameterNameHints": "all",
-    "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
-    "includeInlayFunctionParameterTypeHints": true,
-    "includeInlayVariableTypeHints": true,
-    "includeInlayVariableTypeHintsWhenTypeMatchesName": true,
-    "includeInlayPropertyDeclarationTypeHints": true,
-    "includeInlayFunctionLikeReturnTypeHints": true,
-    "includeInlayEnumMemberValueHints": true,
+{
+  "languages": {
+    "TypeScript": {
+      "language_servers": ["typescript-language-server", "!vtsls", "..."]
+    },
+    "TSX": {
+      "language_servers": ["typescript-language-server", "!vtsls", "..."]
+    },
+    "JavaScript": {
+      "language_servers": ["typescript-language-server", "!vtsls", "..."]
+    }
+  }
 }
 ```
 
-to make the language server send back inlay hints when Zed has them enabled in the settings.
+Prettier will also be used for TypeScript files by default. To disable this:
 
-Use
+```jsonc
+{
+  "languages": {
+    "TypeScript": {
+      "prettier": { "allowed": false },
+    },
+    //...
+  },
+}
+```
+
+## Large projects
+
+`vtsls` may run out of memory on very large projects. You can configure this limit by passing the following options to the language server:
+
+```json
+{
+  "lsp": {
+    "vtsls": {
+      "initialization_options": {
+        // For TypeScript:
+        "typescript": { "tsserver": { "maxTsServerMemory": 8092 } },
+        // For JavaScript:
+        "javascript": { "tsserver": { "maxTsServerMemory": 8092 } }
+      }
+    }
+  }
+}
+```
+
+## Inlay Hints
+
+Zed sets the following initialization options to make the language server send back inlay hints
+(when Zed has inlay hints enabled in the settings).
+
+You can override these settings in your configuration file:
 
 ```json
 "lsp": {
     "$LANGUAGE_SERVER_NAME": {
         "initialization_options": {
             "preferences": {
-                ....
+              "includeInlayParameterNameHints": "all",
+              "includeInlayParameterNameHintsWhenArgumentMatchesName": true,
+              "includeInlayFunctionParameterTypeHints": true,
+              "includeInlayVariableTypeHints": true,
+              "includeInlayVariableTypeHintsWhenTypeMatchesName": true,
+              "includeInlayPropertyDeclarationTypeHints": true,
+              "includeInlayFunctionLikeReturnTypeHints": true,
+              "includeInlayEnumMemberValueHints": true,
             }
         }
     }
