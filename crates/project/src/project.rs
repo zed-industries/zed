@@ -708,16 +708,91 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        let this = Self::local(client, node, user_store, languages, fs, None, cx);
-        this.update(cx, |this, cx| {
-            let client: AnyProtoClient = ssh.clone().into();
+        cx.new_model(|cx: &mut ModelContext<Self>| {
+            let (tx, rx) = mpsc::unbounded();
+            cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
+                .detach();
+            let tasks = Inventory::new(cx);
+            let global_snippets_dir = paths::config_dir().join("snippets");
+            let snippets =
+                SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
-            this.worktree_store.update(cx, |store, _cx| {
-                store.set_upstream_client(client.clone());
+            let worktree_store = cx.new_model(|_| {
+                let mut worktree_store = WorktreeStore::new(false, fs.clone());
+                worktree_store.set_upstream_client(ssh.clone().into());
+                worktree_store
             });
-            this.settings_observer = cx.new_model(|cx| {
-                SettingsObserver::new_ssh(ssh.clone().into(), this.worktree_store.clone(), cx)
+            cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+                .detach();
+
+            let buffer_store =
+                cx.new_model(|cx| BufferStore::new(worktree_store.clone(), None, cx));
+            cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+                .detach();
+
+            let settings_observer = cx.new_model(|cx| {
+                SettingsObserver::new_ssh(ssh.clone().into(), worktree_store.clone(), cx)
             });
+
+            let environment = ProjectEnvironment::new(&worktree_store, None, cx);
+            let lsp_store = cx.new_model(|cx| {
+                LspStore::new(
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                    Some(environment.clone()),
+                    languages.clone(),
+                    Some(client.http_client()),
+                    fs.clone(),
+                    None,
+                    Some(ssh.clone().into()),
+                    None,
+                    cx,
+                )
+            });
+            cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+
+            let this = Self {
+                buffer_ordered_messages_tx: tx,
+                collaborators: Default::default(),
+                worktree_store,
+                buffer_store,
+                lsp_store,
+                current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
+                join_project_response_message_id: 0,
+                client_state: ProjectClientState::Local,
+                client_subscriptions: Vec::new(),
+                _subscriptions: vec![
+                    cx.observe_global::<SettingsStore>(Self::on_settings_changed),
+                    cx.on_release(Self::release),
+                ],
+                active_entry: None,
+                snippets,
+                languages,
+                client,
+                user_store,
+                settings_observer,
+                fs,
+                ssh_session: Some(ssh.clone()),
+                buffers_needing_diff: Default::default(),
+                git_diff_debouncer: DebouncedDelay::new(),
+                terminals: Terminals {
+                    local_handles: Vec::new(),
+                },
+                node: Some(node),
+                default_prettier: DefaultPrettier::default(),
+                prettiers_per_worktree: HashMap::default(),
+                prettier_instances: HashMap::default(),
+                tasks,
+                hosted_project_id: None,
+                dev_server_project_id: None,
+                search_history: Self::new_search_history(),
+                environment,
+                remotely_created_buffers: Default::default(),
+                last_formatting_failure: None,
+                buffers_being_formatted: Default::default(),
+            };
+
+            let client: AnyProtoClient = ssh.clone().into();
 
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
@@ -731,9 +806,8 @@ impl Project {
             LspStore::init(&client);
             SettingsObserver::init(&client);
 
-            this.ssh_session = Some(ssh);
-        });
-        this
+            this
+        })
     }
 
     pub async fn remote(
