@@ -380,6 +380,7 @@ async fn perform_completion(
                 google_ai::API_URL,
                 api_key,
                 serde_json::from_str(&params.provider_request.get())?,
+                None,
             )
             .await?;
 
