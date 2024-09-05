@@ -2,8 +2,10 @@ mod supported_countries;
 
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
-use http_client::HttpClient;
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use isahc::config::Configurable;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 pub use supported_countries::*;
 
@@ -14,6 +16,7 @@ pub async fn stream_generate_content(
     api_url: &str,
     api_key: &str,
     mut request: GenerateContentRequest,
+    low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
     let uri = format!(
         "{api_url}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}",
@@ -21,8 +24,17 @@ pub async fn stream_generate_content(
     );
     request.model.clear();
 
-    let request = serde_json::to_string(&request)?;
-    let mut response = client.post_json(&uri, request.into()).await?;
+    let mut request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json");
+
+    if let Some(low_speed_timeout) = low_speed_timeout {
+        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+    };
+
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
         Ok(reader
