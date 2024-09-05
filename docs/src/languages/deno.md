@@ -31,7 +31,7 @@ To use the Deno Language Server with TypeScript and TSX files, you will likely w
 }
 ```
 
-See [Configuring supported languages](https://zed.dev/docs/configuring-languages) in the Zed documentation for more information.
+See [Configuring supported languages](../configuring-languages.md) in the Zed documentation for more information.
 
 <!--
 TBD: Deno Typescript REPL instructions [docs/repl#typescript-deno](../repl.md#typescript-deno)
