@@ -43,6 +43,21 @@ You can see more examples in Zed's [`default.json`](https://github.com/zed-indus
 
 _There are some key bindings that can't be overridden; we are working on an issue surrounding this._
 
+### Disabling a key binding
+
+Use `null` value to disable a key binding:
+
+```json
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-\\": null
+    }
+  }
+]
+```
+
 ### Keybinding syntax
 
 Zed has the ability to match against not just a single keypress, but a sequence of keys typed in order. Each key in the `"bindings"` map is a sequence of keypresses separated with a space.

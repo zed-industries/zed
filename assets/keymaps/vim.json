@@ -29,6 +29,8 @@
       "shift-g": "vim::EndOfDocument",
       "{": "vim::StartOfParagraph",
       "}": "vim::EndOfParagraph",
+      "(": "vim::SentenceBackward",
+      ")": "vim::SentenceForward",
       "|": "vim::GoToColumn",
       // Word motions
       "w": "vim::NextWordStart",

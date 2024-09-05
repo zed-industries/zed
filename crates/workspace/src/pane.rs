@@ -157,6 +157,7 @@ actions!(
         SplitHorizontal,
         SplitVertical,
         TogglePreviewTab,
+        TogglePinTab,
     ]
 );
 
@@ -272,6 +273,7 @@ pub struct Pane {
     save_modals_spawned: HashSet<EntityId>,
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pinned_tab_count: usize,
 }
 
 pub struct ActivationHistoryEntry {
@@ -470,6 +472,7 @@ impl Pane {
             save_modals_spawned: HashSet::default(),
             split_item_context_menu_handle: Default::default(),
             new_item_context_menu_handle: Default::default(),
+            pinned_tab_count: 0,
         }
     }
 
@@ -948,9 +951,11 @@ impl Pane {
     }
 
     pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
-        self.items
-            .iter()
-            .position(|i| i.item_id() == item.item_id())
+        self.index_for_item_id(item.item_id())
+    }
+
+    fn index_for_item_id(&self, item_id: EntityId) -> Option<usize> {
+        self.items.iter().position(|i| i.item_id() == item_id)
     }
 
     pub fn item_for_index(&self, ix: usize) -> Option<&dyn ItemHandle> {
@@ -1722,6 +1727,65 @@ impl Pane {
         }
     }
 
+    fn toggle_pin_tab(&mut self, _: &TogglePinTab, cx: &mut ViewContext<'_, Self>) {
+        if self.items.is_empty() {
+            return;
+        }
+        let active_tab_ix = self.active_item_index();
+        if self.is_tab_pinned(active_tab_ix) {
+            self.unpin_tab_at(active_tab_ix, cx);
+        } else {
+            self.pin_tab_at(active_tab_ix, cx);
+        }
+    }
+
+    fn pin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
+        maybe!({
+            let pane = cx.view().clone();
+            let destination_index = self.pinned_tab_count;
+            self.pinned_tab_count += 1;
+            let id = self.item_for_index(ix)?.item_id();
+
+            self.workspace
+                .update(cx, |_, cx| {
+                    cx.defer(move |this, cx| {
+                        this.move_item(pane.clone(), pane, id, destination_index, cx)
+                    });
+                })
+                .ok()?;
+
+            Some(())
+        });
+    }
+
+    fn unpin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
+        maybe!({
+            let pane = cx.view().clone();
+            self.pinned_tab_count = self.pinned_tab_count.checked_sub(1).unwrap();
+            let destination_index = self.pinned_tab_count;
+
+            let id = self.item_for_index(ix)?.item_id();
+
+            self.workspace
+                .update(cx, |_, cx| {
+                    cx.defer(move |this, cx| {
+                        this.move_item(pane.clone(), pane, id, destination_index, cx)
+                    });
+                })
+                .ok()?;
+
+            Some(())
+        });
+    }
+
+    fn is_tab_pinned(&self, ix: usize) -> bool {
+        self.pinned_tab_count > ix
+    }
+
+    fn has_pinned_tabs(&self) -> bool {
+        self.pinned_tab_count != 0
+    }
+
     fn render_tab(
         &self,
         ix: usize,
@@ -1764,6 +1828,7 @@ impl Pane {
         let item_id = item.item_id();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
+        let is_pinned = self.is_tab_pinned(ix);
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
 
         let tab = Tab::new(ix)
@@ -1835,17 +1900,31 @@ impl Pane {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
             .start_slot::<Indicator>(indicator)
-            .end_slot(
-                IconButton::new("close tab", IconName::Close)
-                    .shape(IconButtonShape::Square)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::None)
-                    .icon_size(IconSize::XSmall)
-                    .on_click(cx.listener(move |pane, _, cx| {
-                        pane.close_item_by_id(item_id, SaveIntent::Close, cx)
-                            .detach_and_log_err(cx);
-                    })),
-            )
+            .map(|this| {
+                let end_slot = if is_pinned {
+                    IconButton::new("unpin tab", IconName::PinAlt)
+                        .shape(IconButtonShape::Square)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .icon_size(IconSize::XSmall)
+                        .on_click(cx.listener(move |pane, _, cx| {
+                            pane.unpin_tab_at(ix, cx);
+                        }))
+                        .tooltip(|cx| Tooltip::text("Unpin Tab", cx))
+                } else {
+                    IconButton::new("close tab", IconName::Close)
+                        .visible_on_hover("")
+                        .shape(IconButtonShape::Square)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .icon_size(IconSize::XSmall)
+                        .on_click(cx.listener(move |pane, _, cx| {
+                            pane.close_item_by_id(item_id, SaveIntent::Close, cx)
+                                .detach_and_log_err(cx);
+                        }))
+                };
+                this.end_slot(end_slot)
+            })
             .child(
                 h_flex()
                     .gap_1()
@@ -1862,6 +1941,7 @@ impl Pane {
             }
         };
 
+        let is_pinned = self.is_tab_pinned(ix);
         let pane = cx.view().downgrade();
         right_click_menu(ix).trigger(tab).menu(move |cx| {
             let pane = pane.clone();
@@ -1923,6 +2003,27 @@ impl Pane {
                             }),
                         );
 
+                    let pin_tab_entries = |menu: ContextMenu| {
+                        menu.separator().map(|this| {
+                            if is_pinned {
+                                this.entry(
+                                    "Unpin Tab",
+                                    Some(TogglePinTab.boxed_clone()),
+                                    cx.handler_for(&pane, move |pane, cx| {
+                                        pane.unpin_tab_at(ix, cx);
+                                    }),
+                                )
+                            } else {
+                                this.entry(
+                                    "Pin Tab",
+                                    Some(TogglePinTab.boxed_clone()),
+                                    cx.handler_for(&pane, move |pane, cx| {
+                                        pane.pin_tab_at(ix, cx);
+                                    }),
+                                )
+                            }
+                        })
+                    };
                     if let Some(entry) = single_entry_to_resolve {
                         let entry_abs_path = pane.read(cx).entry_abs_path(entry, cx);
                         let parent_abs_path = entry_abs_path
@@ -1950,6 +2051,7 @@ impl Pane {
                                     pane.copy_relative_path(&CopyRelativePath, cx);
                                 }),
                             )
+                            .map(pin_tab_entries)
                             .separator()
                             .entry(
                                 "Reveal In Project Panel",
@@ -1978,6 +2080,8 @@ impl Pane {
                                     }),
                                 )
                             });
+                    } else {
+                        menu = menu.map(pin_tab_entries);
                     }
                 }
 
@@ -2014,8 +2118,17 @@ impl Pane {
                 move |cx| Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, cx)
             });
 
+        let mut tab_items = self
+            .items
+            .iter()
+            .enumerate()
+            .zip(tab_details(&self.items, cx))
+            .map(|((ix, item), detail)| self.render_tab(ix, &**item, detail, cx))
+            .collect::<Vec<_>>();
+
+        let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
+        let pinned_tabs = tab_items;
         TabBar::new("tab_bar")
-            .track_scroll(self.tab_bar_scroll_handle.clone())
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
                 |tab_bar| {
@@ -2032,45 +2145,57 @@ impl Pane {
                     .start_children(left_children)
                     .end_children(right_children)
             })
-            .children(
-                self.items
-                    .iter()
-                    .enumerate()
-                    .zip(tab_details(&self.items, cx))
-                    .map(|((ix, item), detail)| self.render_tab(ix, &**item, detail, cx)),
-            )
+            .children(pinned_tabs.len().ne(&0).then(|| {
+                h_flex()
+                    .children(pinned_tabs)
+                    .border_r_2()
+                    .border_color(cx.theme().colors().border)
+            }))
             .child(
-                div()
-                    .id("tab_bar_drop_target")
-                    .min_w_6()
-                    // HACK: This empty child is currently necessary to force the drop target to appear
-                    // despite us setting a min width above.
-                    .child("")
-                    .h_full()
-                    .flex_grow()
-                    .drag_over::<DraggedTab>(|bar, _, cx| {
-                        bar.bg(cx.theme().colors().drop_target_background)
-                    })
-                    .drag_over::<DraggedSelection>(|bar, _, cx| {
-                        bar.bg(cx.theme().colors().drop_target_background)
-                    })
-                    .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
-                        this.drag_split_direction = None;
-                        this.handle_tab_drop(dragged_tab, this.items.len(), cx)
-                    }))
-                    .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
-                        this.drag_split_direction = None;
-                        this.handle_project_entry_drop(&selection.active_selection.entry_id, cx)
-                    }))
-                    .on_drop(cx.listener(move |this, paths, cx| {
-                        this.drag_split_direction = None;
-                        this.handle_external_paths_drop(paths, cx)
-                    }))
-                    .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
-                        if event.up.click_count == 2 {
-                            cx.dispatch_action(this.double_click_dispatch_action.boxed_clone())
-                        }
-                    })),
+                h_flex()
+                    .id("unpinned tabs")
+                    .overflow_x_scroll()
+                    .w_full()
+                    .track_scroll(&self.tab_bar_scroll_handle)
+                    .children(unpinned_tabs)
+                    .child(
+                        div()
+                            .id("tab_bar_drop_target")
+                            .min_w_6()
+                            // HACK: This empty child is currently necessary to force the drop target to appear
+                            // despite us setting a min width above.
+                            .child("")
+                            .h_full()
+                            .flex_grow()
+                            .drag_over::<DraggedTab>(|bar, _, cx| {
+                                bar.bg(cx.theme().colors().drop_target_background)
+                            })
+                            .drag_over::<DraggedSelection>(|bar, _, cx| {
+                                bar.bg(cx.theme().colors().drop_target_background)
+                            })
+                            .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
+                                this.drag_split_direction = None;
+                                this.handle_tab_drop(dragged_tab, this.items.len(), cx)
+                            }))
+                            .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
+                                this.drag_split_direction = None;
+                                this.handle_project_entry_drop(
+                                    &selection.active_selection.entry_id,
+                                    cx,
+                                )
+                            }))
+                            .on_drop(cx.listener(move |this, paths, cx| {
+                                this.drag_split_direction = None;
+                                this.handle_external_paths_drop(paths, cx)
+                            }))
+                            .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
+                                if event.up.click_count == 2 {
+                                    cx.dispatch_action(
+                                        this.double_click_dispatch_action.boxed_clone(),
+                                    )
+                                }
+                            })),
+                    ),
             )
     }
 
@@ -2164,7 +2289,37 @@ impl Pane {
                     if let Some(split_direction) = split_direction {
                         to_pane = workspace.split_pane(to_pane, split_direction, cx);
                     }
-                    workspace.move_item(from_pane, to_pane, item_id, ix, cx);
+                    let old_ix = from_pane.read(cx).index_for_item_id(item_id);
+                    if to_pane == from_pane {
+                        if let Some(old_index) = old_ix {
+                            to_pane.update(cx, |this, _| {
+                                if old_index < this.pinned_tab_count
+                                    && (ix == this.items.len() || ix > this.pinned_tab_count)
+                                {
+                                    this.pinned_tab_count -= 1;
+                                } else if this.has_pinned_tabs()
+                                    && old_index >= this.pinned_tab_count
+                                    && ix < this.pinned_tab_count
+                                {
+                                    this.pinned_tab_count += 1;
+                                }
+                            });
+                        }
+                    } else {
+                        to_pane.update(cx, |this, _| {
+                            if this.has_pinned_tabs() && ix < this.pinned_tab_count {
+                                this.pinned_tab_count += 1;
+                            }
+                        });
+                        from_pane.update(cx, |this, _| {
+                            if let Some(index) = old_ix {
+                                if this.pinned_tab_count > index {
+                                    this.pinned_tab_count -= 1;
+                                }
+                            }
+                        })
+                    }
+                    workspace.move_item(from_pane.clone(), to_pane.clone(), item_id, ix, cx);
                 });
             })
             .log_err();
@@ -2209,13 +2364,13 @@ impl Pane {
                             if let Some((project_entry_id, build_item)) =
                                 load_path_task.await.notify_async_err(&mut cx)
                             {
-                                workspace
+                                let (to_pane, new_item_handle) = workspace
                                     .update(&mut cx, |workspace, cx| {
                                         if let Some(split_direction) = split_direction {
                                             to_pane =
                                                 workspace.split_pane(to_pane, split_direction, cx);
                                         }
-                                        to_pane.update(cx, |pane, cx| {
+                                        let new_item_handle = to_pane.update(cx, |pane, cx| {
                                             pane.open_item(
                                                 project_entry_id,
                                                 true,
@@ -2223,10 +2378,23 @@ impl Pane {
                                                 cx,
                                                 build_item,
                                             )
-                                        })
+                                        });
+                                        (to_pane, new_item_handle)
                                     })
-                                    .log_err();
+                                    .log_err()?;
+                                to_pane
+                                    .update(&mut cx, |this, cx| {
+                                        let Some(index) = this.index_for_item(&*new_item_handle)
+                                        else {
+                                            return;
+                                        };
+                                        if !this.is_tab_pinned(index) {
+                                            this.pin_tab_at(index, cx);
+                                        }
+                                    })
+                                    .ok()?
                             }
+                            Some(())
                         })
                         .detach();
                     };
@@ -2373,6 +2541,9 @@ impl Render for Pane {
             }))
             .on_action(cx.listener(|pane: &mut Pane, _: &ActivateNextItem, cx| {
                 pane.activate_next_item(true, cx);
+            }))
+            .on_action(cx.listener(|pane, action, cx| {
+                pane.toggle_pin_tab(action, cx);
             }))
             .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
                 this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, cx| {

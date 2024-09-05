@@ -7327,7 +7327,7 @@ impl Editor {
 
     pub fn delete_to_previous_word_start(
         &mut self,
-        _: &DeleteToPreviousWordStart,
+        action: &DeleteToPreviousWordStart,
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
@@ -7336,7 +7336,11 @@ impl Editor {
                 let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
                     if selection.is_empty() && !line_mode {
-                        let cursor = movement::previous_word_start(map, selection.head());
+                        let cursor = if action.ignore_newlines {
+                            movement::previous_word_start(map, selection.head())
+                        } else {
+                            movement::previous_word_start_or_newline(map, selection.head())
+                        };
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });
@@ -7405,13 +7409,21 @@ impl Editor {
         })
     }
 
-    pub fn delete_to_next_word_end(&mut self, _: &DeleteToNextWordEnd, cx: &mut ViewContext<Self>) {
+    pub fn delete_to_next_word_end(
+        &mut self,
+        action: &DeleteToNextWordEnd,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.transact(cx, |this, cx| {
             this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
                     if selection.is_empty() && !line_mode {
-                        let cursor = movement::next_word_end(map, selection.head());
+                        let cursor = if action.ignore_newlines {
+                            movement::next_word_end(map, selection.head())
+                        } else {
+                            movement::next_word_end_or_newline(map, selection.head())
+                        };
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });
