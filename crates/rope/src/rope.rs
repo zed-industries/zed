@@ -1711,7 +1711,7 @@ mod tests {
                                     None
                                 }
                             })
-                            .or_else(|| {
+                            .or({
                                 if offset > 0 && start_ix == 0 {
                                     Some(0)
                                 } else {

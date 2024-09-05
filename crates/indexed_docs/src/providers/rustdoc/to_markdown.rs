@@ -76,10 +76,7 @@ pub struct RustdocCodeHandler;
 
 impl HandleTag for RustdocCodeHandler {
     fn should_handle(&self, tag: &str) -> bool {
-        match tag {
-            "pre" | "code" => true,
-            _ => false,
-        }
+        matches!(tag, "pre" | "code")
     }
 
     fn handle_tag_start(
@@ -97,7 +94,7 @@ impl HandleTag for RustdocCodeHandler {
                 let classes = tag.classes();
                 let is_rust = classes.iter().any(|class| class == "rust");
                 let language = is_rust
-                    .then(|| "rs")
+                    .then_some("rs")
                     .or_else(|| {
                         classes.iter().find_map(|class| {
                             if let Some((_, language)) = class.split_once("language-") {

@@ -158,7 +158,7 @@ impl SshSession {
         let mut remote_server_child = socket
             .ssh_command(&format!(
                 "RUST_LOG={} {:?} run",
-                std::env::var("RUST_LOG").unwrap_or(String::new()),
+                std::env::var("RUST_LOG").unwrap_or_default(),
                 remote_binary_path,
             ))
             .spawn()
@@ -241,7 +241,7 @@ impl SshSession {
                                     let line_ix = start_ix + ix;
                                     let content = &stderr_buffer[start_ix..line_ix];
                                     start_ix = line_ix + 1;
-                                    if let Ok(record) = serde_json::from_slice::<LogRecord>(&content) {
+                                    if let Ok(record) = serde_json::from_slice::<LogRecord>(content) {
                                         record.log(log::logger())
                                     } else {
                                         eprintln!("(remote) {}", String::from_utf8_lossy(content));
