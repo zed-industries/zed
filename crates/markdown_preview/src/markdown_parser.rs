@@ -139,7 +139,7 @@ impl<'a> MarkdownParser<'a> {
                     let list = self.parse_list(order).await;
                     Some(list)
                 }
-                Tag::BlockQuote => {
+                Tag::BlockQuote(_kind) => {
                     self.cursor += 1;
                     let block_quote = self.parse_block_quote().await;
                     Some(vec![ParsedMarkdownElement::BlockQuote(block_quote)])
@@ -654,10 +654,10 @@ impl<'a> MarkdownParser<'a> {
                 // Record that we're in a nested block quote and continue parsing.
                 // We don't need to advance the cursor since the next
                 // call to `parse_block` will handle it.
-                Event::Start(Tag::BlockQuote) => {
+                Event::Start(Tag::BlockQuote(_kind)) => {
                     nested_depth += 1;
                 }
-                Event::End(TagEnd::BlockQuote) => {
+                Event::End(TagEnd::BlockQuote(_kind)) => {
                     nested_depth -= 1;
                     if nested_depth == 0 {
                         self.cursor += 1;

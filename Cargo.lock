@@ -6137,7 +6137,7 @@ dependencies = [
  "lsp",
  "parking_lot",
  "postage",
- "pulldown-cmark",
+ "pulldown-cmark 0.12.1",
  "rand 0.8.5",
  "regex",
  "rpc",
@@ -6657,7 +6657,7 @@ dependencies = [
  "linkify",
  "log",
  "node_runtime",
- "pulldown-cmark",
+ "pulldown-cmark 0.12.1",
  "settings",
  "theme",
  "ui",
@@ -6677,7 +6677,7 @@ dependencies = [
  "linkify",
  "log",
  "pretty_assertions",
- "pulldown-cmark",
+ "pulldown-cmark 0.12.1",
  "theme",
  "ui",
  "workspace",
@@ -6772,7 +6772,7 @@ dependencies = [
  "once_cell",
  "opener",
  "pathdiff",
- "pulldown-cmark",
+ "pulldown-cmark 0.10.3",
  "regex",
  "serde",
  "serde_json",
@@ -8608,6 +8608,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulldown-cmark"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "666f0f59e259aea2d72e6012290c09877a780935cc3c18b1ceded41f3890d59c"
+dependencies = [
+ "bitflags 2.6.0",
+ "memchr",
+ "unicase",
+]
+
+[[package]]
 name = "pulldown-cmark-escape"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9185,7 +9196,7 @@ dependencies = [
  "gpui",
  "language",
  "linkify",
- "pulldown-cmark",
+ "pulldown-cmark 0.12.1",
  "theme",
  "ui",
  "util",
