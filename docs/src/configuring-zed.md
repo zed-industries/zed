@@ -1278,7 +1278,12 @@ List of `integer` column numbers
     "blinking": "terminal_controlled",
     "copy_on_select": false,
     "dock": "bottom",
-    "detect"
+    "detect_venv": {
+      "on": {
+        "directories": [".env", "env", ".venv", "venv"],
+        "activate_script": "default"
+      }
+    }
     "env": {},
     "font_family": null,
     "font_features": null,
