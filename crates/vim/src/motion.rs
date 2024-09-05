@@ -4,7 +4,7 @@ use editor::{
         self, find_boundary, find_preceding_boundary_display_point, FindRange, TextLayoutDetails,
     },
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset, ToPoint,
+    Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset,
 };
 use gpui::{actions, impl_actions, px, ViewContext};
 use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
