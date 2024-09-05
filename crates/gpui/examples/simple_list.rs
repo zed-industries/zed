@@ -5,24 +5,23 @@ struct SimpleList {}
 impl Render for SimpleList {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
-            .h_full()
-            .w_full()
-            .border_1()
-            .border_color(rgb(0x888888))
+            .size_full()
             .bg(rgb(0xffffff))
             .child(
-                uniform_list(cx.view().clone(), "entries", 50, |this, range, cx| {
+                uniform_list(cx.view().clone(), "entries", 50, |_this, range, _cx| {
                     let mut items = Vec::new();
-                    println!("range: {:?}", range);
-                    for i in range {
+                    for ix in range {
+                        let item = ix + 1;
+
                         items.push(
                             div()
+                                .id(ix)
+                                .px_2()
                                 .cursor_pointer()
-                                .id(i)
-                                .on_mouse_down(MouseButton::Left, move |_evt, _ctx| {
-                                    println!("clicked {:?}", format!("item {}", i));
+                                .on_click(move |_event, _cx| {
+                                    println!("clicked Item {item:?}");
                                 })
-                                .child(format!("item {}", i)),
+                                .child(format!("Item {item}")),
                         );
                     }
                     items
