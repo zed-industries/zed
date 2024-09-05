@@ -43,7 +43,10 @@ struct Cli {
 #[derive(clap::Subcommand)]
 enum Commands {
     Fetch {},
-    Run {},
+    Run {
+        #[arg(long)]
+        repo: Option<String>,
+    },
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -101,9 +104,9 @@ fn main() -> Result<()> {
                     })
                     .detach();
             }
-            Commands::Run {} => {
+            Commands::Run { repo } => {
                 cx.spawn(|mut cx| async move {
-                    if let Err(err) = run_evaluation(&executor, &mut cx).await {
+                    if let Err(err) = run_evaluation(repo, &executor, &mut cx).await {
                         eprintln!("Error: {}", err);
                         exit(1);
                     }
@@ -224,7 +227,7 @@ async fn fetch_code_search_net_resources(http_client: &dyn HttpClient) -> Result
     Ok(())
 }
 
-async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext) -> Result<()> {
+async fn run_evaluation(only_repo: Option<String>, executor: &BackgroundExecutor, cx: &mut AsyncAppContext) -> Result<()> {
     cx.update(|cx| {
         let mut store = SettingsStore::new(cx);
         store
@@ -288,6 +291,10 @@ async fn run_evaluation(executor: &BackgroundExecutor, cx: &mut AsyncAppContext)
     eprint!("Running evals.");
 
     for evaluation_project in evaluations {
+        if only_repo.as_ref().map_or(false, |only_repo| only_repo != &evaluation_project.repo) {
+            continue;
+        }
+
         eprint!(
             "\rRunning evals. {}/{} covered. Project: {}...",
             covered_result_count, total_result_count, evaluation_project.repo
