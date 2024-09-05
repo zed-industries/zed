@@ -272,6 +272,7 @@ pub struct Pane {
     save_modals_spawned: HashSet<EntityId>,
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pinned_tab_count: usize,
 }
 
 pub struct ActivationHistoryEntry {
@@ -470,6 +471,7 @@ impl Pane {
             save_modals_spawned: HashSet::default(),
             split_item_context_menu_handle: Default::default(),
             new_item_context_menu_handle: Default::default(),
+            pinned_tab_count: 0,
         }
     }
 
@@ -1722,6 +1724,48 @@ impl Pane {
         }
     }
 
+    fn pin_tab(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
+        maybe!({
+            let pane = cx.view().clone();
+            let destination_index = self.pinned_tab_count;
+            self.pinned_tab_count += 1;
+            let id = self.item_for_index(ix)?.item_id();
+
+            self.workspace
+                .update(cx, |_, cx| {
+                    cx.defer(move |this, cx| {
+                        this.move_item(pane.clone(), pane, id, destination_index, cx)
+                    });
+                })
+                .ok()?;
+
+            Some(())
+        });
+    }
+    fn unpin_tab(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
+        maybe!({
+            let pane = cx.view().clone();
+            self.pinned_tab_count = self.pinned_tab_count.checked_sub(1).unwrap();
+            let destination_index = self.pinned_tab_count;
+
+            let id = self.item_for_index(ix)?.item_id();
+
+            self.workspace
+                .update(cx, |_, cx| {
+                    cx.defer(move |this, cx| {
+                        this.move_item(pane.clone(), pane, id, destination_index, cx)
+                    });
+                })
+                .ok()?;
+
+            Some(())
+        });
+    }
+
+    fn is_tab_pinned(&self, ix: usize) -> bool {
+        self.pinned_tab_count > ix
+    }
+
     fn render_tab(
         &self,
         ix: usize,
@@ -1862,6 +1906,7 @@ impl Pane {
             }
         };
 
+        let is_pinned = self.is_tab_pinned(ix);
         let pane = cx.view().downgrade();
         right_click_menu(ix).trigger(tab).menu(move |cx| {
             let pane = pane.clone();
@@ -1950,6 +1995,26 @@ impl Pane {
                                     pane.copy_relative_path(&CopyRelativePath, cx);
                                 }),
                             )
+                            .separator()
+                            .map(|this| {
+                                if is_pinned {
+                                    this.entry(
+                                        "Unpin Tab",
+                                        None,
+                                        cx.handler_for(&pane, move |pane, cx| {
+                                            pane.unpin_tab(ix, cx);
+                                        }),
+                                    )
+                                } else {
+                                    this.entry(
+                                        "Pin Tab",
+                                        None,
+                                        cx.handler_for(&pane, move |pane, cx| {
+                                            pane.pin_tab(ix, cx);
+                                        }),
+                                    )
+                                }
+                            })
                             .separator()
                             .entry(
                                 "Reveal In Project Panel",
