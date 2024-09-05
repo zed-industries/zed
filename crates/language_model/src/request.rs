@@ -1,6 +1,7 @@
 use std::io::{Cursor, Write};
 
 use crate::role::Role;
+use crate::LanguageModelToolUse;
 use base64::write::EncoderWriter;
 use gpui::{point, size, AppContext, DevicePixels, Image, ObjectFit, RenderImage, Size, Task};
 use image::{codecs::png::PngEncoder, imageops::resize, DynamicImage, ImageDecoder};
@@ -171,17 +172,8 @@ pub struct LanguageModelToolResult {
 pub enum MessageContent {
     Text(String),
     Image(LanguageModelImage),
+    ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
-}
-
-impl MessageContent {
-    pub fn as_string(&self) -> &str {
-        match self {
-            MessageContent::Text(text) => text.as_str(),
-            MessageContent::Image(_) => "",
-            MessageContent::ToolResult(tool_result) => tool_result.content.as_str(),
-        }
-    }
 }
 
 impl From<String> for MessageContent {
@@ -208,8 +200,8 @@ impl LanguageModelRequestMessage {
         let mut string_buffer = String::new();
         for string in self.content.iter().filter_map(|content| match content {
             MessageContent::Text(text) => Some(text),
-            MessageContent::Image(_) => None,
             MessageContent::ToolResult(tool_result) => Some(&tool_result.content),
+            MessageContent::ToolUse(_) | MessageContent::Image(_) => None,
         }) {
             string_buffer.push_str(string.as_str())
         }
@@ -223,10 +215,10 @@ impl LanguageModelRequestMessage {
                 .get(0)
                 .map(|content| match content {
                     MessageContent::Text(text) => text.trim().is_empty(),
-                    MessageContent::Image(_) => true,
                     MessageContent::ToolResult(tool_result) => {
                         tool_result.content.trim().is_empty()
                     }
+                    MessageContent::ToolUse(_) | MessageContent::Image(_) => true,
                 })
                 .unwrap_or(false)
     }
@@ -344,6 +336,14 @@ impl LanguageModelRequest {
                                         media_type: "image/png".to_string(),
                                         data: image.source.to_string(),
                                     },
+                                    cache_control,
+                                })
+                            }
+                            MessageContent::ToolUse(tool_use) => {
+                                Some(anthropic::RequestContent::ToolUse {
+                                    id: tool_use.id,
+                                    name: tool_use.name,
+                                    input: tool_use.input,
                                     cache_control,
                                 })
                             }

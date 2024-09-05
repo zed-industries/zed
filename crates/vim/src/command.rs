@@ -656,13 +656,11 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
             query.next();
         }
         if let Some(replacement) = Replacement::parse(query) {
-            Some(
-                ReplaceCommand {
-                    replacement,
-                    range: range.clone(),
-                }
-                .boxed_clone(),
-            )
+            let range = range.clone().unwrap_or(CommandRange {
+                start: Position::CurrentLine { offset: 0 },
+                end: None,
+            });
+            Some(ReplaceCommand { replacement, range }.boxed_clone())
         } else {
             None
         }
@@ -789,11 +787,13 @@ mod test {
         cx.set_shared_state(indoc! {"
             ˇa
             b
+            b
             c"})
             .await;
         cx.simulate_shared_keystrokes(": % s / b / d enter").await;
         cx.shared_state().await.assert_eq(indoc! {"
             a
+            d
             ˇd
             c"});
         cx.simulate_shared_keystrokes(": % s : . : \\ 0 \\ 0 enter")
@@ -801,7 +801,14 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             aa
             dd
+            dd
             ˇcc"});
+        cx.simulate_shared_keystrokes("k : s / dd / ee enter").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            aa
+            dd
+            ˇee
+            cc"});
     }
 
     #[gpui::test]

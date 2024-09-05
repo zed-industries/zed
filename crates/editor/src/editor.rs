@@ -1488,7 +1488,8 @@ impl CodeActionsMenu {
                         let selected = selected_item == item_ix;
                         let colors = cx.theme().colors();
                         div()
-                            .px_2()
+                            .px_1()
+                            .rounded_md()
                             .text_color(colors.text)
                             .when(selected, |style| {
                                 style
@@ -1541,8 +1542,7 @@ impl CodeActionsMenu {
             },
         )
         .elevation_1(cx)
-        .px_2()
-        .py_1()
+        .p_1()
         .max_h(max_height)
         .occlude()
         .track_scroll(self.scroll_handle.clone())

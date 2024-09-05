@@ -214,7 +214,7 @@ To do so, add the following to your Zed `settings.json`:
 {
   "language_models": {
     "some-provider": {
-      "api_url": "http://localhost:11434/v1"
+      "api_url": "http://localhost:11434"
     }
   }
 }
