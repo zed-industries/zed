@@ -6,17 +6,17 @@ use crate::{
     slash_command::{
         default_command::DefaultSlashCommand,
         docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
-        file_command::codeblock_fence_for_path,
+        file_command::{self, codeblock_fence_for_path},
         SlashCommandCompletionProvider, SlashCommandRegistry,
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, CacheStatus, ConfirmCommand, Context, ContextEvent, ContextId, ContextStore,
     ContextStoreEvent, CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssistId,
-    InlineAssistant, InsertIntoEditor, Message, MessageId, MessageMetadata, MessageStatus,
-    ModelPickerDelegate, ModelSelector, NewContext, PendingSlashCommand, PendingSlashCommandStatus,
-    QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus,
-    ToggleModelSelector, WorkflowStepResolution,
+    InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId, MessageMetadata,
+    MessageStatus, ModelPickerDelegate, ModelSelector, NewContext, PendingSlashCommand,
+    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split,
+    ToggleFocus, ToggleModelSelector, WorkflowStepResolution,
 };
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -37,10 +37,10 @@ use fs::Fs;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
     AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    Context as _, Empty, Entity, EntityId, EventEmitter, FocusHandle, FocusableView, FontWeight,
-    InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render, RenderImage,
-    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
-    UpdateGlobal, View, VisualContext, WeakView, WindowContext,
+    Context as _, Empty, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
+    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render,
+    RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task,
+    Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -52,12 +52,18 @@ use language_model::{
 };
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
-use project::{Project, ProjectLspAdapterDelegate};
+use project::{Project, ProjectLspAdapterDelegate, Worktree};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::{update_settings_file, Settings};
 use smol::stream::StreamExt;
 use std::{
-    borrow::Cow, cmp, collections::hash_map, fmt::Write, ops::Range, path::PathBuf, sync::Arc,
+    borrow::Cow,
+    cmp,
+    collections::hash_map,
+    fmt::Write,
+    ops::{ControlFlow, Range},
+    path::PathBuf,
+    sync::Arc,
     time::Duration,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
@@ -68,16 +74,16 @@ use ui::{
     Avatar, AvatarShape, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
-use util::ResultExt;
-use workspace::searchable::SearchableItemHandle;
+use util::{maybe, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::{self, FollowableItem, Item, ItemHandle},
     pane::{self, SaveIntent},
     searchable::{SearchEvent, SearchableItem},
-    Pane, Save, ShowConfiguration, ToggleZoom, ToolbarItemEvent, ToolbarItemLocation,
-    ToolbarItemView, Workspace,
+    DraggedSelection, Pane, Save, ShowConfiguration, ToggleZoom, ToolbarItemEvent,
+    ToolbarItemLocation, ToolbarItemView, Workspace,
 };
+use workspace::{searchable::SearchableItemHandle, DraggedTab};
 use zed_actions::InlineAssist;
 
 pub fn init(cx: &mut AppContext) {
@@ -96,6 +102,7 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(AssistantPanel::inline_assist)
                 .register_action(ContextEditor::quote_selection)
                 .register_action(ContextEditor::insert_selection)
+                .register_action(ContextEditor::insert_dragged_files)
                 .register_action(AssistantPanel::show_configuration)
                 .register_action(AssistantPanel::create_new_context);
         },
@@ -340,6 +347,62 @@ impl AssistantPanel {
                 NewContext.boxed_clone(),
                 cx,
             );
+
+            let project = workspace.project().clone();
+            pane.set_custom_drop_handle(cx, move |_, dropped_item, cx| {
+                let action = maybe!({
+                    if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
+                        return Some(InsertDraggedFiles::ExternalFiles(paths.paths().to_vec()));
+                    }
+
+                    let project_paths = if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>()
+                    {
+                        if &tab.pane == cx.view() {
+                            return None;
+                        }
+                        let item = tab.pane.read(cx).item_for_index(tab.ix);
+                        Some(
+                            item.and_then(|item| item.project_path(cx))
+                                .into_iter()
+                                .collect::<Vec<_>>(),
+                        )
+                    } else if let Some(selection) = dropped_item.downcast_ref::<DraggedSelection>()
+                    {
+                        Some(
+                            selection
+                                .items()
+                                .filter_map(|item| {
+                                    project.read(cx).path_for_entry(item.entry_id, cx)
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    } else {
+                        None
+                    }?;
+
+                    let paths = project_paths
+                        .into_iter()
+                        .filter_map(|project_path| {
+                            let worktree = project
+                                .read(cx)
+                                .worktree_for_id(project_path.worktree_id, cx)?;
+
+                            let mut full_path = PathBuf::from(worktree.read(cx).root_name());
+                            full_path.push(&project_path.path);
+                            Some(full_path)
+                        })
+                        .collect::<Vec<_>>();
+
+                    Some(InsertDraggedFiles::ProjectPaths(paths))
+                });
+
+                if let Some(action) = action {
+                    cx.dispatch_action(action.boxed_clone());
+                }
+
+                ControlFlow::Break(())
+            });
+
             pane.set_can_split(false, cx);
             pane.set_can_navigate(true, cx);
             pane.display_nav_history_buttons(None);
@@ -1441,6 +1504,12 @@ pub struct ContextEditor {
     show_accept_terms: bool,
     pub(crate) slash_menu_handle:
         PopoverMenuHandle<Picker<slash_command_picker::SlashCommandDelegate>>,
+    // dragged_file_worktrees is used to keep references to worktrees that were added
+    // when the user drag/dropped an external file onto the context editor. Since
+    // the worktree is not part of the project panel, it would be dropped as soon as
+    // the file is opened. In order to keep the worktree alive for the duration of the
+    // context editor, we keep a reference here.
+    dragged_file_worktrees: Vec<Model<Worktree>>,
 }
 
 const DEFAULT_TAB_TITLE: &str = "New Context";
@@ -1505,6 +1574,7 @@ impl ContextEditor {
             error_message: None,
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
+            dragged_file_worktrees: Vec::new(),
         };
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
@@ -2978,6 +3048,80 @@ impl ContextEditor {
                 editor.focus(cx);
             })
         }
+    }
+
+    fn insert_dragged_files(
+        workspace: &mut Workspace,
+        action: &InsertDraggedFiles,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+        let Some(context_editor_view) = panel.read(cx).active_context_editor(cx) else {
+            return;
+        };
+
+        let project = workspace.project().clone();
+
+        let paths = match action {
+            InsertDraggedFiles::ProjectPaths(paths) => Task::ready((paths.clone(), vec![])),
+            InsertDraggedFiles::ExternalFiles(paths) => {
+                let tasks = paths
+                    .clone()
+                    .into_iter()
+                    .map(|path| Workspace::project_path_for_path(project.clone(), &path, false, cx))
+                    .collect::<Vec<_>>();
+
+                cx.spawn(move |_, cx| async move {
+                    let mut paths = vec![];
+                    let mut worktrees = vec![];
+
+                    let opened_paths = futures::future::join_all(tasks).await;
+                    for (worktree, project_path) in opened_paths.into_iter().flatten() {
+                        let Ok(worktree_root_name) =
+                            worktree.read_with(&cx, |worktree, _| worktree.root_name().to_string())
+                        else {
+                            continue;
+                        };
+
+                        let mut full_path = PathBuf::from(worktree_root_name.clone());
+                        full_path.push(&project_path.path);
+                        paths.push(full_path);
+                        worktrees.push(worktree);
+                    }
+
+                    (paths, worktrees)
+                })
+            }
+        };
+
+        cx.spawn(|_, mut cx| async move {
+            let (paths, dragged_file_worktrees) = paths.await;
+            let cmd_name = file_command::FileSlashCommand.name();
+
+            context_editor_view
+                .update(&mut cx, |context_editor, cx| {
+                    let file_argument = paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+
+                    context_editor.editor.update(cx, |editor, cx| {
+                        editor.insert("\n", cx);
+                        editor.insert(&format!("/{} {}", cmd_name, file_argument), cx);
+                    });
+
+                    context_editor.confirm_command(&ConfirmCommand, cx);
+
+                    context_editor
+                        .dragged_file_worktrees
+                        .extend(dragged_file_worktrees);
+                })
+                .log_err();
+        })
+        .detach();
     }
 
     fn quote_selection(
