@@ -787,6 +787,8 @@ impl Project {
                 remotely_created_buffers: Default::default(),
                 last_formatting_failure: None,
                 buffers_being_formatted: Default::default(),
+                search_included_history: Self::new_search_history(),
+                search_excluded_history: Self::new_search_history(),
             };
 
             let client: AnyProtoClient = ssh.clone().into();

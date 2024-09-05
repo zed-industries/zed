@@ -133,6 +133,7 @@ pub struct SshLspStore {
     upstream_client: AnyProtoClient,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum LspStoreMode {
     Local(LocalLspStore),   // ssh host and collab host
     Remote(RemoteLspStore), // collab guest
