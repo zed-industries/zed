@@ -405,19 +405,19 @@ pub struct ThemeColorsContent {
     ///
     /// These colors affect the background of diagnostics that are rendered
     /// inline with code.
-    #[serde(rename = "editor.diagbostic_error_background")]
+    #[serde(rename = "editor.diagnostic_error_background")]
     pub editor_diagnostic_error_background: Option<String>,
 
-    #[serde(rename = "editor.diagbostic_warning_background")]
+    #[serde(rename = "editor.diagnostic_warning_background")]
     pub editor_diagnostic_warning_background: Option<String>,
 
-    #[serde(rename = "editor.diagbostic_information_background")]
+    #[serde(rename = "editor.diagnostic_information_background")]
     pub editor_diagnostic_information_background: Option<String>,
 
-    #[serde(rename = "editor.diagbostic_hint_background")]
+    #[serde(rename = "editor.diagnostic_hint_background")]
     pub editor_diagnostic_hint_background: Option<String>,
 
-    #[serde(rename = "editor.diagbostic_default_background")]
+    #[serde(rename = "editor.diagnostic_default_background")]
     pub editor_diagnostic_default_background: Option<String>,
 
     /// Read-access of a symbol, like reading a variable.
