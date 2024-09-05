@@ -209,6 +209,25 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 The `left_padding` and `right_padding` options define the relative width of the
 left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
 
+## Detect Virtual Environments {#detect_venv}
+
+- Decription: Settings for detecting [Python Virtual Environments](https://docs.python.org/3/library/venv.html).
+- Setting: `detect_venv`
+- Default:
+
+```
+"detect_venv": {
+  "on": {
+    // Default directories to search for virtual environments, relative
+    // to the current working directory. We recommend overriding this
+    // in your project's settings, rather than globally.
+    "directories": [".venv", "venv"],
+    // Can also be `csh`, `fish`, and `nushell`
+    "activate_script": "default"
+  }
+}
+```
+
 ## Direnv Integration
 
 - Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed. `direnv` integration currently only means that the environment variables set by a `direnv` configuration can be used to detect some language servers in `$PATH` instead of installing them.
