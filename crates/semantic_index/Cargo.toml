@@ -17,14 +17,7 @@ name = "index"
 path = "examples/index.rs"
 crate-type = ["bin"]
 
-[[bin]]
-name = "eval"
-path = "src/bin/eval.rs"
-
 [dependencies]
-clap.workspace = true
-tokio.workspace = true
-async-compression.workspace = true
 anyhow.workspace = true
 client.workspace = true
 clock.workspace = true

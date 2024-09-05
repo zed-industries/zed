@@ -3967,7 +3967,6 @@ name = "evals"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-compression",
  "clap",
  "client",
  "clock",
@@ -3975,29 +3974,19 @@ dependencies = [
  "env_logger",
  "fs",
  "futures 0.3.30",
- "futures-batch",
  "git",
  "gpui",
- "heed",
  "http_client",
  "language",
  "languages",
- "log",
  "node_runtime",
  "open_ai",
- "parking_lot",
  "project",
  "semantic_index",
  "serde",
  "serde_json",
  "settings",
- "sha2",
  "smol",
- "theme",
- "tree-sitter",
- "unindent",
- "util",
- "worktree",
 ]
 
 [[package]]
@@ -9852,8 +9841,6 @@ name = "semantic_index"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-compression",
- "clap",
  "client",
  "clock",
  "collections",
@@ -9877,7 +9864,6 @@ dependencies = [
  "smol",
  "tempfile",
  "theme",
- "tokio",
  "tree-sitter",
  "ui",
  "unindent",
