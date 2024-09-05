@@ -17,7 +17,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 - Install the Rust wasm toolchain:
 
   ```sh
-  rustup target add wasm32-wasi
+  rustup target add wasm32-wasip1
   ```
 
 - Install [Visual Studio](https://visualstudio.microsoft.com/downloads/) with the optional component `MSVC v*** - VS YYYY C++ x64/x86 build tools` (`v***` is your VS version and `YYYY` is year when your VS was released)
