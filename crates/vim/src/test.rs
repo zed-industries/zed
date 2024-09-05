@@ -1424,7 +1424,17 @@ async fn test_record_replay_recursion(cx: &mut gpui::TestAppContext) {
     cx.simulate_shared_keystrokes(".").await;
     cx.simulate_shared_keystrokes(".").await;
     cx.simulate_shared_keystrokes(".").await;
-    cx.shared_state().await.assert_eq("ˇhello world"); // takes a _long_ time
+    cx.shared_state().await.assert_eq("ˇhello world");
+}
+
+#[gpui::test]
+async fn test_blackhole_register(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("ˇhello world").await;
+    cx.simulate_shared_keystrokes("d i w \" _ d a w").await;
+    cx.simulate_shared_keystrokes("p").await;
+    cx.shared_state().await.assert_eq("hellˇo");
 }
 
 #[gpui::test]
