@@ -1,7 +1,7 @@
 id = "svelte"
 name = "Svelte"
 description = "Svelte support"
-version = "0.1.0"
+version = "0.1.1"
 schema_version = 1
 authors = []
 repository = "https://github.com/zed-extensions/svelte"
@@ -12,4 +12,4 @@ language = "Svelte"
 
 [grammars.svelte]
 repository = "https://github.com/Himujjal/tree-sitter-svelte"
-commit = "038dea960b58a88d3a8e916e81399d6bfed50ef8"
+commit = "b08d070e303d2a385d6d0ab3add500f8fa514443"

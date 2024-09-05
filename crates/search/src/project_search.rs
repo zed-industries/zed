@@ -1191,6 +1191,7 @@ impl ProjectSearchView {
     }
 
     fn landing_text_minor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle.clone();
         v_flex()
             .gap_1()
             .child(Label::new("Hit enter to search. For more options:"))
@@ -1199,7 +1200,7 @@ impl ProjectSearchView {
                     .icon(IconName::Filter)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
-                    .key_binding(KeyBinding::for_action(&ToggleFilters, cx))
+                    .key_binding(KeyBinding::for_action_in(&ToggleFilters, &focus_handle, cx))
                     .on_click(|_event, cx| cx.dispatch_action(ToggleFilters.boxed_clone())),
             )
             .child(
@@ -1207,7 +1208,7 @@ impl ProjectSearchView {
                     .icon(IconName::Replace)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
-                    .key_binding(KeyBinding::for_action(&ToggleReplace, cx))
+                    .key_binding(KeyBinding::for_action_in(&ToggleReplace, &focus_handle, cx))
                     .on_click(|_event, cx| cx.dispatch_action(ToggleReplace.boxed_clone())),
             )
             .child(
@@ -1215,7 +1216,7 @@ impl ProjectSearchView {
                     .icon(IconName::Regex)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
-                    .key_binding(KeyBinding::for_action(&ToggleRegex, cx))
+                    .key_binding(KeyBinding::for_action_in(&ToggleRegex, &focus_handle, cx))
                     .on_click(|_event, cx| cx.dispatch_action(ToggleRegex.boxed_clone())),
             )
             .child(
@@ -1223,7 +1224,11 @@ impl ProjectSearchView {
                     .icon(IconName::CaseSensitive)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
-                    .key_binding(KeyBinding::for_action(&ToggleCaseSensitive, cx))
+                    .key_binding(KeyBinding::for_action_in(
+                        &ToggleCaseSensitive,
+                        &focus_handle,
+                        cx,
+                    ))
                     .on_click(|_event, cx| cx.dispatch_action(ToggleCaseSensitive.boxed_clone())),
             )
             .child(
@@ -1231,7 +1236,11 @@ impl ProjectSearchView {
                     .icon(IconName::WholeWord)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
-                    .key_binding(KeyBinding::for_action(&ToggleWholeWord, cx))
+                    .key_binding(KeyBinding::for_action_in(
+                        &ToggleWholeWord,
+                        &focus_handle,
+                        cx,
+                    ))
                     .on_click(|_event, cx| cx.dispatch_action(ToggleWholeWord.boxed_clone())),
             )
     }

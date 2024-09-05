@@ -4056,7 +4056,7 @@ impl Render for OutlinePanel {
         .child(
             v_flex().child(horizontal_separator(cx)).child(
                 h_flex().p_2().child(self.filter_editor.clone()).child(
-                    div().border_1().child(
+                    div().child(
                         IconButton::new(
                             "outline-panel-menu",
                             if pinned {
@@ -4066,7 +4066,14 @@ impl Render for OutlinePanel {
                             },
                         )
                         .tooltip(move |cx| {
-                            Tooltip::text(if pinned { "Unpin" } else { "Pin active editor" }, cx)
+                            Tooltip::text(
+                                if pinned {
+                                    "Unpin Outline"
+                                } else {
+                                    "Pin Active Outline"
+                                },
+                                cx,
+                            )
                         })
                         .shape(IconButtonShape::Square)
                         .on_click(cx.listener(|outline_panel, _, cx| {

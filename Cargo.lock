@@ -3284,7 +3284,7 @@ version = "3.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90eeab0aa92f3f9b4e87f258c72b139c207d251f9cbc1080a0086b86a8870dd3"
 dependencies = [
- "nix 0.29.0",
+ "nix",
  "windows-sys 0.59.0",
 ]
 
@@ -4928,6 +4928,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.30",
  "http_client",
+ "isahc",
  "schemars",
  "serde",
  "serde_json",
@@ -6137,7 +6138,7 @@ dependencies = [
  "lsp",
  "parking_lot",
  "postage",
- "pulldown-cmark",
+ "pulldown-cmark 0.12.1",
  "rand 0.8.5",
  "regex",
  "rpc",
@@ -6657,7 +6658,7 @@ dependencies = [
  "linkify",
  "log",
  "node_runtime",
- "pulldown-cmark",
+ "pulldown-cmark 0.12.1",
  "settings",
  "theme",
  "ui",
@@ -6677,7 +6678,8 @@ dependencies = [
  "linkify",
  "log",
  "pretty_assertions",
- "pulldown-cmark",
+ "pulldown-cmark 0.12.1",
+ "settings",
  "theme",
  "ui",
  "workspace",
@@ -6772,7 +6774,7 @@ dependencies = [
  "once_cell",
  "opener",
  "pathdiff",
- "pulldown-cmark",
+ "pulldown-cmark 0.10.3",
  "regex",
  "serde",
  "serde_json",
@@ -7065,18 +7067,6 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
-
-[[package]]
-name = "nix"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
-dependencies = [
- "bitflags 2.6.0",
- "cfg-if",
- "cfg_aliases 0.1.1",
- "libc",
-]
 
 [[package]]
 name = "nix"
@@ -8620,6 +8610,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulldown-cmark"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "666f0f59e259aea2d72e6012290c09877a780935cc3c18b1ceded41f3890d59c"
+dependencies = [
+ "bitflags 2.6.0",
+ "memchr",
+ "unicase",
+]
+
+[[package]]
 name = "pulldown-cmark-escape"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9197,7 +9198,7 @@ dependencies = [
  "gpui",
  "language",
  "linkify",
- "pulldown-cmark",
+ "pulldown-cmark 0.12.1",
  "theme",
  "ui",
  "util",
@@ -14169,7 +14170,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "hex",
- "nix 0.29.0",
+ "nix",
  "ordered-stream",
  "rand 0.8.5",
  "serde",
@@ -14267,7 +14268,7 @@ dependencies = [
  "markdown_preview",
  "menu",
  "mimalloc",
- "nix 0.28.0",
+ "nix",
  "node_runtime",
  "notifications",
  "outline",
@@ -14499,7 +14500,7 @@ dependencies = [
 
 [[package]]
 name = "zed_svelte"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

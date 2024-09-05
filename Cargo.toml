@@ -367,7 +367,7 @@ linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
-nix = "0.28"
+nix = "0.29"
 num-format = "0.4.4"
 once_cell = "1.19.0"
 ordered-float = "2.1.1"
@@ -380,7 +380,7 @@ pretty_assertions = "1.3.0"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
-pulldown-cmark = { version = "0.10.0", default-features = false }
+pulldown-cmark = { version = "0.12.0", default-features = false }
 rand = "0.8.5"
 regex = "1.5"
 repair_json = "0.1.0"
@@ -388,7 +388,6 @@ rsa = "0.9.6"
 runtimelib = { version = "0.15", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
-rusqlite = { version = "0.29.0", features = ["blob", "array", "modern_sqlite"] }
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
 schemars = { version = "0.8", features = ["impl_json_schema"] }
