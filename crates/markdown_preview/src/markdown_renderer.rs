@@ -9,23 +9,24 @@ use gpui::{
     HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Modifiers, ParentElement,
     SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
 };
+use settings::Settings;
 use std::{
     ops::{Mul, Range},
     sync::Arc,
 };
-use theme::{ActiveTheme, SyntaxTheme};
+use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
     h_flex, v_flex, Checkbox, FluentBuilder, InteractiveElement, LinkPreview, Selection,
-    StatefulInteractiveElement, StyledTypography, Tooltip,
+    StatefulInteractiveElement, Tooltip,
 };
 use workspace::Workspace;
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut WindowContext)>>;
 
-pub struct RenderContext<'a> {
-    window_cx: &'a WindowContext<'a>,
+pub struct RenderContext {
     workspace: Option<WeakView<Workspace>>,
     next_id: usize,
+    buffer_font_family: SharedString,
     text_style: TextStyle,
     border_color: Hsla,
     text_color: Hsla,
@@ -37,18 +38,18 @@ pub struct RenderContext<'a> {
     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
 }
 
-impl<'a> RenderContext<'a> {
-    pub fn new(
-        workspace: Option<WeakView<Workspace>>,
-        cx: &'a WindowContext<'a>,
-    ) -> RenderContext<'a> {
+impl RenderContext {
+    pub fn new(workspace: Option<WeakView<Workspace>>, cx: &WindowContext) -> RenderContext {
         let theme = cx.theme().clone();
 
+        let settings = ThemeSettings::get_global(cx);
+        let buffer_font_family = settings.buffer_font.family.clone();
+
         RenderContext {
-            window_cx: cx,
             workspace,
             next_id: 0,
             indent: 0,
+            buffer_font_family,
             text_style: cx.text_style(),
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
@@ -93,14 +94,6 @@ impl<'a> RenderContext<'a> {
         } else {
             element
         }
-    }
-}
-
-impl<'a> std::ops::Deref for RenderContext<'a> {
-    type Target = WindowContext<'a>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.window_cx
     }
 }
 
@@ -333,7 +326,7 @@ fn render_markdown_code_block(
     };
 
     cx.with_common_p(div())
-        .font_buffer(cx)
+        .font_family(cx.buffer_font_family.clone())
         .px_3()
         .py_3()
         .bg(cx.code_block_background_color)

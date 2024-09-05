@@ -1,5 +1,9 @@
 # Rust
 
+```
+Any code
+```
+
 Rust support is available natively in Zed.
 
 - Tree Sitter: [tree-sitter/tree-sitter-rust](https://github.com/tree-sitter/tree-sitter-rust)
