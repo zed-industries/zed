@@ -6678,6 +6678,7 @@ dependencies = [
  "log",
  "pretty_assertions",
  "pulldown-cmark 0.12.1",
+ "settings",
  "theme",
  "ui",
  "workspace",
