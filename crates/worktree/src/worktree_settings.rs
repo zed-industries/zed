@@ -11,6 +11,7 @@ use util::paths::PathMatcher;
 pub struct WorktreeSettings {
     pub file_scan_exclusions: PathMatcher,
     pub private_files: PathMatcher,
+    pub exclusions_gitignore: bool,
 }
 
 impl WorktreeSettings {
@@ -45,6 +46,9 @@ pub struct WorktreeSettingsContent {
     /// Treat the files matching these globs as `.env` files.
     /// Default: [ "**/.env*" ]
     pub private_files: Option<Vec<String>>,
+
+    #[serde(default)]
+    pub exclusions_gitignore: bool,
 }
 
 impl Settings for WorktreeSettings {
@@ -59,11 +63,13 @@ impl Settings for WorktreeSettings {
         let result: WorktreeSettingsContent = sources.json_merge()?;
         let mut file_scan_exclusions = result.file_scan_exclusions.unwrap_or_default();
         let mut private_files = result.private_files.unwrap_or_default();
+        let exclusion = result.exclusions_gitignore;
         file_scan_exclusions.sort();
         private_files.sort();
         Ok(Self {
             file_scan_exclusions: path_matchers(&file_scan_exclusions, "file_scan_exclusions")?,
             private_files: path_matchers(&private_files, "private_files")?,
+            exclusions_gitignore: exclusion,
         })
     }
 }
