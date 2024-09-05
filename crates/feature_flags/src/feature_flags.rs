@@ -53,6 +53,11 @@ impl FeatureFlag for ZedPro {
     const NAME: &'static str = "zed-pro";
 }
 
+pub struct AutoCommand {}
+impl FeatureFlag for AutoCommand {
+    const NAME: &'static str = "auto-command";
+}
+
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where

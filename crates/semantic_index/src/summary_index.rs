@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayString;
-use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use futures::{stream::StreamExt, TryFutureExt};
 use futures_batch::ChunksTimeoutStreamExt;
@@ -125,16 +124,11 @@ impl SummaryIndex {
         self.summary_db
     }
 
-    fn is_staff(cx: &AppContext) -> bool {
-        // [#auto-staff-ship] TODO After the staff-shipping phase of /auto, delete this function and remove feature_flags dep from Cargo.toml.
-        cx.is_staff()
-    }
-
     pub fn index_entries_changed_on_disk(
         &self,
+        is_auto_available: bool,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
-        let is_staff = Self::is_staff(cx);
         let start = Instant::now();
         let backlogged;
         let digest;
@@ -142,7 +136,7 @@ impl SummaryIndex {
         let summaries;
         let persist;
 
-        if is_staff {
+        if is_auto_available {
             let worktree = self.worktree.read(cx).snapshot();
             let worktree_abs_path = worktree.abs_path().clone();
 
@@ -181,7 +175,7 @@ impl SummaryIndex {
                 persist
             )?;
 
-            if is_staff {
+            if is_auto_available {
                 log::info!(
                     "Summarizing everything that changed on disk took {:?}",
                     start.elapsed()
@@ -195,9 +189,9 @@ impl SummaryIndex {
     pub fn index_updated_entries(
         &mut self,
         updated_entries: UpdatedEntriesSet,
+        is_auto_available: bool,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
-        let is_staff = Self::is_staff(cx);
         let start = Instant::now();
         let backlogged;
         let digest;
@@ -205,7 +199,7 @@ impl SummaryIndex {
         let summaries;
         let persist;
 
-        if is_staff {
+        if is_auto_available {
             let worktree = self.worktree.read(cx).snapshot();
             let worktree_abs_path = worktree.abs_path().clone();
 

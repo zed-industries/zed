@@ -3,8 +3,9 @@ use crate::embedding_index::EmbeddingIndex;
 use crate::indexing::IndexingEntrySet;
 use crate::summary_index::SummaryIndex;
 use anyhow::Result;
+use feature_flags::{AutoCommand, FeatureFlagAppExt};
 use fs::Fs;
-use futures::future::Shared;
+use futures::{channel::oneshot, future::Shared};
 use gpui::{
     AppContext, AsyncAppContext, Context, Model, ModelContext, Subscription, Task, WeakModel,
 };
@@ -171,21 +172,49 @@ impl WorktreeIndex {
         updated_entries: channel::Receiver<UpdatedEntriesSet>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
+        // Wait until the feature flags have been set before continuing.
+        let is_auto_available = {
+            let (tx, rx) = oneshot::channel::<bool>();
+            let mut tx = Some(tx);
+
+            let subscription = cx
+                .update(move |cx| {
+                    cx.observe_flag::<AutoCommand, _>(move |enabled, _| {
+                        if let Some(tx) = tx.take() {
+                            tx.send(enabled).ok();
+                        }
+                    })
+                })
+                .ok();
+
+            let ret = rx.await.unwrap_or(false);
+            drop(subscription);
+            ret
+        };
+
         let index = this.update(&mut cx, |this, cx| {
             futures::future::try_join(
                 this.embedding_index.index_entries_changed_on_disk(cx),
-                this.summary_index.index_entries_changed_on_disk(cx),
+                this.summary_index
+                    .index_entries_changed_on_disk(is_auto_available, cx),
             )
         })?;
         index.await.log_err();
 
         while let Ok(updated_entries) = updated_entries.recv().await {
+            let is_auto_available = cx
+                .update(|cx| cx.has_flag::<AutoCommand>())
+                .unwrap_or(false);
+
             let index = this.update(&mut cx, |this, cx| {
                 futures::future::try_join(
                     this.embedding_index
                         .index_updated_entries(updated_entries.clone(), cx),
-                    this.summary_index
-                        .index_updated_entries(updated_entries, cx),
+                    this.summary_index.index_updated_entries(
+                        updated_entries,
+                        is_auto_available,
+                        cx,
+                    ),
                 )
             })?;
             index.await.log_err();
