@@ -308,6 +308,10 @@ pub enum ContextEvent {
         expand_result: bool,
     },
     UsePendingTools,
+    ToolFinished {
+        tool_use_id: Arc<str>,
+        output_range: Range<language::Anchor>,
+    },
     Operation(ContextOperation),
 }
 
@@ -1978,8 +1982,10 @@ impl Context {
                 let output = output.await;
                 this.update(&mut cx, |this, cx| match output {
                     Ok(mut output) => {
-                        if !output.ends_with('\n') {
-                            output.push('\n');
+                        const NEWLINE: char = '\n';
+
+                        if !output.ends_with(NEWLINE) {
+                            output.push(NEWLINE);
                         }
 
                         this.tool_results_by_tool_use_id
@@ -1990,7 +1996,7 @@ impl Context {
                             let insert_end = insert_start;
 
                             let start = insert_start;
-                            let end = start + output.len();
+                            let end = start + output.len() - NEWLINE.len_utf8();
 
                             buffer.edit([(insert_start..insert_end, output)], None, cx);
 
@@ -1999,7 +2005,12 @@ impl Context {
                             output_range
                         });
 
-                        this.insert_tool_result_anchor(tool_use_id, anchor_range.start, cx);
+                        this.insert_tool_result_anchor(tool_use_id.clone(), anchor_range.start, cx);
+
+                        cx.emit(ContextEvent::ToolFinished {
+                            tool_use_id,
+                            output_range: anchor_range,
+                        });
                     }
                     Err(err) => {
                         if let Some(tool_use) = this.pending_tool_uses_by_id.get_mut(&tool_use_id) {
