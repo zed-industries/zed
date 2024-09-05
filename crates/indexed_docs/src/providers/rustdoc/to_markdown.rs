@@ -128,7 +128,7 @@ impl HandleTag for RustdocCodeHandler {
 
     fn handle_text(&mut self, text: &str, writer: &mut MarkdownWriter) -> HandlerOutcome {
         if writer.is_inside("pre") {
-            writer.push_str(&text);
+            writer.push_str(text);
             return HandlerOutcome::Handled;
         }
 
@@ -153,10 +153,7 @@ impl RustdocItemHandler {
 
 impl HandleTag for RustdocItemHandler {
     fn should_handle(&self, tag: &str) -> bool {
-        match tag {
-            "div" | "span" => true,
-            _ => false,
-        }
+        matches!(tag, "div" | "span")
     }
 
     fn handle_tag_start(
@@ -208,10 +205,10 @@ pub struct RustdocChromeRemover;
 
 impl HandleTag for RustdocChromeRemover {
     fn should_handle(&self, tag: &str) -> bool {
-        match tag {
-            "head" | "script" | "nav" | "summary" | "button" | "a" | "div" | "span" => true,
-            _ => false,
-        }
+        matches!(
+            tag,
+            "head" | "script" | "nav" | "summary" | "button" | "a" | "div" | "span"
+        )
     }
 
     fn handle_tag_start(
@@ -307,23 +304,20 @@ impl HandleTag for RustdocItemCollector {
         tag: &HtmlElement,
         writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
-        match tag.tag() {
-            "a" => {
-                let is_reexport = writer.current_element_stack().iter().any(|element| {
-                    if let Some(id) = element.attr("id") {
-                        id.starts_with("reexport.") || id.starts_with("method.")
-                    } else {
-                        false
-                    }
-                });
+        if tag.tag() == "a" {
+            let is_reexport = writer.current_element_stack().iter().any(|element| {
+                if let Some(id) = element.attr("id") {
+                    id.starts_with("reexport.") || id.starts_with("method.")
+                } else {
+                    false
+                }
+            });
 
-                if !is_reexport {
-                    if let Some(item) = Self::parse_item(tag) {
-                        self.items.insert(item);
-                    }
+            if !is_reexport {
+                if let Some(item) = Self::parse_item(tag) {
+                    self.items.insert(item);
                 }
             }
-            _ => {}
         }
 
         StartTagOutcome::Continue

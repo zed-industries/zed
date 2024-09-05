@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn can_deserialize_ts_tasks() {
-        static TYPESCRIPT_TASKS: & str = include_str!("../test_data/typescript.json");
+        static TYPESCRIPT_TASKS: &str = include_str!("../test_data/typescript.json");
         let vscode_definitions: VsCodeTaskFile =
             serde_json_lenient::from_str(TYPESCRIPT_TASKS).unwrap();
 

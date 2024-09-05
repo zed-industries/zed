@@ -843,10 +843,10 @@ pub struct MacOSDisplay {
 }
 
 impl Default for MacOSDisplay {
-     fn default() -> Self {
-         Self::new()
-     }
- }
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl MacOSDisplay {
     pub fn new() -> Self {

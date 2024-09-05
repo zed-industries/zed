@@ -11,8 +11,8 @@ pub struct Session {
     old_window_ids: Option<Vec<WindowId>>,
 }
 
-const SESSION_ID_KEY: & str = "session_id";
-const SESSION_WINDOW_STACK_KEY: & str = "session_window_stack";
+const SESSION_ID_KEY: &str = "session_id";
+const SESSION_WINDOW_STACK_KEY: &str = "session_window_stack";
 
 impl Session {
     pub async fn new() -> Self {
