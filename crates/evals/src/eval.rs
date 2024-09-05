@@ -227,7 +227,11 @@ async fn fetch_code_search_net_resources(http_client: &dyn HttpClient) -> Result
     Ok(())
 }
 
-async fn run_evaluation(only_repo: Option<String>, executor: &BackgroundExecutor, cx: &mut AsyncAppContext) -> Result<()> {
+async fn run_evaluation(
+    only_repo: Option<String>,
+    executor: &BackgroundExecutor,
+    cx: &mut AsyncAppContext,
+) -> Result<()> {
     cx.update(|cx| {
         let mut store = SettingsStore::new(cx);
         store
@@ -291,7 +295,10 @@ async fn run_evaluation(only_repo: Option<String>, executor: &BackgroundExecutor
     eprint!("Running evals.");
 
     for evaluation_project in evaluations {
-        if only_repo.as_ref().map_or(false, |only_repo| only_repo != &evaluation_project.repo) {
+        if only_repo
+            .as_ref()
+            .map_or(false, |only_repo| only_repo != &evaluation_project.repo)
+        {
             continue;
         }
 
