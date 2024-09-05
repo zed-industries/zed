@@ -414,13 +414,15 @@ impl JsonSchema for FormatOnSave {
             .into(),
         );
 
-        let mut valid_raw_values = SchemaObject::default();
-        valid_raw_values.enum_values = Some(vec![
-            Value::String("on".into()),
-            Value::String("off".into()),
-            Value::String("prettier".into()),
-            Value::String("language_server".into()),
-        ]);
+        let valid_raw_values = SchemaObject {
+            enum_values: Some(vec![
+                Value::String("on".into()),
+                Value::String("off".into()),
+                Value::String("prettier".into()),
+                Value::String("language_server".into()),
+            ]),
+            ..Default::default()
+        };
         let mut nested_values = SchemaObject::default();
 
         nested_values.array().items = Some(formatter_schema.clone().into());
@@ -545,12 +547,15 @@ impl JsonSchema for SelectedFormatter {
             .into(),
         );
 
-        let mut valid_raw_values = SchemaObject::default();
-        valid_raw_values.enum_values = Some(vec![
-            Value::String("auto".into()),
-            Value::String("prettier".into()),
-            Value::String("language_server".into()),
-        ]);
+        let valid_raw_values = SchemaObject {
+            enum_values: Some(vec![
+                Value::String("auto".into()),
+                Value::String("prettier".into()),
+                Value::String("language_server".into()),
+            ]),
+            ..Default::default()
+        };
+
         let mut nested_values = SchemaObject::default();
 
         nested_values.array().items = Some(formatter_schema.clone().into());

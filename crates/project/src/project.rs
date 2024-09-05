@@ -2804,7 +2804,7 @@ impl Project {
                 .as_ref()
                 .zip(buffer_abs_path.as_ref());
 
-            let prettier_settings = buffer.read_with(&mut cx, |buffer, cx| {
+            let prettier_settings = buffer.read_with(&cx, |buffer, cx| {
                 language_settings(buffer.language(), buffer.file(), cx)
                     .prettier
                     .clone()
@@ -3033,7 +3033,7 @@ impl Project {
         buffer: &Model<Buffer>,
         buffer_abs_path: &Option<PathBuf>,
         settings: &LanguageSettings,
-        adapters_and_servers: &Vec<(Arc<CachedLspAdapter>, Arc<LanguageServer>)>,
+        adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
         push_to_history: bool,
         transaction: &mut ProjectTransaction,
         cx: &mut AsyncAppContext,
@@ -5404,7 +5404,7 @@ fn deserialize_location(
     })
 }
 
-pub fn sort_worktree_entries(entries: &mut Vec<Entry>) {
+pub fn sort_worktree_entries(entries: &mut [Entry]) {
     entries.sort_by(|entry_a, entry_b| {
         compare_paths(
             (&entry_a.path, entry_a.is_file()),

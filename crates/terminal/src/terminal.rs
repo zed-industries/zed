@@ -823,9 +823,9 @@ impl Terminal {
                     let mut min_index = point;
                     loop {
                         let new_min_index = min_index.sub(term, Boundary::Cursor, 1);
-                        if new_min_index == min_index {
-                            break;
-                        } else if term.grid().index(new_min_index).hyperlink() != link {
+                        if new_min_index == min_index
+                            || term.grid().index(new_min_index).hyperlink() != link
+                        {
                             break;
                         } else {
                             min_index = new_min_index
@@ -835,9 +835,9 @@ impl Terminal {
                     let mut max_index = point;
                     loop {
                         let new_max_index = max_index.add(term, Boundary::Cursor, 1);
-                        if new_max_index == max_index {
-                            break;
-                        } else if term.grid().index(new_max_index).hyperlink() != link {
+                        if new_max_index == max_index
+                            || term.grid().index(new_max_index).hyperlink() != link
+                        {
                             break;
                         } else {
                             max_index = new_max_index
@@ -1610,16 +1610,16 @@ fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, Str
 /// The library
 ///
 /// * does not increment inner grid cursor's _lines_ on `input` calls
-/// (but displaying the lines correctly and incrementing cursor's columns)
+///   (but displaying the lines correctly and incrementing cursor's columns)
 ///
 /// * ignores `\n` and \r` character input, requiring the `newline` call instead
 ///
 /// * does not alter grid state after `newline` call
-/// so its `bottommost_line` is always the same additions, and
-/// the cursor's `point` is not updated to the new line and column values
+///   so its `bottommost_line` is always the same additions, and
+///   the cursor's `point` is not updated to the new line and column values
 ///
 /// * ??? there could be more consequences, and any further "proper" streaming from the PTY might bug and/or panic.
-/// Still, concequent `append_text_to_term` invocations are possible and display the contents correctly.
+///   Still, concequent `append_text_to_term` invocations are possible and display the contents correctly.
 ///
 /// Despite the quirks, this is the simplest approach to appending text to the terminal: its alternative, `grid_mut` manipulations,
 /// do not properly set the scrolling state and display odd text after appending; also those manipulations are more tedious and error-prone.

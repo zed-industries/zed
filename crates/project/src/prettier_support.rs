@@ -49,9 +49,7 @@ pub(super) async fn format_with_prettier(
         .ok()?
         .await;
 
-    let Some((prettier_path, prettier_task)) = prettier_instance else {
-        return None;
-    };
+    let (prettier_path, prettier_task) = prettier_instance?;
 
     let prettier_description = match prettier_path.as_ref() {
         Some(path) => format!("prettier at {path:?}"),

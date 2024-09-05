@@ -77,10 +77,7 @@ impl AlacMouseButton {
     }
 
     fn is_other(&self) -> bool {
-        match self {
-            AlacMouseButton::Other => true,
-            _ => false,
-        }
+        matches!(self, AlacMouseButton::Other)
     }
 }
 

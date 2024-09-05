@@ -760,7 +760,7 @@ impl LspStore {
 
     pub async fn execute_code_actions_on_servers(
         this: &WeakModel<LspStore>,
-        adapters_and_servers: &Vec<(Arc<CachedLspAdapter>, Arc<LanguageServer>)>,
+        adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
         code_actions: Vec<lsp::CodeActionKind>,
         buffer: &Model<Buffer>,
         push_to_history: bool,
@@ -1387,7 +1387,7 @@ impl LspStore {
         let buffer_id = buffer.read(cx).remote_id();
         let buffer_snapshot = buffer.read(cx).snapshot();
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(move |this, cx| async move {
             let mut did_resolve = false;
             if let Some(client) = client {
                 for completion_index in completion_indices {
@@ -1433,7 +1433,7 @@ impl LspStore {
                     };
 
                     let server = this
-                        .read_with(&mut cx, |this, _| this.language_server_for_id(server_id))
+                        .read_with(&cx, |this, _| this.language_server_for_id(server_id))
                         .ok()
                         .flatten();
                     let Some(server) = server else {
@@ -3808,7 +3808,7 @@ impl LspStore {
         let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
 
         let completion = this
-            .read_with(&mut cx, |this, _| {
+            .read_with(&cx, |this, _| {
                 let id = LanguageServerId(envelope.payload.language_server_id as usize);
                 let Some(server) = this.language_server_for_id(id) else {
                     return Err(anyhow!("No language server {id}"));
@@ -5048,9 +5048,12 @@ impl LspStore {
                             lsp_name: name.clone(),
                         };
 
-                        if let Ok(_) = this.update(&mut cx, |_, cx| {
-                            cx.emit(LspStoreEvent::LanguageServerPrompt(request));
-                        }) {
+                        let did_update = this
+                            .update(&mut cx, |_, cx| {
+                                cx.emit(LspStoreEvent::LanguageServerPrompt(request));
+                            })
+                            .is_ok();
+                        if did_update {
                             let response = rx.next().await;
 
                             Ok(response)
@@ -5688,23 +5691,21 @@ impl LspStore {
         let server = self
             .as_local()
             .and_then(|local| local.language_servers.get(&server_id));
-        if let Some((server, status)) = server.zip(status) {
-            if let LanguageServerState::Running { server, .. } = server {
-                for (token, progress) in &status.pending_work {
-                    if let Some(token_to_cancel) = token_to_cancel.as_ref() {
-                        if token != token_to_cancel {
-                            continue;
-                        }
+        if let Some((LanguageServerState::Running { server, .. }, status)) = server.zip(status) {
+            for (token, progress) in &status.pending_work {
+                if let Some(token_to_cancel) = token_to_cancel.as_ref() {
+                    if token != token_to_cancel {
+                        continue;
                     }
-                    if progress.is_cancellable {
-                        server
-                            .notify::<lsp::notification::WorkDoneProgressCancel>(
-                                WorkDoneProgressCancelParams {
-                                    token: lsp::NumberOrString::String(token.clone()),
-                                },
-                            )
-                            .ok();
-                    }
+                }
+                if progress.is_cancellable {
+                    server
+                        .notify::<lsp::notification::WorkDoneProgressCancel>(
+                            WorkDoneProgressCancelParams {
+                                token: lsp::NumberOrString::String(token.clone()),
+                            },
+                        )
+                        .ok();
                 }
             }
         }
@@ -6483,10 +6484,10 @@ async fn populate_labels_for_symbols(
 
 fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
     match server.capabilities().text_document_sync.as_ref()? {
-        lsp::TextDocumentSyncCapability::Kind(kind) => match kind {
-            &lsp::TextDocumentSyncKind::NONE => None,
-            &lsp::TextDocumentSyncKind::FULL => Some(true),
-            &lsp::TextDocumentSyncKind::INCREMENTAL => Some(false),
+        lsp::TextDocumentSyncCapability::Kind(kind) => match *kind {
+            lsp::TextDocumentSyncKind::NONE => None,
+            lsp::TextDocumentSyncKind::FULL => Some(true),
+            lsp::TextDocumentSyncKind::INCREMENTAL => Some(false),
             _ => None,
         },
         lsp::TextDocumentSyncCapability::Options(options) => match options.save.as_ref()? {

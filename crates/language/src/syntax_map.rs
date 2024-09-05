@@ -734,19 +734,24 @@ impl SyntaxSnapshot {
         let mut max_depth = 0;
         let mut prev_range: Option<Range<Anchor>> = None;
         for layer in self.layers.iter() {
-            if layer.depth == max_depth {
-                if let Some(prev_range) = prev_range {
-                    match layer.range.start.cmp(&prev_range.start, text) {
-                        Ordering::Less => panic!("layers out of order"),
-                        Ordering::Equal => {
-                            assert!(layer.range.end.cmp(&prev_range.end, text).is_ge())
+            match Ord::cmp(&layer.depth, &max_depth) {
+                Ordering::Less => {
+                    panic!("layers out of order")
+                }
+                Ordering::Equal => {
+                    if let Some(prev_range) = prev_range {
+                        match layer.range.start.cmp(&prev_range.start, text) {
+                            Ordering::Less => panic!("layers out of order"),
+                            Ordering::Equal => {
+                                assert!(layer.range.end.cmp(&prev_range.end, text).is_ge())
+                            }
+                            Ordering::Greater => {}
                         }
-                        Ordering::Greater => {}
                     }
                 }
-            } else if layer.depth < max_depth {
-                panic!("layers out of order")
+                Ordering::Greater => {}
             }
+
             max_depth = layer.depth;
             prev_range = Some(layer.range.clone());
         }

@@ -710,7 +710,7 @@ impl BufferStore {
     pub fn get_by_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<Model<Buffer>> {
         self.buffers().find_map(|buffer| {
             let file = File::from_dyn(buffer.read(cx).file())?;
-            if file.worktree_id(cx) == path.worktree_id && &file.path == &path.path {
+            if file.worktree_id(cx) == path.worktree_id && file.path == path.path {
                 Some(buffer)
             } else {
                 None

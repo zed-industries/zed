@@ -728,11 +728,10 @@ impl LspCommand for GetTypeDefinition {
     type ProtoRequest = proto::GetTypeDefinition;
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        match &capabilities.server_capabilities.type_definition_provider {
-            None => false,
-            Some(lsp::TypeDefinitionProviderCapability::Simple(false)) => false,
-            _ => true,
-        }
+        !matches!(
+            &capabilities.server_capabilities.type_definition_provider,
+            None | Some(lsp::TypeDefinitionProviderCapability::Simple(false))
+        )
     }
 
     fn to_lsp(

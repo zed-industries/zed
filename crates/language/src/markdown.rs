@@ -336,7 +336,7 @@ pub fn highlight_code(
 }
 
 /// Appends a new paragraph to the provided `text` buffer.
-pub fn new_paragraph(text: &mut String, list_stack: &mut Vec<(Option<u64>, bool)>) {
+pub fn new_paragraph(text: &mut String, list_stack: &mut [(Option<u64>, bool)]) {
     let mut is_subsequent_paragraph_of_list = false;
     if let Some((_, has_content)) = list_stack.last_mut() {
         if *has_content {

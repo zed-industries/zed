@@ -25,6 +25,7 @@ pub struct ProjectSettings {
     ///
     /// The following settings can be overridden for specific language servers:
     /// - initialization_options
+    ///
     /// To override settings for a language, add an entry for that language server's
     /// name to the lsp value.
     /// Default: null
