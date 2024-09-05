@@ -514,7 +514,7 @@ impl AppContext {
                 }
                 Err(e) => {
                     cx.windows.remove(id);
-                    return Err(e);
+                    Err(e)
                 }
             }
         })

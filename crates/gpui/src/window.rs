@@ -3262,24 +3262,23 @@ impl<'a> WindowContext<'a> {
                 && self.window.pending_modifier.modifiers.number_of_modifiers() == 1
                 && !self.window.pending_modifier.saw_keystroke
             {
-                if event.modifiers.number_of_modifiers() == 0 {
-                    let key = match self.window.pending_modifier.modifiers {
-                        modifiers if modifiers.shift => Some("shift"),
-                        modifiers if modifiers.control => Some("control"),
-                        modifiers if modifiers.alt => Some("alt"),
-                        modifiers if modifiers.platform => Some("platform"),
-                        modifiers if modifiers.function => Some("function"),
-                        _ => None,
-                    };
-                    if let Some(key) = key {
-                        keystroke = Some(Keystroke {
-                            key: key.to_string(),
-                            ime_key: None,
-                            modifiers: Modifiers::default(),
-                        });
-                    }
+                let key = match self.window.pending_modifier.modifiers {
+                    modifiers if modifiers.shift => Some("shift"),
+                    modifiers if modifiers.control => Some("control"),
+                    modifiers if modifiers.alt => Some("alt"),
+                    modifiers if modifiers.platform => Some("platform"),
+                    modifiers if modifiers.function => Some("function"),
+                    _ => None,
+                };
+                if let Some(key) = key {
+                    keystroke = Some(Keystroke {
+                        key: key.to_string(),
+                        ime_key: None,
+                        modifiers: Modifiers::default(),
+                    });
                 }
             }
+
             if self.window.pending_modifier.modifiers.number_of_modifiers() == 0
                 && event.modifiers.number_of_modifiers() == 1
             {
