@@ -66,7 +66,7 @@ use rpc::{
     proto::{AnyProtoClient, SSH_PROJECT_ID},
     ErrorCode,
 };
-use search::{SearchQuery, SearchResult};
+use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{watch_config_file, Settings, SettingsLocation, SettingsStore};
 use smol::channel::Receiver;
@@ -167,6 +167,8 @@ pub struct Project {
     hosted_project_id: Option<ProjectId>,
     dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
+    search_included_history: SearchHistory,
+    search_excluded_history: SearchHistory,
     snippets: Model<SnippetProvider>,
     last_formatting_failure: Option<String>,
     buffers_being_formatted: HashSet<BufferId>,
@@ -695,6 +697,8 @@ impl Project {
                 remotely_created_buffers: Default::default(),
                 last_formatting_failure: None,
                 buffers_being_formatted: Default::default(),
+                search_included_history: Self::new_search_history(),
+                search_excluded_history: Self::new_search_history(),
             }
         })
     }
@@ -898,6 +902,8 @@ impl Project {
                     .dev_server_project_id
                     .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
+                search_included_history: Self::new_search_history(),
+                search_excluded_history: Self::new_search_history(),
                 environment: ProjectEnvironment::new(&worktree_store, None, cx),
                 remotely_created_buffers: Arc::new(Mutex::new(RemotelyCreatedBuffers::default())),
                 last_formatting_failure: None,
@@ -1349,12 +1355,20 @@ impl Project {
         &self.snippets
     }
 
-    pub fn search_history(&self) -> &SearchHistory {
-        &self.search_history
+    pub fn search_history(&self, kind: SearchInputKind) -> &SearchHistory {
+        match kind {
+            SearchInputKind::Query => &self.search_history,
+            SearchInputKind::Include => &self.search_included_history,
+            SearchInputKind::Exclude => &self.search_excluded_history,
+        }
     }
 
-    pub fn search_history_mut(&mut self) -> &mut SearchHistory {
-        &mut self.search_history
+    pub fn search_history_mut(&mut self, kind: SearchInputKind) -> &mut SearchHistory {
+        match kind {
+            SearchInputKind::Query => &mut self.search_history,
+            SearchInputKind::Include => &mut self.search_included_history,
+            SearchInputKind::Exclude => &mut self.search_excluded_history,
+        }
     }
 
     pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {
