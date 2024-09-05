@@ -1487,5 +1487,7 @@ async fn test_sentence_forwards(cx: &mut gpui::TestAppContext) {
     cx.simulate_shared_keystrokes(")").await;
     cx.shared_state().await.assert_eq("hello.\n\n\nˇworld.");
     cx.simulate_shared_keystrokes(")").await;
-    cx.shared_state().await.assert_eq("hello.\n\n\nworld.ˇ");
+    cx.shared_state().await.assert_eq("hello.\n\n\nworldˇ.");
+
+    cx.set_shared_state("helˇlo.\n\n\nworld.").await;
 }

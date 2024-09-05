@@ -1,11 +1,10 @@
 use editor::{
     display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{
-        self, find_boundary, find_preceding_boundary_display_point, find_preceding_boundary_point,
-        FindRange, TextLayoutDetails,
+        self, find_boundary, find_preceding_boundary_display_point, FindRange, TextLayoutDetails,
     },
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, Editor, MultiBufferSnapshot, RowExt, ToOffset, ToPoint,
+    Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset, ToPoint,
 };
 use gpui::{actions, impl_actions, px, ViewContext};
 use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
@@ -1589,19 +1588,28 @@ fn sentence_backwards(
 }
 
 fn sentence_forwards(map: &DisplaySnapshot, point: DisplayPoint, mut times: usize) -> DisplayPoint {
-    let mut start = point.to_point(&map).to_offset(&map.buffer_snapshot);
+    let start = point.to_point(&map).to_offset(&map.buffer_snapshot);
     let mut chars = map.buffer_chars_at(start).peekable();
 
+    let mut was_newline = map
+        .reverse_buffer_chars_at(start)
+        .next()
+        .is_some_and(|(c, _)| c == '\n')
+        && chars.peek().is_some_and(|(c, _)| *c == '\n');
+
     while let Some((ch, offset)) = chars.next() {
-        let start_of_next_sentence = if ch == '\n' && chars.peek().is_some_and(|(c, _)| *c == '\n')
-        {
+        if was_newline && ch == '\n' {
+            continue;
+        }
+        let start_of_next_sentence = if was_newline {
+            Some(next_non_blank(map, offset))
+        } else if ch == '\n' && chars.peek().is_some_and(|(c, _)| *c == '\n') {
             Some(next_non_blank(map, offset + ch.len_utf8()))
         } else if ch == '.' || ch == '?' || ch == '!' {
             start_of_next_sentence(map, offset + ch.len_utf8())
         } else {
             None
         };
-        let was_newline = ch == '\n';
 
         let Some(start_of_next_sentence) = start_of_next_sentence else {
             continue;
@@ -1616,6 +1624,8 @@ fn sentence_forwards(map: &DisplaySnapshot, point: DisplayPoint, mut times: usiz
                 Bias::Right,
             );
         }
+
+        was_newline = ch == '\n' && chars.peek().is_some_and(|(c, _)| *c == '\n');
     }
 
     return map.max_point();
@@ -1635,20 +1645,18 @@ fn next_non_blank(map: &DisplaySnapshot, start: usize) -> usize {
 // if this is not a sentence boundary, returns None.
 fn start_of_next_sentence(map: &DisplaySnapshot, end_of_sentence: usize) -> Option<usize> {
     let mut chars = map.buffer_chars_at(end_of_sentence);
-
     let mut seen_space = false;
+
     while let Some((char, offset)) = chars.next() {
         if !seen_space && (char == ')' || char == ']' || char == '"' || char == '\'') {
             continue;
         }
-        if char == '\n' {
-            return Some(offset + char.len_utf8());
-        }
-        if char.is_whitespace() {
+
+        if char == '\n' && seen_space {
+            return Some(offset);
+        } else if char.is_whitespace() {
             seen_space = true;
-            continue;
-        }
-        if seen_space {
+        } else if seen_space {
             return Some(offset);
         } else {
             return None;
