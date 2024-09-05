@@ -257,10 +257,10 @@ impl LanguageModel for GoogleLanguageModel {
         let request = request.into_google(self.model.id().to_string());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .google
-            .api_url
-            .clone();
+
+        let settings = &AllLanguageModelSettings::get_global(cx).google;
+        let api_url = settings.api_url.clone();
+        let low_speed_timeout = settings.low_speed_timeout;
 
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
@@ -271,6 +271,7 @@ impl LanguageModel for GoogleLanguageModel {
                 google_ai::CountTokensRequest {
                     contents: request.contents,
                 },
+                low_speed_timeout,
             )
             .await?;
             Ok(response.total_tokens)
