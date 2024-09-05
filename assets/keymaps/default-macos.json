@@ -191,7 +191,8 @@
       "cmd-shift-g": "search::SelectPrevMatch",
       "alt-m": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
-      "cmd-k l": "assistant::DeployPromptLibrary"
+      "cmd-k l": "assistant::DeployPromptLibrary",
+      "cmd-n": "assistant::NewContext"
     }
   },
   {
