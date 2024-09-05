@@ -4066,7 +4066,14 @@ impl Render for OutlinePanel {
                             },
                         )
                         .tooltip(move |cx| {
-                            Tooltip::text(if pinned { "Unpin Outline" } else { "Pin Active Outline" }, cx)
+                            Tooltip::text(
+                                if pinned {
+                                    "Unpin Outline"
+                                } else {
+                                    "Pin Active Outline"
+                                },
+                                cx,
+                            )
                         })
                         .shape(IconButtonShape::Square)
                         .on_click(cx.listener(|outline_panel, _, cx| {
