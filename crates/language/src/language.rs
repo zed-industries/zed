@@ -194,9 +194,12 @@ impl CachedLspAdapter {
         })
     }
 
+    pub fn name(&self) -> Arc<str> {
+        self.adapter.name().0.clone()
+    }
+
     pub async fn get_language_server_command(
         self: Arc<Self>,
-        language: Arc<Language>,
         container_dir: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
@@ -204,16 +207,8 @@ impl CachedLspAdapter {
         let cached_binary = self.cached_binary.lock().await;
         self.adapter
             .clone()
-            .get_language_server_command(language, container_dir, delegate, cached_binary, cx)
+            .get_language_server_command(container_dir, delegate, cached_binary, cx)
             .await
-    }
-
-    pub fn will_start_server(
-        &self,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncAppContext,
-    ) -> Option<Task<Result<()>>> {
-        self.adapter.will_start_server(delegate, cx)
     }
 
     pub fn can_be_reinstalled(&self) -> bool {
@@ -295,7 +290,6 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        language: Arc<Language>,
         container_dir: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
         mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
@@ -316,7 +310,7 @@ pub trait LspAdapter: 'static + Send + Sync {
             if let Some(binary) = self.check_if_user_installed(delegate.as_ref(), cx).await {
                 log::info!(
                     "found user-installed language server for {}. path: {:?}, arguments: {:?}",
-                    language.name(),
+                    self.name().0,
                     binary.path,
                     binary.arguments
                 );
@@ -379,14 +373,6 @@ pub trait LspAdapter: 'static + Send + Sync {
     ) -> Result<Box<dyn 'static + Send + Any>>;
 
     fn will_fetch_server(
-        &self,
-        _: &Arc<dyn LspAdapterDelegate>,
-        _: &mut AsyncAppContext,
-    ) -> Option<Task<Result<()>>> {
-        None
-    }
-
-    fn will_start_server(
         &self,
         _: &Arc<dyn LspAdapterDelegate>,
         _: &mut AsyncAppContext,

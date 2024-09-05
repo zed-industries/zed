@@ -148,6 +148,10 @@ impl LspStoreMode {
     fn is_ssh(&self) -> bool {
         matches!(self, LspStoreMode::Ssh(_))
     }
+
+    fn is_remote(&self) -> bool {
+        matches!(self, LspStoreMode::Remote(_))
+    }
 }
 
 pub struct LspStore {
@@ -4089,6 +4093,18 @@ impl LspStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_create_language_server(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::CreateLanguageServer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        // We're on SSH host, using a local LSP adapter
+        let local = self.as_local().ok_or_else(|| anyhow!("not a local lsp"))?;
+        let adapter = SshLspAdapter::new(local, envelope.payload);
+
+        self.start_language_server
+    }
+
     async fn handle_apply_additional_edits_for_completion(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
@@ -4206,6 +4222,64 @@ impl LspStore {
             .reorder_language_servers(&language, enabled_lsp_adapters);
     }
 
+    /*
+    ssh client owns the lifecycle of the language servers
+    ssh host actually runs the binaries
+
+    in the future: ssh client will use the local extensions to get the downloads etc.
+        and send them up over the ssh connection (but today) we'll just the static config
+
+        languages::() <-- registers lsp adapters
+        on the ssh host we won't have adapters for the LSPs
+    */
+
+    fn start_language_server_on_ssh_host(
+        &mut self,
+        worktree: &Model<Worktree>,
+        adapter: Arc<CachedLspAdapter>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let ssh = self.as_ssh().unwrap();
+
+        let configured_binary = ProjectSettings::get_global(cx)
+            .lsp
+            .get(&adapter.name())
+            .and_then(|s| s.binary.clone());
+
+        let Some(configured_binary) = configured_binary else {
+            cx.emit(LspStoreEvent::Notification(format!(
+                "ssh-remoting currently requires manually configuring {} in your settings",
+                adapter.name()
+            )));
+            return;
+        };
+
+        let request = ssh.upstream_client.request(proto::CreateLanguageServer {
+            project_id: self.project_id,
+            worktree_id: worktree.read(cx).id().to_proto(),
+            language_server_id: self.languages.next_language_server_id().to_proto(),
+            name: adapter.name().to_string(),
+            binary: Some(proto::LanguageServerCommand {
+                path: configured_binary.path,
+                args: configured_binary.arguments.unwrap_or_default(),
+            }),
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            if let Err(e) = request.await {
+                this.update(&mut cx, |_this, cx| {
+                    cx.emit(LspStoreEvent::Notification(format!(
+                        "failed to start {}: {}",
+                        adapter.name(),
+                        e
+                    )))
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     fn start_language_server(
         &mut self,
         worktree_handle: &Model<Worktree>,
@@ -4213,133 +4287,137 @@ impl LspStore {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.mode.is_local() {
-            if adapter.reinstall_attempt_count.load(SeqCst) > MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
-                return;
-            }
-
-            let worktree = worktree_handle.read(cx);
-            let worktree_id = worktree.id();
-            let worktree_path = worktree.abs_path();
-            let key = (worktree_id, adapter.name.clone());
-            if self.language_server_ids.contains_key(&key) {
-                return;
-            }
-
-            let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
-            let lsp_adapter_delegate = ProjectLspAdapterDelegate::new(self, worktree_handle, cx);
-            let cli_environment = self
-                .as_local()
-                .unwrap()
-                .environment
-                .read(cx)
-                .get_cli_environment();
-
-            let pending_server = match self.languages.create_pending_language_server(
-                stderr_capture.clone(),
-                language.clone(),
-                adapter.clone(),
-                Arc::clone(&worktree_path),
-                lsp_adapter_delegate.clone(),
-                cli_environment,
-                cx,
-            ) {
-                Some(pending_server) => pending_server,
-                None => return,
-            };
-
-            let project_settings = ProjectSettings::get(
-                Some(SettingsLocation {
-                    worktree_id: worktree_id.to_proto() as usize,
-                    path: Path::new(""),
-                }),
-                cx,
-            );
-            let lsp = project_settings.lsp.get(&adapter.name.0);
-            let override_options = lsp.and_then(|s| s.initialization_options.clone());
-
-            let server_id = pending_server.server_id;
-            let container_dir = pending_server.container_dir.clone();
-            let state = LanguageServerState::Starting({
-                let adapter = adapter.clone();
-                let server_name = adapter.name.0.clone();
-                let language = language.clone();
-                let key = key.clone();
-
-                cx.spawn(move |this, mut cx| async move {
-                    let result = Self::setup_and_insert_language_server(
-                        this.clone(),
-                        lsp_adapter_delegate,
-                        override_options,
-                        pending_server,
-                        adapter.clone(),
-                        language.clone(),
-                        server_id,
-                        key,
-                        &mut cx,
-                    )
-                    .await;
-
-                    match result {
-                        Ok(server) => {
-                            stderr_capture.lock().take();
-                            server
-                        }
-
-                        Err(err) => {
-                            log::error!("failed to start language server {server_name:?}: {err}");
-                            log::error!("server stderr: {:?}", stderr_capture.lock().take());
-
-                            let this = this.upgrade()?;
-                            let container_dir = container_dir?;
-
-                            let attempt_count =
-                                adapter.reinstall_attempt_count.fetch_add(1, SeqCst);
-                            if attempt_count >= MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
-                                let max = MAX_SERVER_REINSTALL_ATTEMPT_COUNT;
-                                log::error!(
-                                    "Hit {max} reinstallation attempts for {server_name:?}"
-                                );
-                                return None;
-                            }
-
-                            log::info!(
-                                "retrying installation of language server {server_name:?} in {}s",
-                                SERVER_REINSTALL_DEBOUNCE_TIMEOUT.as_secs()
-                            );
-                            cx.background_executor()
-                                .timer(SERVER_REINSTALL_DEBOUNCE_TIMEOUT)
-                                .await;
-
-                            let installation_test_binary = adapter
-                                .installation_test_binary(container_dir.to_path_buf())
-                                .await;
-
-                            this.update(&mut cx, |_, cx| {
-                                Self::check_errored_server(
-                                    language,
-                                    adapter,
-                                    server_id,
-                                    installation_test_binary,
-                                    cx,
-                                )
-                            })
-                            .ok();
-
-                            None
-                        }
-                    }
-                })
-            });
-
-            self.as_local_mut()
-                .unwrap()
-                .language_servers
-                .insert(server_id, state);
-            self.language_server_ids.insert(key, server_id);
-        } else if self.mode.is_ssh() {
-            // TODO ssh
+        if self.mode.is_remote() {
+            return;
         }
+
+        if adapter.reinstall_attempt_count.load(SeqCst) > MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
+            return;
+        }
+
+        let worktree = worktree_handle.read(cx);
+        let worktree_id = worktree.id();
+        let worktree_path = worktree.abs_path();
+        let key = (worktree_id, adapter.name.clone());
+        if self.language_server_ids.contains_key(&key) {
+            return;
+        }
+
+        if self.mode.is_ssh() {
+            self.start_language_server_on_ssh_host(worktree_handle, adapter, cx);
+            return;
+        }
+
+        let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
+        let lsp_adapter_delegate = ProjectLspAdapterDelegate::new(self, worktree_handle, cx);
+        let cli_environment = self
+            .as_local()
+            .unwrap()
+            .environment
+            .read(cx)
+            .get_cli_environment();
+
+        let pending_server = match self.languages.create_pending_language_server(
+            stderr_capture.clone(),
+            language.clone(),
+            adapter.clone(),
+            Arc::clone(&worktree_path),
+            lsp_adapter_delegate.clone(),
+            cli_environment,
+            cx,
+        ) {
+            Some(pending_server) => pending_server,
+            None => return,
+        };
+
+        let project_settings = ProjectSettings::get(
+            Some(SettingsLocation {
+                worktree_id: worktree_id.to_proto() as usize,
+                path: Path::new(""),
+            }),
+            cx,
+        );
+
+        // We need some on the SSH client, and some on SSH host
+        let lsp = project_settings.lsp.get(&adapter.name.0);
+        let override_options = lsp.and_then(|s| s.initialization_options.clone());
+
+        let server_id = pending_server.server_id;
+        let container_dir = pending_server.container_dir.clone();
+        let state = LanguageServerState::Starting({
+            let adapter = adapter.clone();
+            let server_name = adapter.name.0.clone();
+            let language = language.clone();
+            let key = key.clone();
+
+            cx.spawn(move |this, mut cx| async move {
+                let result = Self::setup_and_insert_language_server(
+                    this.clone(),
+                    lsp_adapter_delegate,
+                    override_options,
+                    pending_server,
+                    adapter.clone(),
+                    language.clone(),
+                    server_id,
+                    key,
+                    &mut cx,
+                )
+                .await;
+
+                match result {
+                    Ok(server) => {
+                        stderr_capture.lock().take();
+                        server
+                    }
+
+                    Err(err) => {
+                        log::error!("failed to start language server {server_name:?}: {err}");
+                        log::error!("server stderr: {:?}", stderr_capture.lock().take());
+
+                        let this = this.upgrade()?;
+                        let container_dir = container_dir?;
+
+                        let attempt_count = adapter.reinstall_attempt_count.fetch_add(1, SeqCst);
+                        if attempt_count >= MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
+                            let max = MAX_SERVER_REINSTALL_ATTEMPT_COUNT;
+                            log::error!("Hit {max} reinstallation attempts for {server_name:?}");
+                            return None;
+                        }
+
+                        log::info!(
+                            "retrying installation of language server {server_name:?} in {}s",
+                            SERVER_REINSTALL_DEBOUNCE_TIMEOUT.as_secs()
+                        );
+                        cx.background_executor()
+                            .timer(SERVER_REINSTALL_DEBOUNCE_TIMEOUT)
+                            .await;
+
+                        let installation_test_binary = adapter
+                            .installation_test_binary(container_dir.to_path_buf())
+                            .await;
+
+                        this.update(&mut cx, |_, cx| {
+                            Self::check_errored_server(
+                                language,
+                                adapter,
+                                server_id,
+                                installation_test_binary,
+                                cx,
+                            )
+                        })
+                        .ok();
+
+                        None
+                    }
+                }
+            })
+        });
+
+        self.as_local_mut()
+            .unwrap()
+            .language_servers
+            .insert(server_id, state);
+        self.language_server_ids.insert(key, server_id);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4754,9 +4832,30 @@ impl LspStore {
             .clone()
             .workspace_configuration(&delegate, cx)
             .await?;
+        // This has to come from the server
         let (language_server, mut initialization_options) = pending_server.task.await?;
 
         let name = language_server.name();
+
+        // 1. Make a SshLspAdapter, that blocks or awaits on a network round trip for these cases
+        //  - Problem: sticks a bunch of network requests in strange places
+        // 2. Move the adapter up into the server, theoretically workable, requires language integration surgery (and builting language server)
+        //  - Problem: More complexity than we want to take
+        // 3. Move the message processing down to the client,
+        //  - Problem: Lots of messages we could handle quickly on the server, can't do that with this
+
+        // Constraints:
+        //  - Some things are on the UI path (e.g. completion labels) MUST be on client
+        //  - We want a minimal server binary, doesn't link in a bunch of UI nonsense
+        //  - Ideally: the code is easy to understand.
+
+        // Create an SshLspAdapter that special cases some langauges but just does it's thing
+        // -----
+        // Fork LspAdapter, create SshLspAdapter,
+        //  fork languages for the stuff we need on the host side, and then redefine the existing languages in
+        //  terms of this subset
+
+        // This has to be on server, Can we make it on the client?
         language_server
             .on_notification::<lsp::notification::PublishDiagnostics, _>({
                 let adapter = adapter.clone();
@@ -4764,7 +4863,9 @@ impl LspStore {
                 move |mut params, mut cx| {
                     let adapter = adapter.clone();
                     if let Some(this) = this.upgrade() {
+                        // This has to be on client
                         adapter.process_diagnostics(&mut params);
+                        // Everything else has to be on the server, Can we make it on the client?
                         this.update(&mut cx, |this, cx| {
                             this.update_diagnostics(
                                 server_id,

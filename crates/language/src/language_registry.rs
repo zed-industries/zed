@@ -723,7 +723,7 @@ impl LanguageRegistry {
     pub fn create_pending_language_server(
         self: &Arc<Self>,
         stderr_capture: Arc<Mutex<Option<String>>>,
-        language: Arc<Language>,
+        language_name_for_tests: Arc<str>,
         adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
@@ -741,7 +741,6 @@ impl LanguageRegistry {
             .clone()
             .ok_or_else(|| anyhow!("language server download directory has not been assigned before starting server"))
             .log_err()?;
-        let language = language.clone();
         let container_dir: Arc<Path> = Arc::from(download_dir.join(adapter.name.0.as_ref()));
         let root_path = root_path.clone();
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
@@ -756,12 +755,7 @@ impl LanguageRegistry {
 
                 let binary_result = adapter
                     .clone()
-                    .get_language_server_command(
-                        language.clone(),
-                        container_dir,
-                        delegate.clone(),
-                        &mut cx,
-                    )
+                    .get_language_server_command(container_dir, delegate.clone(), &mut cx)
                     .await;
 
                 delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
@@ -784,10 +778,6 @@ impl LanguageRegistry {
                     .clone()
                     .initialization_options(&delegate)
                     .await?;
-
-                if let Some(task) = adapter.will_start_server(&delegate, &mut cx) {
-                    task.await?;
-                }
 
                 #[cfg(any(test, feature = "test-support"))]
                 if true {
@@ -825,7 +815,7 @@ impl LanguageRegistry {
                                         .state
                                         .write()
                                         .fake_server_txs
-                                        .get_mut(language.name().as_ref())
+                                        .get_mut(language_name_for_tests.as_ref())
                                     {
                                         for tx in txs {
                                             tx.unbounded_send(fake_server.clone()).ok();
