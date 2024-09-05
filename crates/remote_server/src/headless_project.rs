@@ -57,18 +57,17 @@ impl HeadlessProject {
         });
         let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let lsp_store = cx.new_model(|cx| {
-            LspStore::new(
+            let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
-                Some(environment),
+                environment,
                 languages,
                 None,
                 fs.clone(),
-                Some(session.clone().into()),
-                None,
-                Some(0),
                 cx,
-            )
+            );
+            lsp_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            lsp_store
         });
 
         let client: AnyProtoClient = session.clone().into();
