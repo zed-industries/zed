@@ -1012,9 +1012,7 @@ impl PlatformWindow for WaylandWindow {
 
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let state = self.borrow();
-        let client = state.client.clone();
-        drop(state);
-        client.update_ime_position(bounds);
+        state.client.update_ime_position(bounds);
     }
 
     fn gpu_specs(&self) -> Option<GPUSpecs> {

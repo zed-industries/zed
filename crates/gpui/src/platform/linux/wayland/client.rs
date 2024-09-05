@@ -315,7 +315,7 @@ impl WaylandClientStatePtr {
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
-        if state.composing || state.text_input.is_none() {
+        if !state.composing || state.text_input.is_none() {
             return;
         }
 
