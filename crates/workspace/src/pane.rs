@@ -1013,7 +1013,11 @@ impl Pane {
                 self.focus_active_item(cx);
             }
 
-            self.tab_bar_scroll_handle.scroll_to_item(index);
+            if !self.is_tab_pinned(index) {
+                self.tab_bar_scroll_handle
+                    .scroll_to_item(index - self.pinned_tab_count);
+            }
+
             cx.notify();
         }
     }
