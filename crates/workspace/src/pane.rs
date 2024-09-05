@@ -952,9 +952,11 @@ impl Pane {
     }
 
     pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
-        self.items
-            .iter()
-            .position(|i| i.item_id() == item.item_id())
+        self.index_for_item_id(item.item_id())
+    }
+
+    fn index_for_item_id(&self, item_id: EntityId) -> Option<usize> {
+        self.items.iter().position(|i| i.item_id() == item_id)
     }
 
     pub fn item_for_index(&self, ix: usize) -> Option<&dyn ItemHandle> {
@@ -1791,6 +1793,10 @@ impl Pane {
         self.pinned_tab_count > ix
     }
 
+    fn has_pinned_tabs(&self) -> bool {
+        self.pinned_tab_count != 0
+    }
+
     fn render_tab(
         &self,
         ix: usize,
@@ -2269,7 +2275,37 @@ impl Pane {
                     if let Some(split_direction) = split_direction {
                         to_pane = workspace.split_pane(to_pane, split_direction, cx);
                     }
-                    workspace.move_item(from_pane, to_pane, item_id, ix, cx);
+                    let old_ix = from_pane.read(cx).index_for_item_id(item_id);
+                    if to_pane == from_pane {
+                        if let Some(old_index) = old_ix {
+                            to_pane.update(cx, |this, _| {
+                                if old_index < this.pinned_tab_count
+                                    && (ix == this.items.len() || ix > this.pinned_tab_count)
+                                {
+                                    this.pinned_tab_count -= 1;
+                                } else if this.has_pinned_tabs()
+                                    && old_index >= this.pinned_tab_count
+                                    && ix < this.pinned_tab_count
+                                {
+                                    this.pinned_tab_count += 1;
+                                }
+                            });
+                        }
+                    } else {
+                        to_pane.update(cx, |this, _| {
+                            if this.has_pinned_tabs() && ix < this.pinned_tab_count {
+                                this.pinned_tab_count += 1;
+                            }
+                        });
+                        from_pane.update(cx, |this, _| {
+                            if let Some(index) = old_ix {
+                                if this.pinned_tab_count > index {
+                                    this.pinned_tab_count -= 1;
+                                }
+                            }
+                        })
+                    }
+                    workspace.move_item(from_pane.clone(), to_pane.clone(), item_id, ix, cx);
                 });
             })
             .log_err();
