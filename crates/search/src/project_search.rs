@@ -20,7 +20,11 @@ use gpui::{
 };
 use language::Buffer;
 use menu::Confirm;
-use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
+use project::{
+    search::{SearchInputKind, SearchQuery},
+    search_history::SearchHistoryCursor,
+    Project, ProjectPath,
+};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
@@ -129,6 +133,8 @@ pub struct ProjectSearch {
     no_results: Option<bool>,
     limit_reached: bool,
     search_history_cursor: SearchHistoryCursor,
+    search_included_history_cursor: SearchHistoryCursor,
+    search_excluded_history_cursor: SearchHistoryCursor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -184,6 +190,8 @@ impl ProjectSearch {
             no_results: None,
             limit_reached: false,
             search_history_cursor: Default::default(),
+            search_included_history_cursor: Default::default(),
+            search_excluded_history_cursor: Default::default(),
         }
     }
 
@@ -201,14 +209,42 @@ impl ProjectSearch {
             no_results: self.no_results,
             limit_reached: self.limit_reached,
             search_history_cursor: self.search_history_cursor.clone(),
+            search_included_history_cursor: self.search_included_history_cursor.clone(),
+            search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
         })
+    }
+    fn cursor(&self, kind: SearchInputKind) -> &SearchHistoryCursor {
+        match kind {
+            SearchInputKind::Query => &self.search_history_cursor,
+            SearchInputKind::Include => &self.search_included_history_cursor,
+            SearchInputKind::Exclude => &self.search_excluded_history_cursor,
+        }
+    }
+    fn cursor_mut(&mut self, kind: SearchInputKind) -> &mut SearchHistoryCursor {
+        match kind {
+            SearchInputKind::Query => &mut self.search_history_cursor,
+            SearchInputKind::Include => &mut self.search_included_history_cursor,
+            SearchInputKind::Exclude => &mut self.search_excluded_history_cursor,
+        }
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut ModelContext<Self>) {
         let search = self.project.update(cx, |project, cx| {
             project
-                .search_history_mut()
+                .search_history_mut(SearchInputKind::Query)
                 .add(&mut self.search_history_cursor, query.as_str().to_string());
+            let included = query.as_inner().files_to_include().sources().join(",");
+            if included.len() > 0 {
+                project
+                    .search_history_mut(SearchInputKind::Include)
+                    .add(&mut self.search_included_history_cursor, included);
+            }
+            let excluded = query.as_inner().files_to_exclude().sources().join(",");
+            if excluded.len() > 0 {
+                project
+                    .search_history_mut(SearchInputKind::Exclude)
+                    .add(&mut self.search_excluded_history_cursor, excluded);
+            }
             project.search(query.clone(), cx)
         });
         self.last_search_query_text = Some(query.as_str().to_string());
@@ -1072,8 +1108,7 @@ impl ProjectSearchView {
     }
 
     fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
-        self.query_editor
-            .update(cx, |query_editor, cx| query_editor.set_text(query, cx));
+        self.set_search_editor(SearchInputKind::Query, query, cx);
         if EditorSettings::get_global(cx).use_smartcase_search {
             if !query.is_empty() {
                 if self.search_options.contains(SearchOptions::CASE_SENSITIVE)
@@ -1083,6 +1118,16 @@ impl ProjectSearchView {
                 }
             }
         }
+    }
+
+    fn set_search_editor(&mut self, kind: SearchInputKind, text: &str, cx: &mut ViewContext<Self>) {
+        let editor = match kind {
+            SearchInputKind::Query => &self.query_editor,
+            SearchInputKind::Include => &self.included_files_editor,
+
+            SearchInputKind::Exclude => &self.excluded_files_editor,
+        };
+        editor.update(cx, |included_editor, cx| included_editor.set_text(text, cx));
     }
 
     fn focus_results_editor(&mut self, cx: &mut ViewContext<Self>) {
@@ -1388,20 +1433,36 @@ impl ProjectSearchBar {
     fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                let new_query = search_view.model.update(cx, |model, cx| {
-                    if let Some(new_query) = model.project.update(cx, |project, _| {
-                        project
-                            .search_history_mut()
-                            .next(&mut model.search_history_cursor)
-                            .map(str::to_string)
-                    }) {
-                        new_query
-                    } else {
-                        model.search_history_cursor.reset();
-                        String::new()
+                for (editor, kind) in [
+                    (search_view.query_editor.clone(), SearchInputKind::Query),
+                    (
+                        search_view.included_files_editor.clone(),
+                        SearchInputKind::Include,
+                    ),
+                    (
+                        search_view.excluded_files_editor.clone(),
+                        SearchInputKind::Exclude,
+                    ),
+                ] {
+                    if editor.focus_handle(cx).is_focused(cx) {
+                        let new_query = search_view.model.update(cx, |model, cx| {
+                            let project = model.project.clone();
+
+                            if let Some(new_query) = project.update(cx, |project, _| {
+                                project
+                                    .search_history_mut(kind)
+                                    .next(model.cursor_mut(kind))
+                                    .map(str::to_string)
+                            }) {
+                                new_query
+                            } else {
+                                model.cursor_mut(kind).reset();
+                                String::new()
+                            }
+                        });
+                        search_view.set_search_editor(kind, &new_query, cx);
                     }
-                });
-                search_view.set_query(&new_query, cx);
+                }
             });
         }
     }
@@ -1409,30 +1470,45 @@ impl ProjectSearchBar {
     fn previous_history_query(&mut self, _: &PreviousHistoryQuery, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                if search_view.query_editor.read(cx).text(cx).is_empty() {
-                    if let Some(new_query) = search_view
-                        .model
-                        .read(cx)
-                        .project
-                        .read(cx)
-                        .search_history()
-                        .current(&search_view.model.read(cx).search_history_cursor)
-                        .map(str::to_string)
-                    {
-                        search_view.set_query(&new_query, cx);
-                        return;
-                    }
-                }
+                for (editor, kind) in [
+                    (search_view.query_editor.clone(), SearchInputKind::Query),
+                    (
+                        search_view.included_files_editor.clone(),
+                        SearchInputKind::Include,
+                    ),
+                    (
+                        search_view.excluded_files_editor.clone(),
+                        SearchInputKind::Exclude,
+                    ),
+                ] {
+                    if editor.focus_handle(cx).is_focused(cx) {
+                        if editor.read(cx).text(cx).is_empty() {
+                            if let Some(new_query) = search_view
+                                .model
+                                .read(cx)
+                                .project
+                                .read(cx)
+                                .search_history(kind)
+                                .current(&search_view.model.read(cx).cursor(kind))
+                                .map(str::to_string)
+                            {
+                                search_view.set_search_editor(kind, &new_query, cx);
+                                return;
+                            }
+                        }
 
-                if let Some(new_query) = search_view.model.update(cx, |model, cx| {
-                    model.project.update(cx, |project, _| {
-                        project
-                            .search_history_mut()
-                            .previous(&mut model.search_history_cursor)
-                            .map(str::to_string)
-                    })
-                }) {
-                    search_view.set_query(&new_query, cx);
+                        if let Some(new_query) = search_view.model.update(cx, |model, cx| {
+                            let project = model.project.clone();
+                            project.update(cx, |project, _| {
+                                project
+                                    .search_history_mut(kind)
+                                    .previous(&mut model.cursor_mut(kind))
+                                    .map(str::to_string)
+                            })
+                        }) {
+                            search_view.set_search_editor(kind, &new_query, cx);
+                        }
+                    }
                 }
             });
         }
@@ -1688,6 +1764,12 @@ impl Render for ProjectSearchBar {
                         .border_1()
                         .border_color(search.border_color_for(InputPanel::Include, cx))
                         .rounded_lg()
+                        .on_action(
+                            cx.listener(|this, action, cx| this.previous_history_query(action, cx)),
+                        )
+                        .on_action(
+                            cx.listener(|this, action, cx| this.next_history_query(action, cx)),
+                        )
                         .child(self.render_text_input(&search.included_files_editor, cx)),
                 )
                 .child(
@@ -1701,6 +1783,12 @@ impl Render for ProjectSearchBar {
                         .border_1()
                         .border_color(search.border_color_for(InputPanel::Exclude, cx))
                         .rounded_lg()
+                        .on_action(
+                            cx.listener(|this, action, cx| this.previous_history_query(action, cx)),
+                        )
+                        .on_action(
+                            cx.listener(|this, action, cx| this.next_history_query(action, cx)),
+                        )
                         .child(self.render_text_input(&search.excluded_files_editor, cx)),
                 )
                 .child(
@@ -2769,6 +2857,7 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(cx);
                     search_bar.next_history_query(&NextHistoryQuery, cx);
                 })
             })
@@ -2784,6 +2873,7 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(cx);
                     search_bar.next_history_query(&NextHistoryQuery, cx);
                 })
             })
@@ -2801,6 +2891,7 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(cx);
                     search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                 });
             })
@@ -2818,6 +2909,7 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(cx);
                     search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                 });
             })
@@ -2835,6 +2927,7 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(cx);
                     search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                 });
             })
@@ -2850,6 +2943,7 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(cx);
                     search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                 });
             })
@@ -2867,6 +2961,7 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(cx);
                     search_bar.next_history_query(&NextHistoryQuery, cx);
                 });
             })
@@ -2904,6 +2999,7 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(cx);
                     search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                 });
             })
@@ -2919,6 +3015,7 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(cx);
                     search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                 });
             })
@@ -2934,6 +3031,7 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(cx);
                     search_bar.next_history_query(&NextHistoryQuery, cx);
                 });
             })
@@ -2949,6 +3047,7 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(cx);
                     search_bar.next_history_query(&NextHistoryQuery, cx);
                 });
             })
@@ -2964,6 +3063,7 @@ pub mod tests {
         window
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(cx);
                     search_bar.next_history_query(&NextHistoryQuery, cx);
                 });
             })
@@ -3115,6 +3215,7 @@ pub mod tests {
                 window
                     .update(cx, |_, cx| {
                         search_bar.update(cx, |search_bar, cx| {
+                            search_bar.focus_search(cx);
                             search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                         })
                     })
@@ -3126,6 +3227,7 @@ pub mod tests {
                 window
                     .update(cx, |_, cx| {
                         search_bar.update(cx, |search_bar, cx| {
+                            search_bar.focus_search(cx);
                             search_bar.next_history_query(&NextHistoryQuery, cx);
                         })
                     })
