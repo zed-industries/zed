@@ -33,8 +33,8 @@ use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, Documentation, File as _, Language, LanguageRegistry,
-    LanguageServerName, LocalFile, LspAdapterDelegate, Patch, PendingLanguageServer, PointUtf16,
-    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    LanguageServerName, LocalFile, LspAdapter, LspAdapterDelegate, Patch, PendingLanguageServer,
+    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
     CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
@@ -54,6 +54,7 @@ use similar::{ChangeTag, TextDiff};
 use smol::channel::Sender;
 use snippet::Snippet;
 use std::{
+    any::Any,
     cmp::Ordering,
     convert::TryInto,
     ffi::OsStr,
@@ -1935,7 +1936,7 @@ impl LspStore {
         } else {
             struct WorkspaceSymbolsResult {
                 lsp_adapter: Arc<CachedLspAdapter>,
-                language: Arc<Language>,
+                language: Option<Arc<Language>>,
                 worktree: WeakModel<Worktree>,
                 worktree_abs_path: Arc<Path>,
                 lsp_symbols: Vec<(String, SymbolKind, lsp::Location)>,
@@ -2061,7 +2062,7 @@ impl LspStore {
                     populate_labels_for_symbols(
                         core_symbols,
                         &language_registry,
-                        Some(result.language),
+                        result.language,
                         Some(result.lsp_adapter),
                         &mut symbols,
                     )
@@ -4101,8 +4102,20 @@ impl LspStore {
         // We're on SSH host, using a local LSP adapter
         let local = self.as_local().ok_or_else(|| anyhow!("not a local lsp"))?;
         let adapter = SshLspAdapter::new(local, envelope.payload);
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
 
-        self.start_language_server
+        this.update(&mut cx, |this, cx| {
+            let Some(worktree) = this
+                .worktree_store
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+            else {
+                return Err(anyhow!("worktree not found"));
+            };
+
+            this.start_language_server(&worktree, adapter, language, cx);
+            Ok(())
+        })
     }
 
     async fn handle_apply_additional_edits_for_completion(
@@ -4284,14 +4297,10 @@ impl LspStore {
         &mut self,
         worktree_handle: &Model<Worktree>,
         adapter: Arc<CachedLspAdapter>,
-        language: Arc<Language>,
+        language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) {
         if self.mode.is_remote() {
-            return;
-        }
-
-        if adapter.reinstall_attempt_count.load(SeqCst) > MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
             return;
         }
 
@@ -4308,6 +4317,10 @@ impl LspStore {
             return;
         }
 
+        if adapter.reinstall_attempt_count.load(SeqCst) > MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
+            return;
+        }
+
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
         let lsp_adapter_delegate = ProjectLspAdapterDelegate::new(self, worktree_handle, cx);
         let cli_environment = self
@@ -4319,7 +4332,7 @@ impl LspStore {
 
         let pending_server = match self.languages.create_pending_language_server(
             stderr_capture.clone(),
-            language.clone(),
+            language.map(|l| l.name()).unwrap_or_default(),
             adapter.clone(),
             Arc::clone(&worktree_path),
             lsp_adapter_delegate.clone(),
@@ -4427,7 +4440,7 @@ impl LspStore {
         override_initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
-        language: Arc<Language>,
+        language: Option<Arc<Language>>,
         server_id: LanguageServerId,
         key: (WorktreeId, LanguageServerName),
         cx: &mut AsyncAppContext,
@@ -4464,7 +4477,7 @@ impl LspStore {
 
     fn reinstall_language_server(
         &mut self,
-        language: Arc<Language>,
+        language: Option<Arc<Language>>,
         adapter: Arc<CachedLspAdapter>,
         server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
@@ -4750,7 +4763,7 @@ impl LspStore {
     }
 
     fn check_errored_server(
-        language: Arc<Language>,
+        language: Option<Arc<Language>>,
         adapter: Arc<CachedLspAdapter>,
         server_id: LanguageServerId,
         installation_test_binary: Option<LanguageServerBinary>,
@@ -5450,7 +5463,7 @@ impl LspStore {
 
     fn insert_newly_running_language_server(
         &mut self,
-        language: Arc<Language>,
+        language: Option<Arc<Language>>,
         adapter: Arc<CachedLspAdapter>,
         language_server: Arc<LanguageServer>,
         server_id: LanguageServerId,
@@ -6320,7 +6333,7 @@ pub enum LanguageServerState {
     Starting(Task<Option<Arc<LanguageServer>>>),
 
     Running {
-        language: Arc<Language>,
+        language: Option<Arc<Language>>,
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
@@ -6396,6 +6409,51 @@ fn glob_literal_prefix(glob: &str) -> &str {
         }
     }
     &glob[..literal_end]
+}
+
+pub struct SshLspAdapter {
+    id: LanguageServerId,
+    name: String,
+    binary: LanguageServerBinary,
+}
+
+impl SshLspAdapter {
+    pub fn new() {}
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for SshLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        todo!()
+    }
+
+    async fn cached_server_binary(
+        &self,
+        _: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        return Some(self.binary.clone());
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+    ) -> Result<Box<dyn 'static + Send + Any>> {
+        anyhow::bail!("SshLspAdapter does not support fetch_latest_server_version")
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        _: Box<dyn 'static + Send + Any>,
+        _: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        anyhow::bail!("SshLspAdapter does not support fetch_server_binary")
+    }
+
+    async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
+        None
+    }
 }
 
 pub struct ProjectLspAdapterDelegate {

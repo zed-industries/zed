@@ -2508,9 +2508,8 @@ message LanguageServerCommand {
 message CreateLanguageServer {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
-    uint64 language_server_id = 3;
-
     string name = 4;
+
     LanguageServerCommand binary = 5;
 }
 
