@@ -421,8 +421,8 @@ impl ContextProvider for RustContextProvider {
             .is_some();
 
         if is_main_function {
-            if let Some((package_name, bin_name)) = local_abs_path
-                .and_then(package_name_and_bin_name_from_abs_path)
+            if let Some((package_name, bin_name)) =
+                local_abs_path.and_then(package_name_and_bin_name_from_abs_path)
             {
                 return Ok(TaskVariables::from_iter([
                     (RUST_PACKAGE_TASK_VARIABLE.clone(), package_name),

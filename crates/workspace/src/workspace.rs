@@ -2910,9 +2910,7 @@ impl Workspace {
         direction: SplitDirection,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(to) = self
-            .find_pane_in_direction(direction, cx)
-        {
+        if let Some(to) = self.find_pane_in_direction(direction, cx) {
             self.center.swap(&self.active_pane.clone(), &to);
             cx.notify();
         }
@@ -5487,8 +5485,7 @@ pub fn join_hosted_project(
             let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
-                options.window_bounds =
-                    window_bounds_override.map(WindowBounds::Windowed);
+                options.window_bounds = window_bounds_override.map(WindowBounds::Windowed);
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
@@ -5562,8 +5559,7 @@ pub fn join_dev_server_project(
                 let window_bounds_override = window_bounds_env_override();
                 cx.update(|cx| {
                     let mut options = (app_state.build_window_options)(None, cx);
-                    options.window_bounds =
-                        window_bounds_override.map(WindowBounds::Windowed);
+                    options.window_bounds = window_bounds_override.map(WindowBounds::Windowed);
                     cx.open_window(options, |cx| {
                         cx.new_view(|cx| {
                             Workspace::new(Some(workspace_id), project, app_state.clone(), cx)
@@ -5625,8 +5621,7 @@ pub fn join_in_room_project(
             let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
-                options.window_bounds =
-                    window_bounds_override.map(WindowBounds::Windowed);
+                options.window_bounds = window_bounds_override.map(WindowBounds::Windowed);
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), cx)

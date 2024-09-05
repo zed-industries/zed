@@ -538,10 +538,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
 
     // Leave the room
     active_call_a
-        .update(cx_a, |call, cx| {
-            
-            call.hang_up(cx)
-        })
+        .update(cx_a, |call, cx| call.hang_up(cx))
         .await
         .unwrap();
 
@@ -574,10 +571,7 @@ async fn test_joining_channels_and_calling_multiple_users_simultaneously(
 
     // Leave the room
     active_call_a
-        .update(cx_a, |call, cx| {
-            
-            call.hang_up(cx)
-        })
+        .update(cx_a, |call, cx| call.hang_up(cx))
         .await
         .unwrap();
 

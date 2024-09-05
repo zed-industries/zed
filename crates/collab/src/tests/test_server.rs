@@ -263,8 +263,7 @@ impl TestServer {
                 })
             });
 
-        let git_hosting_provider_registry =
-            cx.update(GitHostingProviderRegistry::default_global);
+        let git_hosting_provider_registry = cx.update(GitHostingProviderRegistry::default_global);
         git_hosting_provider_registry
             .register_hosting_provider(Arc::new(git_hosting_providers::Github));
 

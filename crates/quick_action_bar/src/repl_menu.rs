@@ -316,8 +316,6 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
         }
     };
 
-    
-
     match &session.kernel {
         Kernel::Restarting => ReplMenuState {
             tooltip: format!("Restarting {}", kernel_name).into(),

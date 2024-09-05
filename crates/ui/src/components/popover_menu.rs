@@ -322,8 +322,6 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             menu.prepaint(cx);
         }
 
-        
-
         request_layout.child_layout_id.map(|layout_id| {
             let bounds = cx.layout_bounds(layout_id);
             cx.with_element_state(global_id.unwrap(), |element_state, _cx| {

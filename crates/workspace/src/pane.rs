@@ -839,7 +839,8 @@ impl Pane {
                 true
             } else if existing_item.is_singleton(cx) {
                 existing_item
-                    .project_entry_ids(cx).first()
+                    .project_entry_ids(cx)
+                    .first()
                     .map_or(false, |existing_entry_id| {
                         Some(existing_entry_id) == project_entry_id.as_ref()
                     })
@@ -2455,19 +2456,17 @@ impl Pane {
                         split_direction = None;
                     }
 
-                    if let Ok(open_task) = workspace
-                        .update(&mut cx, |workspace, cx| {
-                            if let Some(split_direction) = split_direction {
-                                to_pane = workspace.split_pane(to_pane, split_direction, cx);
-                            }
-                            workspace.open_paths(
-                                paths,
-                                OpenVisible::OnlyDirectories,
-                                Some(to_pane.downgrade()),
-                                cx,
-                            )
-                        })
-                    {
+                    if let Ok(open_task) = workspace.update(&mut cx, |workspace, cx| {
+                        if let Some(split_direction) = split_direction {
+                            to_pane = workspace.split_pane(to_pane, split_direction, cx);
+                        }
+                        workspace.open_paths(
+                            paths,
+                            OpenVisible::OnlyDirectories,
+                            Some(to_pane.downgrade()),
+                            cx,
+                        )
+                    }) {
                         let opened_items: Vec<_> = open_task.await;
                         _ = workspace.update(&mut cx, |workspace, cx| {
                             for item in opened_items.into_iter().flatten() {

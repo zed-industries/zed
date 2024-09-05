@@ -797,7 +797,9 @@ impl Worktree {
             }
             Worktree::Remote(this) => {
                 let relative_worktree_source_path =
-                    relative_worktree_source_path.map(|relative_worktree_source_path| relative_worktree_source_path.to_string_lossy().into());
+                    relative_worktree_source_path.map(|relative_worktree_source_path| {
+                        relative_worktree_source_path.to_string_lossy().into()
+                    });
                 let response = this.client.request(proto::CopyProjectEntry {
                     project_id: this.project_id,
                     entry_id: entry_id.to_proto(),
@@ -954,7 +956,8 @@ impl Worktree {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
-            let relative_worktree_source_path = request.relative_worktree_source_path.map(PathBuf::from);
+            let relative_worktree_source_path =
+                request.relative_worktree_source_path.map(PathBuf::from);
             (
                 this.scan_id(),
                 this.copy_entry(
@@ -2113,7 +2116,8 @@ impl Snapshot {
         self.repository_entries.retain(|_, entry| {
             !update
                 .removed_repositories
-                .binary_search(&entry.work_directory.to_proto()).is_ok()
+                .binary_search(&entry.work_directory.to_proto())
+                .is_ok()
         });
 
         for repository in update.updated_repositories {
@@ -3364,11 +3368,13 @@ impl sum_tree::Item for Entry {
         }
 
         let mut statuses = GitStatuses::default();
-        if let Some(status) = self.git_status { match status {
-            GitFileStatus::Added => statuses.added = 1,
-            GitFileStatus::Modified => statuses.modified = 1,
-            GitFileStatus::Conflict => statuses.conflict = 1,
-        } }
+        if let Some(status) = self.git_status {
+            match status {
+                GitFileStatus::Added => statuses.added = 1,
+                GitFileStatus::Modified => statuses.modified = 1,
+                GitFileStatus::Conflict => statuses.conflict = 1,
+            }
+        }
 
         EntrySummary {
             max_path: self.path.clone(),

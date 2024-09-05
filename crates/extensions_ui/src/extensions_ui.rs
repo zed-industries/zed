@@ -95,8 +95,10 @@ pub fn init(cx: &mut AppContext) {
                     .detach();
             });
 
-        cx.subscribe(workspace.project(), |_, _, event, cx| if let project::Event::LanguageNotFound(buffer) = event {
-            extension_suggest::suggest(buffer.clone(), cx);
+        cx.subscribe(workspace.project(), |_, _, event, cx| {
+            if let project::Event::LanguageNotFound(buffer) = event {
+                extension_suggest::suggest(buffer.clone(), cx);
+            }
         })
         .detach();
     })
@@ -689,8 +691,7 @@ impl ExtensionsPage {
         has_dev_extension: bool,
         cx: &mut ViewContext<Self>,
     ) -> (Button, Option<Button>) {
-        let is_compatible =
-            extension::is_version_compatible(ReleaseChannel::global(cx), extension);
+        let is_compatible = extension::is_version_compatible(ReleaseChannel::global(cx), extension);
 
         if has_dev_extension {
             // If we have a dev extension for the given extension, just treat it as uninstalled.

@@ -2913,7 +2913,6 @@ impl LspCommand for LinkedEditingRange {
     ) -> Result<Vec<Range<Anchor>>> {
         if let Some(lsp::LinkedEditingRanges { mut ranges, .. }) = message {
             ranges.sort_by_key(|range| range.start);
-            
 
             buffer.read_with(&cx, |buffer, _| {
                 ranges

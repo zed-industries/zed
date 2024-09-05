@@ -63,7 +63,6 @@ impl Vim {
                             object.range(&display_map, selection.clone(), false)
                         }
                         SurroundsType::Motion(motion) => {
-                            
                             motion
                                 .range(
                                     &display_map,

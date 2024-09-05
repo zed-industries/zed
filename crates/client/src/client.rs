@@ -1344,8 +1344,6 @@ impl Client {
                 );
             }
 
-            
-
             serde_json::from_slice::<GithubUser>(body.as_slice()).map_err(|err| {
                 log::error!("Error deserializing: {:?}", err);
                 log::error!(

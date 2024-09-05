@@ -589,7 +589,6 @@ impl Element for TerminalElement {
                 style.size.width = relative(1.).into();
                 style.size.height = relative(1.).into();
                 // style.overflow = point(Overflow::Hidden, Overflow::Hidden);
-                
 
                 cx.request_layout(style, None)
             });
@@ -622,7 +621,8 @@ impl Element for TerminalElement {
                 let font_fallbacks = terminal_settings
                     .font_fallbacks
                     .as_ref()
-                    .or(settings.buffer_font.fallbacks.as_ref()).cloned();
+                    .or(settings.buffer_font.fallbacks.as_ref())
+                    .cloned();
 
                 let font_features = terminal_settings
                     .font_features

@@ -184,8 +184,6 @@ impl Output {
                                             multi_buffer
                                         });
 
-                                        
-
                                         Editor::for_multibuffer(multibuffer, None, false, cx)
                                     }));
                                     workspace
@@ -429,8 +427,9 @@ impl ExecutionView {
     fn apply_terminal_text(&mut self, text: &str, cx: &mut ViewContext<Self>) -> Option<Output> {
         if let Some(last_output) = self.outputs.last_mut() {
             if let Output::Stream {
-                    content: last_stream,
-                } = last_output {
+                content: last_stream,
+            } = last_output
+            {
                 // Don't need to add a new output, we already have a terminal output
                 // and can just update the most recent terminal output
                 last_stream.update(cx, |last_stream, cx| {

@@ -168,7 +168,6 @@ impl WorktreeStore {
         }
         let task = self.loading_worktrees.get(&path).unwrap().clone();
         cx.background_executor().spawn(async move {
-            
             match task.await {
                 Ok(worktree) => Ok(worktree),
                 Err(err) => Err(anyhow!("{}", err)),

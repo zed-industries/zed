@@ -47,7 +47,9 @@ impl Vim {
 
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             for selection in editor.selections.all_adjusted(cx) {
-                if !selection.is_empty() && (vim.mode != Mode::VisualBlock || new_anchors.is_empty()) {
+                if !selection.is_empty()
+                    && (vim.mode != Mode::VisualBlock || new_anchors.is_empty())
+                {
                     new_anchors.push((true, snapshot.anchor_before(selection.start)))
                 }
                 for row in selection.start.row..=selection.end.row {
@@ -136,7 +138,11 @@ fn find_number(
             begin = None;
             num = String::new();
         }
-        if num == "0" && ch == 'x' && chars.peek().is_some() && chars.peek().unwrap().is_ascii_hexdigit() {
+        if num == "0"
+            && ch == 'x'
+            && chars.peek().is_some()
+            && chars.peek().unwrap().is_ascii_hexdigit()
+        {
             radix = 16;
             begin = None;
             num = String::new();

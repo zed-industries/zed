@@ -91,8 +91,10 @@ impl BufferStore {
         remote_id: Option<u64>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        cx.subscribe(&worktree_store, |this, _, event, cx| if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
-            this.subscribe_to_worktree(worktree, cx);
+        cx.subscribe(&worktree_store, |this, _, event, cx| {
+            if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
+                this.subscribe_to_worktree(worktree, cx);
+            }
         })
         .detach();
 

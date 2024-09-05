@@ -840,7 +840,10 @@ impl LspStore {
         lang_server: &LanguageServer,
         action: &mut CodeAction,
     ) -> anyhow::Result<()> {
-        if GetCodeActions::can_resolve_actions(&lang_server.capabilities()) && action.lsp_action.data.is_some() && (action.lsp_action.command.is_none() || action.lsp_action.edit.is_none()) {
+        if GetCodeActions::can_resolve_actions(&lang_server.capabilities())
+            && action.lsp_action.data.is_some()
+            && (action.lsp_action.command.is_none() || action.lsp_action.edit.is_none())
+        {
             action.lsp_action = lang_server
                 .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action.clone())
                 .await?;

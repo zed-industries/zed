@@ -695,7 +695,10 @@ impl ProjectSearchView {
                 if let EditorEvent::Edited { .. } = event {
                     if EditorSettings::get_global(cx).use_smartcase_search {
                         let query = this.search_query_text(cx);
-                        if !query.is_empty() && this.search_options.contains(SearchOptions::CASE_SENSITIVE) != is_contains_uppercase(&query) {
+                        if !query.is_empty()
+                            && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
+                                != is_contains_uppercase(&query)
+                        {
                             this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                         }
                     }
@@ -1064,7 +1067,10 @@ impl ProjectSearchView {
         if let Some(index) = self.active_match_index {
             let match_ranges = self.model.read(cx).match_ranges.clone();
 
-            if !EditorSettings::get_global(cx).search_wrap && ((direction == Direction::Next && index + 1 >= match_ranges.len()) || (direction == Direction::Prev && index == 0)) {
+            if !EditorSettings::get_global(cx).search_wrap
+                && ((direction == Direction::Next && index + 1 >= match_ranges.len())
+                    || (direction == Direction::Prev && index == 0))
+            {
                 crate::show_no_more_matches(cx);
                 return;
             }
@@ -1094,7 +1100,11 @@ impl ProjectSearchView {
 
     fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
         self.set_search_editor(SearchInputKind::Query, query, cx);
-        if EditorSettings::get_global(cx).use_smartcase_search && !query.is_empty() && self.search_options.contains(SearchOptions::CASE_SENSITIVE) != is_contains_uppercase(query) {
+        if EditorSettings::get_global(cx).use_smartcase_search
+            && !query.is_empty()
+            && self.search_options.contains(SearchOptions::CASE_SENSITIVE)
+                != is_contains_uppercase(query)
+        {
             self.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx)
         }
     }

@@ -11,14 +11,14 @@ use gpui::{px, Modifiers, MouseButton, MouseMoveEvent, Pixels, Point, ScrollWhee
 use crate::TerminalSize;
 
 enum MouseFormat {
-    SGR,
+    Sgr,
     Normal(bool),
 }
 
 impl MouseFormat {
     fn from_mode(mode: TermMode) -> Self {
         if mode.contains(TermMode::SGR_MOUSE) {
-            MouseFormat::SGR
+            MouseFormat::Sgr
         } else if mode.contains(TermMode::UTF8_MOUSE) {
             MouseFormat::Normal(true)
         } else {
@@ -219,7 +219,7 @@ fn mouse_report(
     }
 
     match format {
-        MouseFormat::SGR => {
+        MouseFormat::Sgr => {
             Some(sgr_mouse_report(point, button as u8 + mods, pressed).into_bytes())
         }
         MouseFormat::Normal(utf8) => {

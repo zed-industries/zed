@@ -773,9 +773,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                             (
                                 path.clone(),
                                 server_id,
-                                current_diagnostics
-                                    .entry((path, server_id))
-                                    .or_default(),
+                                current_diagnostics.entry((path, server_id)).or_default(),
                             )
                         }
                     };

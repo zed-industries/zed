@@ -784,7 +784,10 @@ impl BufferSearchBar {
                     .filter(|matches| !matches.is_empty())
                 {
                     // If 'wrapscan' is disabled, searches do not wrap around the end of the file.
-                    if !EditorSettings::get_global(cx).search_wrap && ((direction == Direction::Next && index + count >= matches.len()) || (direction == Direction::Prev && index < count)) {
+                    if !EditorSettings::get_global(cx).search_wrap
+                        && ((direction == Direction::Next && index + count >= matches.len())
+                            || (direction == Direction::Prev && index < count))
+                    {
                         crate::show_no_more_matches(cx);
                         return;
                     }

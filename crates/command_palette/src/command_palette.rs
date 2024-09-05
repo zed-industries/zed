@@ -303,7 +303,6 @@ impl PickerDelegate for CommandPaletteDelegate {
                         })
                         .collect()
                 } else {
-                    
                     fuzzy::match_strings(
                         &candidates,
                         &query,

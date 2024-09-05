@@ -249,11 +249,13 @@ impl ChannelStore {
     }
 
     pub fn initialize(&mut self) {
-        if !self.did_subscribe && self
+        if !self.did_subscribe
+            && self
                 .client
                 .send(proto::SubscribeToChannels {})
                 .log_err()
-                .is_some() {
+                .is_some()
+        {
             self.did_subscribe = true;
         }
     }
@@ -1091,11 +1093,7 @@ impl ChannelStore {
                         id: ChannelId(channel.id),
                         visibility: channel.visibility(),
                         name: channel.name.into(),
-                        parent_path: channel
-                            .parent_path
-                            .into_iter()
-                            .map(ChannelId)
-                            .collect(),
+                        parent_path: channel.parent_path.into_iter().map(ChannelId).collect(),
                     }),
                 ),
             }
@@ -1110,11 +1108,8 @@ impl ChannelStore {
 
         if channels_changed {
             if !payload.delete_channels.is_empty() {
-                let delete_channels: Vec<ChannelId> = payload
-                    .delete_channels
-                    .into_iter()
-                    .map(ChannelId)
-                    .collect();
+                let delete_channels: Vec<ChannelId> =
+                    payload.delete_channels.into_iter().map(ChannelId).collect();
                 self.channel_index.delete_channels(&delete_channels);
                 self.channel_participants
                     .retain(|channel_id, _| !delete_channels.contains(channel_id));

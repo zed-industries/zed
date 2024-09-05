@@ -2565,7 +2565,8 @@ fn git_reset(offset: usize, repo: &git2::Repository) {
         .parents()
         .inspect(|parnet| {
             parnet.message();
-        }).nth(offset)
+        })
+        .nth(offset)
         .expect("Not enough history");
     repo.reset(new_head.as_object(), git2::ResetType::Soft, None)
         .expect("Could not reset");

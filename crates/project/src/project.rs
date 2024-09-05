@@ -3069,28 +3069,20 @@ impl Project {
                     None
                 }
             }
-            Formatter::Prettier => {
-                prettier_support::format_with_prettier(&project, buffer, cx)
-                    .await
-                    .transpose()
-                    .ok()
-                    .flatten()
-            }
+            Formatter::Prettier => prettier_support::format_with_prettier(&project, buffer, cx)
+                .await
+                .transpose()
+                .ok()
+                .flatten(),
             Formatter::External { command, arguments } => {
                 let buffer_abs_path = buffer_abs_path.as_ref().map(|path| path.as_path());
-                Self::format_via_external_command(
-                    buffer,
-                    buffer_abs_path,
-                    command,
-                    arguments,
-                    cx,
-                )
-                .await
-                .context(format!(
-                    "failed to format via external command {:?}",
-                    command
-                ))?
-                .map(FormatOperation::External)
+                Self::format_via_external_command(buffer, buffer_abs_path, command, arguments, cx)
+                    .await
+                    .context(format!(
+                        "failed to format via external command {:?}",
+                        command
+                    ))?
+                    .map(FormatOperation::External)
             }
             Formatter::CodeActions(code_actions) => {
                 let code_actions = deserialize_code_actions(code_actions);

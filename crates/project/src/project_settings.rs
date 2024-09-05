@@ -335,11 +335,14 @@ impl SettingsObserver {
         event: &WorktreeStoreEvent,
         cx: &mut ModelContext<Self>,
     ) {
-        if let WorktreeStoreEvent::WorktreeAdded(worktree) = event { cx
-        .subscribe(worktree, |this, worktree, event, cx| if let worktree::Event::UpdatedEntries(changes) = event {
-            this.update_local_worktree_settings(&worktree, changes, cx)
-        })
-        .detach() }
+        if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
+            cx.subscribe(worktree, |this, worktree, event, cx| {
+                if let worktree::Event::UpdatedEntries(changes) = event {
+                    this.update_local_worktree_settings(&worktree, changes, cx)
+                }
+            })
+            .detach()
+        }
     }
 
     fn update_local_worktree_settings(

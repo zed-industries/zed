@@ -460,8 +460,7 @@ impl Item for ChannelView {
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        self.editor
-            .update(cx, Item::deactivated)
+        self.editor.update(cx, Item::deactivated)
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, cx: &mut ViewContext<Self>) {

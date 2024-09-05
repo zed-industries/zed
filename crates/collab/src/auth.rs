@@ -303,9 +303,7 @@ mod test {
 
         let token = create_access_token(db, user.user_id, None).await.unwrap();
         assert!(matches!(
-            verify_access_token(&token, user.user_id, db)
-                .await
-                .unwrap(),
+            verify_access_token(&token, user.user_id, db).await.unwrap(),
             VerifyAccessTokenResult {
                 is_valid: true,
                 impersonator_id: None,
@@ -365,9 +363,7 @@ mod test {
         ));
 
         assert!(matches!(
-            verify_access_token(&token, user.user_id, db)
-                .await
-                .unwrap(),
+            verify_access_token(&token, user.user_id, db).await.unwrap(),
             VerifyAccessTokenResult {
                 is_valid: true,
                 impersonator_id: None,

@@ -897,7 +897,8 @@ impl OutlinePanel {
             self.cached_entries
                 .iter()
                 .map(|cached_entry| &cached_entry.entry)
-                .skip_while(|entry| entry != &selected_entry).nth(1)
+                .skip_while(|entry| entry != &selected_entry)
+                .nth(1)
                 .cloned()
         }) {
             self.select_entry(entry_to_select, true, cx);
@@ -912,7 +913,8 @@ impl OutlinePanel {
                 .iter()
                 .rev()
                 .map(|cached_entry| &cached_entry.entry)
-                .skip_while(|entry| entry != &selected_entry).nth(1)
+                .skip_while(|entry| entry != &selected_entry)
+                .nth(1)
                 .cloned()
         }) {
             self.select_entry(entry_to_select, true, cx);
@@ -1513,9 +1515,11 @@ impl OutlinePanel {
                         );
                         let mut current_entry = buffer_entry;
                         loop {
-                            if current_entry.is_dir() && outline_panel
+                            if current_entry.is_dir()
+                                && outline_panel
                                     .collapsed_entries
-                                    .remove(&CollapsedEntry::Dir(worktree_id, current_entry.id)) {
+                                    .remove(&CollapsedEntry::Dir(worktree_id, current_entry.id))
+                            {
                                 dirs_to_expand.push(current_entry.id);
                             }
 
@@ -2910,7 +2914,8 @@ impl OutlinePanel {
                                         let start_of_collapsed_dir_sequence = !parent_expanded
                                             && parent_dirs
                                                 .iter()
-                                                .rev().nth(folded_dirs.len() + 1)
+                                                .rev()
+                                                .nth(folded_dirs.len() + 1)
                                                 .map_or(true, |parent| parent.expanded);
                                         if start_of_collapsed_dir_sequence
                                             || parent_expanded
@@ -3501,8 +3506,8 @@ impl OutlinePanel {
 
         let new_search_entries = new_search_matches
             .map(|(match_range, search_data)| {
-                let previous_search_data = previous_search_matches
-                    .get(&(kind, match_range)).copied();
+                let previous_search_data =
+                    previous_search_matches.get(&(kind, match_range)).copied();
                 let render_data = search_data
                     .get()
                     .or(previous_search_data)
@@ -3688,9 +3693,11 @@ fn cleanup_fs_entries_without_search_children(
                 }
                 PanelEntry::Search(_) | PanelEntry::Outline(_) => Vec::new(),
             };
-            if !collapsed_entries_to_check.is_empty() && collapsed_entries_to_check
+            if !collapsed_entries_to_check.is_empty()
+                && collapsed_entries_to_check
                     .iter()
-                    .any(|collapsed_entry| collapsed_entries.contains(collapsed_entry)) {
+                    .any(|collapsed_entry| collapsed_entries.contains(collapsed_entry))
+            {
                 previous_entry = Some(&entry.entry);
                 continue;
             }
@@ -4477,9 +4484,7 @@ mod tests {
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
         let outline_panel = window
-            .update(cx, |_, cx| {
-                cx.spawn(OutlinePanel::load)
-            })
+            .update(cx, |_, cx| cx.spawn(OutlinePanel::load))
             .unwrap()
             .await
             .expect("Failed to load outline panel");

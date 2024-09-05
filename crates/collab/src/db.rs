@@ -140,9 +140,7 @@ impl Database {
             match result {
                 Ok(result) => match tx.commit().await.map_err(Into::into) {
                     Ok(()) => Ok(result),
-                    Err(error) => {
-                        Err(error)
-                    }
+                    Err(error) => Err(error),
                 },
                 Err(error) => {
                     tx.rollback().await?;

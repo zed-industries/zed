@@ -456,9 +456,7 @@ impl Copilot {
             )?;
 
             server
-                .on_notification::<StatusNotification, _>(
-                    |_, _| { /* Silence the notification */ },
-                )
+                .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
                 .detach();
             let server = cx.update(|cx| server.initialize(None, cx))?.await?;
 
@@ -1002,7 +1000,8 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
             fs::create_dir_all(dist_dir.as_path()).await?;
 
             let url = &release
-                .assets.first()
+                .assets
+                .first()
                 .context("Github release for copilot contained no assets")?
                 .browser_download_url;
 

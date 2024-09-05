@@ -1055,7 +1055,7 @@ mod tests {
             SettingsStore::update(cx, |store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
             });
-        });;
+        });
     }
 
     pub struct TestEmbeddingProvider {

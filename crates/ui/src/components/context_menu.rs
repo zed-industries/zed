@@ -213,13 +213,16 @@ impl ContextMenu {
     pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         let context = self.action_context.as_ref();
         if let Some(
-                ContextMenuItem::Entry {
-                    handler,
-                    disabled: false,
-                    ..
-                }
-                | ContextMenuItem::CustomEntry { handler, .. },
-            ) = self.selected_index.and_then(|ix| self.items.get(ix)) { (handler)(context, cx) }
+            ContextMenuItem::Entry {
+                handler,
+                disabled: false,
+                ..
+            }
+            | ContextMenuItem::CustomEntry { handler, .. },
+        ) = self.selected_index.and_then(|ix| self.items.get(ix))
+        {
+            (handler)(context, cx)
+        }
 
         cx.emit(DismissEvent);
     }

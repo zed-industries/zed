@@ -443,7 +443,10 @@ impl Vim {
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
 
-        if VimSettings::get_global(cx).toggle_relative_line_numbers && self.mode != self.last_mode && (self.mode == Mode::Insert || self.last_mode == Mode::Insert) {
+        if VimSettings::get_global(cx).toggle_relative_line_numbers
+            && self.mode != self.last_mode
+            && (self.mode == Mode::Insert || self.last_mode == Mode::Insert)
+        {
             self.update_editor(cx, |vim, editor, cx| {
                 let is_relative = vim.mode != Mode::Insert;
                 editor.set_relative_line_number(Some(is_relative), cx)
@@ -1040,7 +1043,11 @@ impl Vim {
                 }
             },
             Some(Operator::Jump { line }) => self.jump(text, line, cx),
-            _ => if self.mode == Mode::Replace { self.multi_replace(text, cx) },
+            _ => {
+                if self.mode == Mode::Replace {
+                    self.multi_replace(text, cx)
+                }
+            }
         }
     }
 

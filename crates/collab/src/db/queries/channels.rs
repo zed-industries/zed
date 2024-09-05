@@ -188,11 +188,13 @@ impl Database {
                             .anyhow())?;
                     }
                 }
-            } else if visibility == ChannelVisibility::Members && self
+            } else if visibility == ChannelVisibility::Members
+                && self
                     .get_channel_descendants_excluding_self([&channel], &tx)
                     .await?
                     .into_iter()
-                    .any(|channel| channel.visibility == ChannelVisibility::Public) {
+                    .any(|channel| channel.visibility == ChannelVisibility::Public)
+            {
                 Err(ErrorCode::BadPublicNesting
                     .with_tag("direction", "children")
                     .anyhow())?;

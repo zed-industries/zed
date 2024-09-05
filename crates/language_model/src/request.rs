@@ -211,7 +211,8 @@ impl LanguageModelRequestMessage {
     pub fn contents_empty(&self) -> bool {
         self.content.is_empty()
             || self
-                .content.first()
+                .content
+                .first()
                 .map(|content| match content {
                     MessageContent::Text(text) => text.trim().is_empty(),
                     MessageContent::ToolResult(tool_result) => {

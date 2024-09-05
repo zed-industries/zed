@@ -29,8 +29,10 @@ impl ProjectEnvironment {
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx| {
-            cx.subscribe(worktree_store, |this: &mut Self, _, event, _| if let WorktreeStoreEvent::WorktreeRemoved(_, id) = event {
-                this.remove_worktree_environment(*id);
+            cx.subscribe(worktree_store, |this: &mut Self, _, event, _| {
+                if let WorktreeStoreEvent::WorktreeRemoved(_, id) = event {
+                    this.remove_worktree_environment(*id);
+                }
             })
             .detach();
 

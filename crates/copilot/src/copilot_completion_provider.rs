@@ -1158,6 +1158,6 @@ mod tests {
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, f);
             });
-        });;
+        });
     }
 }

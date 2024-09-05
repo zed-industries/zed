@@ -1565,7 +1565,8 @@ async fn join_room(
                     &joined_room.room.live_kit_room,
                     &session.user_id().to_string(),
                 )
-                .trace_err().map(|token| proto::LiveKitConnectionInfo {
+                .trace_err()
+                .map(|token| proto::LiveKitConnectionInfo {
                     server_url: live_kit.url().into(),
                     token,
                     can_publish: true,
@@ -4836,9 +4837,7 @@ async fn get_notifications(
         .get_notifications(
             session.user_id(),
             NOTIFICATION_COUNT_PER_PAGE,
-            request
-                .before_id
-                .map(db::NotificationId::from_proto),
+            request.before_id.map(db::NotificationId::from_proto),
         )
         .await?;
     response.send(proto::GetNotificationsResponse {
@@ -5149,7 +5148,8 @@ fn channel_updated(
         None,
         pool.channel_connection_ids(channel.root_id())
             .filter_map(|(channel_id, role)| {
-                role.can_see_channel(channel.visibility).then_some(channel_id)
+                role.can_see_channel(channel.visibility)
+                    .then_some(channel_id)
             }),
         |peer_id| {
             peer.send(

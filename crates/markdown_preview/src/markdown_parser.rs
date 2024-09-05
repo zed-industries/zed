@@ -415,10 +415,7 @@ impl<'a> MarkdownParser<'a> {
         let mut body = vec![];
         let mut current_row = vec![];
         let mut in_header = true;
-        let column_alignments = alignment
-            .iter()
-            .map(Self::convert_alignment)
-            .collect();
+        let column_alignments = alignment.iter().map(Self::convert_alignment).collect();
 
         loop {
             if self.eof() {

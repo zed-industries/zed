@@ -1167,8 +1167,7 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
                             .await
                             .log_err()
                         {
-                            cx.update(ThemeSettings::reload_current_theme)
-                                .log_err();
+                            cx.update(ThemeSettings::reload_current_theme).log_err();
                         }
                     }
                 }

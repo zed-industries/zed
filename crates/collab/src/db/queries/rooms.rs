@@ -1108,11 +1108,13 @@ impl Database {
                     .count(tx)
                     .await?
                     > 0;
-            if requires_zed_cla && contributor::Entity::find()
+            if requires_zed_cla
+                && contributor::Entity::find()
                     .filter(contributor::Column::UserId.eq(user_id))
                     .one(tx)
                     .await?
-                    .is_none() {
+                    .is_none()
+            {
                 Err(anyhow!("user has not signed the Zed CLA"))?;
             }
         }

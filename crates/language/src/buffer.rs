@@ -1946,7 +1946,9 @@ impl Buffer {
             position.row += 1;
         }
 
-        if space_below && (position.row == self.max_point().row || !self.is_line_blank(position.row + 1)) {
+        if space_below
+            && (position.row == self.max_point().row || !self.is_line_blank(position.row + 1))
+        {
             self.edit(
                 [(position..position, "\n")],
                 Some(AutoindentMode::EachLine),
