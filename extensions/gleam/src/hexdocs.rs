@@ -130,10 +130,10 @@ pub struct GleamChromeRemover;
 
 impl HandleTag for GleamChromeRemover {
     fn should_handle(&self, tag: &str) -> bool {
-        match tag {
-            "head" | "script" | "style" | "svg" | "header" | "footer" | "a" => true,
-            _ => false,
-        }
+        matches!(
+            tag,
+            "head" | "script" | "style" | "svg" | "header" | "footer" | "a"
+        )
     }
 
     fn handle_tag_start(
@@ -188,10 +188,7 @@ impl GleamModuleCollector {
 
 impl HandleTag for GleamModuleCollector {
     fn should_handle(&self, tag: &str) -> bool {
-        match tag {
-            "h2" | "a" => true,
-            _ => false,
-        }
+        matches!(tag, "h2" | "a")
     }
 
     fn handle_tag_start(
@@ -199,15 +196,10 @@ impl HandleTag for GleamModuleCollector {
         tag: &HtmlElement,
         writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
-        match tag.tag() {
-            "a" => {
-                if self.has_seen_modules_header && writer.is_inside("li") {
-                    if let Some(module_name) = Self::parse_module(tag) {
-                        self.modules.insert(module_name);
-                    }
-                }
+        if tag.tag() == "a" && self.has_seen_modules_header && writer.is_inside("li") {
+            if let Some(module_name) = Self::parse_module(tag) {
+                self.modules.insert(module_name);
             }
-            _ => {}
         }
 
         StartTagOutcome::Continue
