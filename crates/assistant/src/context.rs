@@ -307,6 +307,10 @@ pub enum ContextEvent {
         expand_result: bool,
     },
     UsePendingTools,
+    ToolFinished {
+        tool_use_id: Arc<str>,
+        output_range: Range<language::Anchor>,
+    },
     Operation(ContextOperation),
 }
 
@@ -1923,28 +1927,43 @@ impl Context {
 
     pub fn insert_tool_output(
         &mut self,
-        tool_id: Arc<str>,
+        tool_use_id: Arc<str>,
         output: Task<Result<String>>,
         cx: &mut ModelContext<Self>,
     ) {
         let insert_output_task = cx.spawn(|this, mut cx| {
-            let tool_id = tool_id.clone();
+            let tool_use_id = tool_use_id.clone();
             async move {
                 let output = output.await;
                 this.update(&mut cx, |this, cx| match output {
                     Ok(mut output) => {
-                        if !output.ends_with('\n') {
-                            output.push('\n');
+                        const NEWLINE: char = '\n';
+
+                        if !output.ends_with(NEWLINE) {
+                            output.push(NEWLINE);
                         }
 
-                        this.buffer.update(cx, |buffer, cx| {
-                            let buffer_end = buffer.len().to_offset(buffer);
+                        let anchor_range = this.buffer.update(cx, |buffer, cx| {
+                            let insert_start = buffer.len().to_offset(buffer);
+                            let insert_end = insert_start;
 
-                            buffer.edit([(buffer_end..buffer_end, output)], None, cx);
+                            let start = insert_start;
+                            let end = start + output.len() - NEWLINE.len_utf8();
+
+                            buffer.edit([(insert_start..insert_end, output)], None, cx);
+
+                            let output_range = buffer.anchor_after(start)..buffer.anchor_after(end);
+
+                            output_range
+                        });
+
+                        cx.emit(ContextEvent::ToolFinished {
+                            tool_use_id,
+                            output_range: anchor_range,
                         });
                     }
                     Err(err) => {
-                        if let Some(tool_use) = this.pending_tool_uses_by_id.get_mut(&tool_id) {
+                        if let Some(tool_use) = this.pending_tool_uses_by_id.get_mut(&tool_use_id) {
                             tool_use.status = PendingToolUseStatus::Error(err.to_string());
                         }
                     }
@@ -1953,7 +1972,7 @@ impl Context {
             }
         });
 
-        if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_id) {
+        if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
             tool_use.status = PendingToolUseStatus::Running {
                 _task: insert_output_task.shared(),
             };
