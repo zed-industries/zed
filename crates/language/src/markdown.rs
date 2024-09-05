@@ -191,7 +191,7 @@ pub async fn parse_markdown_block(
                         style.strikethrough = true;
                     }
 
-                    if let Some(link) = link_url.clone().and_then(|u| Link::identify(u)) {
+                    if let Some(link) = link_url.clone().and_then(Link::identify) {
                         region_ranges.push(prev_len..text.len());
                         regions.push(ParsedRegion {
                             code: false,
@@ -222,7 +222,7 @@ pub async fn parse_markdown_block(
                 text.push_str(t.as_ref());
                 region_ranges.push(prev_len..text.len());
 
-                let link = link_url.clone().and_then(|u| Link::identify(u));
+                let link = link_url.clone().and_then(Link::identify);
                 if link.is_some() {
                     highlights.push((
                         prev_len..text.len(),

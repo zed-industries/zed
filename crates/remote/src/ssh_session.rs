@@ -582,7 +582,7 @@ impl SshClientState {
         let mut server_binary_exists = false;
         if cfg!(not(debug_assertions)) {
             if let Ok(installed_version) =
-                run_cmd(self.socket.ssh_command(&dst_path).arg("version")).await
+                run_cmd(self.socket.ssh_command(dst_path).arg("version")).await
             {
                 if installed_version.trim() == version.to_string() {
                     server_binary_exists = true;
@@ -621,7 +621,7 @@ impl SshClientState {
             self.socket
                 .ssh_command("chmod")
                 .arg(format!("{:o}", server_mode))
-                .arg(&dst_path),
+                .arg(dst_path),
         )
         .await?;
 
@@ -660,7 +660,7 @@ impl SshClientState {
                     .map(|port| vec!["-P".to_string(), port.to_string()])
                     .unwrap_or_default(),
             )
-            .arg(&src_path)
+            .arg(src_path)
             .arg(&format!(
                 "{}:{}",
                 self.socket.connection_options.scp_url(),

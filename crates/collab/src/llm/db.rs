@@ -110,14 +110,14 @@ impl LlmDatabase {
             let (tx, result) = self.with_transaction(&f).await?;
             match result {
                 Ok(result) => match tx.commit().await.map_err(Into::into) {
-                    Ok(()) => return Ok(result),
+                    Ok(()) => Ok(result),
                     Err(error) => {
-                        return Err(error);
+                        Err(error)
                     }
                 },
                 Err(error) => {
                     tx.rollback().await?;
-                    return Err(error);
+                    Err(error)
                 }
             }
         };

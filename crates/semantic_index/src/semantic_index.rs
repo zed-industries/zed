@@ -1047,7 +1047,7 @@ mod tests {
     use std::{future, path::Path, sync::Arc};
 
     fn init_test(cx: &mut TestAppContext) {
-        _ = cx.update(|cx| {
+        cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             language::init(cx);
@@ -1055,7 +1055,7 @@ mod tests {
             SettingsStore::update(cx, |store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
             });
-        });
+        });;
     }
 
     pub struct TestEmbeddingProvider {
@@ -1068,10 +1068,10 @@ mod tests {
             batch_size: usize,
             compute_embedding: impl 'static + Fn(&str) -> Result<Embedding> + Send + Sync,
         ) -> Self {
-            return Self {
+            Self {
                 batch_size,
                 compute_embedding: Box::new(compute_embedding),
-            };
+            }
         }
     }
 

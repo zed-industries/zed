@@ -55,7 +55,7 @@ pub struct State {
     _subscription: Subscription,
 }
 
-const OPENAI_API_KEY_VAR: &'static str = "OPENAI_API_KEY";
+const OPENAI_API_KEY_VAR: &str = "OPENAI_API_KEY";
 
 impl State {
     fn is_authenticated(&self) -> bool {

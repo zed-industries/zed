@@ -1343,7 +1343,7 @@ pub(crate) fn splice_included_ranges(
     new_ranges: &[tree_sitter::Range],
 ) -> (Vec<tree_sitter::Range>, Range<usize>) {
     let mut removed_ranges = removed_ranges.iter().cloned().peekable();
-    let mut new_ranges = new_ranges.into_iter().cloned().peekable();
+    let mut new_ranges = new_ranges.iter().cloned().peekable();
     let mut ranges_ix = 0;
     let mut changed_portion: Option<Range<usize>> = None;
     loop {
@@ -1709,7 +1709,7 @@ impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary>
 {
     fn cmp(&self, cursor_location: &SyntaxLayerSummary, buffer: &BufferSnapshot) -> Ordering {
         if self.change.cmp(cursor_location, buffer).is_le() {
-            return Ordering::Less;
+            Ordering::Less
         } else {
             self.position.cmp(cursor_location, buffer)
         }
@@ -1759,7 +1759,7 @@ impl<'a> Iterator for ByteChunks<'a> {
 
 impl QueryCursorHandle {
     pub fn new() -> Self {
-        let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_else(QueryCursor::new);
+        let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_default();
         cursor.set_match_limit(64);
         QueryCursorHandle(Some(cursor))
     }

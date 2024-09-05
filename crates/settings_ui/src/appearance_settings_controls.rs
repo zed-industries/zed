@@ -353,10 +353,7 @@ impl EditableSettingControl for UiFontLigaturesControl {
             .as_ref()
             .map(|features| {
                 features
-                    .tag_value_list()
-                    .into_iter()
-                    .cloned()
-                    .collect::<Vec<_>>()
+                    .tag_value_list().to_vec()
             })
             .unwrap_or_default();
 

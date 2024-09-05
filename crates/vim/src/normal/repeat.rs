@@ -180,7 +180,7 @@ impl Vim {
         globals.last_replayed_register = Some(register);
         let mut replayer = globals
             .replayer
-            .get_or_insert_with(|| Replayer::new())
+            .get_or_insert_with(Replayer::new)
             .clone();
         replayer.replay(repeated_actions, cx);
     }
@@ -315,7 +315,7 @@ impl Vim {
         globals.dot_replaying = true;
         let mut replayer = globals
             .replayer
-            .get_or_insert_with(|| Replayer::new())
+            .get_or_insert_with(Replayer::new)
             .clone();
         replayer.replay(actions, cx);
     }

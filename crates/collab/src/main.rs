@@ -257,7 +257,7 @@ async fn setup_app_database(config: &Config) -> Result<()> {
     db.initialize_notification_kinds().await?;
 
     if config.seed_path.is_some() {
-        collab::seed::seed(&config, &db, false).await?;
+        collab::seed::seed(config, &db, false).await?;
     }
 
     Ok(())

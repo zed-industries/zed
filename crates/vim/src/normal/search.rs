@@ -298,7 +298,7 @@ impl Vim {
                         return None;
                     }
                     let mut query = action.query.clone();
-                    if query == "" {
+                    if query.is_empty() {
                         query = search_bar.query(cx);
                     };
 
@@ -365,7 +365,7 @@ impl Vim {
                 if replacement.is_case_sensitive {
                     options.set(SearchOptions::CASE_SENSITIVE, true)
                 }
-                let search = if replacement.search == "" {
+                let search = if replacement.search.is_empty() {
                     search_bar.query(cx)
                 } else {
                     replacement.search
@@ -442,7 +442,7 @@ impl Replacement {
         for c in chars {
             if escaped {
                 escaped = false;
-                if phase == 1 && c.is_digit(10) {
+                if phase == 1 && c.is_ascii_digit() {
                     buffer.push('$')
                 // unescape escaped parens
                 } else if phase == 0 && c == '(' || c == ')' {

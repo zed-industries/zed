@@ -113,7 +113,7 @@ pub fn render_parsed_markdown(
         elements.push(render_markdown_block(child, &mut cx));
     }
 
-    return elements;
+    elements
 }
 
 pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderContext) -> AnyElement {

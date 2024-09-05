@@ -249,7 +249,7 @@ impl SyntaxTreeView {
         }
 
         let node = cursor.node();
-        return row
+        row
             .child(if node.is_named() {
                 Label::new(node.kind()).color(Color::Default)
             } else {
@@ -266,7 +266,7 @@ impl SyntaxTreeView {
                 Hsla::default()
             })
             .pl(rems(depth as f32))
-            .hover(|style| style.bg(colors.element_hover));
+            .hover(|style| style.bg(colors.element_hover))
     }
 }
 
@@ -403,6 +403,12 @@ impl Item for SyntaxTreeView {
             }
             clone
         }))
+    }
+}
+
+impl Default for SyntaxTreeToolbarItemView {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -181,7 +181,7 @@ mod macos {
                 "-c",
                 shader_path,
                 "-include",
-                &header_path.to_str().unwrap(),
+                (header_path.to_str().unwrap()),
                 "-o",
             ])
             .arg(&air_output_path)

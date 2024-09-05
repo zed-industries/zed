@@ -174,7 +174,7 @@ impl DevServerProjects {
     ) {
         let mut path = self.project_path_input.read(cx).text(cx).trim().to_string();
 
-        if path == "" {
+        if path.is_empty() {
             return;
         }
 
@@ -598,7 +598,7 @@ impl DevServerProjects {
                             })
                             .log_err();
 
-                            return Err(e);
+                            Err(e)
                         }
                     }
                 }
@@ -735,7 +735,6 @@ impl DevServerProjects {
                     ..Default::default()
                 });
                 cx.notify();
-                return;
             }
             _ => {
                 self.mode = Mode::Default(None);
@@ -1308,12 +1307,10 @@ impl DevServerProjects {
                             } else {
                                 "Create"
                             }
+                        } else if dev_server_id.is_some() {
+                            "Reconnect"
                         } else {
-                            if dev_server_id.is_some() {
-                                "Reconnect"
-                            } else {
-                                "Connect"
-                            }
+                            "Connect"
                         },
                     )
                     .style(ButtonStyle::Filled)

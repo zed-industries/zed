@@ -48,7 +48,7 @@ fn zed_cloud_provider_additional_models() -> &'static [AvailableModel] {
     static ADDITIONAL_MODELS: LazyLock<Vec<AvailableModel>> = LazyLock::new(|| {
         ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON
             .map(|json| serde_json::from_str(json).unwrap())
-            .unwrap_or(Vec::new())
+            .unwrap_or_default()
     });
     ADDITIONAL_MODELS.as_slice()
 }
@@ -777,12 +777,12 @@ impl LlmApiToken {
         if let Some(token) = lock.as_ref() {
             Ok(token.to_string())
         } else {
-            Self::fetch(RwLockUpgradableReadGuard::upgrade(lock).await, &client).await
+            Self::fetch(RwLockUpgradableReadGuard::upgrade(lock).await, client).await
         }
     }
 
     async fn refresh(&self, client: &Arc<Client>) -> Result<String> {
-        Self::fetch(self.0.write().await, &client).await
+        Self::fetch(self.0.write().await, client).await
     }
 
     async fn fetch<'a>(

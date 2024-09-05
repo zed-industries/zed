@@ -1410,12 +1410,10 @@ impl Terminal {
                 && !e.shift
             {
                 self.pty_tx.notify(alt_scroll(scroll_lines))
-            } else {
-                if scroll_lines != 0 {
-                    let scroll = AlacScroll::Delta(scroll_lines);
+            } else if scroll_lines != 0 {
+                let scroll = AlacScroll::Delta(scroll_lines);
 
-                    self.events.push_back(InternalEvent::Scroll(scroll));
-                }
+                self.events.push_back(InternalEvent::Scroll(scroll));
             }
         }
     }
@@ -1496,7 +1494,7 @@ impl Terminal {
                     let process_name = format!(
                         "{}{}",
                         fpi.name,
-                        if argv.len() >= 1 {
+                        if !argv.is_empty() {
                             format!(" {}", (argv[1..]).join(" "))
                         } else {
                             "".to_string()

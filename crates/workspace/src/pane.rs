@@ -484,10 +484,8 @@ impl Pane {
                 .find_position(|item| item.item_id() == alternative.id());
             if let Some((ix, _)) = existing {
                 self.activate_item(ix, true, true, cx);
-            } else {
-                if let Some(upgraded) = alternative.upgrade() {
-                    self.add_item(upgraded, true, true, None, cx);
-                }
+            } else if let Some(upgraded) = alternative.upgrade() {
+                self.add_item(upgraded, true, true, None, cx);
             }
         }
     }
@@ -805,7 +803,7 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) {
         if item.is_singleton(cx) {
-            if let Some(&entry_id) = item.project_entry_ids(cx).get(0) {
+            if let Some(&entry_id) = item.project_entry_ids(cx).first() {
                 let project = self.project.read(cx);
                 if let Some(project_path) = project.path_for_entry(entry_id, cx) {
                     let abs_path = project.absolute_path(&project_path, cx);
@@ -831,7 +829,7 @@ impl Pane {
 
         // Does the item already exist?
         let project_entry_id = if item.is_singleton(cx) {
-            item.project_entry_ids(cx).get(0).copied()
+            item.project_entry_ids(cx).first().copied()
         } else {
             None
         };
@@ -841,8 +839,7 @@ impl Pane {
                 true
             } else if existing_item.is_singleton(cx) {
                 existing_item
-                    .project_entry_ids(cx)
-                    .get(0)
+                    .project_entry_ids(cx).first()
                     .map_or(false, |existing_entry_id| {
                         Some(existing_entry_id) == project_entry_id.as_ref()
                     })
@@ -1817,7 +1814,7 @@ impl Pane {
         let icon_color = if ItemSettings::get_global(cx).git_status {
             project_path
                 .as_ref()
-                .and_then(|path| self.project.read(cx).entry_for_path(&path, cx))
+                .and_then(|path| self.project.read(cx).entry_for_path(path, cx))
                 .map(|entry| {
                     Self::git_aware_icon_color(entry.git_status, entry.is_ignored, is_active)
                 })
@@ -2458,7 +2455,7 @@ impl Pane {
                         split_direction = None;
                     }
 
-                    if let Some(open_task) = workspace
+                    if let Ok(open_task) = workspace
                         .update(&mut cx, |workspace, cx| {
                             if let Some(split_direction) = split_direction {
                                 to_pane = workspace.split_pane(to_pane, split_direction, cx);
@@ -2470,7 +2467,6 @@ impl Pane {
                                 cx,
                             )
                         })
-                        .ok()
                     {
                         let opened_items: Vec<_> = open_task.await;
                         _ = workspace.update(&mut cx, |workspace, cx| {
@@ -2887,7 +2883,7 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
         .and_then(|p| {
             p.path
                 .to_str()
-                .and_then(|s| if s == "" { None } else { Some(s) })
+                .and_then(|s| if s.is_empty() { None } else { Some(s) })
         })
         .unwrap_or("This buffer");
     let path = truncate_and_remove_front(path, 80);
@@ -2940,6 +2936,25 @@ pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &WindowContext) -> O
 
         Some(Indicator::dot().color(indicator_color))
     })
+}
+
+impl Render for DraggedTab {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
+        let label = self.item.tab_content(
+            TabContentParams {
+                detail: Some(self.detail),
+                selected: false,
+                preview: false,
+            },
+            cx,
+        );
+        Tab::new("")
+            .selected(self.is_active)
+            .child(label)
+            .render(cx)
+            .font(ui_font)
+    }
 }
 
 #[cfg(test)]
@@ -3482,24 +3497,5 @@ mod tests {
                 "pane items do not match expectation"
             );
         })
-    }
-}
-
-impl Render for DraggedTab {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
-        let label = self.item.tab_content(
-            TabContentParams {
-                detail: Some(self.detail),
-                selected: false,
-                preview: false,
-            },
-            cx,
-        );
-        Tab::new("")
-            .selected(self.is_active)
-            .child(label)
-            .render(cx)
-            .font(ui_font)
     }
 }

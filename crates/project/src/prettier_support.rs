@@ -262,10 +262,10 @@ fn start_default_prettier(
                         });
                     new_default_prettier
                 })?;
-                return Ok(new_default_prettier);
+                Ok(new_default_prettier)
             }
             ControlFlow::Break(instance) => match instance.prettier {
-                Some(instance) => return Ok(instance),
+                Some(instance) => Ok(instance),
                 None => {
                     let new_default_prettier = project.update(&mut cx, |project, cx| {
                         let new_default_prettier =
@@ -277,7 +277,7 @@ fn start_default_prettier(
                             });
                         new_default_prettier
                     })?;
-                    return Ok(new_default_prettier);
+                    Ok(new_default_prettier)
                 }
             },
         }

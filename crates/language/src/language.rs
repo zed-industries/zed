@@ -433,7 +433,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
-        for (ix, completion) in completions.into_iter().enumerate() {
+        for (ix, completion) in completions.iter().enumerate() {
             let label = self.label_for_completion(completion, language).await;
             if let Some(label) = label {
                 labels.resize(ix + 1, None);
@@ -457,7 +457,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
-        for (ix, (name, kind)) in symbols.into_iter().enumerate() {
+        for (ix, (name, kind)) in symbols.iter().enumerate() {
             let label = self.label_for_symbol(name, *kind, language).await;
             if let Some(label) = label {
                 labels.resize(ix + 1, None);

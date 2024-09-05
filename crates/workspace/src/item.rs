@@ -685,7 +685,6 @@ impl<T: Item> ItemHandle for View<T> {
                                 pane.close_item_by_id(item.item_id(), crate::SaveIntent::Close, cx)
                             })
                             .detach_and_log_err(cx);
-                            return;
                         }
 
                         ItemEvent::UpdateTab => {

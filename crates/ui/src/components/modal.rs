@@ -97,6 +97,12 @@ pub struct ModalHeader {
     show_back_button: bool,
 }
 
+impl Default for ModalHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModalHeader {
     pub fn new() -> Self {
         Self {
@@ -182,6 +188,12 @@ pub struct ModalRow {
     children: SmallVec<[AnyElement; 2]>,
 }
 
+impl Default for ModalRow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModalRow {
     pub fn new() -> Self {
         Self {
@@ -206,6 +218,12 @@ impl RenderOnce for ModalRow {
 pub struct ModalFooter {
     start_slot: Option<AnyElement>,
     end_slot: Option<AnyElement>,
+}
+
+impl Default for ModalFooter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ModalFooter {
@@ -245,6 +263,12 @@ pub struct Section {
     header: Option<SectionHeader>,
     meta: Option<SharedString>,
     children: SmallVec<[AnyElement; 2]>,
+}
+
+impl Default for Section {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Section {
@@ -381,15 +405,15 @@ impl RenderOnce for SectionHeader {
     }
 }
 
-impl Into<SectionHeader> for SharedString {
-    fn into(self) -> SectionHeader {
-        SectionHeader::new(self)
+impl From<SharedString> for SectionHeader {
+    fn from(val: SharedString) -> Self {
+        SectionHeader::new(val)
     }
 }
 
-impl Into<SectionHeader> for &'static str {
-    fn into(self) -> SectionHeader {
-        let label: SharedString = self.into();
+impl From<&'static str> for SectionHeader {
+    fn from(val: &'static str) -> Self {
+        let label: SharedString = val.into();
         SectionHeader::new(label)
     }
 }

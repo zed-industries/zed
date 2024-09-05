@@ -91,11 +91,8 @@ impl BufferStore {
         remote_id: Option<u64>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        cx.subscribe(&worktree_store, |this, _, event, cx| match event {
-            WorktreeStoreEvent::WorktreeAdded(worktree) => {
-                this.subscribe_to_worktree(worktree, cx);
-            }
-            _ => {}
+        cx.subscribe(&worktree_store, |this, _, event, cx| if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
+            this.subscribe_to_worktree(worktree, cx);
         })
         .detach();
 
@@ -885,11 +882,8 @@ impl BufferStore {
         event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
-        match event {
-            BufferEvent::FileHandleChanged => {
-                self.buffer_changed_file(buffer, cx);
-            }
-            _ => {}
+        if event == &BufferEvent::FileHandleChanged {
+            self.buffer_changed_file(buffer, cx);
         }
     }
 

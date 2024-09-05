@@ -68,7 +68,7 @@ pub use lsp::DiagnosticSeverity;
 
 /// A label for the background task spawned by the buffer to compute
 /// a diff against the contents of its file.
-pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(|| TaskLabel::new());
+pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
 /// Indicate whether a [Buffer] has permissions to edit.
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -1105,7 +1105,6 @@ impl Buffer {
         {
             Ok(new_syntax_snapshot) => {
                 self.did_finish_parsing(new_syntax_snapshot, cx);
-                return;
             }
             Err(parse_task) => {
                 self.parsing_in_background = true;
@@ -1938,25 +1937,21 @@ impl Buffer {
             );
         }
 
-        if space_above {
-            if position.row > 0 && !self.is_line_blank(position.row - 1) {
-                self.edit(
-                    [(position..position, "\n")],
-                    Some(AutoindentMode::EachLine),
-                    cx,
-                );
-                position.row += 1;
-            }
+        if space_above && position.row > 0 && !self.is_line_blank(position.row - 1) {
+            self.edit(
+                [(position..position, "\n")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            position.row += 1;
         }
 
-        if space_below {
-            if position.row == self.max_point().row || !self.is_line_blank(position.row + 1) {
-                self.edit(
-                    [(position..position, "\n")],
-                    Some(AutoindentMode::EachLine),
-                    cx,
-                );
-            }
+        if space_below && (position.row == self.max_point().row || !self.is_line_blank(position.row + 1)) {
+            self.edit(
+                [(position..position, "\n")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
         }
 
         self.end_transaction(cx);
@@ -2582,7 +2577,7 @@ impl BufferSnapshot {
         });
         let highlight_maps = captures
             .grammars()
-            .into_iter()
+            .iter()
             .map(|grammar| grammar.highlight_map())
             .collect();
         (captures, highlight_maps)

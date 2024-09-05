@@ -49,7 +49,7 @@ fn resolve_virtual(path: &Path) -> Option<Arc<Path>> {
                 continue;
             }
         }
-        non_virtual_path.push(&components[i]);
+        non_virtual_path.push(components[i]);
         i += 1;
     }
 
@@ -85,7 +85,7 @@ impl YarnPathStore {
             path
         };
 
-        let as_virtual = resolve_virtual(&path);
+        let as_virtual = resolve_virtual(path);
         let Some(path) = as_virtual.or_else(|| is_zip.then(|| Arc::from(path))) else {
             return Task::ready(None);
         };

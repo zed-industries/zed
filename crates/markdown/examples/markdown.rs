@@ -9,7 +9,7 @@ use theme::LoadThemes;
 use ui::prelude::*;
 use ui::{div, WindowContext};
 
-const MARKDOWN_EXAMPLE: &'static str = r#"
+const MARKDOWN_EXAMPLE: &str = r#"
 # Markdown Example Document
 
 ## Headings

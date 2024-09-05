@@ -306,7 +306,7 @@ impl AppState {
             blob_store_client: build_blob_store_client(&config).await.log_err(),
             stripe_client: build_stripe_client(&config)
                 .await
-                .map(|client| Arc::new(client))
+                .map(Arc::new)
                 .log_err(),
             rate_limiter: Arc::new(RateLimiter::new(db)),
             executor,

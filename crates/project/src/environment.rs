@@ -29,11 +29,8 @@ impl ProjectEnvironment {
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx| {
-            cx.subscribe(worktree_store, |this: &mut Self, _, event, _| match event {
-                WorktreeStoreEvent::WorktreeRemoved(_, id) => {
-                    this.remove_worktree_environment(*id);
-                }
-                _ => {}
+            cx.subscribe(worktree_store, |this: &mut Self, _, event, _| if let WorktreeStoreEvent::WorktreeRemoved(_, id) = event {
+                this.remove_worktree_environment(*id);
             })
             .detach();
 
@@ -160,9 +157,9 @@ enum EnvironmentOrigin {
     WorktreeShell,
 }
 
-impl Into<String> for EnvironmentOrigin {
-    fn into(self) -> String {
-        match self {
+impl From<EnvironmentOrigin> for String {
+    fn from(val: EnvironmentOrigin) -> Self {
+        match val {
             EnvironmentOrigin::Cli => "cli".into(),
             EnvironmentOrigin::WorktreeShell => "worktree-shell".into(),
         }

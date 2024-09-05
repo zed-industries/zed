@@ -485,7 +485,7 @@ impl Dock {
             self.set_open(serialized.visible, cx);
             return true;
         }
-        return false;
+        false
     }
 
     pub fn remove_panel<T: Panel>(&mut self, panel: &View<T>, cx: &mut ViewContext<Self>) {

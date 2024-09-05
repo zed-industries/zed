@@ -249,15 +249,12 @@ impl ChannelStore {
     }
 
     pub fn initialize(&mut self) {
-        if !self.did_subscribe {
-            if self
+        if !self.did_subscribe && self
                 .client
                 .send(proto::SubscribeToChannels {})
                 .log_err()
-                .is_some()
-            {
-                self.did_subscribe = true;
-            }
+                .is_some() {
+            self.did_subscribe = true;
         }
     }
 
@@ -423,7 +420,7 @@ impl ChannelStore {
     ) {
         self.channel_states
             .entry(channel_id)
-            .or_insert_with(|| Default::default())
+            .or_default()
             .acknowledge_message_id(message_id);
         cx.notify();
     }
@@ -436,7 +433,7 @@ impl ChannelStore {
     ) {
         self.channel_states
             .entry(channel_id)
-            .or_insert_with(|| Default::default())
+            .or_default()
             .update_latest_message_id(message_id);
         cx.notify();
     }
@@ -450,7 +447,7 @@ impl ChannelStore {
     ) {
         self.channel_states
             .entry(channel_id)
-            .or_insert_with(|| Default::default())
+            .or_default()
             .acknowledge_notes_version(epoch, version);
         cx.notify()
     }
@@ -464,7 +461,7 @@ impl ChannelStore {
     ) {
         self.channel_states
             .entry(channel_id)
-            .or_insert_with(|| Default::default())
+            .or_default()
             .update_latest_notes_version(epoch, version);
         cx.notify()
     }
@@ -924,7 +921,7 @@ impl ChannelStore {
                 if let Some(role) = ChannelRole::from_i32(membership.role) {
                     this.channel_states
                         .entry(ChannelId(membership.channel_id))
-                        .or_insert_with(|| ChannelState::default())
+                        .or_default()
                         .set_role(role)
                 }
             }
@@ -1097,7 +1094,7 @@ impl ChannelStore {
                         parent_path: channel
                             .parent_path
                             .into_iter()
-                            .map(|cid| ChannelId(cid))
+                            .map(ChannelId)
                             .collect(),
                     }),
                 ),
@@ -1116,11 +1113,11 @@ impl ChannelStore {
                 let delete_channels: Vec<ChannelId> = payload
                     .delete_channels
                     .into_iter()
-                    .map(|cid| ChannelId(cid))
+                    .map(ChannelId)
                     .collect();
                 self.channel_index.delete_channels(&delete_channels);
                 self.channel_participants
-                    .retain(|channel_id, _| !delete_channels.contains(&channel_id));
+                    .retain(|channel_id, _| !delete_channels.contains(channel_id));
 
                 for channel_id in &delete_channels {
                     let channel_id = *channel_id;

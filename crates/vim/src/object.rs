@@ -452,10 +452,10 @@ fn argument(
 
             // TODO: Is there any better way to filter out string brackets?
             // Used to filter out string brackets
-            return matches!(
+            matches!(
                 buffer.chars_at(open.start).next(),
                 Some('(' | '[' | '{' | '<' | '|')
-            );
+            )
         };
 
         // Find the brackets containing the cursor
@@ -481,9 +481,7 @@ fn argument(
             parent_covers_bracket_range = covers_bracket_range;
 
             // Unable to find a child node with a parent that covers the bracket range, so no argument to select
-            if cursor.goto_first_child_for_byte(offset).is_none() {
-                return None;
-            }
+            cursor.goto_first_child_for_byte(offset)?;
         }
 
         let mut argument_node = cursor.node();
@@ -656,7 +654,7 @@ fn is_sentence_end(map: &DisplaySnapshot, offset: usize) -> bool {
         }
     }
 
-    return false;
+    false
 }
 
 /// Expands the passed range to include whitespace on one side or the other in a line. Attempts to add the
@@ -669,8 +667,8 @@ fn expand_to_include_whitespace(
     let mut range = range.start.to_offset(map, Bias::Left)..range.end.to_offset(map, Bias::Right);
     let mut whitespace_included = false;
 
-    let mut chars = map.buffer_chars_at(range.end).peekable();
-    while let Some((char, offset)) = chars.next() {
+    let chars = map.buffer_chars_at(range.end).peekable();
+    for (char, offset) in chars {
         if char == '\n' && stop_at_newline {
             break;
         }
@@ -1053,7 +1051,7 @@ mod test {
             .assert_matches();
     }
 
-    const PARAGRAPH_EXAMPLES: &[&'static str] = &[
+    const PARAGRAPH_EXAMPLES: &[&str] = &[
         // Single line
         "ˇThe quick brown fox jumpˇs over the lazy dogˇ.ˇ",
         // Multiple lines without empty lines
@@ -1140,7 +1138,7 @@ mod test {
     async fn test_visual_paragraph_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        const EXAMPLES: &[&'static str] = &[
+        const EXAMPLES: &[&str] = &[
             indoc! {"
                 ˇThe quick brown
                 fox jumps over

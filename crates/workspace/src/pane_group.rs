@@ -922,11 +922,9 @@ mod element {
             }
 
             for (ix, child_layout) in layout.children.iter_mut().enumerate() {
-                if active_pane_magnification.is_none() {
-                    if ix < len - 1 {
-                        child_layout.handle =
-                            Some(Self::layout_handle(self.axis, child_layout.bounds, cx));
-                    }
+                if active_pane_magnification.is_none() && ix < len - 1 {
+                    child_layout.handle =
+                        Some(Self::layout_handle(self.axis, child_layout.bounds, cx));
                 }
             }
 
@@ -986,19 +984,17 @@ mod element {
                         let axis = self.axis;
                         move |e: &MouseMoveEvent, phase, cx| {
                             let dragged_handle = dragged_handle.borrow();
-                            if phase.bubble() {
-                                if *dragged_handle == Some(ix) {
-                                    Self::compute_resize(
-                                        &flexes,
-                                        e,
-                                        ix,
-                                        axis,
-                                        child_bounds.origin,
-                                        bounds.size,
-                                        workspace.clone(),
-                                        cx,
-                                    )
-                                }
+                            if phase.bubble() && *dragged_handle == Some(ix) {
+                                Self::compute_resize(
+                                    &flexes,
+                                    e,
+                                    ix,
+                                    axis,
+                                    child_bounds.origin,
+                                    bounds.size,
+                                    workspace.clone(),
+                                    cx,
+                                )
                             }
                         }
                     });
