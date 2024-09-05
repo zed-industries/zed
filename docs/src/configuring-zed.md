@@ -108,6 +108,7 @@ The name of any font family installed on the user's system
 - Description: The OpenType features to enable for text in the editor.
 - Setting: `buffer_font_features`
 - Default: `null`
+- Platform: macOS and Windows.
 
 **Options**
 
@@ -130,6 +131,23 @@ You can also set other OpenType features, like setting `cv01` to `7`:
   "buffer_font_features": {
     "cv01": 7
   }
+}
+```
+
+## Buffer Font Fallbacks
+
+- Description: Set the buffer text's font fallbacks, this will be merged with the platform's default fallbacks.
+- Setting: `buffer_font_fallbacks`
+- Default: `null`
+- Platform: macOS and Windows.
+
+**Options**
+
+For example, to use `Nerd Font` as a fallback, add the following to your settings:
+
+```json
+{
+  "buffer_font_fallbacks": ["Nerd Font"]
 }
 ```
 
@@ -1432,6 +1450,7 @@ The name of any font family installed on the user's system
 - Description: What font features to use for the terminal. When not set, defaults to matching the editor's font features.
 - Setting: `font_features`
 - Default: `null`
+- Platform: macOS and Windows.
 
 **Options**
 
