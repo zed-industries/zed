@@ -1528,16 +1528,6 @@ pub(crate) fn end_of_line(
         map.clip_point(map.next_line_boundary(point.to_point(map)).1, Bias::Left)
     }
 }
-/*
-A sentence is defined as ending at a '.', '!' or '?' followed by either the
-end of a line, or by a space or tab.  Any number of closing ')', ']', '"'
-and ''' characters may appear after the '.', '!' or '?' before the spaces,
-tabs or end of line.  OR \n\n
-boundary.
-
-                                                        paragraph
-A paragraph begins after each empty line.
-*/
 
 fn sentence_backwards(
     map: &DisplaySnapshot,
@@ -1563,20 +1553,18 @@ fn sentence_backwards(
             None
         };
 
-        let Some(start_of_next_sentence) = start_of_next_sentence else {
-            continue;
-        };
-
-        if start_of_next_sentence < start {
-            times = times.saturating_sub(1);
-        }
-        if times == 0 || offset == 0 {
-            return map.clip_point(
-                start_of_next_sentence
-                    .to_offset(&map.buffer_snapshot)
-                    .to_display_point(&map),
-                Bias::Left,
-            );
+        if let Some(start_of_next_sentence) = start_of_next_sentence {
+            if start_of_next_sentence < start {
+                times = times.saturating_sub(1);
+            }
+            if times == 0 || offset == 0 {
+                return map.clip_point(
+                    start_of_next_sentence
+                        .to_offset(&map.buffer_snapshot)
+                        .to_display_point(&map),
+                    Bias::Left,
+                );
+            }
         }
         if was_newline {
             start = offset;
@@ -1611,18 +1599,16 @@ fn sentence_forwards(map: &DisplaySnapshot, point: DisplayPoint, mut times: usiz
             None
         };
 
-        let Some(start_of_next_sentence) = start_of_next_sentence else {
-            continue;
-        };
-
-        times = times.saturating_sub(1);
-        if times == 0 {
-            return map.clip_point(
-                start_of_next_sentence
-                    .to_offset(&map.buffer_snapshot)
-                    .to_display_point(&map),
-                Bias::Right,
-            );
+        if let Some(start_of_next_sentence) = start_of_next_sentence {
+            times = times.saturating_sub(1);
+            if times == 0 {
+                return map.clip_point(
+                    start_of_next_sentence
+                        .to_offset(&map.buffer_snapshot)
+                        .to_display_point(&map),
+                    Bias::Right,
+                );
+            }
         }
 
         was_newline = ch == '\n' && chars.peek().is_some_and(|(c, _)| *c == '\n');

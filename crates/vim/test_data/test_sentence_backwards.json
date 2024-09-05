@@ -1,0 +1,10 @@
+{"Put":{"state":"one\n\ntwo\nthree\nˇ\nfour"}}
+{"Key":"("}
+{"Get":{"state":"one\n\nˇtwo\nthree\n\nfour","mode":"Normal"}}
+{"Put":{"state":"hello.\n\n\nworˇld."}}
+{"Key":"("}
+{"Get":{"state":"hello.\n\n\nˇworld.","mode":"Normal"}}
+{"Key":"("}
+{"Get":{"state":"hello.\n\nˇ\nworld.","mode":"Normal"}}
+{"Key":"("}
+{"Get":{"state":"ˇhello.\n\n\nworld.","mode":"Normal"}}

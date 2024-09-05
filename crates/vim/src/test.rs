@@ -1412,6 +1412,12 @@ async fn test_record_replay_recursion(cx: &mut gpui::TestAppContext) {
 async fn test_sentence_backwards(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
+    cx.set_shared_state("one\n\ntwo\nthree\nˇ\nfour").await;
+    cx.simulate_shared_keystrokes("(").await;
+    cx.shared_state()
+        .await
+        .assert_eq("one\n\nˇtwo\nthree\n\nfour");
+
     cx.set_shared_state("hello.\n\n\nworˇld.").await;
     cx.simulate_shared_keystrokes("(").await;
     cx.shared_state().await.assert_eq("hello.\n\n\nˇworld.");
