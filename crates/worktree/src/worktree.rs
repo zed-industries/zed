@@ -1349,7 +1349,11 @@ impl LocalWorktree {
             Ok(path) => path,
             Err(e) => return Task::ready(Err(e.context(format!("absolutizing path {path:?}")))),
         };
-        let path_excluded = self.settings.is_path_excluded(&abs_path);
+        let is_gitignored = self.settings.exclusions_gitignore
+            && self
+                .ignore_stack_for_abs_path(&abs_path, is_dir)
+                .is_abs_path_ignored(&abs_path, is_dir);
+        let path_excluded = self.settings.is_path_excluded(&abs_path) || is_gitignored;
         let fs = self.fs.clone();
         let task_abs_path = abs_path.clone();
         let write = cx.background_executor().spawn(async move {
@@ -1722,7 +1726,17 @@ impl LocalWorktree {
         old_path: Option<Arc<Path>>,
         cx: &ModelContext<Worktree>,
     ) -> Task<Result<Option<Entry>>> {
-        if self.settings.is_path_excluded(&path) {
+        let abs_path = self.abs_path().join(&path);
+        let is_gitignored = self.settings.exclusions_gitignore
+            && match abs_path.metadata() {
+                Ok(m) => self
+                    .ignore_stack_for_abs_path(&abs_path, m.is_dir())
+                    .is_abs_path_ignored(&abs_path, m.is_dir()),
+                Err(_) => false,
+            }
+            && path.file_name() != Some(&GITIGNORE);
+
+        if self.settings.is_path_excluded(&path) || is_gitignored {
             return Task::ready(Ok(None));
         }
         let paths = if let Some(old_path) = old_path.as_ref() {
@@ -1735,11 +1749,18 @@ impl LocalWorktree {
         cx.spawn(move |this, mut cx| async move {
             refresh.recv().await;
             log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
-            let new_entry = this.update(&mut cx, |this, _| {
+            let new_entry = this.update(&mut cx, |this, mcx| {
+                if path.file_name() == Some(&GITIGNORE) {
+                    match this {
+                        Worktree::Local(wt) => wt.restart_background_scanners(mcx),
+                        Worktree::Remote(_) => {}
+                    };
+                }
                 this.entry_for_path(path)
                     .cloned()
                     .ok_or_else(|| anyhow!("failed to read path after update"))
             })??;
+
             Ok(Some(new_entry))
         })
     }
@@ -3859,7 +3880,11 @@ impl BackgroundScanner {
                     return false;
                 }
 
-                if self.settings.is_path_excluded(&relative_path) {
+                let is_gitignored = self.settings.exclusions_gitignore && match abs_path.metadata() {
+                    Ok(m) => snapshot.ignore_stack_for_abs_path(abs_path, m.is_dir()).is_abs_path_ignored(abs_path,m.is_dir()),
+                    Err(_) => false
+                } ;
+                if self.settings.is_path_excluded(&relative_path) || is_gitignored{
                     if !is_git_related {
                         log::debug!("ignoring FS event for excluded path {relative_path:?}");
                     }
@@ -4111,12 +4136,6 @@ impl BackgroundScanner {
                 }
             }
 
-            if self.settings.is_path_excluded(&child_path) {
-                log::debug!("skipping excluded child entry {child_path:?}");
-                self.state.lock().remove_path(&child_path);
-                continue;
-            }
-
             let child_metadata = match self.fs.metadata(&child_abs_path).await {
                 Ok(Some(metadata)) => metadata,
                 Ok(None) => continue,
@@ -4125,6 +4144,16 @@ impl BackgroundScanner {
                     continue;
                 }
             };
+
+            if self.settings.is_path_excluded(&child_path)
+                || (self.settings.exclusions_gitignore
+                    && ignore_stack
+                        .is_abs_path_ignored(&child_abs_path.clone(), child_metadata.is_dir))
+            {
+                log::debug!("skipping excluded child entry {child_path:?}");
+                self.state.lock().remove_path(&child_path);
+                continue;
+            }
 
             let mut child_entry = Entry::new(
                 child_path.clone(),

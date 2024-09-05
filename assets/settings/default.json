@@ -647,6 +647,8 @@
     "**/.classpath",
     "**/.settings"
   ],
+  // Use .gitignore to exclude files from the worktree.
+  "exclusions_gitignore": false,
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:
