@@ -8,10 +8,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use std::{ops::Not, sync::Arc};
-use ui::{
-    h_flex, v_flex, Button, ButtonCommon, Clickable, Color, HighlightedLabel, Label, LabelCommon,
-    LabelSize, ListItem, ListItemSpacing, Selectable,
-};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::{ModalView, Toast, Workspace};
@@ -300,11 +297,17 @@ impl PickerDelegate for BranchListDelegate {
 
         Some(
             h_flex()
-                .mr_3()
-                .pb_2()
+                .p_2()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .justify_end()
                 .child(h_flex().w_full())
                 .child(
-                    Button::new("branch-picker-create-branch-button", "Create branch")
+                    Button::new("branch-picker-create-branch-button", "Create Branch")
+                        .icon(IconName::Plus)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .icon_position(IconPosition::Start)
                         .on_click(cx.listener(|_, _, cx| {
                             cx.spawn(|picker, mut cx| async move {
                                 picker.update(&mut cx, |this, cx| {
@@ -330,7 +333,6 @@ impl PickerDelegate for BranchListDelegate {
                             })
                             .detach_and_log_err(cx);
                         }))
-                        .style(ui::ButtonStyle::Filled),
                 )
                 .into_any_element(),
         )
