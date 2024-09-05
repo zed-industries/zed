@@ -2114,8 +2114,17 @@ impl Pane {
                 move |cx| Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, cx)
             });
 
+        let mut tab_items = self
+            .items
+            .iter()
+            .enumerate()
+            .zip(tab_details(&self.items, cx))
+            .map(|((ix, item), detail)| self.render_tab(ix, &**item, detail, cx))
+            .collect::<Vec<_>>();
+
+        let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
+        let pinned_tabs = tab_items;
         TabBar::new("tab_bar")
-            .track_scroll(self.tab_bar_scroll_handle.clone())
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
                 |tab_bar| {
@@ -2132,45 +2141,57 @@ impl Pane {
                     .start_children(left_children)
                     .end_children(right_children)
             })
-            .children(
-                self.items
-                    .iter()
-                    .enumerate()
-                    .zip(tab_details(&self.items, cx))
-                    .map(|((ix, item), detail)| self.render_tab(ix, &**item, detail, cx)),
-            )
+            .children(pinned_tabs.len().ne(&0).then(|| {
+                h_flex()
+                    .children(pinned_tabs)
+                    .border_r_2()
+                    .border_color(cx.theme().colors().border)
+            }))
             .child(
-                div()
-                    .id("tab_bar_drop_target")
-                    .min_w_6()
-                    // HACK: This empty child is currently necessary to force the drop target to appear
-                    // despite us setting a min width above.
-                    .child("")
-                    .h_full()
-                    .flex_grow()
-                    .drag_over::<DraggedTab>(|bar, _, cx| {
-                        bar.bg(cx.theme().colors().drop_target_background)
-                    })
-                    .drag_over::<DraggedSelection>(|bar, _, cx| {
-                        bar.bg(cx.theme().colors().drop_target_background)
-                    })
-                    .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
-                        this.drag_split_direction = None;
-                        this.handle_tab_drop(dragged_tab, this.items.len(), cx)
-                    }))
-                    .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
-                        this.drag_split_direction = None;
-                        this.handle_project_entry_drop(&selection.active_selection.entry_id, cx)
-                    }))
-                    .on_drop(cx.listener(move |this, paths, cx| {
-                        this.drag_split_direction = None;
-                        this.handle_external_paths_drop(paths, cx)
-                    }))
-                    .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
-                        if event.up.click_count == 2 {
-                            cx.dispatch_action(this.double_click_dispatch_action.boxed_clone())
-                        }
-                    })),
+                h_flex()
+                    .id("unpinned tabs")
+                    .overflow_x_scroll()
+                    .w_full()
+                    .track_scroll(&self.tab_bar_scroll_handle)
+                    .children(unpinned_tabs)
+                    .child(
+                        div()
+                            .id("tab_bar_drop_target")
+                            .min_w_6()
+                            // HACK: This empty child is currently necessary to force the drop target to appear
+                            // despite us setting a min width above.
+                            .child("")
+                            .h_full()
+                            .flex_grow()
+                            .drag_over::<DraggedTab>(|bar, _, cx| {
+                                bar.bg(cx.theme().colors().drop_target_background)
+                            })
+                            .drag_over::<DraggedSelection>(|bar, _, cx| {
+                                bar.bg(cx.theme().colors().drop_target_background)
+                            })
+                            .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
+                                this.drag_split_direction = None;
+                                this.handle_tab_drop(dragged_tab, this.items.len(), cx)
+                            }))
+                            .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
+                                this.drag_split_direction = None;
+                                this.handle_project_entry_drop(
+                                    &selection.active_selection.entry_id,
+                                    cx,
+                                )
+                            }))
+                            .on_drop(cx.listener(move |this, paths, cx| {
+                                this.drag_split_direction = None;
+                                this.handle_external_paths_drop(paths, cx)
+                            }))
+                            .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
+                                if event.up.click_count == 2 {
+                                    cx.dispatch_action(
+                                        this.double_click_dispatch_action.boxed_clone(),
+                                    )
+                                }
+                            })),
+                    ),
             )
     }
 
