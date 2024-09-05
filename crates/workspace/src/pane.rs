@@ -149,7 +149,6 @@ actions!(
         GoBack,
         GoForward,
         JoinIntoNext,
-        PinTab,
         ReopenClosedItem,
         SplitLeft,
         SplitUp,
@@ -158,7 +157,7 @@ actions!(
         SplitHorizontal,
         SplitVertical,
         TogglePreviewTab,
-        UnpinTab,
+        TogglePinTab,
     ]
 );
 
@@ -1728,26 +1727,16 @@ impl Pane {
         }
     }
 
-    fn pin_tab(&mut self, _: &PinTab, cx: &mut ViewContext<'_, Self>) {
+    fn toggle_pin_tab(&mut self, _: &TogglePinTab, cx: &mut ViewContext<'_, Self>) {
         if self.items.is_empty() {
             return;
         }
         let active_tab_ix = self.active_item_index();
         if self.is_tab_pinned(active_tab_ix) {
-            return;
+            self.unpin_tab_at(active_tab_ix, cx);
+        } else {
+            self.pin_tab_at(active_tab_ix, cx);
         }
-        self.pin_tab_at(active_tab_ix, cx);
-    }
-
-    fn unpin_tab(&mut self, _: &UnpinTab, cx: &mut ViewContext<'_, Self>) {
-        if self.items.is_empty() {
-            return;
-        }
-        let active_tab_ix = self.active_item_index();
-        if !self.is_tab_pinned(active_tab_ix) {
-            return;
-        }
-        self.unpin_tab_at(active_tab_ix, cx);
     }
 
     fn pin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
@@ -2046,7 +2035,7 @@ impl Pane {
                                 if is_pinned {
                                     this.entry(
                                         "Unpin Tab",
-                                        Some(UnpinTab.boxed_clone()),
+                                        Some(TogglePinTab.boxed_clone()),
                                         cx.handler_for(&pane, move |pane, cx| {
                                             pane.unpin_tab_at(ix, cx);
                                         }),
@@ -2054,7 +2043,7 @@ impl Pane {
                                 } else {
                                     this.entry(
                                         "Pin Tab",
-                                        Some(PinTab.boxed_clone()),
+                                        Some(TogglePinTab.boxed_clone()),
                                         cx.handler_for(&pane, move |pane, cx| {
                                             pane.pin_tab_at(ix, cx);
                                         }),
@@ -2516,10 +2505,7 @@ impl Render for Pane {
                 pane.activate_next_item(true, cx);
             }))
             .on_action(cx.listener(|pane, action, cx| {
-                pane.pin_tab(action, cx);
-            }))
-            .on_action(cx.listener(|pane, action, cx| {
-                pane.unpin_tab(action, cx);
+                pane.toggle_pin_tab(action, cx);
             }))
             .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
                 this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, cx| {

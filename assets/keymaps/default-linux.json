@@ -262,7 +262,8 @@
       "alt-r": "search::ToggleRegex",
       "alt-ctrl-f": "project_search::ToggleFilters",
       "ctrl-alt-shift-r": "search::ToggleRegex",
-      "ctrl-alt-shift-x": "search::ToggleRegex"
+      "ctrl-alt-shift-x": "search::ToggleRegex",
+      "ctrl-k shift-enter": "pane::TogglePinTab"
     }
   },
   // Bindings from VS Code
