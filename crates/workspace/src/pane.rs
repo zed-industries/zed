@@ -1825,7 +1825,7 @@ impl Pane {
             }))
             .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
                 this.drag_split_direction = None;
-                this.handle_project_entry_drop(&selection.active_selection.entry_id, cx)
+                this.handle_dragged_selection_drop(selection, cx)
             }))
             .on_drop(cx.listener(move |this, paths, cx| {
                 this.drag_split_direction = None;
@@ -2170,6 +2170,19 @@ impl Pane {
             .log_err();
     }
 
+    fn handle_dragged_selection_drop(
+        &mut self,
+        dragged_selection: &DraggedSelection,
+        cx: &mut ViewContext<'_, Self>,
+    ) {
+        if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
+            if let ControlFlow::Break(()) = custom_drop_handle(self, dragged_selection, cx) {
+                return;
+            }
+        }
+        self.handle_project_entry_drop(&dragged_selection.active_selection.entry_id, cx);
+    }
+
     fn handle_project_entry_drop(
         &mut self,
         project_entry_id: &ProjectEntryId,
@@ -2478,10 +2491,7 @@ impl Render for Pane {
                                 this.handle_tab_drop(dragged_tab, this.active_item_index(), cx)
                             }))
                             .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
-                                this.handle_project_entry_drop(
-                                    &selection.active_selection.entry_id,
-                                    cx,
-                                )
+                                this.handle_dragged_selection_drop(selection, cx)
                             }))
                             .on_drop(cx.listener(move |this, paths, cx| {
                                 this.handle_external_paths_drop(paths, cx)
