@@ -2337,13 +2337,13 @@ impl Pane {
                             if let Some((project_entry_id, build_item)) =
                                 load_path_task.await.notify_async_err(&mut cx)
                             {
-                                workspace
+                                let (to_pane, new_item_handle) = workspace
                                     .update(&mut cx, |workspace, cx| {
                                         if let Some(split_direction) = split_direction {
                                             to_pane =
                                                 workspace.split_pane(to_pane, split_direction, cx);
                                         }
-                                        to_pane.update(cx, |pane, cx| {
+                                        let new_item_handle = to_pane.update(cx, |pane, cx| {
                                             pane.open_item(
                                                 project_entry_id,
                                                 true,
@@ -2351,10 +2351,23 @@ impl Pane {
                                                 cx,
                                                 build_item,
                                             )
-                                        })
+                                        });
+                                        (to_pane, new_item_handle)
                                     })
-                                    .log_err();
+                                    .log_err()?;
+                                to_pane
+                                    .update(&mut cx, |this, cx| {
+                                        let Some(index) = this.index_for_item(&*new_item_handle)
+                                        else {
+                                            return;
+                                        };
+                                        if !this.is_tab_pinned(index) {
+                                            this.pin_tab_at(index, cx);
+                                        }
+                                    })
+                                    .ok()?
                             }
+                            Some(())
                         })
                         .detach();
                     };
