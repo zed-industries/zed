@@ -5,7 +5,7 @@ use crate::{
     lsp_ext_command,
     project_settings::ProjectSettings,
     relativize_path, resolve_path,
-    worktree_store::WorktreeStore,
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
     CodeAction, Completion, CoreCompletion, Hover, InlayHint, Item as _, ProjectPath,
     ProjectTransaction, ResolveState, Symbol,
@@ -89,7 +89,7 @@ pub struct LspStore {
     downstream_client: Option<AnyProtoClient>,
     upstream_client: Option<AnyProtoClient>,
     project_id: u64,
-    http_client: Arc<dyn HttpClient>,
+    http_client: Option<Arc<dyn HttpClient>>,
     fs: Arc<dyn Fs>,
     nonce: u128,
     buffer_store: Model<BufferStore>,
@@ -210,12 +210,12 @@ impl LspStore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub fn new(
         buffer_store: Model<BufferStore>,
         worktree_store: Model<WorktreeStore>,
         environment: Option<Model<ProjectEnvironment>>,
         languages: Arc<LanguageRegistry>,
-        http_client: Arc<dyn HttpClient>,
+        http_client: Option<Arc<dyn HttpClient>>,
         fs: Arc<dyn Fs>,
         downstream_client: Option<AnyProtoClient>,
         upstream_client: Option<AnyProtoClient>,
@@ -224,6 +224,8 @@ impl LspStore {
     ) -> Self {
         let yarn = YarnPathStore::new(fs.clone(), cx);
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+            .detach();
+        cx.subscribe(&worktree_store, Self::on_worktree_store_event)
             .detach();
 
         Self {
@@ -275,6 +277,31 @@ impl LspStore {
                 self.register_buffer_with_language_servers(&buffer, cx);
             }
             BufferStoreEvent::BufferDropped(_) => {}
+        }
+    }
+
+    fn on_worktree_store_event(
+        &mut self,
+        _: Model<WorktreeStore>,
+        event: &WorktreeStoreEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            WorktreeStoreEvent::WorktreeAdded(worktree) => {
+                if !worktree.read(cx).is_local() {
+                    return;
+                }
+                cx.subscribe(worktree, |this, worktree, event, cx| match event {
+                    worktree::Event::UpdatedEntries(changes) => {
+                        this.update_local_worktree_language_servers(&worktree, changes, cx);
+                    }
+                    worktree::Event::UpdatedGitRepositories(_)
+                    | worktree::Event::DeletedEntry(_) => {}
+                })
+                .detach()
+            }
+            WorktreeStoreEvent::WorktreeRemoved(_, id) => self.remove_worktree(*id, cx),
+            WorktreeStoreEvent::WorktreeOrderChanged => {}
         }
     }
 
@@ -461,11 +488,6 @@ impl LspStore {
 
     pub fn buffer_store(&self) -> Model<BufferStore> {
         self.buffer_store.clone()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn set_environment(&mut self, environment: Model<ProjectEnvironment>) {
-        self.environment = Some(environment);
     }
 
     pub fn set_active_entry(&mut self, active_entry: Option<ProjectEntryId>) {
@@ -5715,11 +5737,10 @@ impl LspStore {
                                 }
                             }
                             if !snippet_edits.is_empty() {
-                                if let Some(buffer_version) = op.text_document.version {
-                                    let buffer_id = buffer_to_edit.read(cx).remote_id();
-                                    // Check if the edit that triggered that edit has been made by this participant.
-                                    let most_recent_edit = this
-                                        .buffer_snapshots
+                                let buffer_id = buffer_to_edit.read(cx).remote_id();
+                                let version = if let Some(buffer_version) = op.text_document.version
+                                {
+                                    this.buffer_snapshots
                                         .get(&buffer_id)
                                         .and_then(|server_to_snapshots| {
                                             let all_snapshots = server_to_snapshots
@@ -5731,17 +5752,22 @@ impl LspStore {
                                                 .ok()
                                                 .and_then(|index| all_snapshots.get(index))
                                         })
-                                        .and_then(|lsp_snapshot| {
-                                            let version = lsp_snapshot.snapshot.version();
-                                            version.iter().max_by_key(|timestamp| timestamp.value)
-                                        });
-                                    if let Some(most_recent_edit) = most_recent_edit {
-                                        cx.emit(LspStoreEvent::SnippetEdit {
-                                            buffer_id,
-                                            edits: snippet_edits,
-                                            most_recent_edit,
-                                        });
-                                    }
+                                        .map(|lsp_snapshot| lsp_snapshot.snapshot.version())
+                                } else {
+                                    Some(buffer_to_edit.read(cx).saved_version())
+                                };
+
+                                let most_recent_edit = version.and_then(|version| {
+                                    version.iter().max_by_key(|timestamp| timestamp.value)
+                                });
+                                // Check if the edit that triggered that edit has been made by this participant.
+
+                                if let Some(most_recent_edit) = most_recent_edit {
+                                    cx.emit(LspStoreEvent::SnippetEdit {
+                                        buffer_id,
+                                        edits: snippet_edits,
+                                        most_recent_edit,
+                                    });
                                 }
                             }
 
@@ -6101,11 +6127,15 @@ impl ProjectLspAdapterDelegate {
             Task::ready(None).shared()
         };
 
+        let Some(http_client) = lsp_store.http_client.clone() else {
+            panic!("ProjectLspAdapterDelegate cannot be constructedd on an ssh-remote yet")
+        };
+
         Arc::new(Self {
             lsp_store: cx.weak_model(),
             worktree: worktree.read(cx).snapshot(),
             fs: lsp_store.fs.clone(),
-            http_client: lsp_store.http_client.clone(),
+            http_client,
             language_registry: lsp_store.languages.clone(),
             load_shell_env_task,
         })

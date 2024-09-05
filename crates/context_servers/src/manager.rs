@@ -39,6 +39,7 @@ pub struct ServerConfig {
     pub id: String,
     pub executable: String,
     pub args: Vec<String>,
+    pub env: Option<HashMap<String, String>>,
 }
 
 impl Settings for ContextServerSettings {
@@ -70,13 +71,13 @@ impl ContextServer {
     }
 
     async fn start(&self, cx: &AsyncAppContext) -> anyhow::Result<()> {
-        log::info!("starting context server {}", self.config.id);
+        log::info!("starting context server {}", self.config.id,);
         let client = Client::new(
             client::ContextServerId(self.config.id.clone()),
             client::ModelContextServerBinary {
                 executable: Path::new(&self.config.executable).to_path_buf(),
                 args: self.config.args.clone(),
-                env: None,
+                env: self.config.env.clone(),
             },
             cx.clone(),
         )?;

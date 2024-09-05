@@ -1,9 +1,23 @@
 use collections::HashMap;
-use gpui::AppContext;
+use fs::Fs;
+use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Model, ModelContext};
+use paths::local_settings_file_relative_path;
+use rpc::{
+    proto::{self, AnyProtoClient},
+    TypedEnvelope,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
-use std::{sync::Arc, time::Duration};
+use settings::{Settings, SettingsSources, SettingsStore};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+use util::ResultExt;
+use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
+
+use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettings {
@@ -155,5 +169,278 @@ impl Settings for ProjectSettings {
         _: &mut AppContext,
     ) -> anyhow::Result<Self> {
         sources.json_merge()
+    }
+}
+
+pub enum SettingsObserverMode {
+    Local(Arc<dyn Fs>),
+    Ssh(AnyProtoClient),
+    Remote,
+}
+
+pub struct SettingsObserver {
+    mode: SettingsObserverMode,
+    downstream_client: Option<AnyProtoClient>,
+    worktree_store: Model<WorktreeStore>,
+    project_id: u64,
+}
+
+/// SettingsObserver observers changes to .zed/settings.json files in local worktrees
+/// (or the equivalent protobuf messages from upstream) and updates local settings
+/// and sends notifications downstream.
+/// In ssh mode it also monitors ~/.config/zed/settings.json and sends the content
+/// upstream.
+impl SettingsObserver {
+    pub fn init(client: &AnyProtoClient) {
+        client.add_model_message_handler(Self::handle_update_worktree_settings);
+        client.add_model_message_handler(Self::handle_update_user_settings)
+    }
+
+    pub fn new_local(
+        fs: Arc<dyn Fs>,
+        worktree_store: Model<WorktreeStore>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+            .detach();
+
+        Self {
+            worktree_store,
+            mode: SettingsObserverMode::Local(fs),
+            downstream_client: None,
+            project_id: 0,
+        }
+    }
+
+    pub fn new_ssh(
+        client: AnyProtoClient,
+        worktree_store: Model<WorktreeStore>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        let this = Self {
+            worktree_store,
+            mode: SettingsObserverMode::Ssh(client.clone()),
+            downstream_client: None,
+            project_id: 0,
+        };
+        this.maintain_ssh_settings(client, cx);
+        this
+    }
+
+    pub fn new_remote(worktree_store: Model<WorktreeStore>, _: &mut ModelContext<Self>) -> Self {
+        Self {
+            worktree_store,
+            mode: SettingsObserverMode::Remote,
+            downstream_client: None,
+            project_id: 0,
+        }
+    }
+
+    pub fn shared(
+        &mut self,
+        project_id: u64,
+        downstream_client: AnyProtoClient,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.project_id = project_id;
+        self.downstream_client = Some(downstream_client.clone());
+
+        let store = cx.global::<SettingsStore>();
+        for worktree in self.worktree_store.read(cx).worktrees() {
+            let worktree_id = worktree.read(cx).id().to_proto();
+            for (path, content) in store.local_settings(worktree.entity_id().as_u64() as usize) {
+                downstream_client
+                    .send(proto::UpdateWorktreeSettings {
+                        project_id,
+                        worktree_id,
+                        path: path.to_string_lossy().into(),
+                        content: Some(content),
+                    })
+                    .log_err();
+            }
+        }
+    }
+
+    pub fn unshared(&mut self, _: &mut ModelContext<Self>) {
+        self.downstream_client = None;
+    }
+
+    async fn handle_update_worktree_settings(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::UpdateWorktreeSettings>,
+        mut cx: AsyncAppContext,
+    ) -> anyhow::Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+            let Some(worktree) = this
+                .worktree_store
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+            else {
+                return;
+            };
+            this.update_settings(
+                worktree,
+                [(
+                    PathBuf::from(&envelope.payload.path).into(),
+                    envelope.payload.content,
+                )],
+                cx,
+            );
+        })?;
+        Ok(())
+    }
+
+    pub async fn handle_update_user_settings(
+        _: Model<Self>,
+        envelope: TypedEnvelope<proto::UpdateUserSettings>,
+        mut cx: AsyncAppContext,
+    ) -> anyhow::Result<()> {
+        cx.update_global(move |settings_store: &mut SettingsStore, cx| {
+            settings_store.set_user_settings(&envelope.payload.content, cx)
+        })??;
+
+        Ok(())
+    }
+
+    pub fn maintain_ssh_settings(&self, ssh: AnyProtoClient, cx: &mut ModelContext<Self>) {
+        let mut settings = cx.global::<SettingsStore>().raw_user_settings().clone();
+        if let Some(content) = serde_json::to_string(&settings).log_err() {
+            ssh.send(proto::UpdateUserSettings {
+                project_id: 0,
+                content,
+            })
+            .log_err();
+        }
+
+        cx.observe_global::<SettingsStore>(move |_, cx| {
+            let new_settings = cx.global::<SettingsStore>().raw_user_settings();
+            if &settings != new_settings {
+                settings = new_settings.clone()
+            }
+            if let Some(content) = serde_json::to_string(&settings).log_err() {
+                ssh.send(proto::UpdateUserSettings {
+                    project_id: 0,
+                    content,
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
+
+    fn on_worktree_store_event(
+        &mut self,
+        _: Model<WorktreeStore>,
+        event: &WorktreeStoreEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            WorktreeStoreEvent::WorktreeAdded(worktree) => cx
+                .subscribe(worktree, |this, worktree, event, cx| match event {
+                    worktree::Event::UpdatedEntries(changes) => {
+                        this.update_local_worktree_settings(&worktree, changes, cx)
+                    }
+                    _ => {}
+                })
+                .detach(),
+            _ => {}
+        }
+    }
+
+    fn update_local_worktree_settings(
+        &mut self,
+        worktree: &Model<Worktree>,
+        changes: &UpdatedEntriesSet,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let SettingsObserverMode::Local(fs) = &self.mode else {
+            return;
+        };
+
+        let mut settings_contents = Vec::new();
+        for (path, _, change) in changes.iter() {
+            let removed = change == &PathChange::Removed;
+            let abs_path = match worktree.read(cx).absolutize(path) {
+                Ok(abs_path) => abs_path,
+                Err(e) => {
+                    log::warn!("Cannot absolutize {path:?} received as {change:?} FS change: {e}");
+                    continue;
+                }
+            };
+
+            if path.ends_with(local_settings_file_relative_path()) {
+                let settings_dir = Arc::from(
+                    path.ancestors()
+                        .nth(local_settings_file_relative_path().components().count())
+                        .unwrap(),
+                );
+                let fs = fs.clone();
+                settings_contents.push(async move {
+                    (
+                        settings_dir,
+                        if removed {
+                            None
+                        } else {
+                            Some(async move { fs.load(&abs_path).await }.await)
+                        },
+                    )
+                });
+            }
+        }
+
+        if settings_contents.is_empty() {
+            return;
+        }
+
+        let worktree = worktree.clone();
+        cx.spawn(move |this, cx| async move {
+            let settings_contents: Vec<(Arc<Path>, _)> =
+                futures::future::join_all(settings_contents).await;
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.update_settings(
+                        worktree,
+                        settings_contents
+                            .into_iter()
+                            .map(|(path, content)| (path, content.and_then(|c| c.log_err()))),
+                        cx,
+                    )
+                })
+            })
+        })
+        .detach();
+    }
+
+    fn update_settings(
+        &mut self,
+        worktree: Model<Worktree>,
+        settings_contents: impl IntoIterator<Item = (Arc<Path>, Option<String>)>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let worktree_id = worktree.entity_id();
+        let remote_worktree_id = worktree.read(cx).id();
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            for (directory, file_content) in settings_contents {
+                store
+                    .set_local_settings(
+                        worktree_id.as_u64() as usize,
+                        directory.clone(),
+                        file_content.as_deref(),
+                        cx,
+                    )
+                    .log_err();
+                if let Some(downstream_client) = &self.downstream_client {
+                    downstream_client
+                        .send(proto::UpdateWorktreeSettings {
+                            project_id: self.project_id,
+                            worktree_id: remote_worktree_id.to_proto(),
+                            path: directory.to_string_lossy().into_owned(),
+                            content: file_content,
+                        })
+                        .log_err();
+                }
+            }
+        })
     }
 }

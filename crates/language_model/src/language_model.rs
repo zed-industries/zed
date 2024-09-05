@@ -55,11 +55,20 @@ pub struct LanguageModelCacheConfiguration {
 /// A completion event from a language model.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum LanguageModelCompletionEvent {
+    Stop(StopReason),
     Text(String),
     ToolUse(LanguageModelToolUse),
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    EndTurn,
+    MaxTokens,
+    ToolUse,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct LanguageModelToolUse {
     pub id: String,
     pub name: String,
@@ -112,6 +121,7 @@ pub trait LanguageModel: Send + Sync {
                 .filter_map(|result| async move {
                     match result {
                         Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
+                        Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                         Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                         Err(err) => Some(Err(err)),
                     }

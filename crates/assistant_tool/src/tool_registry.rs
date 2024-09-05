@@ -66,4 +66,9 @@ impl ToolRegistry {
     pub fn tools(&self) -> Vec<Arc<dyn Tool>> {
         self.state.read().tools.values().cloned().collect()
     }
+
+    /// Returns the [`Tool`] with the given name.
+    pub fn tool(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.state.read().tools.get(name).cloned()
+    }
 }

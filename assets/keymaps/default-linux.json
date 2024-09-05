@@ -169,7 +169,8 @@
       "ctrl-shift-g": "search::SelectPrevMatch",
       "alt-m": "assistant::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
-      "ctrl-k l": "assistant::DeployPromptLibrary"
+      "ctrl-k l": "assistant::DeployPromptLibrary",
+      "ctrl-n": "assistant::NewContext"
     }
   },
   {

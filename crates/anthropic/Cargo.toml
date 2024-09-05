@@ -18,7 +18,6 @@ path = "src/anthropic.rs"
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
-collections.workspace = true
 futures.workspace = true
 http_client.workspace = true
 isahc.workspace = true
