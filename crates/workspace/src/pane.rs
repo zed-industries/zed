@@ -149,6 +149,7 @@ actions!(
         GoBack,
         GoForward,
         JoinIntoNext,
+        PinTab,
         ReopenClosedItem,
         SplitLeft,
         SplitUp,
@@ -157,6 +158,7 @@ actions!(
         SplitHorizontal,
         SplitVertical,
         TogglePreviewTab,
+        UnpinTab,
     ]
 );
 
@@ -1724,7 +1726,29 @@ impl Pane {
         }
     }
 
-    fn pin_tab(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
+    fn pin_tab(&mut self, _: &PinTab, cx: &mut ViewContext<'_, Self>) {
+        if self.items.is_empty() {
+            return;
+        }
+        let active_tab_ix = self.active_item_index();
+        if self.is_tab_pinned(active_tab_ix) {
+            return;
+        }
+        self.pin_tab_at(active_tab_ix, cx);
+    }
+
+    fn unpin_tab(&mut self, _: &UnpinTab, cx: &mut ViewContext<'_, Self>) {
+        if self.items.is_empty() {
+            return;
+        }
+        let active_tab_ix = self.active_item_index();
+        if !self.is_tab_pinned(active_tab_ix) {
+            return;
+        }
+        self.unpin_tab_at(active_tab_ix, cx);
+    }
+
+    fn pin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
         maybe!({
             let pane = cx.view().clone();
             let destination_index = self.pinned_tab_count;
@@ -1742,7 +1766,8 @@ impl Pane {
             Some(())
         });
     }
-    fn unpin_tab(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
+
+    fn unpin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
         maybe!({
             let pane = cx.view().clone();
             self.pinned_tab_count = self.pinned_tab_count.checked_sub(1).unwrap();
@@ -1808,6 +1833,7 @@ impl Pane {
         let item_id = item.item_id();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
+        let is_pinned = self.is_tab_pinned(ix);
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
 
         let tab = Tab::new(ix)
@@ -1879,17 +1905,31 @@ impl Pane {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
             .start_slot::<Indicator>(indicator)
-            .end_slot(
-                IconButton::new("close tab", IconName::Close)
-                    .shape(IconButtonShape::Square)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::None)
-                    .icon_size(IconSize::XSmall)
-                    .on_click(cx.listener(move |pane, _, cx| {
-                        pane.close_item_by_id(item_id, SaveIntent::Close, cx)
-                            .detach_and_log_err(cx);
-                    })),
-            )
+            .map(|this| {
+                let end_slot = if is_pinned {
+                    IconButton::new("unpin tab", IconName::PinAlt)
+                        .shape(IconButtonShape::Square)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .icon_size(IconSize::XSmall)
+                        .on_click(cx.listener(move |pane, _, cx| {
+                            pane.unpin_tab_at(ix, cx);
+                        }))
+                        .tooltip(|cx| Tooltip::text("Unpin Tab", cx))
+                } else {
+                    IconButton::new("close tab", IconName::Close)
+                        .visible_on_hover("")
+                        .shape(IconButtonShape::Square)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .icon_size(IconSize::XSmall)
+                        .on_click(cx.listener(move |pane, _, cx| {
+                            pane.close_item_by_id(item_id, SaveIntent::Close, cx)
+                                .detach_and_log_err(cx);
+                        }))
+                };
+                this.end_slot(end_slot)
+            })
             .child(
                 h_flex()
                     .gap_1()
@@ -2000,17 +2040,17 @@ impl Pane {
                                 if is_pinned {
                                     this.entry(
                                         "Unpin Tab",
-                                        None,
+                                        Some(UnpinTab.boxed_clone()),
                                         cx.handler_for(&pane, move |pane, cx| {
-                                            pane.unpin_tab(ix, cx);
+                                            pane.unpin_tab_at(ix, cx);
                                         }),
                                     )
                                 } else {
                                     this.entry(
                                         "Pin Tab",
-                                        None,
+                                        Some(PinTab.boxed_clone()),
                                         cx.handler_for(&pane, move |pane, cx| {
-                                            pane.pin_tab(ix, cx);
+                                            pane.pin_tab_at(ix, cx);
                                         }),
                                     )
                                 }
@@ -2425,6 +2465,12 @@ impl Render for Pane {
             }))
             .on_action(cx.listener(|pane: &mut Pane, _: &ActivateNextItem, cx| {
                 pane.activate_next_item(true, cx);
+            }))
+            .on_action(cx.listener(|pane, action, cx| {
+                pane.pin_tab(action, cx);
+            }))
+            .on_action(cx.listener(|pane, action, cx| {
+                pane.unpin_tab(action, cx);
             }))
             .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
                 this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, cx| {
