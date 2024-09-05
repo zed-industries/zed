@@ -87,7 +87,7 @@ pub trait FeatureFlagAppExt {
 
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
-        F: Fn(bool, &mut AppContext) + 'static;
+        F: FnMut(bool, &mut AppContext) + 'static;
 }
 
 impl FeatureFlagAppExt for AppContext {
@@ -114,9 +114,9 @@ impl FeatureFlagAppExt for AppContext {
             .unwrap_or(false)
     }
 
-    fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
+    fn observe_flag<T: FeatureFlag, F>(&mut self, mut callback: F) -> Subscription
     where
-        F: Fn(bool, &mut AppContext) + 'static,
+        F: FnMut(bool, &mut AppContext) + 'static,
     {
         self.observe_global::<FeatureFlags>(move |cx| {
             let feature_flags = cx.global::<FeatureFlags>();
