@@ -1,5 +1,5 @@
 use crate::{
-    FocusSearch, NextHistory, PreviousHistory, ReplaceAll, ReplaceNext, SearchOptions,
+    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
     SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex,
     ToggleReplace, ToggleWholeWord,
 };
@@ -1430,7 +1430,7 @@ impl ProjectSearchBar {
         }
     }
 
-    fn next_history(&mut self, _: &NextHistory, cx: &mut ViewContext<Self>) {
+    fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 for (editor, kind) in [
@@ -1467,7 +1467,7 @@ impl ProjectSearchBar {
         }
     }
 
-    fn previous_history(&mut self, _: &PreviousHistory, cx: &mut ViewContext<Self>) {
+    fn previous_history_query(&mut self, _: &PreviousHistoryQuery, cx: &mut ViewContext<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 for (editor, kind) in [
@@ -1578,8 +1578,8 @@ impl Render for ProjectSearchBar {
             .min_w(rems(MIN_INPUT_WIDTH_REMS))
             .max_w(rems(MAX_INPUT_WIDTH_REMS))
             .on_action(cx.listener(|this, action, cx| this.confirm(action, cx)))
-            .on_action(cx.listener(|this, action, cx| this.previous_history(action, cx)))
-            .on_action(cx.listener(|this, action, cx| this.next_history(action, cx)))
+            .on_action(cx.listener(|this, action, cx| this.previous_history_query(action, cx)))
+            .on_action(cx.listener(|this, action, cx| this.next_history_query(action, cx)))
             .child(self.render_text_input(&search.query_editor, cx))
             .child(
                 h_flex()
@@ -1765,9 +1765,11 @@ impl Render for ProjectSearchBar {
                         .border_color(search.border_color_for(InputPanel::Include, cx))
                         .rounded_lg()
                         .on_action(
-                            cx.listener(|this, action, cx| this.previous_history(action, cx)),
+                            cx.listener(|this, action, cx| this.previous_history_query(action, cx)),
                         )
-                        .on_action(cx.listener(|this, action, cx| this.next_history(action, cx)))
+                        .on_action(
+                            cx.listener(|this, action, cx| this.next_history_query(action, cx)),
+                        )
                         .child(self.render_text_input(&search.included_files_editor, cx)),
                 )
                 .child(
@@ -1782,9 +1784,11 @@ impl Render for ProjectSearchBar {
                         .border_color(search.border_color_for(InputPanel::Exclude, cx))
                         .rounded_lg()
                         .on_action(
-                            cx.listener(|this, action, cx| this.previous_history(action, cx)),
+                            cx.listener(|this, action, cx| this.previous_history_query(action, cx)),
                         )
-                        .on_action(cx.listener(|this, action, cx| this.next_history(action, cx)))
+                        .on_action(
+                            cx.listener(|this, action, cx| this.next_history_query(action, cx)),
+                        )
                         .child(self.render_text_input(&search.excluded_files_editor, cx)),
                 )
                 .child(
@@ -2854,7 +2858,7 @@ pub mod tests {
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.focus_search(cx);
-                    search_bar.next_history(&NextHistory, cx);
+                    search_bar.next_history_query(&NextHistoryQuery, cx);
                 })
             })
             .unwrap();
@@ -2870,7 +2874,7 @@ pub mod tests {
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.focus_search(cx);
-                    search_bar.next_history(&NextHistory, cx);
+                    search_bar.next_history_query(&NextHistoryQuery, cx);
                 })
             })
             .unwrap();
@@ -2888,7 +2892,7 @@ pub mod tests {
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.focus_search(cx);
-                    search_bar.previous_history(&PreviousHistory, cx);
+                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                 });
             })
             .unwrap();
@@ -2906,7 +2910,7 @@ pub mod tests {
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.focus_search(cx);
-                    search_bar.previous_history(&PreviousHistory, cx);
+                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                 });
             })
             .unwrap();
@@ -2924,7 +2928,7 @@ pub mod tests {
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.focus_search(cx);
-                    search_bar.previous_history(&PreviousHistory, cx);
+                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                 });
             })
             .unwrap();
@@ -2940,7 +2944,7 @@ pub mod tests {
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.focus_search(cx);
-                    search_bar.previous_history(&PreviousHistory, cx);
+                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                 });
             })
             .unwrap();
@@ -2958,7 +2962,7 @@ pub mod tests {
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.focus_search(cx);
-                    search_bar.next_history(&NextHistory, cx);
+                    search_bar.next_history_query(&NextHistoryQuery, cx);
                 });
             })
             .unwrap();
@@ -2996,7 +3000,7 @@ pub mod tests {
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.focus_search(cx);
-                    search_bar.previous_history(&PreviousHistory, cx);
+                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                 });
             })
             .unwrap();
@@ -3012,7 +3016,7 @@ pub mod tests {
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.focus_search(cx);
-                    search_bar.previous_history(&PreviousHistory, cx);
+                    search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                 });
             })
             .unwrap();
@@ -3028,7 +3032,7 @@ pub mod tests {
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.focus_search(cx);
-                    search_bar.next_history(&NextHistory, cx);
+                    search_bar.next_history_query(&NextHistoryQuery, cx);
                 });
             })
             .unwrap();
@@ -3044,7 +3048,7 @@ pub mod tests {
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.focus_search(cx);
-                    search_bar.next_history(&NextHistory, cx);
+                    search_bar.next_history_query(&NextHistoryQuery, cx);
                 });
             })
             .unwrap();
@@ -3060,7 +3064,7 @@ pub mod tests {
             .update(cx, |_, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.focus_search(cx);
-                    search_bar.next_history(&NextHistory, cx);
+                    search_bar.next_history_query(&NextHistoryQuery, cx);
                 });
             })
             .unwrap();
@@ -3212,7 +3216,7 @@ pub mod tests {
                     .update(cx, |_, cx| {
                         search_bar.update(cx, |search_bar, cx| {
                             search_bar.focus_search(cx);
-                            search_bar.previous_history(&PreviousHistory, cx);
+                            search_bar.previous_history_query(&PreviousHistoryQuery, cx);
                         })
                     })
                     .unwrap();
@@ -3224,7 +3228,7 @@ pub mod tests {
                     .update(cx, |_, cx| {
                         search_bar.update(cx, |search_bar, cx| {
                             search_bar.focus_search(cx);
-                            search_bar.next_history(&NextHistory, cx);
+                            search_bar.next_history_query(&NextHistoryQuery, cx);
                         })
                     })
                     .unwrap();

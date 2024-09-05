@@ -219,8 +219,8 @@
   {
     "context": "ProjectSearchBar > Editor",
     "bindings": {
-      "up": "search::PreviousHistory",
-      "down": "search::NextHistory"
+      "up": "search::PreviousHistoryQuery",
+      "down": "search::NextHistoryQuery"
     }
   },
   {
