@@ -24,7 +24,7 @@ use wit_component::ComponentEncoder;
 ///
 /// Once Rust 1.78 is released, there will be a `wasm32-wasip2` target available, so we will
 /// not need the adapter anymore.
-const RUST_TARGET: &str = "wasm32-wasi";
+const RUST_TARGET: &str = "wasm32-wasip1";
 const WASI_ADAPTER_URL: &str =
     "https://github.com/bytecodealliance/wasmtime/releases/download/v18.0.2/wasi_snapshot_preview1.reactor.wasm";
 
@@ -158,7 +158,7 @@ impl ExtensionBuilder {
             &cargo_toml
                 .package
                 .name
-                // The wasm32-wasi target normalizes `-` in package names to `_` in the resulting `.wasm` file.
+                // The wasm32-wasip1 target normalizes `-` in package names to `_` in the resulting `.wasm` file.
                 .replace('-', "_"),
         ]);
         wasm_path.set_extension("wasm");
