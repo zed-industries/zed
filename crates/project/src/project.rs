@@ -697,8 +697,8 @@ impl Project {
                 remotely_created_buffers: Default::default(),
                 last_formatting_failure: None,
                 buffers_being_formatted: Default::default(),
-                search_included_history: Self::new_search_included_history(),
-                search_excluded_history: Self::new_search_excluded_history(),
+                search_included_history: Self::new_search_history(),
+                search_excluded_history: Self::new_search_history(),
             }
         })
     }
