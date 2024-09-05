@@ -395,13 +395,16 @@ impl Message {
         let mut content = Vec::new();
 
         let mut range_start = self.offset_range.start;
+        let mut skip_text = false;
+
         dbg!(&self.content_offsets);
         for (content_offset, content_kind) in self.content_offsets.iter() {
-            if range_start != *content_offset {
+            if range_start != *content_offset && !skip_text {
                 content.extend(Self::collect_text_content(
                     buffer,
                     range_start..*content_offset,
                 ));
+                skip_text = false;
             }
 
             match content_kind {
@@ -428,9 +431,10 @@ impl Message {
             }
 
             range_start = *content_offset;
+            skip_text = !skip_text;
         }
 
-        if range_start != self.offset_range.end {
+        if range_start != self.offset_range.end && !skip_text {
             content.extend(Self::collect_text_content(
                 buffer,
                 range_start..self.offset_range.end,
