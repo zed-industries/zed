@@ -356,8 +356,16 @@ impl AssistantPanel {
                             cx.dispatch_action(DeployHistory.boxed_clone())
                         }
                     }))
-                    .tooltip(move |cx| {
-                        Tooltip::for_action_in("Open History", &DeployHistory, &focus_handle, cx)
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |cx| {
+                            Tooltip::for_action_in(
+                                "Open History",
+                                &DeployHistory,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
                     })
                     .selected(
                         pane.active_item()
@@ -373,7 +381,14 @@ impl AssistantPanel {
                                     cx.dispatch_action(NewContext.boxed_clone())
                                 }),
                             )
-                            .tooltip(|cx| Tooltip::for_action("New Context", &NewContext, cx)),
+                            .tooltip(move |cx| {
+                                Tooltip::for_action_in(
+                                    "New Context",
+                                    &NewContext,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            }),
                     )
                     .child(
                         PopoverMenu::new("assistant-panel-popover-menu")

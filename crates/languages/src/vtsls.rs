@@ -226,6 +226,9 @@ impl LspAdapter for VtslsLspAdapter {
             "suggest": {
                 "completeFunctionCalls": true
             },
+            "tsserver": {
+                "maxTsServerMemory": 8092
+            },
             "inlayHints": {
                 "parameterNames": {
                     "enabled": "all",

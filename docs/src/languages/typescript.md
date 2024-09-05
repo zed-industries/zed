@@ -46,7 +46,7 @@ Prettier will also be used for TypeScript files by default. To disable this:
 
 ## Large projects
 
-`vtsls` may run out of memory on very large projects. You can configure this limit by passing the following options to the language server:
+`vtsls` may run out of memory on very large projects. We default the limit to 8092 (8 GiB) vs the default of 3072 but this may not be sufficient for you:
 
 ```json
 {
@@ -54,9 +54,9 @@ Prettier will also be used for TypeScript files by default. To disable this:
     "vtsls": {
       "initialization_options": {
         // For TypeScript:
-        "typescript": { "tsserver": { "maxTsServerMemory": 8092 } },
+        "typescript": { "tsserver": { "maxTsServerMemory": 16184 } },
         // For JavaScript:
-        "javascript": { "tsserver": { "maxTsServerMemory": 8092 } }
+        "javascript": { "tsserver": { "maxTsServerMemory": 16184 } }
       }
     }
   }
