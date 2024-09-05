@@ -125,34 +125,12 @@ impl LocalLspStore {
 
 pub struct RemoteLspStore {
     upstream_client: AnyProtoClient,
-    project_id: u64,
 }
 
-impl RemoteLspStore {
-    fn send_lsp_proto_request<R: LspCommand>(
-        &self,
-        buffer: Model<Buffer>,
-        project_id: u64,
-        request: R,
-        cx: &mut ModelContext<'_, LspStore>,
-    ) -> Task<anyhow::Result<<R as LspCommand>::Response>> {
-        let message = request.to_proto(project_id, buffer.read(cx));
-        let client = self.upstream_client.clone();
-        cx.spawn(move |this, cx| async move {
-            let response = client.request(message).await?;
-            let this = this.upgrade().context("project dropped")?;
-            request
-                .response_from_proto(response, this, buffer, cx)
-                .await
-        })
-    }
-}
+impl RemoteLspStore {}
 
 pub struct SshLspStore {
     upstream_client: AnyProtoClient,
-    fs: Arc<dyn Fs>,
-    // adapters:
-    // responsible_for_lifecycle:
 }
 
 pub enum LspStoreMode {
@@ -165,20 +143,11 @@ impl LspStoreMode {
     fn is_local(&self) -> bool {
         matches!(self, LspStoreMode::Local(_))
     }
-    fn is_remote(&self) -> bool {
-        matches!(self, LspStoreMode::Remote(_))
-    }
+
     fn is_ssh(&self) -> bool {
         matches!(self, LspStoreMode::Ssh(_))
     }
 }
-// Collab:
-// Host determines
-//
-// Headless Host:
-// no treesitter
-// no languages
-// no buffers <-> language-server association
 
 pub struct LspStore {
     mode: LspStoreMode,
@@ -292,14 +261,6 @@ impl LspStore {
         client.add_model_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
     }
 
-    pub fn fs(&self) -> Option<Arc<dyn Fs>> {
-        match &self.mode {
-            LspStoreMode::Local(local_lsp_store) => Some(local_lsp_store.fs.clone()),
-            LspStoreMode::Ssh(ssh_store) => Some(ssh_store.fs.clone()),
-            LspStoreMode::Remote(_) => None,
-        }
-    }
-
     pub fn as_remote(&self) -> Option<&RemoteLspStore> {
         match &self.mode {
             LspStoreMode::Remote(remote_lsp_store) => Some(remote_lsp_store),
@@ -388,6 +349,23 @@ impl LspStore {
         }
     }
 
+    fn send_lsp_proto_request<R: LspCommand>(
+        &self,
+        buffer: Model<Buffer>,
+        client: AnyProtoClient,
+        request: R,
+        cx: &mut ModelContext<'_, LspStore>,
+    ) -> Task<anyhow::Result<<R as LspCommand>::Response>> {
+        let message = request.to_proto(self.project_id, buffer.read(cx));
+        cx.spawn(move |this, cx| async move {
+            let response = client.request(message).await?;
+            let this = this.upgrade().context("project dropped")?;
+            request
+                .response_from_proto(response, this, buffer, cx)
+                .await
+        })
+    }
+
     pub fn new_remote(
         buffer_store: Model<BufferStore>,
         worktree_store: Model<WorktreeStore>,
@@ -402,10 +380,7 @@ impl LspStore {
             .detach();
 
         Self {
-            mode: LspStoreMode::Remote(RemoteLspStore {
-                upstream_client,
-                project_id,
-            }),
+            mode: LspStoreMode::Remote(RemoteLspStore { upstream_client }),
             downstream_client: None,
             project_id,
             buffer_store,
@@ -693,13 +668,10 @@ impl LspStore {
     {
         let buffer = buffer_handle.read(cx);
 
-        if let LspStoreMode::Remote(remote) = &self.mode {
-            return remote.send_lsp_proto_request(buffer_handle, self.project_id, request, cx);
+        if let Some(upstream_client) = self.upstream_client() {
+            return self.send_lsp_proto_request(buffer_handle, upstream_client, request, cx);
         }
 
-        // if self.upstream_client().is_some() {
-        //     return self.send_lsp_proto_request(buffer_handle, self.project_id, request, cx);
-        // }
         let language_server = match server {
             LanguageServerToQuery::Primary => {
                 match self.primary_language_server_for_buffer(buffer, cx) {
@@ -1317,10 +1289,10 @@ impl LspStore {
     ) -> Task<Result<Vec<Completion>>> {
         let language_registry = self.languages.clone();
 
-        if let Some(remote_lsp_store) = self.as_remote() {
-            let task = remote_lsp_store.send_lsp_proto_request(
+        if let Some(upstream_client) = self.upstream_client() {
+            let task = self.send_lsp_proto_request(
                 buffer.clone(),
-                self.project_id,
+                upstream_client,
                 GetCompletions { position, context },
                 cx,
             );
@@ -4365,7 +4337,7 @@ impl LspStore {
                 .insert(server_id, state);
             self.language_server_ids.insert(key, server_id);
         } else if self.mode.is_ssh() {
-            // TODO
+            // TODO ssh
         }
     }
 
@@ -4599,7 +4571,7 @@ impl LspStore {
                 Task::ready(Vec::new())
             }
         } else if self.mode.is_ssh() {
-            // TODO
+            // TODO ssh
             Task::ready(Vec::new())
         } else {
             Task::ready(Vec::new())
@@ -6360,8 +6332,10 @@ impl ProjectLspAdapterDelegate {
         };
 
         let fs = lsp_store
-            .fs()
-            .expect("ProjectLspAdapterDelegate cannot be constructedd on an ssh-remote yet");
+            .as_local()
+            .expect("ProjectLspAdapterDelegate cannot be constructedd on an ssh-remote yet")
+            .fs
+            .clone();
 
         Arc::new(Self {
             lsp_store: cx.weak_model(),
