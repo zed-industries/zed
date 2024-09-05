@@ -103,7 +103,7 @@ A common tool for formatting Python code is [Ruff](https://docs.astral.sh/ruff/)
 ## Virtual Environments in the Terminal {#terminal-detect_venv}
 
 Zed will also detect virtual environments and automatically activate them in terminal if available.
-See: [detect_venv documentation](https://zed.dev/docs/configuring-zed#terminal-detect_venv) for more.
+See: [detect_venv documentation](../configuring-zed.md#terminal-detect_venv) for more.
 
 <!--
 TBD: Expand Python Ruff docs.
