@@ -1906,7 +1906,7 @@ impl Pane {
             .start_slot::<Indicator>(indicator)
             .map(|this| {
                 let end_slot = if is_pinned {
-                    IconButton::new("unpin tab", IconName::PinAlt)
+                    IconButton::new("unpin tab", IconName::Pin)
                         .shape(IconButtonShape::Square)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
