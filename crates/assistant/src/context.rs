@@ -440,7 +440,7 @@ impl Message {
             return None;
         }
 
-        dbg!(&content);
+        // dbg!(&content);
 
         Some(LanguageModelRequestMessage {
             role: self.role,
@@ -2106,6 +2106,7 @@ impl Context {
                 let stream_completion = async {
                     let request_start = Instant::now();
                     let mut events = stream.await?;
+                    let mut stop_reason = StopReason::EndTurn;
 
                     while let Some(event) = events.next().await {
                         if response_latency.is_none() {
@@ -2118,7 +2119,7 @@ impl Context {
                                 .message_anchors
                                 .iter()
                                 .position(|message| message.id == assistant_message_id)?;
-                            let event_to_emit = this.buffer.update(cx, |buffer, cx| {
+                            this.buffer.update(cx, |buffer, cx| {
                                 let message_old_end_offset = this.message_anchors[message_ix + 1..]
                                     .iter()
                                     .find(|message| message.start.is_valid(buffer))
@@ -2127,13 +2128,9 @@ impl Context {
                                     });
 
                                 match event {
-                                    LanguageModelCompletionEvent::Stop(reason) => match reason {
-                                        StopReason::ToolUse => {
-                                            return Some(ContextEvent::UsePendingTools);
-                                        }
-                                        StopReason::EndTurn => {}
-                                        StopReason::MaxTokens => {}
-                                    },
+                                    LanguageModelCompletionEvent::Stop(reason) => {
+                                        stop_reason = reason;
+                                    }
                                     LanguageModelCompletionEvent::Text(chunk) => {
                                         buffer.edit(
                                             [(
@@ -2184,14 +2181,9 @@ impl Context {
                                         );
                                     }
                                 }
-
-                                None
                             });
 
                             cx.emit(ContextEvent::StreamedCompletion);
-                            if let Some(event) = event_to_emit {
-                                cx.emit(event);
-                            }
 
                             Some(())
                         })?;
@@ -2200,8 +2192,18 @@ impl Context {
                     this.update(&mut cx, |this, cx| {
                         this.pending_completions
                             .retain(|completion| completion.id != pending_completion_id);
+                        dbg!(&this.pending_completions.len());
                         this.summarize(false, cx);
                         this.update_cache_status_for_completion(cx);
+
+                        match stop_reason {
+                            StopReason::ToolUse => {
+                                // TODO: Emitting this event causes the tool uses to end up in the user message?
+                                // cx.emit(ContextEvent::UsePendingTools);
+                            }
+                            StopReason::EndTurn => {}
+                            StopReason::MaxTokens => {}
+                        }
                     })?;
 
                     anyhow::Ok(())
