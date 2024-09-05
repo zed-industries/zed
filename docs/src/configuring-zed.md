@@ -1582,7 +1582,7 @@ See Buffer Font Features
 - Setting: `detect_venv`
 - Default:
 
-```
+```json
 {
   "terminal":
     "detect_venv": {
@@ -1607,6 +1607,7 @@ Disable with:
     "detect_venv": "off"
   }
 }
+```
 
 ## Terminal: Toolbar
 
