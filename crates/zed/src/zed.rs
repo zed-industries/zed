@@ -203,7 +203,7 @@ pub fn initialize_workspace(
             activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
         let active_buffer_language =
             cx.new_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
-        let vim_mode_indicator = cx.new_view(|cx| vim::ModeIndicator::new(cx));
+        let vim_mode_indicator = cx.new_view(vim::ModeIndicator::new);
         let cursor_position =
             cx.new_view(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
@@ -236,7 +236,7 @@ pub fn initialize_workspace(
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
                     let tasks_file_rx =
-                        watch_config_file(&cx.background_executor(), fs, paths::tasks_file().clone());
+                        watch_config_file(cx.background_executor(), fs, paths::tasks_file().clone());
                     inventory.add_source(
                         TaskSourceKind::AbsPath {
                             id_base: "global_tasks".into(),
@@ -423,7 +423,7 @@ pub fn initialize_workspace(
                 move |_: &mut Workspace,
                       _: &zed_actions::OpenKeymap,
                       cx: &mut ViewContext<Workspace>| {
-                    open_settings_file(&paths::keymap_file(), || settings::initial_keymap_content().as_ref().into(), cx);
+                    open_settings_file(paths::keymap_file(), || settings::initial_keymap_content().as_ref().into(), cx);
                 },
             )
             .register_action(
@@ -628,8 +628,8 @@ fn quit(_: &Quit, cx: &mut AppContext) {
 
         // If multiple windows have unsaved changes, and need a save prompt,
         // prompt in the active window before switching to a different window.
-        cx.update(|mut cx| {
-            workspace_windows.sort_by_key(|window| window.is_active(&mut cx) == Some(false));
+        cx.update(|cx| {
+            workspace_windows.sort_by_key(|window| window.is_active(cx) == Some(false));
         })
         .log_err();
 
@@ -1029,7 +1029,7 @@ fn open_settings_file(
                     // TODO: Do note that all other external files (e.g. drag and drop from OS) still have their worktrees released on file close, causing LSP servers' restarts.
                     project.find_or_create_worktree(paths::config_dir().as_path(), false, cx)
                 });
-                let settings_open_task = create_and_open_local_file(&abs_path, cx, default_content);
+                let settings_open_task = create_and_open_local_file(abs_path, cx, default_content);
                 (worktree_creation_task, settings_open_task)
             })?;
 
@@ -1038,6 +1038,11 @@ fn open_settings_file(
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
+}
+
+async fn register_zed_scheme(cx: &AsyncAppContext) -> anyhow::Result<()> {
+    cx.update(|cx| cx.register_url_scheme(ZED_URL_SCHEME))?
+        .await
 }
 
 #[cfg(test)]
@@ -3368,7 +3373,7 @@ mod tests {
     #[gpui::test]
     async fn test_bundled_languages(cx: &mut TestAppContext) {
         env_logger::builder().is_test(true).try_init().ok();
-        let settings = cx.update(|cx| SettingsStore::test(cx));
+        let settings = cx.update(SettingsStore::test);
         cx.set_global(settings);
         let languages = LanguageRegistry::test(cx.executor());
         let languages = Arc::new(languages);
@@ -3387,7 +3392,7 @@ mod tests {
     }
 
     pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
-        init_test_with_state(cx, cx.update(|cx| AppState::test(cx)))
+        init_test_with_state(cx, cx.update(AppState::test))
     }
 
     fn init_test_with_state(
@@ -3505,9 +3510,4 @@ mod tests {
             );
         }
     }
-}
-
-async fn register_zed_scheme(cx: &AsyncAppContext) -> anyhow::Result<()> {
-    cx.update(|cx| cx.register_url_scheme(ZED_URL_SCHEME))?
-        .await
 }
