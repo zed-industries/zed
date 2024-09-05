@@ -12,6 +12,7 @@ pub struct WorktreeSettings {
     pub file_scan_inclusions: PathMatcher,
     pub file_scan_exclusions: PathMatcher,
     pub private_files: PathMatcher,
+    pub exclusions_gitignore: bool,
 }
 
 impl WorktreeSettings {
@@ -62,6 +63,9 @@ pub struct WorktreeSettingsContent {
     /// Treat the files matching these globs as `.env` files.
     /// Default: [ "**/.env*" ]
     pub private_files: Option<Vec<String>>,
+
+    #[serde(default)]
+    pub exclusions_gitignore: bool,
 }
 
 impl Settings for WorktreeSettings {
@@ -84,6 +88,7 @@ impl Settings for WorktreeSettings {
             })
             .filter(|p| p != "")
             .collect();
+        let exclusion = result.exclusions_gitignore;
         file_scan_exclusions.sort();
         private_files.sort();
         parsed_file_scan_inclusions.sort();
@@ -94,6 +99,7 @@ impl Settings for WorktreeSettings {
                 &parsed_file_scan_inclusions,
                 "file_scan_inclusions",
             )?,
+            exclusions_gitignore: exclusion,
         })
     }
 }
