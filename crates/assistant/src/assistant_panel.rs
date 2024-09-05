@@ -26,8 +26,8 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CustomBlockId, FoldId,
-        RenderBlock, ToDisplayPoint,
+        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CreaseMetadata,
+        CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
     Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowExt, ToOffset as _, ToPoint,
@@ -54,13 +54,13 @@ use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectLspAdapterDelegate, Worktree};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
+use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings};
 use smol::stream::StreamExt;
 use std::{
     borrow::Cow,
     cmp,
     collections::hash_map,
-    fmt::Write,
     ops::{ControlFlow, Range},
     path::PathBuf,
     sync::Arc,
@@ -2450,20 +2450,26 @@ impl ContextEditor {
                     .unwrap();
                 let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                 buffer_rows_to_fold.insert(buffer_row);
-                creases.push(Crease::new(
-                    start..end,
-                    FoldPlaceholder {
-                        render: render_fold_icon_button(
-                            cx.view().downgrade(),
-                            section.icon,
-                            section.label.clone(),
-                        ),
-                        constrain_width: false,
-                        merge_adjacent: false,
-                    },
-                    render_slash_command_output_toggle,
-                    |_, _, _| Empty.into_any_element(),
-                ));
+                creases.push(
+                    Crease::new(
+                        start..end,
+                        FoldPlaceholder {
+                            render: render_fold_icon_button(
+                                cx.view().downgrade(),
+                                section.icon,
+                                section.label.clone(),
+                            ),
+                            constrain_width: false,
+                            merge_adjacent: false,
+                        },
+                        render_slash_command_output_toggle,
+                        |_, _, _| Empty.into_any_element(),
+                    )
+                    .with_metadata(CreaseMetadata {
+                        icon: section.icon,
+                        label: section.label,
+                    }),
+                );
             }
 
             editor.insert_creases(creases, cx);
@@ -3277,12 +3283,47 @@ impl ContextEditor {
     }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
+        let creases_metadata = self.editor.update(cx, |editor, cx| {
+            let selection = editor.selections.newest::<Point>(cx);
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            editor.display_map.update(cx, |display_map, cx| {
+                display_map
+                    .snapshot(cx)
+                    .crease_snapshot
+                    .creases_in_range(
+                        MultiBufferRow(selection.start.row)..MultiBufferRow(selection.end.row),
+                        &snapshot,
+                    )
+                    .filter_map(|crease| {
+                        if let Some(metadata) = &crease.metadata {
+                            let start_row = crease.range.start.to_point(&snapshot).row;
+                            let end_row = crease.range.end.to_point(&snapshot).row;
+
+                            let start_row_relative_to_selection =
+                                start_row.saturating_sub(selection.start.row);
+                            let end_row_relative_to_selection =
+                                end_row.saturating_sub(selection.start.row) + 1;
+
+                            Some(SelectedCreaseMetadata {
+                                row_range_relative_to_selection: start_row_relative_to_selection
+                                    ..end_row_relative_to_selection,
+                                crease: metadata.clone(),
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+        });
+
         let editor = self.editor.read(cx);
         let context = self.context.read(cx);
+        let mut message_role_blocks = Vec::new();
         if editor.selections.count() == 1 {
             let selection = editor.selections.newest::<usize>(cx);
+            let start_row = editor.selections.newest::<Point>(cx).start.row;
             let mut copied_text = String::new();
-            let mut spanned_messages = 0;
             for message in context.messages(cx) {
                 if message.offset_range.start >= selection.range().end {
                     break;
@@ -3290,8 +3331,7 @@ impl ContextEditor {
                     let range = cmp::max(message.offset_range.start, selection.range().start)
                         ..cmp::min(message.offset_range.end, selection.range().end);
                     if !range.is_empty() {
-                        spanned_messages += 1;
-                        write!(&mut copied_text, "## {}\n\n", message.role).unwrap();
+                        message_role_blocks.push((start_row + 0, message.role)); // todo: Get the right row
                         for chunk in context.buffer().read(cx).text_for_range(range) {
                             copied_text.push_str(chunk);
                         }
@@ -3300,16 +3340,23 @@ impl ContextEditor {
                 }
             }
 
-            if spanned_messages > 1 {
-                cx.write_to_clipboard(ClipboardItem::new_string(copied_text));
-                return;
-            }
+            cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+                copied_text,
+                CopyMetadata {
+                    creases_metadata,
+                    message_role_blocks,
+                },
+            ));
+            cx.stop_propagation();
+            return;
         }
 
         cx.propagate();
     }
 
-    fn paste(&mut self, _: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
+    fn paste(&mut self, action: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
+        cx.stop_propagation();
+
         let images = if let Some(item) = cx.read_from_clipboard() {
             item.into_entries()
                 .filter_map(|entry| {
@@ -3324,9 +3371,62 @@ impl ContextEditor {
             Vec::new()
         };
 
+        let metadata = if let Some(item) = cx.read_from_clipboard() {
+            item.entries().first().and_then(|entry| {
+                if let ClipboardEntry::String(text) = entry {
+                    text.metadata_json::<CopyMetadata>()
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+
         if images.is_empty() {
-            // If we didn't find any valid image data to paste, propagate to let normal pasting happen.
-            cx.propagate();
+            self.editor.update(cx, |editor, cx| {
+                let paste_position = editor.selections.newest::<Point>(cx).head();
+                editor.paste(action, cx);
+
+                if let Some(metadata) = metadata {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+
+                    let mut buffer_rows_to_fold = BTreeSet::new();
+                    let weak_editor = cx.view().downgrade();
+                    editor.insert_creases(
+                        metadata.creases_metadata.into_iter().map(|metadata| {
+                            let start = buffer.anchor_before(Point::new(
+                                paste_position.row + metadata.row_range_relative_to_selection.start,
+                                0,
+                            ));
+                            let end = buffer.anchor_after(Point::new(
+                                paste_position.row + metadata.row_range_relative_to_selection.end,
+                                0,
+                            ));
+                            let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                            buffer_rows_to_fold.insert(buffer_row);
+                            Crease::new(
+                                start..end,
+                                FoldPlaceholder {
+                                    constrain_width: false,
+                                    render: render_fold_icon_button(
+                                        weak_editor.clone(),
+                                        metadata.crease.icon,
+                                        metadata.crease.label,
+                                    ),
+                                    merge_adjacent: false,
+                                },
+                                render_slash_command_output_toggle,
+                                |_, _, _| Empty.into_any(),
+                            )
+                        }),
+                        cx,
+                    );
+                    for buffer_row in buffer_rows_to_fold.into_iter().rev() {
+                        editor.fold_at(&FoldAt { buffer_row }, cx);
+                    }
+                }
+            });
         } else {
             let mut image_positions = Vec::new();
             self.editor.update(cx, |editor, cx| {
@@ -3994,6 +4094,18 @@ fn render_fold_icon_button(
             })
             .into_any_element()
     })
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct CopyMetadata {
+    creases_metadata: Vec<SelectedCreaseMetadata>,
+    message_role_blocks: Vec<(u32, Role)>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct SelectedCreaseMetadata {
+    row_range_relative_to_selection: Range<u32>,
+    crease: CreaseMetadata,
 }
 
 impl EventEmitter<EditorEvent> for ContextEditor {}
