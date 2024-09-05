@@ -2003,6 +2003,27 @@ impl Pane {
                             }),
                         );
 
+                    let pin_tab_entries = |menu: ContextMenu| {
+                        menu.separator().map(|this| {
+                            if is_pinned {
+                                this.entry(
+                                    "Unpin Tab",
+                                    Some(TogglePinTab.boxed_clone()),
+                                    cx.handler_for(&pane, move |pane, cx| {
+                                        pane.unpin_tab_at(ix, cx);
+                                    }),
+                                )
+                            } else {
+                                this.entry(
+                                    "Pin Tab",
+                                    Some(TogglePinTab.boxed_clone()),
+                                    cx.handler_for(&pane, move |pane, cx| {
+                                        pane.pin_tab_at(ix, cx);
+                                    }),
+                                )
+                            }
+                        })
+                    };
                     if let Some(entry) = single_entry_to_resolve {
                         let entry_abs_path = pane.read(cx).entry_abs_path(entry, cx);
                         let parent_abs_path = entry_abs_path
@@ -2030,26 +2051,7 @@ impl Pane {
                                     pane.copy_relative_path(&CopyRelativePath, cx);
                                 }),
                             )
-                            .separator()
-                            .map(|this| {
-                                if is_pinned {
-                                    this.entry(
-                                        "Unpin Tab",
-                                        Some(TogglePinTab.boxed_clone()),
-                                        cx.handler_for(&pane, move |pane, cx| {
-                                            pane.unpin_tab_at(ix, cx);
-                                        }),
-                                    )
-                                } else {
-                                    this.entry(
-                                        "Pin Tab",
-                                        Some(TogglePinTab.boxed_clone()),
-                                        cx.handler_for(&pane, move |pane, cx| {
-                                            pane.pin_tab_at(ix, cx);
-                                        }),
-                                    )
-                                }
-                            })
+                            .map(pin_tab_entries)
                             .separator()
                             .entry(
                                 "Reveal In Project Panel",
@@ -2078,6 +2080,8 @@ impl Pane {
                                     }),
                                 )
                             });
+                    } else {
+                        menu = menu.map(pin_tab_entries);
                     }
                 }
 
