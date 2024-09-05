@@ -21,7 +21,7 @@ use crate::{
         JoinLines,
     },
     state::Mode,
-    visual::VisualDeleteLine,
+    visual::{VisualDeleteLine, VisualYankLine},
     Vim,
 };
 
@@ -587,6 +587,7 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("lN", "ext"), editor::actions::GoToPrevDiagnostic).count(),
         VimCommand::new(("j", "oin"), JoinLines).range(),
         VimCommand::new(("d", "elete"), VisualDeleteLine).range(),
+        VimCommand::new(("y", "ank"), VisualYankLine).range(),
         VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(),
         VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
