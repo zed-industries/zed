@@ -1,4 +1,5 @@
 use gpui::ViewContext;
+use language::CursorShape;
 
 use crate::{Editor, RangeToAnchorExt};
 
@@ -13,8 +14,16 @@ pub fn refresh_matching_bracket_highlights(editor: &mut Editor, cx: &mut ViewCon
         return;
     }
 
-    let head = newest_selection.head();
+    let mut head = newest_selection.head();
+    // Apply 1 offset for vim normal mode
+    if editor.cursor_shape == CursorShape::Block || editor.cursor_shape == CursorShape::Hollow {
+        head += 1;
+    }
     let snapshot = editor.snapshot(cx);
+    // Don't highlight if the head offset is out of the buffer. This happens when the buffer is empty
+    if head >= snapshot.buffer_snapshot.len() {
+        return;
+    }
     if let Some((opening_range, closing_range)) = snapshot
         .buffer_snapshot
         .innermost_enclosing_bracket_ranges(head..head, None)
