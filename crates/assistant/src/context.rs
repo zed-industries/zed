@@ -2195,24 +2195,16 @@ impl Context {
                         dbg!(&this.pending_completions.len());
                         this.summarize(false, cx);
                         this.update_cache_status_for_completion(cx);
-
-                        match stop_reason {
-                            StopReason::ToolUse => {
-                                // TODO: Emitting this event causes the tool uses to end up in the user message?
-                                // cx.emit(ContextEvent::UsePendingTools);
-                            }
-                            StopReason::EndTurn => {}
-                            StopReason::MaxTokens => {}
-                        }
                     })?;
 
-                    anyhow::Ok(())
+                    anyhow::Ok(stop_reason)
                 };
 
                 let result = stream_completion.await;
 
                 this.update(&mut cx, |this, cx| {
                     let error_message = result
+                        .as_ref()
                         .err()
                         .map(|error| error.to_string().trim().to_string());
 
@@ -2239,6 +2231,18 @@ impl Context {
                             response_latency,
                             error_message,
                         );
+                    }
+
+                    if let Ok(stop_reason) = result {
+                        match stop_reason {
+                            StopReason::ToolUse => {
+                                dbg!("Stopping for tool use");
+                                // TODO: Emitting this event causes the tool uses to end up in the user message?
+                                cx.emit(ContextEvent::UsePendingTools);
+                            }
+                            StopReason::EndTurn => {}
+                            StopReason::MaxTokens => {}
+                        }
                     }
                 })
                 .ok();

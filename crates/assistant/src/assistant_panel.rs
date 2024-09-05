@@ -2187,6 +2187,8 @@ impl ContextEditor {
                 }
             }
             ContextEvent::UsePendingTools => {
+                dbg!("using pending tools");
+
                 let pending_tool_uses = self
                     .context
                     .read(cx)
