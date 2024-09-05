@@ -395,6 +395,7 @@ impl Message {
         let mut content = Vec::new();
 
         let mut range_start = self.offset_range.start;
+        dbg!(&self.content_offsets);
         for (content_offset, content_kind) in self.content_offsets.iter() {
             if range_start != *content_offset {
                 content.extend(Self::collect_text_content(
@@ -2449,6 +2450,11 @@ impl Context {
 
         self.content_anchors
             .insert(insertion_ix, ContentAnchor { anchor, kind });
+
+        // HACK: The insertion using `binary_search_by` doesn't seem to be operating as expected, so we
+        // sort the content anchors afterwards to maintain a sorted order.
+        self.content_anchors
+            .sort_by(|a, b| a.anchor.cmp(&b.anchor, buffer));
     }
 
     pub fn content_anchors<'a>(
