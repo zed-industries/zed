@@ -26,7 +26,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 - Install the Rust wasm toolchain:
 
   ```sh
-  rustup target add wasm32-wasi
+  rustup target add wasm32-wasip1
   ```
 
 ## Backend Dependencies
