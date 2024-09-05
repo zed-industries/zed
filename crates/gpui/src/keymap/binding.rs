@@ -51,13 +51,15 @@ impl KeyBinding {
             return None;
         }
 
+        // TODO:
+        // should_match?
         for (target, typed) in self.keystrokes.iter().zip(typed.iter()) {
             if !typed.should_match(target) {
                 return None;
             }
         }
 
-        return Some(self.keystrokes.len() > typed.len());
+        Some(self.keystrokes.len() > typed.len())
     }
 
     /// Get the keystrokes associated with this binding

@@ -1,7 +1,8 @@
-use std::rc::Rc;
+use std::{cell::RefMut, rc::Rc};
 
 use ::util::ResultExt;
 use anyhow::Context;
+use keycodes::VirtualKeyCode;
 use windows::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
@@ -80,7 +81,7 @@ pub(crate) fn handle_msg(
         WM_SYSCOMMAND => handle_system_command(wparam, state_ptr),
         WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
         WM_KEYUP => handle_keyup_msg(wparam, state_ptr),
-        WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
+        WM_CHAR => handle_char_msg(wparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
@@ -235,38 +236,28 @@ fn handle_mouse_move_msg(
     wparam: WPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        drop(lock);
-        let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
-            flags if flags.contains(MK_LBUTTON) => Some(MouseButton::Left),
-            flags if flags.contains(MK_RBUTTON) => Some(MouseButton::Right),
-            flags if flags.contains(MK_MBUTTON) => Some(MouseButton::Middle),
-            flags if flags.contains(MK_XBUTTON1) => {
-                Some(MouseButton::Navigate(NavigationDirection::Back))
-            }
-            flags if flags.contains(MK_XBUTTON2) => {
-                Some(MouseButton::Navigate(NavigationDirection::Forward))
-            }
-            _ => None,
-        };
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
-        let event = MouseMoveEvent {
-            position: logical_point(x, y, scale_factor),
-            pressed_button,
-            modifiers: current_modifiers(),
-        };
-        let result = if callback(PlatformInput::MouseMove(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
-        return result;
-    }
-    Some(1)
+    let scale_factor = state_ptr.state.borrow().scale_factor;
+    let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
+        flags if flags.contains(MK_LBUTTON) => Some(MouseButton::Left),
+        flags if flags.contains(MK_RBUTTON) => Some(MouseButton::Right),
+        flags if flags.contains(MK_MBUTTON) => Some(MouseButton::Middle),
+        flags if flags.contains(MK_XBUTTON1) => {
+            Some(MouseButton::Navigate(NavigationDirection::Back))
+        }
+        flags if flags.contains(MK_XBUTTON2) => {
+            Some(MouseButton::Navigate(NavigationDirection::Forward))
+        }
+        _ => None,
+    };
+    let x = lparam.signed_loword() as f32;
+    let y = lparam.signed_hiword() as f32;
+    let event = PlatformInput::MouseMove(MouseMoveEvent {
+        position: logical_point(x, y, scale_factor),
+        pressed_button,
+        modifiers: current_modifiers(),
+    });
+    with_keyboard_input_handler(&state_ptr, event, |_, _| {});
+    Some(0)
 }
 
 fn handle_syskeydown_msg(
@@ -276,37 +267,32 @@ fn handle_syskeydown_msg(
 ) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
-    let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
-    let event = KeyDownEvent {
-        keystroke,
+    let event = PlatformInput::KeyDown(KeyDownEvent {
+        keystroke: parse_syskeydown_msg_keystroke(wparam)?,
         is_held: lparam.0 & (0x1 << 30) > 0,
-    };
-    let result = if !func(PlatformInput::KeyDown(event)).propagate {
-        state_ptr.state.borrow_mut().system_key_handled = true;
+    });
+    if with_keyboard_input_handler(&state_ptr, event, |lock, handled| {
+        lock.system_key_handled = handled;
+    })
+    .is_some()
+    {
         Some(0)
     } else {
         None
-    };
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
-
-    result
+    }
 }
 
 fn handle_syskeyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
-    let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
-    let event = KeyUpEvent { keystroke };
-    let result = if func(PlatformInput::KeyUp(event)).default_prevented {
+    let event = PlatformInput::KeyUp(KeyUpEvent {
+        keystroke: parse_syskeydown_msg_keystroke(wparam)?,
+    });
+    if with_keyboard_input_handler(&state_ptr, event, |_, _| {}).is_some() {
         Some(0)
     } else {
-        Some(1)
-    };
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
-
-    result
+        None
+    }
 }
 
 fn handle_keydown_msg(
@@ -314,87 +300,27 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let Some(keystroke_or_modifier) = parse_keydown_msg_keystroke(wparam) else {
-        return Some(1);
-    };
-    let mut lock = state_ptr.state.borrow_mut();
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return Some(1);
-    };
-    drop(lock);
-
-    let event = match keystroke_or_modifier {
-        KeystrokeOrModifier::Keystroke(keystroke) => PlatformInput::KeyDown(KeyDownEvent {
-            keystroke,
-            is_held: lparam.0 & (0x1 << 30) > 0,
-        }),
-        KeystrokeOrModifier::Modifier(modifiers) => {
-            PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
-        }
-    };
-
-    let result = if func(event).default_prevented {
-        Some(0)
-    } else {
-        Some(1)
-    };
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
-
-    result
+    println!("WM_KEYDOWN");
+    let event = parse_keydown_msg_to_platform_input(wparam, lparam);
+    println!("char: {:?}, keycode: {}", event, wparam.0);
+    with_keyboard_input_handler(&state_ptr, event, |lock, handled| {
+        lock.last_keydown_handled = handled;
+    });
+    Some(0)
 }
 
 fn handle_keyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let Some(keystroke_or_modifier) = parse_keydown_msg_keystroke(wparam) else {
-        return Some(1);
-    };
-    let mut lock = state_ptr.state.borrow_mut();
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return Some(1);
-    };
-    drop(lock);
-
-    let event = match keystroke_or_modifier {
-        KeystrokeOrModifier::Keystroke(keystroke) => PlatformInput::KeyUp(KeyUpEvent { keystroke }),
-        KeystrokeOrModifier::Modifier(modifiers) => {
-            PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
-        }
-    };
-
-    let result = if func(event).default_prevented {
-        Some(0)
-    } else {
-        Some(1)
-    };
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
-
-    result
+    let event = parse_keydup_msg_to_platform_input(wparam);
+    with_keyboard_input_handler(&state_ptr, event, |_, _| {});
+    Some(0)
 }
 
-fn handle_char_msg(
-    wparam: WPARAM,
-    lparam: LPARAM,
-    state_ptr: Rc<WindowsWindowStatePtr>,
-) -> Option<isize> {
-    let Some(keystroke) = parse_char_msg_keystroke(wparam) else {
-        return Some(1);
-    };
-    let mut lock = state_ptr.state.borrow_mut();
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return Some(1);
-    };
-    drop(lock);
-    let ime_key = keystroke.ime_key.clone();
-    let event = KeyDownEvent {
-        keystroke,
-        is_held: lparam.0 & (0x1 << 30) > 0,
-    };
-    let dispatch_event_result = func(PlatformInput::KeyDown(event));
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
-
-    if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
+fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    println!("WM_CHAR");
+    if state_ptr.state.borrow().last_keydown_handled {
         return Some(0);
     }
-    let Some(ime_char) = ime_key else {
+    let Some(ime_char) = parse_char_msg(wparam) else {
         return Some(1);
     };
     with_input_handler(&state_ptr, |input_handler| {
@@ -411,33 +337,23 @@ fn handle_mouse_down_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     unsafe { SetCapture(handle) };
+    let x = lparam.signed_loword() as f32;
+    let y = lparam.signed_hiword() as f32;
+    let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
-        let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
-        let click_count = lock.click_state.update(button, physical_point);
-        let scale_factor = lock.scale_factor;
-        drop(lock);
+    let click_count = lock.click_state.update(button, physical_point);
+    let scale_factor = lock.scale_factor;
+    drop(lock);
 
-        let event = MouseDownEvent {
-            button,
-            position: logical_point(x, y, scale_factor),
-            modifiers: current_modifiers(),
-            click_count,
-            first_mouse: false,
-        };
-        let result = if callback(PlatformInput::MouseDown(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
-
-        result
-    } else {
-        Some(1)
-    }
+    let event = PlatformInput::MouseDown(MouseDownEvent {
+        button,
+        position: logical_point(x, y, scale_factor),
+        modifiers: current_modifiers(),
+        click_count,
+        first_mouse: false,
+    });
+    with_platform_input_handler(&state_ptr, event);
+    Some(0)
 }
 
 fn handle_mouse_up_msg(
@@ -447,31 +363,21 @@ fn handle_mouse_up_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     unsafe { ReleaseCapture().log_err() };
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
-        let click_count = lock.click_state.current_count;
-        let scale_factor = lock.scale_factor;
-        drop(lock);
+    let x = lparam.signed_loword() as f32;
+    let y = lparam.signed_hiword() as f32;
+    let lock = state_ptr.state.borrow();
+    let click_count = lock.click_state.current_count;
+    let scale_factor = lock.scale_factor;
+    drop(lock);
 
-        let event = MouseUpEvent {
-            button,
-            position: logical_point(x, y, scale_factor),
-            modifiers: current_modifiers(),
-            click_count,
-        };
-        let result = if callback(PlatformInput::MouseUp(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
-
-        result
-    } else {
-        Some(1)
-    }
+    let event = PlatformInput::MouseUp(MouseUpEvent {
+        button,
+        position: logical_point(x, y, scale_factor),
+        modifiers: current_modifiers(),
+        click_count,
+    });
+    with_platform_input_handler(&state_ptr, event);
+    Some(0)
 }
 
 fn handle_xbutton_msg(
@@ -496,47 +402,38 @@ fn handle_mouse_wheel_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let modifiers = current_modifiers();
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        let wheel_scroll_amount = match modifiers.shift {
-            true => lock.system_settings.mouse_wheel_settings.wheel_scroll_chars,
-            false => lock.system_settings.mouse_wheel_settings.wheel_scroll_lines,
-        };
-        drop(lock);
-        let wheel_distance =
-            (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_amount as f32;
-        let mut cursor_point = POINT {
-            x: lparam.signed_loword().into(),
-            y: lparam.signed_hiword().into(),
-        };
-        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = ScrollWheelEvent {
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            delta: ScrollDelta::Lines(match modifiers.shift {
-                true => Point {
-                    x: wheel_distance,
-                    y: 0.0,
-                },
-                false => Point {
-                    y: wheel_distance,
-                    x: 0.0,
-                },
-            }),
-            modifiers: current_modifiers(),
-            touch_phase: TouchPhase::Moved,
-        };
-        let result = if callback(PlatformInput::ScrollWheel(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
+    let lock = state_ptr.state.borrow();
+    let scale_factor = lock.scale_factor;
+    let wheel_scroll_amount = match modifiers.shift {
+        true => lock.system_settings.mouse_wheel_settings.wheel_scroll_chars,
+        false => lock.system_settings.mouse_wheel_settings.wheel_scroll_lines,
+    };
+    drop(lock);
 
-        result
-    } else {
-        Some(1)
-    }
+    let wheel_distance =
+        (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_amount as f32;
+    let mut cursor_point = POINT {
+        x: lparam.signed_loword().into(),
+        y: lparam.signed_hiword().into(),
+    };
+    unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+    let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+        delta: ScrollDelta::Lines(match modifiers.shift {
+            true => Point {
+                x: wheel_distance,
+                y: 0.0,
+            },
+            false => Point {
+                y: wheel_distance,
+                x: 0.0,
+            },
+        }),
+        modifiers: current_modifiers(),
+        touch_phase: TouchPhase::Moved,
+    });
+    with_platform_input_handler(&state_ptr, event);
+    Some(0)
 }
 
 fn handle_mouse_horizontal_wheel_msg(
@@ -545,38 +442,28 @@ fn handle_mouse_horizontal_wheel_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        let wheel_scroll_chars = lock.system_settings.mouse_wheel_settings.wheel_scroll_chars;
-        drop(lock);
-        let wheel_distance =
-            (-wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
-        let mut cursor_point = POINT {
-            x: lparam.signed_loword().into(),
-            y: lparam.signed_hiword().into(),
-        };
-        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = ScrollWheelEvent {
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            delta: ScrollDelta::Lines(Point {
-                x: wheel_distance,
-                y: 0.0,
-            }),
-            modifiers: current_modifiers(),
-            touch_phase: TouchPhase::Moved,
-        };
-        let result = if callback(PlatformInput::ScrollWheel(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
-
-        result
-    } else {
-        Some(1)
-    }
+    let lock = state_ptr.state.borrow();
+    let scale_factor = lock.scale_factor;
+    let wheel_scroll_chars = lock.system_settings.mouse_wheel_settings.wheel_scroll_chars;
+    drop(lock);
+    let wheel_distance =
+        (-wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
+    let mut cursor_point = POINT {
+        x: lparam.signed_loword().into(),
+        y: lparam.signed_hiword().into(),
+    };
+    unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+    let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+        delta: ScrollDelta::Lines(Point {
+            x: wheel_distance,
+            y: 0.0,
+        }),
+        modifiers: current_modifiers(),
+        touch_phase: TouchPhase::Moved,
+    });
+    with_platform_input_handler(&state_ptr, event);
+    Some(0)
 }
 
 fn retrieve_caret_position(state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<POINT> {
@@ -684,8 +571,8 @@ fn handle_calc_client_size(
     let is_maximized = state_ptr.state.borrow().is_maximized();
     let insets = get_client_area_insets(handle, is_maximized, state_ptr.windows_version);
     // wparam is TRUE so lparam points to an NCCALCSIZE_PARAMS structure
-    let mut params = lparam.0 as *mut NCCALCSIZE_PARAMS;
-    let mut requested_client_rect = unsafe { &mut ((*params).rgrc) };
+    let params = lparam.0 as *mut NCCALCSIZE_PARAMS;
+    let requested_client_rect = unsafe { &mut ((*params).rgrc) };
 
     requested_client_rect[0].left += insets.left;
     requested_client_rect[0].top += insets.top;
@@ -914,28 +801,19 @@ fn handle_nc_mouse_move_msg(
         return None;
     }
 
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        drop(lock);
-        let mut cursor_point = POINT {
-            x: lparam.signed_loword().into(),
-            y: lparam.signed_hiword().into(),
-        };
-        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = MouseMoveEvent {
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            pressed_button: None,
-            modifiers: current_modifiers(),
-        };
-        let result = if callback(PlatformInput::MouseMove(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
-
-        result
+    let scale_factor = state_ptr.state.borrow().scale_factor;
+    let mut cursor_point = POINT {
+        x: lparam.signed_loword().into(),
+        y: lparam.signed_hiword().into(),
+    };
+    unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+    let event = PlatformInput::MouseMove(MouseMoveEvent {
+        position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+        pressed_button: None,
+        modifiers: current_modifiers(),
+    });
+    if with_platform_input_handler(&state_ptr, event).is_some() {
+        Some(0)
     } else {
         None
     }
@@ -953,36 +831,25 @@ fn handle_nc_mouse_down_msg(
     }
 
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        let mut cursor_point = POINT {
-            x: lparam.signed_loword().into(),
-            y: lparam.signed_hiword().into(),
-        };
-        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let physical_point = point(DevicePixels(cursor_point.x), DevicePixels(cursor_point.y));
-        let click_count = lock.click_state.update(button, physical_point);
-        drop(lock);
-        let event = MouseDownEvent {
-            button,
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            modifiers: current_modifiers(),
-            click_count,
-            first_mouse: false,
-        };
-        let result = if callback(PlatformInput::MouseDown(event)).default_prevented {
-            Some(0)
-        } else {
-            None
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
-
-        if result.is_some() {
-            return result;
-        }
-    } else {
-        drop(lock);
+    let scale_factor = lock.scale_factor;
+    let mut cursor_point = POINT {
+        x: lparam.signed_loword().into(),
+        y: lparam.signed_hiword().into(),
     };
+    unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+    let physical_point = point(DevicePixels(cursor_point.x), DevicePixels(cursor_point.y));
+    let click_count = lock.click_state.update(button, physical_point);
+    drop(lock);
+    let event = PlatformInput::MouseDown(MouseDownEvent {
+        button,
+        position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+        modifiers: current_modifiers(),
+        click_count,
+        first_mouse: false,
+    });
+    if with_platform_input_handler(&state_ptr, event).is_some() {
+        return Some(0);
+    }
 
     // Since these are handled in handle_nc_mouse_up_msg we must prevent the default window proc
     if button == MouseButton::Left {
@@ -1009,32 +876,20 @@ fn handle_nc_mouse_up_msg(
         return None;
     }
 
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        drop(lock);
-        let mut cursor_point = POINT {
-            x: lparam.signed_loword().into(),
-            y: lparam.signed_hiword().into(),
-        };
-        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = MouseUpEvent {
-            button,
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            modifiers: current_modifiers(),
-            click_count: 1,
-        };
-        let result = if callback(PlatformInput::MouseUp(event)).default_prevented {
-            Some(0)
-        } else {
-            None
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
-        if result.is_some() {
-            return result;
-        }
-    } else {
-        drop(lock);
+    let scale_factor = state_ptr.state.borrow().scale_factor;
+    let mut cursor_point = POINT {
+        x: lparam.signed_loword().into(),
+        y: lparam.signed_hiword().into(),
+    };
+    unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+    let event = PlatformInput::MouseUp(MouseUpEvent {
+        button,
+        position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+        modifiers: current_modifiers(),
+        click_count: 1,
+    });
+    if with_platform_input_handler(&state_ptr, event).is_some() {
+        return Some(0);
     }
 
     let last_pressed = state_ptr.state.borrow_mut().nc_button_pressed.take();
@@ -1136,6 +991,7 @@ fn handle_system_theme_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<i
 }
 
 fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
+    let vk_code = VIRTUAL_KEY(wparam.loword());
     let modifiers = current_modifiers();
     if !modifiers.alt {
         // on Windows, F10 can trigger this event, not just the alt key
@@ -1143,111 +999,55 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         return None;
     }
 
-    let vk_code = wparam.loword();
-
-    let key = match VIRTUAL_KEY(vk_code) {
-        VK_BACK => "backspace",
-        VK_RETURN => "enter",
-        VK_TAB => "tab",
-        VK_UP => "up",
-        VK_DOWN => "down",
-        VK_RIGHT => "right",
-        VK_LEFT => "left",
-        VK_HOME => "home",
-        VK_END => "end",
-        VK_PRIOR => "pageup",
-        VK_NEXT => "pagedown",
-        VK_ESCAPE => "escape",
-        VK_INSERT => "insert",
-        VK_DELETE => "delete",
-        _ => return basic_vkcode_to_string(vk_code, modifiers),
-    }
-    .to_owned();
-
     Some(Keystroke {
         modifiers,
-        key,
+        key: vk_code.into(),
         ime_key: None,
     })
 }
 
-enum KeystrokeOrModifier {
-    Keystroke(Keystroke),
-    Modifier(Modifiers),
-}
-
-fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
-    let vk_code = wparam.loword();
-
+/// Should only return Keydown or modifier events.
+fn parse_keydown_msg_to_platform_input(wparam: WPARAM, lparam: LPARAM) -> PlatformInput {
+    let vk_code = VIRTUAL_KEY(wparam.loword());
     let modifiers = current_modifiers();
 
-    let key = match VIRTUAL_KEY(vk_code) {
-        VK_BACK => "backspace",
-        VK_RETURN => "enter",
-        VK_TAB => "tab",
-        VK_UP => "up",
-        VK_DOWN => "down",
-        VK_RIGHT => "right",
-        VK_LEFT => "left",
-        VK_HOME => "home",
-        VK_END => "end",
-        VK_PRIOR => "pageup",
-        VK_NEXT => "pagedown",
-        VK_ESCAPE => "escape",
-        VK_INSERT => "insert",
-        VK_DELETE => "delete",
-        _ => {
-            if is_modifier(VIRTUAL_KEY(vk_code)) {
-                return Some(KeystrokeOrModifier::Modifier(modifiers));
-            }
-
-            if modifiers.control || modifiers.alt {
-                let basic_key = basic_vkcode_to_string(vk_code, modifiers);
-                if let Some(basic_key) = basic_key {
-                    return Some(KeystrokeOrModifier::Keystroke(basic_key));
-                }
-            }
-
-            if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
-                let offset = vk_code - VK_F1.0;
-                return Some(KeystrokeOrModifier::Keystroke(Keystroke {
-                    modifiers,
-                    key: format!("f{}", offset + 1),
-                    ime_key: None,
-                }));
-            };
-            return None;
-        }
+    if is_modifier(vk_code) {
+        PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
+    } else {
+        PlatformInput::KeyDown(KeyDownEvent {
+            keystroke: Keystroke {
+                modifiers,
+                key: vk_code.into(),
+                ime_key: None,
+            },
+            is_held: lparam.0 & (0x1 << 30) > 0,
+        })
     }
-    .to_owned();
-
-    Some(KeystrokeOrModifier::Keystroke(Keystroke {
-        modifiers,
-        key,
-        ime_key: None,
-    }))
 }
 
-fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
+fn parse_keydup_msg_to_platform_input(wparam: WPARAM) -> PlatformInput {
+    let vk_code = VIRTUAL_KEY(wparam.loword());
+    let modifiers = current_modifiers();
+
+    if is_modifier(vk_code) {
+        PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
+    } else {
+        PlatformInput::KeyUp(KeyUpEvent {
+            keystroke: Keystroke {
+                modifiers,
+                key: vk_code.into(),
+                ime_key: None,
+            },
+        })
+    }
+}
+
+fn parse_char_msg(wparam: WPARAM) -> Option<String> {
     let first_char = char::from_u32((wparam.0 as u16).into())?;
     if first_char.is_control() {
         None
     } else {
-        let mut modifiers = current_modifiers();
-        // for characters that use 'shift' to type it is expected that the
-        // shift is not reported if the uppercase/lowercase are the same and instead only the key is reported
-        if first_char.to_ascii_uppercase() == first_char.to_ascii_lowercase() {
-            modifiers.shift = false;
-        }
-        let key = match first_char {
-            ' ' => "space".to_string(),
-            first_char => first_char.to_lowercase().to_string(),
-        };
-        Some(Keystroke {
-            modifiers,
-            key,
-            ime_key: Some(first_char.to_string()),
-        })
+        Some(first_char.to_string())
     }
 }
 
@@ -1300,28 +1100,6 @@ fn parse_ime_compostion_result(ctx: HIMC) -> Option<String> {
             None
         }
     }
-}
-
-fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> {
-    let mapped_code = unsafe { MapVirtualKeyW(code as u32, MAPVK_VK_TO_CHAR) };
-
-    let key = match mapped_code {
-        0 => None,
-        raw_code => char::from_u32(raw_code),
-    }?
-    .to_ascii_lowercase();
-
-    let key = if matches!(code as u32, 112..=135) {
-        format!("f{key}")
-    } else {
-        key.to_string()
-    };
-
-    Some(Keystroke {
-        modifiers,
-        key,
-        ime_key: None,
-    })
 }
 
 #[inline]
@@ -1442,4 +1220,217 @@ where
     let result = f(&mut input_handler, scale_factor);
     state_ptr.state.borrow_mut().input_handler = Some(input_handler);
     result
+}
+
+fn with_keyboard_input_handler<F>(
+    state_ptr: &Rc<WindowsWindowStatePtr>,
+    event: PlatformInput,
+    f: F,
+) -> Option<()>
+where
+    F: FnOnce(&mut RefMut<'_, WindowsWindowState>, bool),
+{
+    // let mut lock = state_ptr.state.borrow_mut();
+    // let mut handler = lock.callbacks.input.take()?;
+    // drop(lock);
+    let mut handler = state_ptr.state.borrow_mut().callbacks.input.take()?;
+    let handled = !handler(event).propagate;
+    let mut lock = state_ptr.state.borrow_mut();
+    lock.callbacks.input = Some(handler);
+    f(&mut lock, handled);
+    if handled {
+        Some(())
+    } else {
+        None
+    }
+}
+
+fn with_platform_input_handler(
+    state_ptr: &Rc<WindowsWindowStatePtr>,
+    event: PlatformInput,
+) -> Option<()> {
+    let mut handler = state_ptr.state.borrow_mut().callbacks.input.take()?;
+    let handled = !handler(event).propagate;
+    state_ptr.state.borrow_mut().callbacks.input = Some(handler);
+    if handled {
+        Some(())
+    } else {
+        None
+    }
+}
+
+impl From<VIRTUAL_KEY> for VirtualKeyCode {
+    fn from(value: VIRTUAL_KEY) -> Self {
+        match value {
+            // VirtualKeyCode::Unknown => todo!(),
+            // VirtualKeyCode::Function => todo!(),
+            VK_CANCEL => VirtualKeyCode::Cancel,
+            VK_BACK => VirtualKeyCode::Backspace,
+            VK_TAB => VirtualKeyCode::Tab,
+            VK_CLEAR => VirtualKeyCode::Clear,
+            VK_RETURN => VirtualKeyCode::Enter,
+            VK_SHIFT => VirtualKeyCode::Shift,
+            VK_CONTROL => VirtualKeyCode::Control,
+            VK_MENU => VirtualKeyCode::Alt,
+            VK_PAUSE => VirtualKeyCode::Pause,
+            VK_CAPITAL => VirtualKeyCode::Capital,
+            VK_KANA => VirtualKeyCode::Kana,
+            // VK_HANGUL => VirtualKeyCode::Hangul,
+            VK_JUNJA => VirtualKeyCode::Junja,
+            VK_FINAL => VirtualKeyCode::Final,
+            VK_HANJA => VirtualKeyCode::Hanja,
+            // VK_KANJI => VirtualKeyCode::Kanji,
+            VK_ESCAPE => VirtualKeyCode::Escape,
+            VK_CONVERT => VirtualKeyCode::Convert,
+            VK_NONCONVERT => VirtualKeyCode::Nonconvert,
+            VK_ACCEPT => VirtualKeyCode::Accept,
+            VK_MODECHANGE => VirtualKeyCode::ModeChange,
+            VK_SPACE => VirtualKeyCode::Space,
+            VK_PRIOR => VirtualKeyCode::PageUp,
+            VK_NEXT => VirtualKeyCode::PageDown,
+            VK_END => VirtualKeyCode::End,
+            VK_HOME => VirtualKeyCode::Home,
+            VK_LEFT => VirtualKeyCode::Left,
+            VK_UP => VirtualKeyCode::Up,
+            VK_RIGHT => VirtualKeyCode::Right,
+            VK_DOWN => VirtualKeyCode::Down,
+            VK_SELECT => VirtualKeyCode::Select,
+            VK_PRINT => VirtualKeyCode::Print,
+            VK_EXECUTE => VirtualKeyCode::Execute,
+            VK_SNAPSHOT => VirtualKeyCode::PrintScreen,
+            VK_INSERT => VirtualKeyCode::Insert,
+            VK_DELETE => VirtualKeyCode::Delete,
+            VK_HELP => VirtualKeyCode::Help,
+            VK_0 => VirtualKeyCode::Digital0,
+            VK_1 => VirtualKeyCode::Digital1,
+            VK_2 => VirtualKeyCode::Digital2,
+            VK_3 => VirtualKeyCode::Digital3,
+            VK_4 => VirtualKeyCode::Digital4,
+            VK_5 => VirtualKeyCode::Digital5,
+            VK_6 => VirtualKeyCode::Digital6,
+            VK_7 => VirtualKeyCode::Digital7,
+            VK_8 => VirtualKeyCode::Digital8,
+            VK_9 => VirtualKeyCode::Digital9,
+            VK_A => VirtualKeyCode::A,
+            VK_B => VirtualKeyCode::B,
+            VK_C => VirtualKeyCode::C,
+            VK_D => VirtualKeyCode::D,
+            VK_E => VirtualKeyCode::E,
+            VIRTUAL_KEY(70u16) => VirtualKeyCode::F,
+            VK_G => VirtualKeyCode::G,
+            VK_H => VirtualKeyCode::H,
+            VK_I => VirtualKeyCode::I,
+            VK_J => VirtualKeyCode::J,
+            VK_K => VirtualKeyCode::K,
+            VK_L => VirtualKeyCode::L,
+            VK_M => VirtualKeyCode::M,
+            VK_N => VirtualKeyCode::N,
+            VK_O => VirtualKeyCode::O,
+            VK_P => VirtualKeyCode::P,
+            VK_Q => VirtualKeyCode::Q,
+            VK_R => VirtualKeyCode::R,
+            VK_S => VirtualKeyCode::S,
+            VK_T => VirtualKeyCode::T,
+            VK_U => VirtualKeyCode::U,
+            VK_V => VirtualKeyCode::V,
+            VK_W => VirtualKeyCode::W,
+            VK_X => VirtualKeyCode::X,
+            VK_Y => VirtualKeyCode::Y,
+            VK_Z => VirtualKeyCode::Z,
+            VK_LWIN => VirtualKeyCode::LeftPlatform,
+            VK_RWIN => VirtualKeyCode::RightPlatform,
+            VK_APPS => VirtualKeyCode::App,
+            VK_SLEEP => VirtualKeyCode::Sleep,
+            VK_NUMPAD0 => VirtualKeyCode::Numpad0,
+            VK_NUMPAD1 => VirtualKeyCode::Numpad1,
+            VK_NUMPAD2 => VirtualKeyCode::Numpad2,
+            VK_NUMPAD3 => VirtualKeyCode::Numpad3,
+            VK_NUMPAD4 => VirtualKeyCode::Numpad4,
+            VK_NUMPAD5 => VirtualKeyCode::Numpad5,
+            VK_NUMPAD6 => VirtualKeyCode::Numpad6,
+            VK_NUMPAD7 => VirtualKeyCode::Numpad7,
+            VK_NUMPAD8 => VirtualKeyCode::Numpad8,
+            VK_NUMPAD9 => VirtualKeyCode::Numpad9,
+            VK_MULTIPLY => VirtualKeyCode::Multiply,
+            VK_ADD => VirtualKeyCode::Add,
+            VK_SEPARATOR => VirtualKeyCode::Separator,
+            VK_SUBTRACT => VirtualKeyCode::Subtract,
+            VK_DECIMAL => VirtualKeyCode::Decimal,
+            VK_DIVIDE => VirtualKeyCode::Divide,
+            VK_F1 => VirtualKeyCode::F1,
+            VK_F2 => VirtualKeyCode::F2,
+            VK_F3 => VirtualKeyCode::F3,
+            VK_F4 => VirtualKeyCode::F4,
+            VK_F5 => VirtualKeyCode::F5,
+            VK_F6 => VirtualKeyCode::F6,
+            VK_F7 => VirtualKeyCode::F7,
+            VK_F8 => VirtualKeyCode::F8,
+            VK_F9 => VirtualKeyCode::F9,
+            VK_F10 => VirtualKeyCode::F10,
+            VK_F11 => VirtualKeyCode::F11,
+            VK_F12 => VirtualKeyCode::F12,
+            VK_F13 => VirtualKeyCode::F13,
+            VK_F14 => VirtualKeyCode::F14,
+            VK_F15 => VirtualKeyCode::F15,
+            VK_F16 => VirtualKeyCode::F16,
+            VK_F17 => VirtualKeyCode::F17,
+            VK_F18 => VirtualKeyCode::F18,
+            VK_F19 => VirtualKeyCode::F19,
+            VK_F20 => VirtualKeyCode::F20,
+            VK_F21 => VirtualKeyCode::F21,
+            VK_F22 => VirtualKeyCode::F22,
+            VK_F23 => VirtualKeyCode::F23,
+            VK_F24 => VirtualKeyCode::F24,
+            VK_NUMLOCK => VirtualKeyCode::NumLock,
+            VK_SCROLL => VirtualKeyCode::ScrollLock,
+            VK_LSHIFT => VirtualKeyCode::LeftShift,
+            VK_RSHIFT => VirtualKeyCode::RightShift,
+            VK_LCONTROL => VirtualKeyCode::LeftControl,
+            VK_RCONTROL => VirtualKeyCode::RightControl,
+            VK_LMENU => VirtualKeyCode::LeftAlt,
+            VK_RMENU => VirtualKeyCode::RightAlt,
+            VK_BROWSER_BACK => VirtualKeyCode::BrowserBack,
+            VK_BROWSER_FORWARD => VirtualKeyCode::BrowserForward,
+            VK_BROWSER_REFRESH => VirtualKeyCode::BrowserRefresh,
+            VK_BROWSER_STOP => VirtualKeyCode::BrowserStop,
+            VK_BROWSER_SEARCH => VirtualKeyCode::BrowserSearch,
+            VK_BROWSER_FAVORITES => VirtualKeyCode::BrowserFavorites,
+            VK_BROWSER_HOME => VirtualKeyCode::BrowserHome,
+            VK_VOLUME_MUTE => VirtualKeyCode::VolumeMute,
+            VK_VOLUME_DOWN => VirtualKeyCode::VolumeDown,
+            VK_VOLUME_UP => VirtualKeyCode::VolumeUp,
+            VK_MEDIA_NEXT_TRACK => VirtualKeyCode::MediaNextTrack,
+            VK_MEDIA_PREV_TRACK => VirtualKeyCode::MediaPrevTrack,
+            VK_MEDIA_STOP => VirtualKeyCode::MediaStop,
+            VK_MEDIA_PLAY_PAUSE => VirtualKeyCode::MediaPlayPause,
+            VK_LAUNCH_MAIL => VirtualKeyCode::LaunchMail,
+            VK_LAUNCH_MEDIA_SELECT => VirtualKeyCode::LaunchMediaSelect,
+            VK_LAUNCH_APP1 => VirtualKeyCode::LaunchApp1,
+            VK_LAUNCH_APP2 => VirtualKeyCode::LaunchApp2,
+            VK_OEM_1 => VirtualKeyCode::OEM1,
+            VK_OEM_PLUS => VirtualKeyCode::OEMPlus,
+            VK_OEM_COMMA => VirtualKeyCode::OEMComma,
+            VK_OEM_MINUS => VirtualKeyCode::OEMMinus,
+            VK_OEM_PERIOD => VirtualKeyCode::OEMPeriod,
+            VK_OEM_2 => VirtualKeyCode::OEM2,
+            VK_OEM_3 => VirtualKeyCode::OEM3,
+            VK_OEM_4 => VirtualKeyCode::OEM4,
+            VK_OEM_5 => VirtualKeyCode::OEM5,
+            VK_OEM_6 => VirtualKeyCode::OEM6,
+            VK_OEM_7 => VirtualKeyCode::OEM7,
+            VK_OEM_8 => VirtualKeyCode::OEM8,
+            VK_OEM_102 => VirtualKeyCode::OEM102,
+            VK_PROCESSKEY => VirtualKeyCode::ProcessKey,
+            VK_PACKET => VirtualKeyCode::Packet,
+            VK_ATTN => VirtualKeyCode::Attn,
+            VK_CRSEL => VirtualKeyCode::CrSel,
+            VK_EXSEL => VirtualKeyCode::ExSel,
+            VK_EREOF => VirtualKeyCode::EraseEOF,
+            VK_PLAY => VirtualKeyCode::Play,
+            VK_ZOOM => VirtualKeyCode::Zoom,
+            VK_PA1 => VirtualKeyCode::PA1,
+            VK_OEM_CLEAR => VirtualKeyCode::OEMClear,
+            _ => VirtualKeyCode::Unknown,
+        }
+    }
 }

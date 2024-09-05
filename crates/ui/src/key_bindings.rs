@@ -1,4 +1,4 @@
-use gpui::{Action, FocusHandle, KeyBinding, Keystroke, WindowContext};
+use gpui::{Action, FocusHandle, KeyBinding, Keystroke, VirtualKeyCode, WindowContext};
 
 use crate::PlatformStyle;
 
@@ -85,17 +85,19 @@ pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) 
         text.push(delimiter);
     }
 
-    fn capitalize(str: &str) -> String {
-        let mut chars = str.chars();
-        match chars.next() {
-            None => String::new(),
-            Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
-        }
+    // TODO:
+    fn capitalize(key: VirtualKeyCode) -> String {
+        // let mut chars = str.chars();
+        // match chars.next() {
+        //     None => String::new(),
+        //     Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
+        // }
+        key.to_string()
     }
 
-    let key = match keystroke.key.as_str() {
-        "pageup" => "PageUp",
-        "pagedown" => "PageDown",
+    let key = match keystroke.key {
+        VirtualKeyCode::PageUp => "PageUp",
+        VirtualKeyCode::PageDown => "PageDown",
         key => &capitalize(key),
     };
 
