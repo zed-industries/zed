@@ -194,5 +194,5 @@ name = "opacity"
 path = "examples/opacity.rs"
 
 [[example]]
-name = "simple_list"
-path = "examples/simple_list.rs"
+name = "uniform_list"
+path = "examples/uniform_list.rs"

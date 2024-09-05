@@ -1,8 +1,8 @@
 use gpui::*;
 
-struct SimpleList {}
+struct UniformListExample {}
 
-impl Render for SimpleList {
+impl Render for UniformListExample {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .size_full()
@@ -39,7 +39,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |cx| cx.new_view(|_cx| SimpleList {}),
+            |cx| cx.new_view(|_cx| UniformListExample {}),
         )
         .unwrap();
     });
