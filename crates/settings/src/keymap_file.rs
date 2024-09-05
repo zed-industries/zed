@@ -44,7 +44,7 @@ impl std::fmt::Display for KeymapAction {
                 let strings: Vec<String> = arr.iter().map(|v| v.to_string()).collect();
                 write!(f, "{}", strings.join(", "))
             }
-            _ => write!(f, "{}", self.0.to_string()),
+            _ => write!(f, "{}", self.0),
         }
     }
 }

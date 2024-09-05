@@ -2114,10 +2114,9 @@ impl Snapshot {
 
         update.removed_repositories.sort_unstable();
         self.repository_entries.retain(|_, entry| {
-            !update
+            update
                 .removed_repositories
-                .binary_search(&entry.work_directory.to_proto())
-                .is_ok()
+                .binary_search(&entry.work_directory.to_proto()).is_err()
         });
 
         for repository in update.updated_repositories {
