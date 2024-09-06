@@ -3443,7 +3443,7 @@ impl ContextEditor {
                                     constrain_width: false,
                                     render: render_fold_icon_button(
                                         weak_editor.clone(),
-                                        metadata.crease.icon.clone(),
+                                        metadata.crease.icon,
                                         metadata.crease.label.clone(),
                                     ),
                                     merge_adjacent: false,
