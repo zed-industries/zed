@@ -35,7 +35,7 @@ impl zed::Extension for DartExtension {
             });
         }
 
-        Err("Either 'dart' or 'fvm' must be installed".to_string().into())
+        Err("Either 'dart' or 'fvm' must be installed".to_string())
     }
 
     fn language_server_workspace_configuration(
