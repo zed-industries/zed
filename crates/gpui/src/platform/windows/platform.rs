@@ -8,6 +8,10 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
+use app_identifier::{
+    get_app_instance_event_identifier, get_app_shared_memory_identifier, APP_SHARED_MEMORY_MAX_SIZE,
+};
+use collections::FxHashMap;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -29,14 +33,20 @@ use windows::{
                 RegisterClipboardFormatW, SetClipboardData,
             },
             LibraryLoader::*,
-            Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
+            Memory::{
+                CreateFileMappingW, GlobalAlloc, GlobalLock, GlobalUnlock, MapViewOfFile,
+                UnmapViewOfFile, FILE_MAP_ALL_ACCESS, GMEM_MOVEABLE, PAGE_READWRITE,
+            },
             Ole::*,
             SystemInformation::*,
             Threading::*,
         },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
-    UI::ViewManagement::UISettings,
+    UI::{
+        StartScreen::{JumpList, JumpListItem},
+        ViewManagement::UISettings,
+    },
 };
 
 use crate::*;
@@ -54,10 +64,13 @@ pub(crate) struct WindowsPlatform {
     windows_version: WindowsVersion,
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
     validation_number: usize,
+    single_instance_event: Owned<HANDLE>,
+    shared_memory_handle: Owned<HANDLE>,
 }
 
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
+    dock_menu_actions: FxHashMap<String, Box<dyn Action>>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: HCURSOR,
 }
@@ -75,10 +88,12 @@ struct PlatformCallbacks {
 impl WindowsPlatformState {
     fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
+        let dock_menu_actions = FxHashMap::default();
         let current_cursor = load_cursor(CursorStyle::Arrow);
 
         Self {
             callbacks,
+            dock_menu_actions,
             current_cursor,
         }
     }
@@ -108,6 +123,30 @@ impl WindowsPlatform {
             register_clipboard_format(CLIPBOARD_METADATA_FORMAT).unwrap();
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
         let validation_number = rand::random::<usize>();
+        let single_instance_event = unsafe {
+            Owned::new(
+                CreateEventW(
+                    None,
+                    false,
+                    false,
+                    &HSTRING::from(get_app_instance_event_identifier()),
+                )
+                .expect("Unable to create single instance event."),
+            )
+        };
+        let shared_memory_handle = unsafe {
+            Owned::new(
+                CreateFileMappingW(
+                    INVALID_HANDLE_VALUE,
+                    None,
+                    PAGE_READWRITE,
+                    0,
+                    APP_SHARED_MEMORY_MAX_SIZE as u32,
+                    &HSTRING::from(get_app_shared_memory_identifier()),
+                )
+                .expect("Unable to create shared memory"),
+            )
+        };
 
         Self {
             state,
@@ -121,6 +160,8 @@ impl WindowsPlatform {
             windows_version,
             bitmap_factory,
             validation_number,
+            single_instance_event,
+            shared_memory_handle,
         }
     }
 
@@ -176,6 +217,73 @@ impl WindowsPlatform {
 
         lock.is_empty()
     }
+
+    fn configure_jump_list(&self, menus: Vec<MenuItem>) -> Result<()> {
+        let jump_list = JumpList::LoadCurrentAsync()?.get()?;
+        let items = jump_list.Items()?;
+        items.Clear()?;
+        for item in menus {
+            let item = match item {
+                MenuItem::Separator => JumpListItem::CreateSeparator()?,
+                MenuItem::Submenu(_) => {
+                    log::error!("Set `MenuItemSubmenu` for dock menu on Windows is not supported.");
+                    continue;
+                }
+                MenuItem::Action { name, action, .. } => {
+                    let item_args = format!("--new-instance {}", action.arguments());
+                    self.state
+                        .borrow_mut()
+                        .dock_menu_actions
+                        .insert(action.arguments().to_string(), action);
+                    JumpListItem::CreateWithArguments(
+                        &HSTRING::from(item_args),
+                        &HSTRING::from(name.as_ref()),
+                    )?
+                }
+            };
+            items.Append(&item)?;
+        }
+        jump_list.SaveAsync()?.get()?;
+        Ok(())
+    }
+
+    fn handle_instance_message(&self) {
+        let msg = unsafe {
+            let memory_addr =
+                MapViewOfFile(*self.shared_memory_handle, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+            let string = String::from_utf8_lossy(std::slice::from_raw_parts(
+                memory_addr.Value as *const _ as _,
+                APP_SHARED_MEMORY_MAX_SIZE,
+            ))
+            .trim_matches('\0')
+            .to_string();
+            let empty_buffer = vec![0u8; string.len()];
+            std::ptr::copy_nonoverlapping(
+                empty_buffer.as_ptr(),
+                memory_addr.Value as _,
+                empty_buffer.len(),
+            );
+            UnmapViewOfFile(memory_addr).log_err();
+            string
+        };
+        println!("-> Single instance event, {},", msg);
+        let mut lock = self.state.borrow_mut();
+        if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
+            let Some(action) = lock
+                .dock_menu_actions
+                .get(&msg)
+                .map(|action| action.boxed_clone())
+            else {
+                lock.callbacks.app_menu_action = Some(callback);
+                log::error!("Dock menu {msg} not found");
+                return;
+            };
+            drop(lock);
+            println!("==> Performing action: {msg}");
+            callback(&*action);
+            self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+        }
+    }
 }
 
 impl Platform for WindowsPlatform {
@@ -197,7 +305,12 @@ impl Platform for WindowsPlatform {
         begin_vsync(*vsync_event);
         'a: loop {
             let wait_result = unsafe {
-                MsgWaitForMultipleObjects(Some(&[*vsync_event]), false, INFINITE, QS_ALLINPUT)
+                MsgWaitForMultipleObjects(
+                    Some(&[*vsync_event, *self.single_instance_event]),
+                    false,
+                    INFINITE,
+                    QS_ALLINPUT,
+                )
             };
 
             match wait_result {
@@ -205,8 +318,10 @@ impl Platform for WindowsPlatform {
                 WAIT_EVENT(0) => {
                     self.redraw_all();
                 }
+                // TODO:
+                WAIT_EVENT(1) => self.handle_instance_message(),
                 // Windows thread messages are posted
-                WAIT_EVENT(1) => {
+                WAIT_EVENT(2) => {
                     let mut msg = MSG::default();
                     unsafe {
                         while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
@@ -410,7 +525,10 @@ impl Platform for WindowsPlatform {
 
     // todo(windows)
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
-    fn set_dock_menu(&self, _menus: Vec<MenuItem>, _keymap: &Keymap) {}
+
+    fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
+        self.configure_jump_list(menus).log_err();
+    }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
@@ -772,8 +890,8 @@ fn read_metadata_from_clipboard(metadata_format: u32) -> Option<String> {
 }
 
 // clipboard
-pub const CLIPBOARD_HASH_FORMAT: PCWSTR = windows::core::w!("zed-text-hash");
-pub const CLIPBOARD_METADATA_FORMAT: PCWSTR = windows::core::w!("zed-metadata");
+const CLIPBOARD_HASH_FORMAT: PCWSTR = windows::core::w!("zed-text-hash");
+const CLIPBOARD_METADATA_FORMAT: PCWSTR = windows::core::w!("zed-metadata");
 
 #[cfg(test)]
 mod tests {
