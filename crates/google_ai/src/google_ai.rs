@@ -304,7 +304,12 @@ pub enum Model {
     #[serde(rename = "gemini-1.5-flash")]
     Gemini15Flash,
     #[serde(rename = "custom")]
-    Custom { name: String, max_tokens: usize },
+    Custom {
+        name: String,
+        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        display_name: Option<String>,
+        max_tokens: usize,
+    },
 }
 
 impl Model {

@@ -77,7 +77,7 @@ You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the m
 
 1. Go the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
 2. Open the configuration view (`assistant: show configuration`) and navigate to the Google AI section
-3. Enter your Google AI API key
+3. Enter your Google AI API key and press enter.
 
 The Google AI API key will be saved in your keychain.
 
@@ -85,7 +85,7 @@ Zed will also use the `GOOGLE_AI_API_KEY` environment variable if it's defined.
 
 #### Google AI custom models {#google-ai-custom-models}
 
-You can add custom models to the Google AI provider by adding the following to your Zed `settings.json`:
+You can use specific versions of models, including [experimental models](https://ai.google.dev/gemini-api/docs/models/experimental-models) with the Google AI provider by adding the following to your Zed `settings.json`:
 
 ```json
 {
@@ -93,8 +93,9 @@ You can add custom models to the Google AI provider by adding the following to y
     "google": {
       "available_models": [
         {
-          "name": "custom-model",
-          "max_tokens": 128000
+          "name": "gemini-1.5-flash-latest",
+          "display_name": "Gemini 1.5 Flash (Latest)",
+          "max_tokens": 1000000
         }
       ]
     }
