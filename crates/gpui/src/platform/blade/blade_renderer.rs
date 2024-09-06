@@ -9,7 +9,6 @@ use crate::{
 };
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
-use futures::channel::oneshot;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
 #[cfg(target_os = "macos")]
@@ -542,12 +541,7 @@ impl BladeRenderer {
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
     }
 
-    pub fn draw(
-        &mut self,
-        scene: &Scene,
-        // Required to compile on macOS, but not currently supported.
-        _on_complete: Option<oneshot::Sender<()>>,
-    ) {
+    pub fn draw(&mut self, scene: &Scene) {
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
         self.rasterize_paths(scene.paths());
@@ -775,11 +769,5 @@ impl BladeRenderer {
 
         self.wait_for_gpu();
         self.last_sync_point = Some(sync_point);
-    }
-
-    /// Required to compile on macOS, but not currently supported.
-    #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(dead_code))]
-    pub fn fps(&self) -> f32 {
-        0.0
     }
 }
