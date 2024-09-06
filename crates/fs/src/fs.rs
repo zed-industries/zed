@@ -354,7 +354,7 @@ impl Fs for RealFs {
                 // Use the directory of the destination as temp dir to avoid
                 // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
                 // See https://github.com/zed-industries/zed/pull/8437 for more details.
-                NamedTempFile::new_in(path.parent().unwrap_or(&paths::temp_dir()))
+                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
             } else if cfg!(target_os = "windows") {
                 // If temp dir is set to a different drive than the destination,
                 // we receive error:
@@ -364,7 +364,7 @@ impl Fs for RealFs {
                 //
                 // So we use the directory of the destination as a temp dir to avoid it.
                 // https://github.com/zed-industries/zed/issues/16571
-                NamedTempFile::new_in(path.parent().unwrap_or(&paths::temp_dir()))
+                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
             } else {
                 NamedTempFile::new()
             }?;
@@ -1007,7 +1007,7 @@ impl FakeFs {
                 self.create_dir(path).await.unwrap();
                 for entry in std::fs::read_dir(&src_path).unwrap() {
                     let entry = entry.unwrap();
-                    self.insert_tree_from_real_fs(&path.join(entry.file_name()), &entry.path())
+                    self.insert_tree_from_real_fs(path.join(entry.file_name()), entry.path())
                         .await;
                 }
             }
@@ -1313,7 +1313,7 @@ impl Fs for FakeFs {
                 }
             })
             .unwrap();
-        state.emit_event(&[path]);
+        state.emit_event([path]);
         Ok(())
     }
 

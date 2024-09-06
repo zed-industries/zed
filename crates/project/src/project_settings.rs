@@ -25,6 +25,7 @@ pub struct ProjectSettings {
     ///
     /// The following settings can be overridden for specific language servers:
     /// - initialization_options
+    ///
     /// To override settings for a language, add an entry for that language server's
     /// name to the lsp value.
     /// Default: null
@@ -335,16 +336,13 @@ impl SettingsObserver {
         event: &WorktreeStoreEvent,
         cx: &mut ModelContext<Self>,
     ) {
-        match event {
-            WorktreeStoreEvent::WorktreeAdded(worktree) => cx
-                .subscribe(worktree, |this, worktree, event, cx| match event {
-                    worktree::Event::UpdatedEntries(changes) => {
-                        this.update_local_worktree_settings(&worktree, changes, cx)
-                    }
-                    _ => {}
-                })
-                .detach(),
-            _ => {}
+        if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
+            cx.subscribe(worktree, |this, worktree, event, cx| {
+                if let worktree::Event::UpdatedEntries(changes) = event {
+                    this.update_local_worktree_settings(&worktree, changes, cx)
+                }
+            })
+            .detach()
         }
     }
 

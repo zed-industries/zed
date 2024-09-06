@@ -97,7 +97,7 @@ pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
         start: 0,
         end: text.len(),
     };
-    for link in finder.links(&text) {
+    for link in finder.links(text) {
         let link_range = link.start()..link.end();
 
         if link_range.start > text_range.start {

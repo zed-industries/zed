@@ -134,7 +134,7 @@ impl Editor {
             }
             None => {
                 update_inlay_link_and_hover_points(
-                    &snapshot,
+                    snapshot,
                     point_for_position,
                     self,
                     modifiers.secondary(),
@@ -490,12 +490,12 @@ pub fn show_link_definition(
             .is_some_and(|d| matches!(d, HoverLink::Url(_)));
 
     if same_kind {
-        if is_cached && (&hovered_link_state.last_trigger_point == &trigger_point)
+        if is_cached && (hovered_link_state.last_trigger_point == trigger_point)
             || hovered_link_state
                 .symbol_range
                 .as_ref()
                 .is_some_and(|symbol_range| {
-                    symbol_range.point_within_range(&trigger_point, &snapshot)
+                    symbol_range.point_within_range(&trigger_point, snapshot)
                 })
         {
             editor.hovered_link_state = Some(hovered_link_state);
@@ -596,7 +596,7 @@ pub fn show_link_definition(
                 if let Some((symbol_range, definitions)) = result {
                     hovered_link_state.links = definitions;
 
-                    let underline_hovered_link = hovered_link_state.links.len() > 0
+                    let underline_hovered_link = !hovered_link_state.links.is_empty()
                         || hovered_link_state.symbol_range.is_some();
 
                     if underline_hovered_link {
@@ -718,7 +718,7 @@ pub(crate) async fn find_file(
 
     let existing_path = project
         .update(cx, |project, cx| {
-            project.resolve_existing_file_path(&candidate_file_path, &buffer, cx)
+            project.resolve_existing_file_path(&candidate_file_path, buffer, cx)
         })
         .ok()?
         .await?;
@@ -1258,7 +1258,7 @@ mod tests {
                     let variable« »= TestStruct;
                 }
             "})
-            .get(0)
+            .first()
             .cloned()
             .unwrap();
         let midpoint = cx.update_editor(|editor, cx| {

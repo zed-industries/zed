@@ -95,7 +95,7 @@ struct MacOsUnmounter {
 impl Drop for MacOsUnmounter {
     fn drop(&mut self) {
         let unmount_output = std::process::Command::new("hdiutil")
-            .args(&["detach", "-force"])
+            .args(["detach", "-force"])
             .arg(&self.mount_path)
             .output();
 
@@ -211,7 +211,7 @@ pub fn check(_: &Check, cx: &mut WindowContext) {
         return;
     }
 
-    if let Some(message) = env::var("ZED_UPDATE_EXPLANATION").ok() {
+    if let Ok(message) = env::var("ZED_UPDATE_EXPLANATION") {
         drop(cx.prompt(
             gpui::PromptLevel::Info,
             "Zed was installed via a package manager.",
@@ -254,7 +254,7 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<(
         let url = &auto_updater
             .http_client
             .build_url(&format!("/releases/{release_channel}/{current_version}"));
-        cx.open_url(&url);
+        cx.open_url(url);
     }
 
     None
@@ -722,7 +722,7 @@ async fn install_release_linux(
     }
 
     let output = Command::new("rsync")
-        .args(&["-av", "--delete"])
+        .args(["-av", "--delete"])
         .arg(&from)
         .arg(&to)
         .output()
@@ -754,10 +754,10 @@ async fn install_release_macos(
 
     mounted_app_path.push("/");
     let output = Command::new("hdiutil")
-        .args(&["attach", "-nobrowse"])
+        .args(["attach", "-nobrowse"])
         .arg(&downloaded_dmg)
         .arg("-mountroot")
-        .arg(&temp_dir.path())
+        .arg(temp_dir.path())
         .output()
         .await?;
 
@@ -773,7 +773,7 @@ async fn install_release_macos(
     };
 
     let output = Command::new("rsync")
-        .args(&["-av", "--delete"])
+        .args(["-av", "--delete"])
         .arg(&mounted_app_path)
         .arg(&running_app_path)
         .output()

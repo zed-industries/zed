@@ -352,14 +352,14 @@ async fn open_workspaces(
     wait: bool,
     app_state: Arc<AppState>,
     env: Option<collections::HashMap<String, String>>,
-    mut cx: &mut AsyncAppContext,
+    cx: &mut AsyncAppContext,
 ) -> Result<()> {
     let grouped_paths = if paths.is_empty() {
         // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
         if open_new_workspace == Some(true) {
             Vec::new()
         } else {
-            let locations = restorable_workspace_locations(&mut cx, &app_state).await;
+            let locations = restorable_workspace_locations(cx, &app_state).await;
             locations
                 .into_iter()
                 .flat_map(|locations| {
@@ -423,7 +423,7 @@ async fn open_workspaces(
                 responses,
                 env.as_ref(),
                 &app_state,
-                &mut cx,
+                cx,
             )
             .await;
 

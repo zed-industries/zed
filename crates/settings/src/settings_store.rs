@@ -926,7 +926,7 @@ fn update_value_in_json_text<'a>(
         }
     } else if key_path
         .last()
-        .map_or(false, |key| preserved_keys.contains(&key))
+        .map_or(false, |key| preserved_keys.contains(key))
         || old_value != new_value
     {
         let mut new_value = new_value.clone();

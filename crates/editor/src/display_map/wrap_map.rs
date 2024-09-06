@@ -111,7 +111,7 @@ impl WrapMap {
         } else {
             self.edits_since_sync = self
                 .edits_since_sync
-                .compose(&self.snapshot.interpolate(tab_snapshot, &edits));
+                .compose(self.snapshot.interpolate(tab_snapshot, &edits));
             self.snapshot.interpolated = false;
         }
 
@@ -213,7 +213,7 @@ impl WrapMap {
             }
             let new_rows = self.snapshot.transforms.summary().output.lines.row + 1;
             self.snapshot.interpolated = false;
-            self.edits_since_sync = self.edits_since_sync.compose(&Patch::new(vec![WrapEdit {
+            self.edits_since_sync = self.edits_since_sync.compose(Patch::new(vec![WrapEdit {
                 old: 0..old_rows,
                 new: 0..new_rows,
             }]));
@@ -1009,7 +1009,8 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapPoint {
 fn consolidate_wrap_edits(edits: Vec<WrapEdit>) -> Vec<WrapEdit> {
     let _old_alloc_ptr = edits.as_ptr();
     let mut wrap_edits = edits.into_iter();
-    let wrap_edits = if let Some(mut first_edit) = wrap_edits.next() {
+
+    if let Some(mut first_edit) = wrap_edits.next() {
         // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
         #[allow(clippy::filter_map_identity)]
         let mut v: Vec<_> = wrap_edits
@@ -1030,9 +1031,7 @@ fn consolidate_wrap_edits(edits: Vec<WrapEdit>) -> Vec<WrapEdit> {
         v
     } else {
         vec![]
-    };
-
-    wrap_edits
+    }
 }
 
 #[cfg(test)]

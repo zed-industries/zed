@@ -587,11 +587,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let executor = cx.executor();
     let _task = cx.executor().spawn(async move {
         while let Some(event) = events.next().await {
-            match event {
-                crate::Event::StartedReloading => {
-                    executor.advance_clock(RELOAD_DEBOUNCE_DURATION);
-                }
-                _ => (),
+            if let crate::Event::StartedReloading = event {
+                executor.advance_clock(RELOAD_DEBOUNCE_DURATION);
             }
         }
     });

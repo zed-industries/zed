@@ -270,11 +270,11 @@ impl LspStore {
             }
             BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
                 if let Some(old_file) = File::from_dyn(old_file.as_ref()) {
-                    self.unregister_buffer_from_language_servers(&buffer, old_file, cx);
+                    self.unregister_buffer_from_language_servers(buffer, old_file, cx);
                 }
 
-                self.detect_language_for_buffer(&buffer, cx);
-                self.register_buffer_with_language_servers(&buffer, cx);
+                self.detect_language_for_buffer(buffer, cx);
+                self.register_buffer_with_language_servers(buffer, cx);
             }
             BufferStoreEvent::BufferDropped(_) => {}
         }
@@ -657,7 +657,7 @@ impl LspStore {
 
     pub async fn execute_code_actions_on_servers(
         this: &WeakModel<LspStore>,
-        adapters_and_servers: &Vec<(Arc<CachedLspAdapter>, Arc<LanguageServer>)>,
+        adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
         code_actions: Vec<lsp::CodeActionKind>,
         buffer: &Model<Buffer>,
         push_to_history: bool,
@@ -679,7 +679,7 @@ impl LspStore {
                 .await?;
 
             for mut action in actions {
-                Self::try_resolve_code_action(&language_server, &mut action)
+                Self::try_resolve_code_action(language_server, &mut action)
                     .await
                     .context("resolving a formatting code action")?;
 
@@ -733,14 +733,13 @@ impl LspStore {
         lang_server: &LanguageServer,
         action: &mut CodeAction,
     ) -> anyhow::Result<()> {
-        if GetCodeActions::can_resolve_actions(&lang_server.capabilities()) {
-            if action.lsp_action.data.is_some()
-                && (action.lsp_action.command.is_none() || action.lsp_action.edit.is_none())
-            {
-                action.lsp_action = lang_server
-                    .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action.clone())
-                    .await?;
-            }
+        if GetCodeActions::can_resolve_actions(&lang_server.capabilities())
+            && action.lsp_action.data.is_some()
+            && (action.lsp_action.command.is_none() || action.lsp_action.edit.is_none())
+        {
+            action.lsp_action = lang_server
+                .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action.clone())
+                .await?;
         }
 
         anyhow::Ok(())
@@ -814,10 +813,7 @@ impl LspStore {
                         })
                         .await;
 
-                    if let Err(err) = result {
-                        // TODO: LSP ERROR
-                        return Err(err);
-                    }
+                    result?;
 
                     return this.update(&mut cx, |this, _| {
                         this.last_workspace_edits_by_language_server
@@ -1157,7 +1153,7 @@ impl LspStore {
             })
         } else {
             let all_actions_task = self.request_multiple_lsp_locally(
-                &buffer_handle,
+                buffer_handle,
                 Some(range.start),
                 GetCodeActions {
                     range: range.clone(),
@@ -1280,7 +1276,7 @@ impl LspStore {
         let buffer_id = buffer.read(cx).remote_id();
         let buffer_snapshot = buffer.read(cx).snapshot();
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(move |this, cx| async move {
             let mut did_resolve = false;
             if let Some(client) = client {
                 for completion_index in completion_indices {
@@ -1326,7 +1322,7 @@ impl LspStore {
                     };
 
                     let server = this
-                        .read_with(&mut cx, |this, _| this.language_server_for_id(server_id))
+                        .read_with(&cx, |this, _| this.language_server_for_id(server_id))
                         .ok()
                         .flatten();
                     let Some(server) = server else {
@@ -1776,7 +1772,7 @@ impl LspStore {
             })
         } else {
             let all_actions_task = self.request_multiple_lsp_locally(
-                &buffer,
+                buffer,
                 Some(position),
                 GetHover { position },
                 cx,
@@ -2785,7 +2781,7 @@ impl LspStore {
             })
             .collect::<FuturesUnordered<_>>();
 
-        return cx.spawn(|_, _| async move {
+        cx.spawn(|_, _| async move {
             let mut responses = Vec::with_capacity(response_results.len());
             while let Some(response_result) = response_results.next().await {
                 if let Some(response) = response_result.log_err() {
@@ -2793,7 +2789,7 @@ impl LspStore {
                 }
             }
             responses
-        });
+        })
     }
 
     async fn handle_lsp_command<T: LspCommand>(
@@ -3279,7 +3275,7 @@ impl LspStore {
                             if let Some(glob) = Glob::new(relative_glob_pattern).log_err() {
                                 builders
                                     .entry(tree.id())
-                                    .or_insert_with(|| GlobSetBuilder::new())
+                                    .or_insert_with(GlobSetBuilder::new)
                                     .add(glob);
                             }
                             return true;
@@ -3674,7 +3670,7 @@ impl LspStore {
         let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
 
         let completion = this
-            .read_with(&mut cx, |this, _| {
+            .read_with(&cx, |this, _| {
                 let id = LanguageServerId(envelope.payload.language_server_id as usize);
                 let Some(server) = this.language_server_for_id(id) else {
                     return Err(anyhow!("No language server {id}"));
@@ -4875,9 +4871,12 @@ impl LspStore {
                             lsp_name: name.clone(),
                         };
 
-                        if let Ok(_) = this.update(&mut cx, |_, cx| {
-                            cx.emit(LspStoreEvent::LanguageServerPrompt(request));
-                        }) {
+                        let did_update = this
+                            .update(&mut cx, |_, cx| {
+                                cx.emit(LspStoreEvent::LanguageServerPrompt(request));
+                            })
+                            .is_ok();
+                        if did_update {
                             let response = rx.next().await;
 
                             Ok(response)
@@ -5240,7 +5239,7 @@ impl LspStore {
                 if file.worktree.read(cx).id() != key.0
                     || !self
                         .languages
-                        .lsp_adapters(&language)
+                        .lsp_adapters(language)
                         .iter()
                         .any(|a| a.name == key.1)
                 {
@@ -5272,7 +5271,7 @@ impl LspStore {
                     lsp::DidOpenTextDocumentParams {
                         text_document: lsp::TextDocumentItem::new(
                             uri,
-                            adapter.language_id(&language),
+                            adapter.language_id(language),
                             version,
                             initial_snapshot.text(),
                         ),
@@ -5498,23 +5497,31 @@ impl LspStore {
     ) {
         let status = self.language_server_statuses.get(&server_id);
         let server = self.language_servers.get(&server_id);
-        if let Some((server, status)) = server.zip(status) {
-            if let LanguageServerState::Running { server, .. } = server {
-                for (token, progress) in &status.pending_work {
-                    if let Some(token_to_cancel) = token_to_cancel.as_ref() {
-                        if token != token_to_cancel {
-                            continue;
-                        }
+        if let Some((LanguageServerState::Running { server, .. }, status)) = server.zip(status) {
+            for (token, progress) in &status.pending_work {
+                if let Some(token_to_cancel) = token_to_cancel.as_ref() {
+                    if token != token_to_cancel {
+                        continue;
                     }
-                    if progress.is_cancellable {
-                        server
-                            .notify::<lsp::notification::WorkDoneProgressCancel>(
-                                WorkDoneProgressCancelParams {
-                                    token: lsp::NumberOrString::String(token.clone()),
-                                },
-                            )
-                            .ok();
-                    }
+                }
+                if progress.is_cancellable {
+                    server
+                        .notify::<lsp::notification::WorkDoneProgressCancel>(
+                            WorkDoneProgressCancelParams {
+                                token: lsp::NumberOrString::String(token.clone()),
+                            },
+                        )
+                        .ok();
+                }
+
+                if progress.is_cancellable {
+                    server
+                        .notify::<lsp::notification::WorkDoneProgressCancel>(
+                            WorkDoneProgressCancelParams {
+                                token: lsp::NumberOrString::String(token.clone()),
+                            },
+                        )
+                        .ok();
                 }
             }
         }
@@ -5538,7 +5545,7 @@ impl LspStore {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
             let worktree_id = file.worktree_id(cx);
             self.languages
-                .lsp_adapters(&language)
+                .lsp_adapters(language)
                 .iter()
                 .flat_map(|adapter| {
                     let key = (worktree_id, adapter.name.clone());
@@ -5956,7 +5963,7 @@ async fn populate_labels_for_completions(
         .zip(labels.into_iter().chain(iter::repeat(None)))
     {
         let documentation = if let Some(docs) = &lsp_completion.documentation {
-            Some(prepare_completion_documentation(docs, &language_registry, language.clone()).await)
+            Some(prepare_completion_documentation(docs, language_registry, language.clone()).await)
         } else {
             None
         };
@@ -6089,7 +6096,7 @@ impl DiagnosticSummary {
 fn glob_literal_prefix(glob: &str) -> &str {
     let mut literal_end = 0;
     for (i, part) in glob.split(path::MAIN_SEPARATOR).enumerate() {
-        if part.contains(&['*', '?', '{', '}']) {
+        if part.contains(['*', '?', '{', '}']) {
             break;
         } else {
             if i > 0 {
@@ -6173,7 +6180,7 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
         let shell_path = self.shell_env().await.get("PATH").cloned();
-        which::which_in(command, shell_path.as_ref(), &worktree_abs_path).ok()
+        which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
     }
 
     #[cfg(target_os = "windows")]
@@ -6280,10 +6287,10 @@ async fn populate_labels_for_symbols(
 
 fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
     match server.capabilities().text_document_sync.as_ref()? {
-        lsp::TextDocumentSyncCapability::Kind(kind) => match kind {
-            &lsp::TextDocumentSyncKind::NONE => None,
-            &lsp::TextDocumentSyncKind::FULL => Some(true),
-            &lsp::TextDocumentSyncKind::INCREMENTAL => Some(false),
+        lsp::TextDocumentSyncCapability::Kind(kind) => match *kind {
+            lsp::TextDocumentSyncKind::NONE => None,
+            lsp::TextDocumentSyncKind::FULL => Some(true),
+            lsp::TextDocumentSyncKind::INCREMENTAL => Some(false),
             _ => None,
         },
         lsp::TextDocumentSyncCapability::Options(options) => match options.save.as_ref()? {

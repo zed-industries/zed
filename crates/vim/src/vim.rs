@@ -443,15 +443,14 @@ impl Vim {
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
 
-        if VimSettings::get_global(cx).toggle_relative_line_numbers {
-            if self.mode != self.last_mode {
-                if self.mode == Mode::Insert || self.last_mode == Mode::Insert {
-                    self.update_editor(cx, |vim, editor, cx| {
-                        let is_relative = vim.mode != Mode::Insert;
-                        editor.set_relative_line_number(Some(is_relative), cx)
-                    });
-                }
-            }
+        if VimSettings::get_global(cx).toggle_relative_line_numbers
+            && self.mode != self.last_mode
+            && (self.mode == Mode::Insert || self.last_mode == Mode::Insert)
+        {
+            self.update_editor(cx, |vim, editor, cx| {
+                let is_relative = vim.mode != Mode::Insert;
+                editor.set_relative_line_number(Some(is_relative), cx)
+            });
         }
 
         if leave_selections {
@@ -510,10 +509,8 @@ impl Vim {
                             point = movement::left(map, selection.head());
                         }
                         selection.collapse_to(point, selection.goal)
-                    } else if !last_mode.is_visual() && mode.is_visual() {
-                        if selection.is_empty() {
-                            selection.end = movement::right(map, selection.start);
-                        }
+                    } else if !last_mode.is_visual() && mode.is_visual() && selection.is_empty() {
+                        selection.end = movement::right(map, selection.start);
                     }
                 });
             })
@@ -526,7 +523,7 @@ impl Vim {
             return global_state.recorded_count;
         }
 
-        let count = if self.post_count == None && self.pre_count == None {
+        let count = if self.post_count.is_none() && self.pre_count.is_none() {
             return None;
         } else {
             Some(self.post_count.take().unwrap_or(1) * self.pre_count.take().unwrap_or(1))
@@ -1046,10 +1043,11 @@ impl Vim {
                 }
             },
             Some(Operator::Jump { line }) => self.jump(text, line, cx),
-            _ => match self.mode {
-                Mode::Replace => self.multi_replace(text, cx),
-                _ => {}
-            },
+            _ => {
+                if self.mode == Mode::Replace {
+                    self.multi_replace(text, cx)
+                }
+            }
         }
     }
 

@@ -23,7 +23,6 @@ use gpui::{
     Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, Task,
     UpdateGlobal as _, VisualContext,
 };
-use image_viewer;
 use language::LanguageRegistry;
 use log::LevelFilter;
 
@@ -728,12 +727,12 @@ fn handle_open_request(
 async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
     if stdout_is_a_pty() {
         if *client::ZED_DEVELOPMENT_AUTH {
-            client.authenticate_and_connect(true, &cx).await?;
+            client.authenticate_and_connect(true, cx).await?;
         } else if client::IMPERSONATE_LOGIN.is_some() {
-            client.authenticate_and_connect(false, &cx).await?;
+            client.authenticate_and_connect(false, cx).await?;
         }
-    } else if client.has_credentials(&cx).await {
-        client.authenticate_and_connect(true, &cx).await?;
+    } else if client.has_credentials(cx).await {
+        client.authenticate_and_connect(true, cx).await?;
     }
     Ok::<_, anyhow::Error>(())
 }
@@ -1082,7 +1081,7 @@ fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
                 || arg.starts_with("ssh://")
             {
                 Ok(arg.into())
-            } else if let Some(_) = parse_zed_link(&arg, cx) {
+            } else if parse_zed_link(arg, cx).is_some() {
                 Ok(arg.into())
             } else {
                 Err(anyhow!("error parsing path argument: {}", error))
@@ -1141,7 +1140,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
                     }
                 }
                 theme_registry.load_user_themes(themes_dir, fs).await?;
-                cx.update(|cx| ThemeSettings::reload_current_theme(cx))?;
+                cx.update(ThemeSettings::reload_current_theme)?;
             }
             anyhow::Ok(())
         }
@@ -1168,8 +1167,7 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
                             .await
                             .log_err()
                         {
-                            cx.update(|cx| ThemeSettings::reload_current_theme(cx))
-                                .log_err();
+                            cx.update(ThemeSettings::reload_current_theme).log_err();
                         }
                     }
                 }

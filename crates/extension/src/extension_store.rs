@@ -290,7 +290,7 @@ impl ExtensionStore {
         // it must be asynchronously rebuilt.
         let mut extension_index = ExtensionIndex::default();
         let mut extension_index_needs_rebuild = true;
-        if let Some(index_content) = index_content.ok() {
+        if let Ok(index_content) = index_content {
             if let Some(index) = serde_json::from_str(&index_content).log_err() {
                 extension_index = index;
                 if let (Ok(Some(index_metadata)), Ok(Some(extensions_metadata))) =
@@ -582,11 +582,11 @@ impl ExtensionStore {
         query: &[(&str, &str)],
         cx: &mut ModelContext<'_, ExtensionStore>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
-        let url = self.http_client.build_zed_api_url(path, &query);
+        let url = self.http_client.build_zed_api_url(path, query);
         let http_client = self.http_client.clone();
         cx.spawn(move |_, _| async move {
             let mut response = http_client
-                .get(&url?.as_ref(), AsyncBody::empty(), true)
+                .get(url?.as_ref(), AsyncBody::empty(), true)
                 .await?;
 
             let mut body = Vec::new();
@@ -651,7 +651,7 @@ impl ExtensionStore {
             });
 
             let mut response = http_client
-                .get(&url.as_ref(), Default::default(), true)
+                .get(url.as_ref(), Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading extension: {}", err))?;
 
@@ -687,14 +687,11 @@ impl ExtensionStore {
             })?
             .await;
 
-            match operation {
-                ExtensionOperation::Install => {
-                    this.update(&mut cx, |_, cx| {
-                        cx.emit(Event::ExtensionInstalled(extension_id));
-                    })
-                    .ok();
-                }
-                _ => {}
+            if let ExtensionOperation::Install = operation {
+                this.update(&mut cx, |_, cx| {
+                    cx.emit(Event::ExtensionInstalled(extension_id));
+                })
+                .ok();
             }
 
             anyhow::Ok(())
@@ -873,10 +870,10 @@ impl ExtensionStore {
                 .await?;
 
             let output_path = &extensions_dir.join(extension_id.as_ref());
-            if let Some(metadata) = fs.metadata(&output_path).await? {
+            if let Some(metadata) = fs.metadata(output_path).await? {
                 if metadata.is_symlink {
                     fs.remove_file(
-                        &output_path,
+                        output_path,
                         RemoveOptions {
                             recursive: false,
                             ignore_if_not_exists: true,
@@ -967,7 +964,7 @@ impl ExtensionStore {
                     (Some(_), None) => {
                         extensions_to_unload.push(old_keys.next().unwrap().0.clone());
                     }
-                    (Some((old_key, _)), Some((new_key, _))) => match old_key.cmp(&new_key) {
+                    (Some((old_key, _)), Some((new_key, _))) => match old_key.cmp(new_key) {
                         Ordering::Equal => {
                             let (old_key, old_value) = old_keys.next().unwrap();
                             let (new_key, new_value) = new_keys.next().unwrap();
@@ -1140,7 +1137,7 @@ impl ExtensionStore {
                     async move {
                         for theme_path in &themes_to_add {
                             theme_registry
-                                .load_user_theme(&theme_path, fs.clone())
+                                .load_user_theme(theme_path, fs.clone())
                                 .await
                                 .log_err();
                         }

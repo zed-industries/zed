@@ -155,7 +155,7 @@ impl SearchState {
                 .collect(),
             highlight_search_match_tx,
             _search_match_highlighter: cx.background_executor().spawn(async move {
-                while let Some(highlight_arguments) = highlight_search_match_rx.recv().await.ok() {
+                while let Ok(highlight_arguments) = highlight_search_match_rx.recv().await {
                     let highlight_data = &highlight_arguments.search_data.highlights_data;
                     if highlight_data.get().is_some() {
                         continue;
@@ -220,7 +220,7 @@ impl SearchState {
                 }
             }),
             _search_match_notify: cx.spawn(|outline_panel, mut cx| async move {
-                while let Some(()) = notify_rx.recv().await.ok() {
+                while let Ok(()) = notify_rx.recv().await {
                     let update_result = outline_panel.update(&mut cx, |_, cx| {
                         cx.notify();
                     });
@@ -400,7 +400,7 @@ impl SearchData {
         match_range: &Range<editor::Anchor>,
         multi_buffer_snapshot: &MultiBufferSnapshot,
     ) -> Self {
-        let match_point_range = match_range.to_point(&multi_buffer_snapshot);
+        let match_point_range = match_range.to_point(multi_buffer_snapshot);
         let context_left_border = multi_buffer_snapshot.clip_point(
             language::Point::new(
                 match_point_range.start.row,
@@ -420,9 +420,9 @@ impl SearchData {
         );
 
         let context_anchor_range =
-            (context_left_border..context_right_border).to_anchors(&multi_buffer_snapshot);
-        let context_offset_range = context_anchor_range.to_offset(&multi_buffer_snapshot);
-        let match_offset_range = match_range.to_offset(&multi_buffer_snapshot);
+            (context_left_border..context_right_border).to_anchors(multi_buffer_snapshot);
+        let context_offset_range = context_anchor_range.to_offset(multi_buffer_snapshot);
+        let match_offset_range = match_range.to_offset(multi_buffer_snapshot);
 
         let mut search_match_indices = vec![
             multi_buffer_snapshot.clip_offset(
@@ -485,7 +485,7 @@ impl SearchData {
         Self {
             highlights_data: Arc::default(),
             search_match_indices,
-            context_range: trimmed_row_offset_range.to_anchors(&multi_buffer_snapshot),
+            context_range: trimmed_row_offset_range.to_anchors(multi_buffer_snapshot),
             context_text: trimmed_text,
             truncated_left,
             truncated_right,
@@ -898,8 +898,7 @@ impl OutlinePanel {
                 .iter()
                 .map(|cached_entry| &cached_entry.entry)
                 .skip_while(|entry| entry != &selected_entry)
-                .skip(1)
-                .next()
+                .nth(1)
                 .cloned()
         }) {
             self.select_entry(entry_to_select, true, cx);
@@ -915,8 +914,7 @@ impl OutlinePanel {
                 .rev()
                 .map(|cached_entry| &cached_entry.entry)
                 .skip_while(|entry| entry != &selected_entry)
-                .skip(1)
-                .next()
+                .nth(1)
                 .cloned()
         }) {
             self.select_entry(entry_to_select, true, cx);
@@ -975,11 +973,11 @@ impl OutlinePanel {
                     previous_entries.find(|entry| match entry {
                         PanelEntry::Fs(FsEntry::File(_, _, file_buffer_id, file_excerpts)) => {
                             file_buffer_id == excerpt_buffer_id
-                                && file_excerpts.contains(&excerpt_id)
+                                && file_excerpts.contains(excerpt_id)
                         }
                         PanelEntry::Fs(FsEntry::ExternalFile(file_buffer_id, file_excerpts)) => {
                             file_buffer_id == excerpt_buffer_id
-                                && file_excerpts.contains(&excerpt_id)
+                                && file_excerpts.contains(excerpt_id)
                         }
                         _ => false,
                     })
@@ -1012,7 +1010,7 @@ impl OutlinePanel {
     }
 
     fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
-        if let Some(first_entry) = self.cached_entries.iter().next() {
+        if let Some(first_entry) = self.cached_entries.first() {
             self.select_entry(first_entry.entry.clone(), true, cx);
         }
     }
@@ -1358,7 +1356,7 @@ impl OutlinePanel {
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
         if let Some(clipboard_text) = self
             .selected_entry()
-            .and_then(|entry| self.abs_path(&entry, cx))
+            .and_then(|entry| self.abs_path(entry, cx))
             .map(|p| p.to_string_lossy().to_string())
         {
             cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
@@ -1369,7 +1367,7 @@ impl OutlinePanel {
         if let Some(clipboard_text) = self
             .selected_entry()
             .and_then(|entry| match entry {
-                PanelEntry::Fs(entry) => self.relative_path(&entry, cx),
+                PanelEntry::Fs(entry) => self.relative_path(entry, cx),
                 PanelEntry::FoldedDirs(_, dirs) => dirs.last().map(|entry| entry.path.clone()),
                 PanelEntry::Search(_) | PanelEntry::Outline(..) => None,
             })
@@ -1382,7 +1380,7 @@ impl OutlinePanel {
     fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
         if let Some(abs_path) = self
             .selected_entry()
-            .and_then(|entry| self.abs_path(&entry, cx))
+            .and_then(|entry| self.abs_path(entry, cx))
         {
             cx.reveal_path(&abs_path);
         }
@@ -1390,7 +1388,7 @@ impl OutlinePanel {
 
     fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
         let selected_entry = self.selected_entry();
-        let abs_path = selected_entry.and_then(|entry| self.abs_path(&entry, cx));
+        let abs_path = selected_entry.and_then(|entry| self.abs_path(entry, cx));
         let working_directory = if let (
             Some(abs_path),
             Some(PanelEntry::Fs(FsEntry::File(..) | FsEntry::ExternalFile(..))),
@@ -1517,13 +1515,12 @@ impl OutlinePanel {
                         );
                         let mut current_entry = buffer_entry;
                         loop {
-                            if current_entry.is_dir() {
-                                if outline_panel
+                            if current_entry.is_dir()
+                                && outline_panel
                                     .collapsed_entries
                                     .remove(&CollapsedEntry::Dir(worktree_id, current_entry.id))
-                                {
-                                    dirs_to_expand.push(current_entry.id);
-                                }
+                            {
+                                dirs_to_expand.push(current_entry.id);
                             }
 
                             if traversal.back_to_parent() {
@@ -1630,7 +1627,7 @@ impl OutlinePanel {
                 rendered_outline.range, &rendered_outline.text,
             ))),
             language::render_item(
-                &rendered_outline,
+                rendered_outline,
                 string_match
                     .map(|string_match| string_match.ranges().collect::<Vec<_>>())
                     .unwrap_or_default(),
@@ -1882,7 +1879,7 @@ impl OutlinePanel {
                 name_ranges: search_data.search_match_indices.clone(),
                 body_range: Some(search_data.context_range.clone()),
             },
-            match_ranges.into_iter().cloned(),
+            match_ranges.iter().cloned(),
             cx,
         );
         let truncated_contents_label = || Label::new(TRUNCATED_CONTEXT_MARK);
@@ -2161,7 +2158,7 @@ impl OutlinePanel {
                                     if processed_external_buffers.insert(buffer_id) {
                                         external_excerpts
                                             .entry(buffer_id)
-                                            .or_insert_with(|| Vec::new())
+                                            .or_insert_with(Vec::new)
                                             .extend(excerpts);
                                     }
                                 }
@@ -2169,7 +2166,7 @@ impl OutlinePanel {
                         } else if processed_external_buffers.insert(buffer_id) {
                             external_excerpts
                                 .entry(buffer_id)
-                                .or_insert_with(|| Vec::new())
+                                .or_insert_with(Vec::new)
                                 .extend(excerpts);
                         }
                     }
@@ -2249,7 +2246,7 @@ impl OutlinePanel {
                                     } else {
                                         if auto_fold_dirs {
                                             let children = new_children_count
-                                                .get(&worktree_id)
+                                                .get(worktree_id)
                                                 .and_then(|children_count| {
                                                     children_count.get(&dir_entry.path)
                                                 })
@@ -2262,10 +2259,10 @@ impl OutlinePanel {
                                                         .last()
                                                         .map(|(parent_dir_id, _)| {
                                                             new_unfolded_dirs
-                                                                .get(&worktree_id)
+                                                                .get(worktree_id)
                                                                 .map_or(true, |unfolded_dirs| {
                                                                     unfolded_dirs
-                                                                        .contains(&parent_dir_id)
+                                                                        .contains(parent_dir_id)
                                                                 })
                                                         })
                                                         .unwrap_or(true))
@@ -2643,7 +2640,7 @@ impl OutlinePanel {
 
     fn invalidate_outlines(&mut self, ids: &[ExcerptId]) {
         self.outline_fetch_tasks.clear();
-        let mut ids = ids.into_iter().collect::<HashSet<_>>();
+        let mut ids = ids.iter().collect::<HashSet<_>>();
         for excerpts in self.excerpts.values_mut() {
             ids.retain(|id| {
                 if let Some(excerpt) = excerpts.get_mut(id) {
@@ -2675,7 +2672,7 @@ impl OutlinePanel {
                 match fs_entry {
                     FsEntry::File(_, _, buffer_id, file_excerpts)
                     | FsEntry::ExternalFile(buffer_id, file_excerpts) => {
-                        let excerpts = self.excerpts.get(&buffer_id);
+                        let excerpts = self.excerpts.get(buffer_id);
                         for &file_excerpt in file_excerpts {
                             if let Some(excerpt) = excerpts
                                 .and_then(|excerpts| excerpts.get(&file_excerpt))
@@ -2918,8 +2915,7 @@ impl OutlinePanel {
                                             && parent_dirs
                                                 .iter()
                                                 .rev()
-                                                .skip(folded_dirs.len() + 1)
-                                                .next()
+                                                .nth(folded_dirs.len() + 1)
                                                 .map_or(true, |parent| parent.expanded);
                                         if start_of_collapsed_dir_sequence
                                             || parent_expanded
@@ -3079,7 +3075,7 @@ impl OutlinePanel {
                             if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider {
                                 outline_panel.add_excerpt_entries(
                                     buffer_id,
-                                    &entry_excerpts,
+                                    entry_excerpts,
                                     depth,
                                     track_matches,
                                     is_singleton,
@@ -3510,15 +3506,14 @@ impl OutlinePanel {
 
         let new_search_entries = new_search_matches
             .map(|(match_range, search_data)| {
-                let previous_search_data = previous_search_matches
-                    .get(&(kind, &match_range))
-                    .map(|&data| data);
+                let previous_search_data =
+                    previous_search_matches.get(&(kind, match_range)).copied();
                 let render_data = search_data
                     .get()
-                    .or_else(|| previous_search_data)
+                    .or(previous_search_data)
                     .unwrap_or_else(|| {
                         search_data.get_or_init(|| {
-                            Arc::new(SearchData::new(&match_range, &multi_buffer_snapshot))
+                            Arc::new(SearchData::new(match_range, &multi_buffer_snapshot))
                         })
                     });
                 if let (Some(previous_highlights), None) = (
@@ -3698,14 +3693,13 @@ fn cleanup_fs_entries_without_search_children(
                 }
                 PanelEntry::Search(_) | PanelEntry::Outline(_) => Vec::new(),
             };
-            if !collapsed_entries_to_check.is_empty() {
-                if collapsed_entries_to_check
+            if !collapsed_entries_to_check.is_empty()
+                && collapsed_entries_to_check
                     .iter()
                     .any(|collapsed_entry| collapsed_entries.contains(collapsed_entry))
-                {
-                    previous_entry = Some(&entry.entry);
-                    continue;
-                }
+            {
+                previous_entry = Some(&entry.entry);
+                continue;
             }
             match_ids_to_remove.insert(id);
             previous_entry = None;
@@ -3817,7 +3811,7 @@ impl Panel for OutlinePanel {
     fn icon(&self, cx: &WindowContext) -> Option<IconName> {
         OutlinePanelSettings::get_global(cx)
             .button
-            .then(|| IconName::ListTree)
+            .then_some(IconName::ListTree)
     }
 
     fn icon_tooltip(&self, _: &WindowContext) -> Option<&'static str> {
@@ -4107,7 +4101,7 @@ fn subscribe_for_editor_events(
                 );
             }
             EditorEvent::ExcerptsRemoved { ids } => {
-                let mut ids = ids.into_iter().collect::<HashSet<_>>();
+                let mut ids = ids.iter().collect::<HashSet<_>>();
                 for excerpts in outline_panel.excerpts.values_mut() {
                     excerpts.retain(|excerpt_id, _| !ids.remove(excerpt_id));
                     if ids.is_empty() {
@@ -4227,9 +4221,9 @@ mod tests {
       config.rs
         search: param_names_for_lifetime_elision_hints: self"#;
         let select_first_in_all_matches = |line_to_select: &str| {
-            assert!(all_matches.contains(&line_to_select));
+            assert!(all_matches.contains(line_to_select));
             all_matches.replacen(
-                &line_to_select,
+                line_to_select,
                 &format!("{line_to_select}{SELECTED_MARKER}"),
                 1,
             )
@@ -4490,9 +4484,7 @@ mod tests {
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
         let outline_panel = window
-            .update(cx, |_, cx| {
-                cx.spawn(|workspace_handle, cx| OutlinePanel::load(workspace_handle, cx))
-            })
+            .update(cx, |_, cx| cx.spawn(OutlinePanel::load))
             .unwrap()
             .await
             .expect("Failed to load outline panel");

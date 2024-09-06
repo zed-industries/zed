@@ -397,7 +397,7 @@ pub async fn post_events(
         match &wrapper.event {
             Event::Editor(event) => to_upload.editor_events.push(EditorEventRow::from_event(
                 event.clone(),
-                &wrapper,
+                wrapper,
                 &request_body,
                 first_event_at,
                 country_code.clone(),
@@ -410,7 +410,7 @@ pub async fn post_events(
                     .inline_completion_events
                     .push(InlineCompletionEventRow::from_event(
                         event.clone(),
-                        &wrapper,
+                        wrapper,
                         &request_body,
                         first_event_at,
                         country_code.clone(),
@@ -419,7 +419,7 @@ pub async fn post_events(
             }
             Event::Call(event) => to_upload.call_events.push(CallEventRow::from_event(
                 event.clone(),
-                &wrapper,
+                wrapper,
                 &request_body,
                 first_event_at,
                 checksum_matched,
@@ -429,7 +429,7 @@ pub async fn post_events(
                     .assistant_events
                     .push(AssistantEventRow::from_event(
                         event.clone(),
-                        &wrapper,
+                        wrapper,
                         &request_body,
                         first_event_at,
                         checksum_matched,
@@ -437,42 +437,42 @@ pub async fn post_events(
             }
             Event::Cpu(event) => to_upload.cpu_events.push(CpuEventRow::from_event(
                 event.clone(),
-                &wrapper,
+                wrapper,
                 &request_body,
                 first_event_at,
                 checksum_matched,
             )),
             Event::Memory(event) => to_upload.memory_events.push(MemoryEventRow::from_event(
                 event.clone(),
-                &wrapper,
+                wrapper,
                 &request_body,
                 first_event_at,
                 checksum_matched,
             )),
             Event::App(event) => to_upload.app_events.push(AppEventRow::from_event(
                 event.clone(),
-                &wrapper,
+                wrapper,
                 &request_body,
                 first_event_at,
                 checksum_matched,
             )),
             Event::Setting(event) => to_upload.setting_events.push(SettingEventRow::from_event(
                 event.clone(),
-                &wrapper,
+                wrapper,
                 &request_body,
                 first_event_at,
                 checksum_matched,
             )),
             Event::Edit(event) => to_upload.edit_events.push(EditEventRow::from_event(
                 event.clone(),
-                &wrapper,
+                wrapper,
                 &request_body,
                 first_event_at,
                 checksum_matched,
             )),
             Event::Action(event) => to_upload.action_events.push(ActionEventRow::from_event(
                 event.clone(),
-                &wrapper,
+                wrapper,
                 &request_body,
                 first_event_at,
                 checksum_matched,
@@ -486,7 +486,7 @@ pub async fn post_events(
                     .extension_events
                     .push(ExtensionEventRow::from_event(
                         event.clone(),
-                        &wrapper,
+                        wrapper,
                         &request_body,
                         metadata,
                         first_event_at,
@@ -495,7 +495,7 @@ pub async fn post_events(
             }
             Event::Repl(event) => to_upload.repl_events.push(ReplEventRow::from_event(
                 event.clone(),
-                &wrapper,
+                wrapper,
                 &request_body,
                 first_event_at,
                 checksum_matched,
@@ -1332,7 +1332,7 @@ pub fn calculate_json_checksum(app: Arc<AppState>, json: &impl AsRef<[u8]>) -> O
 
     let mut summer = Sha256::new();
     summer.update(checksum_seed);
-    summer.update(&json);
+    summer.update(json);
     summer.update(checksum_seed);
     Some(summer.finalize().into_iter().collect())
 }

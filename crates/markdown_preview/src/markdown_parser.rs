@@ -90,9 +90,9 @@ impl<'a> MarkdownParser<'a> {
             | Event::Start(Tag::Strong)
             | Event::Start(Tag::Strikethrough)
             | Event::Start(Tag::Image { link_type: _, dest_url: _, title: _, id: _ }) => {
-                return true;
+                true
             }
-            _ => return false,
+            _ => false,
         }
     }
 
@@ -252,7 +252,7 @@ impl<'a> MarkdownParser<'a> {
                         let mut finder = linkify::LinkFinder::new();
                         finder.kinds(&[linkify::LinkKind::Url]);
                         let mut last_link_len = prev_len;
-                        for link in finder.links(&t) {
+                        for link in finder.links(t) {
                             let start = link.start();
                             let end = link.end();
                             let range = (prev_len + start)..(prev_len + end);
@@ -415,10 +415,7 @@ impl<'a> MarkdownParser<'a> {
         let mut body = vec![];
         let mut current_row = vec![];
         let mut in_header = true;
-        let column_alignments = alignment
-            .iter()
-            .map(|a| Self::convert_alignment(a))
-            .collect();
+        let column_alignments = alignment.iter().map(Self::convert_alignment).collect();
 
         loop {
             if self.eof() {
@@ -440,7 +437,7 @@ impl<'a> MarkdownParser<'a> {
                 }
                 Event::End(TagEnd::TableHead) | Event::End(TagEnd::TableRow) => {
                     self.cursor += 1;
-                    let new_row = std::mem::replace(&mut current_row, vec![]);
+                    let new_row = std::mem::take(&mut current_row);
                     if in_header {
                         header.children = new_row;
                         in_header = false;
@@ -683,7 +680,7 @@ impl<'a> MarkdownParser<'a> {
             let (current, _source_range) = self.current().unwrap();
             match current {
                 Event::Text(text) => {
-                    code.push_str(&text);
+                    code.push_str(text);
                     self.cursor += 1;
                 }
                 Event::End(TagEnd::CodeBlock) => {

@@ -416,7 +416,7 @@ pub fn find_preceding_boundary_point(
     mut is_boundary: impl FnMut(char, char) -> bool,
 ) -> Point {
     let mut prev_ch = None;
-    let mut offset = from.to_offset(&buffer_snapshot);
+    let mut offset = from.to_offset(buffer_snapshot);
 
     for ch in buffer_snapshot.reversed_chars_at(offset) {
         if find_range == FindRange::SingleLine && ch == '\n' {
@@ -432,7 +432,7 @@ pub fn find_preceding_boundary_point(
         prev_ch = Some(ch);
     }
 
-    offset.to_point(&buffer_snapshot)
+    offset.to_point(buffer_snapshot)
 }
 
 /// Scans for a boundary preceding the given start point `from` until a boundary is found,
@@ -466,7 +466,7 @@ pub fn find_boundary_point(
     mut is_boundary: impl FnMut(char, char) -> bool,
     return_point_before_boundary: bool,
 ) -> DisplayPoint {
-    let mut offset = from.to_offset(&map, Bias::Right);
+    let mut offset = from.to_offset(map, Bias::Right);
     let mut prev_offset = offset;
     let mut prev_ch = None;
 
@@ -496,7 +496,7 @@ pub fn find_boundary(
     find_range: FindRange,
     is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
-    return find_boundary_point(map, from, find_range, is_boundary, false);
+    find_boundary_point(map, from, find_range, is_boundary, false)
 }
 
 pub fn find_boundary_exclusive(
@@ -505,7 +505,7 @@ pub fn find_boundary_exclusive(
     find_range: FindRange,
     is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
-    return find_boundary_point(map, from, find_range, is_boundary, true);
+    find_boundary_point(map, from, find_range, is_boundary, true)
 }
 
 /// Returns an iterator over the characters following a given offset in the [`DisplaySnapshot`].
@@ -517,7 +517,7 @@ pub fn chars_after(
 ) -> impl Iterator<Item = (char, Range<usize>)> + '_ {
     map.buffer_snapshot.chars_at(offset).map(move |ch| {
         let before = offset;
-        offset = offset + ch.len_utf8();
+        offset += ch.len_utf8();
         (ch, before..offset)
     })
 }
@@ -533,7 +533,7 @@ pub fn chars_before(
         .reversed_chars_at(offset)
         .map(move |ch| {
             let after = offset;
-            offset = offset - ch.len_utf8();
+            offset -= ch.len_utf8();
             (ch, offset..after)
         })
 }

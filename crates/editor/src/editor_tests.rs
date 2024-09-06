@@ -195,7 +195,7 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
         editor.change_selections(None, cx, |s| s.select_ranges([2..2]));
 
         // Simulate an edit in another editor
-        _ = buffer.update(cx, |buffer, cx| {
+        buffer.update(cx, |buffer, cx| {
             buffer.start_transaction_at(now, cx);
             buffer.edit([(0..1, "a")], None, cx);
             buffer.edit([(1..1, "b")], None, cx);
@@ -661,7 +661,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
             let mut editor = build_editor(buffer.clone(), cx);
             let handle = cx.view();
-            editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
+            editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(handle)));
 
             fn pop_history(editor: &mut Editor, cx: &mut WindowContext) -> Option<NavigationEntry> {
                 editor.nav_history.as_mut().unwrap().pop_backward(cx)
@@ -1088,7 +1088,7 @@ fn test_move_cursor(cx: &mut TestAppContext) {
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx));
     let view = cx.add_window(|cx| build_editor(buffer.clone(), cx));
 
-    _ = buffer.update(cx, |buffer, cx| {
+    buffer.update(cx, |buffer, cx| {
         buffer.edit(
             vec![
                 (Point::new(1, 0)..Point::new(1, 0), "\t"),
@@ -1822,7 +1822,7 @@ async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
     cx.simulate_window_resize(window, size(px(1000.), 4. * line_height + px(0.5)));
 
     cx.set_state(
-        &r#"ˇone
+        r#"ˇone
         two
         three
         four
@@ -1886,7 +1886,7 @@ async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
     cx.simulate_window_resize(window, size(px(1000.), 6. * line_height));
 
     cx.set_state(
-        &r#"ˇone
+        r#"ˇone
             two
             three
             four
@@ -4650,17 +4650,8 @@ let foo = «2ˇ»;"#,
 async fn test_select_previous_multibuffer(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new_multibuffer(
-        cx,
-        [
-            &indoc! {
-                "aaa\n«bbb\nccc\n»ddd"
-            },
-            &indoc! {
-                "aaa\n«bbb\nccc\n»ddd"
-            },
-        ],
-    );
+    let mut cx =
+        EditorTestContext::new_multibuffer(cx, ["aaa\n«bbb\nccc\n»ddd", "aaa\n«bbb\nccc\n»ddd"]);
 
     cx.assert_editor_state(indoc! {"
         ˇbbb
@@ -4809,7 +4800,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
 
     editor
-        .condition::<crate::EditorEvent>(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+        .condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
     editor.update(cx, |view, cx| {
@@ -5021,7 +5012,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
         .await;
 
-    _ = editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([5..5, 8..8, 9..9]));
         editor.newline(&Newline, cx);
         assert_eq!(editor.text(cx), "fn a(\n    \n) {\n    \n}\n");
@@ -5702,7 +5693,7 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
     view.condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
-    _ = view.update(cx, |view, cx| {
+    view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
@@ -5852,7 +5843,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
         .condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
-    _ = editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, cx| {
         editor.change_selections(None, cx, |s| {
             s.select_ranges([
                 Point::new(0, 1)..Point::new(0, 1),
@@ -6042,7 +6033,7 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
         .condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
-    _ = editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, cx| {
         editor.set_auto_replace_emoji_shortcode(true);
 
         editor.handle_input("Hello ", cx);
@@ -6111,7 +6102,7 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
 
-    _ = editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, cx| {
         let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
 
         editor
@@ -6738,7 +6729,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
 
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    _ = editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
 
     let format = editor
         .update(cx, |editor, cx| {
@@ -6766,7 +6757,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         "one, two\nthree\n"
     );
 
-    _ = editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     // Ensure we don't lock if formatting hangs.
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
@@ -7765,7 +7756,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 
-    _ = cx.update(|cx| {
+    cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
             settings.update_user_settings::<EditorSettings>(cx, |settings| {
                 settings.show_completions_on_input = Some(false);
@@ -8371,7 +8362,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
     });
 
     let (view, cx) = cx.add_window_view(|cx| build_editor(multibuffer, cx));
-    _ = view.update(cx, |view, cx| {
+    view.update(cx, |view, cx| {
         assert_eq!(view.text(cx), "aaaa\nbbbb");
         view.change_selections(None, cx, |s| {
             s.select_ranges([
@@ -8441,7 +8432,7 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
     });
 
     let (view, cx) = cx.add_window_view(|cx| build_editor(multibuffer, cx));
-    _ = view.update(cx, |view, cx| {
+    view.update(cx, |view, cx| {
         let (expected_text, selection_ranges) = marked_text_ranges(
             indoc! {"
                 aaaa
@@ -8545,7 +8536,7 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
         );
     });
 
-    _ = multibuffer.update(cx, |multibuffer, cx| {
+    multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
     });
     _ = editor.update(cx, |editor, cx| {
@@ -8612,7 +8603,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
         editor
     });
 
-    _ = multibuffer.update(cx, |multibuffer, cx| {
+    multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
     });
     _ = editor.update(cx, |editor, cx| {
@@ -8679,7 +8670,7 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
     view.condition::<crate::EditorEvent>(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
         .await;
 
-    _ = view.update(cx, |view, cx| {
+    view.update(cx, |view, cx| {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 3),
@@ -8864,7 +8855,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     _ = follower.update(cx, |follower, cx| {
         assert_eq!(follower.selections.ranges(cx), vec![1..1]);
     });
-    assert_eq!(*is_still_following.borrow(), true);
+    assert!(*is_still_following.borrow());
     assert_eq!(*follower_edit_event_count.borrow(), 0);
 
     // Update the scroll position only
@@ -8884,7 +8875,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
             .unwrap(),
         gpui::Point::new(1.5, 3.5)
     );
-    assert_eq!(*is_still_following.borrow(), true);
+    assert!(*is_still_following.borrow());
     assert_eq!(*follower_edit_event_count.borrow(), 0);
 
     // Update the selections and scroll position. The follower's scroll position is updated
@@ -8905,7 +8896,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         assert_eq!(follower.scroll_position(cx), gpui::Point::new(1.5, 0.0));
         assert_eq!(follower.selections.ranges(cx), vec![0..0]);
     });
-    assert_eq!(*is_still_following.borrow(), true);
+    assert!(*is_still_following.borrow());
 
     // Creating a pending selection that precedes another selection
     _ = leader.update(cx, |leader, cx| {
@@ -8922,7 +8913,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     _ = follower.update(cx, |follower, cx| {
         assert_eq!(follower.selections.ranges(cx), vec![0..0, 1..1]);
     });
-    assert_eq!(*is_still_following.borrow(), true);
+    assert!(*is_still_following.borrow());
 
     // Extend the pending selection so that it surrounds another selection
     _ = leader.update(cx, |leader, cx| {
@@ -8950,7 +8941,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
             cx,
         );
     });
-    assert_eq!(*is_still_following.borrow(), false);
+    assert!(!(*is_still_following.borrow()));
 }
 
 #[gpui::test]
@@ -9011,7 +9002,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     });
 
     // Insert some excerpts.
-    _ = leader.update(cx, |leader, cx| {
+    leader.update(cx, |leader, cx| {
         leader.buffer.update(cx, |multibuffer, cx| {
             let excerpt_ids = multibuffer.push_excerpts(
                 buffer_1.clone(),
@@ -9086,7 +9077,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     );
 
     // Remove some excerpts.
-    _ = leader.update(cx, |leader, cx| {
+    leader.update(cx, |leader, cx| {
         leader.buffer.update(cx, |multibuffer, cx| {
             let excerpt_ids = multibuffer.excerpt_ids();
             multibuffer.remove_excerpts([excerpt_ids[1], excerpt_ids[2]], cx);
@@ -9129,8 +9120,8 @@ async fn go_to_prev_overlapping_diagnostic(
         }
     "});
 
-    _ = cx.update(|cx| {
-        _ = project.update(cx, |project, cx| {
+    cx.update(|cx| {
+        project.update(cx, |project, cx| {
             project
                 .update_diagnostics(
                     LanguageServerId(0),
@@ -9568,7 +9559,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
 
     cx.executor().run_until_parked();
 
-    _ = buffer.update(cx, |buffer, _| {
+    buffer.update(cx, |buffer, _| {
         assert_eq!(
             buffer.text(),
             "fn main() { let a = {5}; }",
@@ -9971,7 +9962,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     let buffer_text = "one\ntwo\nthree\n";
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    _ = editor.update(cx, |editor, cx| editor.set_text(buffer_text, cx));
+    editor.update(cx, |editor, cx| editor.set_text(buffer_text, cx));
 
     editor
         .update(cx, |editor, cx| {
@@ -10913,7 +10904,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(1)..=DisplayRow(1), DisplayRow(7)..=DisplayRow(7), DisplayRow(9)..=DisplayRow(9)],
@@ -11058,7 +11049,7 @@ async fn test_toggled_diff_base_change(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(9)..=DisplayRow(10), DisplayRow(13)..=DisplayRow(14)],
@@ -11240,7 +11231,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
@@ -11317,7 +11308,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(0)..=DisplayRow(0), DisplayRow(5)..=DisplayRow(5)],
@@ -11410,7 +11401,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
@@ -11622,7 +11613,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     multi_buffer_editor.update(cx, |editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(all_hunks, expected_all_hunks);
         assert_eq!(all_expanded_hunks, Vec::new());
@@ -11636,7 +11627,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     multi_buffer_editor.update(cx, |editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
@@ -11655,7 +11646,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     multi_buffer_editor.update(cx, |editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(all_hunks, expected_all_hunks);
         assert_eq!(all_expanded_hunks, Vec::new());
@@ -11668,7 +11659,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     multi_buffer_editor.update(cx, |editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![
@@ -11687,7 +11678,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     multi_buffer_editor.update(cx, |editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(all_hunks, expected_all_hunks);
         assert_eq!(all_expanded_hunks, Vec::new());
@@ -11775,7 +11766,7 @@ async fn test_edits_around_toggled_additions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![(
@@ -11815,7 +11806,7 @@ async fn test_edits_around_toggled_additions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![(
@@ -11860,7 +11851,7 @@ async fn test_edits_around_toggled_additions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![(
@@ -11904,7 +11895,7 @@ async fn test_edits_around_toggled_additions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![(
@@ -11952,7 +11943,7 @@ async fn test_edits_around_toggled_additions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![(
@@ -11988,7 +11979,7 @@ async fn test_edits_around_toggled_additions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![
@@ -12103,7 +12094,7 @@ async fn test_edits_around_toggled_deletions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
@@ -12139,7 +12130,7 @@ async fn test_edits_around_toggled_deletions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             Vec::new(),
@@ -12178,7 +12169,7 @@ async fn test_edits_around_toggled_deletions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
@@ -12213,7 +12204,7 @@ async fn test_edits_around_toggled_deletions(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![(
@@ -12315,7 +12306,7 @@ async fn test_edits_around_toggled_modifications(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(6)..=DisplayRow(6)],
@@ -12358,7 +12349,7 @@ async fn test_edits_around_toggled_modifications(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(6)..=DisplayRow(6)],
@@ -12404,7 +12395,7 @@ async fn test_edits_around_toggled_modifications(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(6)..=DisplayRow(8)],
@@ -12448,7 +12439,7 @@ async fn test_edits_around_toggled_modifications(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(6)..=DisplayRow(9)],
@@ -12492,7 +12483,7 @@ async fn test_edits_around_toggled_modifications(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(6)..=DisplayRow(8)],
@@ -12533,7 +12524,7 @@ async fn test_edits_around_toggled_modifications(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             Vec::new(),
@@ -12636,7 +12627,7 @@ async fn test_multiple_expanded_hunks_merge(
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(6)..=DisplayRow(6)],
@@ -12689,8 +12680,8 @@ async fn setup_indent_guides_editor(
     let buffer_id = cx.update_editor(|editor, cx| {
         editor.set_text(text, cx);
         let buffer_ids = editor.buffer().read(cx).excerpt_buffer_ids();
-        let buffer_id = buffer_ids[0];
-        buffer_id
+
+        buffer_ids[0]
     });
 
     (buffer_id, cx)
@@ -13249,7 +13240,7 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
 
     let render_args = render_args.lock().take().unwrap();
     assert_eq!(render_args.row, MultiBufferRow(1));
-    assert_eq!(render_args.folded, false);
+    assert!(!render_args.folded);
     assert!(!snapshot.is_line_folded(MultiBufferRow(1)));
 
     cx.update_window(*editor, |_, cx| (render_args.callback)(true, cx))
@@ -13616,7 +13607,7 @@ pub(crate) fn update_test_language_settings(
     cx: &mut TestAppContext,
     f: impl Fn(&mut AllLanguageSettingsContent),
 ) {
-    _ = cx.update(|cx| {
+    cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, f);
         });
@@ -13627,7 +13618,7 @@ pub(crate) fn update_test_project_settings(
     cx: &mut TestAppContext,
     f: impl Fn(&mut ProjectSettings),
 ) {
-    _ = cx.update(|cx| {
+    cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, f);
         });
@@ -13635,7 +13626,7 @@ pub(crate) fn update_test_project_settings(
 }
 
 pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
-    _ = cx.update(|cx| {
+    cx.update(|cx| {
         assets::Assets.load_test_fonts(cx);
         let store = SettingsStore::test(cx);
         cx.set_global(store);

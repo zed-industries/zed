@@ -2146,7 +2146,7 @@ pub struct Percentage(pub f32);
 /// Generate a `Radian` from a percentage of a full circle.
 pub fn percentage(value: f32) -> Percentage {
     debug_assert!(
-        value >= 0.0 && value <= 1.0,
+        (0.0..=1.0).contains(&value),
         "Percentage must be between 0 and 1"
     );
     Percentage(value)
@@ -3133,12 +3133,12 @@ mod tests {
         };
 
         // Test Case 1: Intersecting bounds
-        assert_eq!(bounds1.intersects(&bounds2), true);
+        assert!(bounds1.intersects(&bounds2));
 
         // Test Case 2: Non-Intersecting bounds
-        assert_eq!(bounds1.intersects(&bounds3), false);
+        assert!(!bounds1.intersects(&bounds3));
 
         // Test Case 3: Bounds intersecting with themselves
-        assert_eq!(bounds1.intersects(&bounds1), true);
+        assert!(bounds1.intersects(&bounds1));
     }
 }

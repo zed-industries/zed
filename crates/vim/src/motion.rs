@@ -634,16 +634,16 @@ impl Motion {
             Backspace => (backspace(map, point, times), SelectionGoal::None),
             Down {
                 display_lines: false,
-            } => up_down_buffer_rows(map, point, goal, times as isize, &text_layout_details),
+            } => up_down_buffer_rows(map, point, goal, times as isize, text_layout_details),
             Down {
                 display_lines: true,
-            } => down_display(map, point, goal, times, &text_layout_details),
+            } => down_display(map, point, goal, times, text_layout_details),
             Up {
                 display_lines: false,
-            } => up_down_buffer_rows(map, point, goal, 0 - times as isize, &text_layout_details),
+            } => up_down_buffer_rows(map, point, goal, 0 - times as isize, text_layout_details),
             Up {
                 display_lines: true,
-            } => up_display(map, point, goal, times, &text_layout_details),
+            } => up_display(map, point, goal, times, text_layout_details),
             Right => (right(map, point, times), SelectionGoal::None),
             Space => (space(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (
@@ -802,9 +802,9 @@ impl Motion {
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
             EndOfLineDownward => (last_non_whitespace(map, point, times), SelectionGoal::None),
             GoToColumn => (go_to_column(map, point, times), SelectionGoal::None),
-            WindowTop => window_top(map, point, &text_layout_details, times - 1),
-            WindowMiddle => window_middle(map, point, &text_layout_details),
-            WindowBottom => window_bottom(map, point, &text_layout_details, times - 1),
+            WindowTop => window_top(map, point, text_layout_details, times - 1),
+            WindowMiddle => window_middle(map, point, text_layout_details),
+            WindowBottom => window_bottom(map, point, text_layout_details, times - 1),
             Jump { line, anchor } => mark::jump_motion(map, *anchor, *line),
             ZedSearchResult { new_selections, .. } => {
                 // There will be only one selection, as
@@ -864,7 +864,7 @@ impl Motion {
             selection.head(),
             selection.goal,
             times,
-            &text_layout_details,
+            text_layout_details,
         ) {
             let mut selection = selection.clone();
             selection.set_head(new_head, goal);
@@ -896,11 +896,11 @@ impl Motion {
                     ignore_punctuation: _,
                 } = self
                 {
-                    let start_row = MultiBufferRow(selection.start.to_point(&map).row);
-                    if selection.end.to_point(&map).row > start_row.0 {
+                    let start_row = MultiBufferRow(selection.start.to_point(map).row);
+                    if selection.end.to_point(map).row > start_row.0 {
                         selection.end =
                             Point::new(start_row.0, map.buffer_snapshot.line_len(start_row))
-                                .to_display_point(&map)
+                                .to_display_point(map)
                     }
                 }
 
@@ -909,8 +909,8 @@ impl Motion {
                 // becomes inclusive. Example: "}" moves to the first line after a paragraph,
                 // but "d}" will not include that line.
                 let mut inclusive = self.inclusive();
-                let start_point = selection.start.to_point(&map);
-                let mut end_point = selection.end.to_point(&map);
+                let start_point = selection.start.to_point(map);
+                let mut end_point = selection.end.to_point(map);
 
                 // DisplayPoint
 
@@ -1108,7 +1108,7 @@ fn up_display(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     for _ in 0..times {
-        (point, goal) = movement::up(map, point, goal, true, &text_layout_details);
+        (point, goal) = movement::up(map, point, goal, true, text_layout_details);
     }
 
     (point, goal)
@@ -1558,7 +1558,7 @@ fn sentence_backwards(
     point: DisplayPoint,
     mut times: usize,
 ) -> DisplayPoint {
-    let mut start = point.to_point(&map).to_offset(&map.buffer_snapshot);
+    let mut start = point.to_point(map).to_offset(&map.buffer_snapshot);
     let mut chars = map.reverse_buffer_chars_at(start).peekable();
 
     let mut was_newline = map
@@ -1585,7 +1585,7 @@ fn sentence_backwards(
                 return map.clip_point(
                     start_of_next_sentence
                         .to_offset(&map.buffer_snapshot)
-                        .to_display_point(&map),
+                        .to_display_point(map),
                     Bias::Left,
                 );
             }
@@ -1596,11 +1596,11 @@ fn sentence_backwards(
         was_newline = ch == '\n';
     }
 
-    return DisplayPoint::zero();
+    DisplayPoint::zero()
 }
 
 fn sentence_forwards(map: &DisplaySnapshot, point: DisplayPoint, mut times: usize) -> DisplayPoint {
-    let start = point.to_point(&map).to_offset(&map.buffer_snapshot);
+    let start = point.to_point(map).to_offset(&map.buffer_snapshot);
     let mut chars = map.buffer_chars_at(start).peekable();
 
     let mut was_newline = map
@@ -1629,7 +1629,7 @@ fn sentence_forwards(map: &DisplaySnapshot, point: DisplayPoint, mut times: usiz
                 return map.clip_point(
                     start_of_next_sentence
                         .to_offset(&map.buffer_snapshot)
-                        .to_display_point(&map),
+                        .to_display_point(map),
                     Bias::Right,
                 );
             }
@@ -1638,7 +1638,7 @@ fn sentence_forwards(map: &DisplaySnapshot, point: DisplayPoint, mut times: usiz
         was_newline = ch == '\n' && chars.peek().is_some_and(|(c, _)| *c == '\n');
     }
 
-    return map.max_point();
+    map.max_point()
 }
 
 fn next_non_blank(map: &DisplaySnapshot, start: usize) -> usize {
@@ -1648,16 +1648,16 @@ fn next_non_blank(map: &DisplaySnapshot, start: usize) -> usize {
         }
     }
 
-    return map.buffer_snapshot.len();
+    map.buffer_snapshot.len()
 }
 
 // given the offset after a ., !, or ? find the start of the next sentence.
 // if this is not a sentence boundary, returns None.
 fn start_of_next_sentence(map: &DisplaySnapshot, end_of_sentence: usize) -> Option<usize> {
-    let mut chars = map.buffer_chars_at(end_of_sentence);
+    let chars = map.buffer_chars_at(end_of_sentence);
     let mut seen_space = false;
 
-    while let Some((char, offset)) = chars.next() {
+    for (char, offset) in chars {
         if !seen_space && (char == ')' || char == ']' || char == '"' || char == '\'') {
             continue;
         }
@@ -1673,7 +1673,7 @@ fn start_of_next_sentence(map: &DisplaySnapshot, end_of_sentence: usize) -> Opti
         }
     }
 
-    return Some(map.buffer_snapshot.len());
+    Some(map.buffer_snapshot.len())
 }
 
 fn start_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) -> DisplayPoint {
@@ -1839,7 +1839,7 @@ fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> 
 }
 
 fn previous_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let correct_line = start_of_relative_buffer_row(map, point, (times as isize) * -1);
+    let correct_line = start_of_relative_buffer_row(map, point, -(times as isize));
     first_non_whitespace(map, false, correct_line)
 }
 

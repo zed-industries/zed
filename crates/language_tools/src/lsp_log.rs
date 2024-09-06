@@ -180,13 +180,13 @@ pub(crate) struct LogMenuItem {
 actions!(debug, [OpenLanguageServerLogs]);
 
 pub fn init(cx: &mut AppContext) {
-    let log_store = cx.new_model(|cx| LogStore::new(cx));
+    let log_store = cx.new_model(LogStore::new);
 
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
         let project = workspace.project();
         if project.read(cx).is_local_or_ssh() {
             log_store.update(cx, |store, cx| {
-                store.add_project(&project, cx);
+                store.add_project(project, cx);
             });
         }
 
@@ -215,37 +215,34 @@ impl LogStore {
         let copilot_subscription = Copilot::global(cx).map(|copilot| {
             let copilot = &copilot;
             cx.subscribe(copilot, |this, copilot, inline_completion_event, cx| {
-                match inline_completion_event {
-                    copilot::Event::CopilotLanguageServerStarted => {
-                        if let Some(server) = copilot.read(cx).language_server() {
-                            let server_id = server.server_id();
-                            let weak_this = cx.weak_model();
-                            this.copilot_log_subscription =
-                                Some(server.on_notification::<copilot::request::LogMessage, _>(
-                                    move |params, mut cx| {
-                                        weak_this
-                                            .update(&mut cx, |this, cx| {
-                                                this.add_language_server_log(
-                                                    server_id,
-                                                    MessageType::LOG,
-                                                    &params.message,
-                                                    cx,
-                                                );
-                                            })
-                                            .ok();
-                                    },
-                                ));
-                            this.add_language_server(
-                                LanguageServerKind::Global {
-                                    name: LanguageServerName(Arc::from("copilot")),
+                if let copilot::Event::CopilotLanguageServerStarted = inline_completion_event {
+                    if let Some(server) = copilot.read(cx).language_server() {
+                        let server_id = server.server_id();
+                        let weak_this = cx.weak_model();
+                        this.copilot_log_subscription =
+                            Some(server.on_notification::<copilot::request::LogMessage, _>(
+                                move |params, mut cx| {
+                                    weak_this
+                                        .update(&mut cx, |this, cx| {
+                                            this.add_language_server_log(
+                                                server_id,
+                                                MessageType::LOG,
+                                                &params.message,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
                                 },
-                                server.server_id(),
-                                Some(server.clone()),
-                                cx,
-                            );
-                        }
+                            ));
+                        this.add_language_server(
+                            LanguageServerKind::Global {
+                                name: LanguageServerName(Arc::from("copilot")),
+                            },
+                            server.server_id(),
+                            Some(server.clone()),
+                            cx,
+                        );
                     }
-                    _ => {}
                 }
             })
         });
@@ -593,21 +590,19 @@ impl LspLogView {
         });
         let events_subscriptions = cx.subscribe(&log_store, |log_view, _, e, cx| match e {
             Event::NewServerLogEntry { id, entry, kind } => {
-                if log_view.current_server_id == Some(*id) {
-                    if *kind == log_view.active_entry_kind {
-                        log_view.editor.update(cx, |editor, cx| {
-                            editor.set_read_only(false);
-                            let last_point = editor.buffer().read(cx).len(cx);
-                            editor.edit(
-                                vec![
-                                    (last_point..last_point, entry.trim()),
-                                    (last_point..last_point, "\n"),
-                                ],
-                                cx,
-                            );
-                            editor.set_read_only(true);
-                        });
-                    }
+                if log_view.current_server_id == Some(*id) && *kind == log_view.active_entry_kind {
+                    log_view.editor.update(cx, |editor, cx| {
+                        editor.set_read_only(false);
+                        let last_point = editor.buffer().read(cx).len(cx);
+                        editor.edit(
+                            vec![
+                                (last_point..last_point, entry.trim()),
+                                (last_point..last_point, "\n"),
+                            ],
+                            cx,
+                        );
+                        editor.set_read_only(true);
+                    });
                 }
             }
         });
@@ -877,8 +872,8 @@ fn log_filter<T: Message>(line: &T, cmp: <T as Message>::Level) -> Option<&str> 
 
 fn log_contents<T: Message>(lines: &VecDeque<T>, cmp: <T as Message>::Level) -> String {
     let (a, b) = lines.as_slices();
-    let a = a.into_iter().filter_map(move |v| log_filter(v, cmp));
-    let b = b.into_iter().filter_map(move |v| log_filter(v, cmp));
+    let a = a.iter().filter_map(move |v| log_filter(v, cmp));
+    let b = b.iter().filter_map(move |v| log_filter(v, cmp));
     a.chain(b).fold(String::new(), |mut acc, el| {
         acc.push_str(el);
         acc.push('\n');
@@ -1274,6 +1269,12 @@ impl Render for LspLogToolbarItemView {
 const RPC_MESSAGES: &str = "RPC Messages";
 const SERVER_LOGS: &str = "Server Logs";
 const SERVER_TRACE: &str = "Server Trace";
+
+impl Default for LspLogToolbarItemView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl LspLogToolbarItemView {
     pub fn new() -> Self {

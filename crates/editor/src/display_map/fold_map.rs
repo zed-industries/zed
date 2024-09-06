@@ -122,7 +122,7 @@ impl<'a> FoldMapWriter<'a> {
         let snapshot = self.0.snapshot.inlay_snapshot.clone();
         for (range, fold_text) in ranges.into_iter() {
             let buffer = &snapshot.buffer;
-            let range = range.start.to_offset(&buffer)..range.end.to_offset(&buffer);
+            let range = range.start.to_offset(buffer)..range.end.to_offset(buffer);
 
             // Ignore any empty ranges.
             if range.start == range.end {
@@ -420,7 +420,7 @@ impl FoldMap {
                     }
 
                     if fold_range.end > fold_range.start {
-                        const ELLIPSIS: &'static str = "⋯";
+                        const ELLIPSIS: &str = "⋯";
 
                         let fold_id = fold.id;
                         new_transforms.push(
@@ -850,7 +850,8 @@ fn consolidate_inlay_edits(mut edits: Vec<InlayEdit>) -> Vec<InlayEdit> {
 
     let _old_alloc_ptr = edits.as_ptr();
     let mut inlay_edits = edits.into_iter();
-    let inlay_edits = if let Some(mut first_edit) = inlay_edits.next() {
+
+    if let Some(mut first_edit) = inlay_edits.next() {
         // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
         #[allow(clippy::filter_map_identity)]
         let mut v: Vec<_> = inlay_edits
@@ -872,9 +873,7 @@ fn consolidate_inlay_edits(mut edits: Vec<InlayEdit>) -> Vec<InlayEdit> {
         v
     } else {
         vec![]
-    };
-
-    inlay_edits
+    }
 }
 
 fn consolidate_fold_edits(mut edits: Vec<FoldEdit>) -> Vec<FoldEdit> {
@@ -886,7 +885,8 @@ fn consolidate_fold_edits(mut edits: Vec<FoldEdit>) -> Vec<FoldEdit> {
     });
     let _old_alloc_ptr = edits.as_ptr();
     let mut fold_edits = edits.into_iter();
-    let fold_edits = if let Some(mut first_edit) = fold_edits.next() {
+
+    if let Some(mut first_edit) = fold_edits.next() {
         // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
         #[allow(clippy::filter_map_identity)]
         let mut v: Vec<_> = fold_edits
@@ -907,9 +907,7 @@ fn consolidate_fold_edits(mut edits: Vec<FoldEdit>) -> Vec<FoldEdit> {
         v
     } else {
         vec![]
-    };
-
-    fold_edits
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -956,9 +954,9 @@ impl sum_tree::Summary for TransformSummary {
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub struct FoldId(usize);
 
-impl Into<ElementId> for FoldId {
-    fn into(self) -> ElementId {
-        ElementId::Integer(self.0)
+impl From<FoldId> for ElementId {
+    fn from(val: FoldId) -> Self {
+        ElementId::Integer(val.0)
     }
 }
 

@@ -52,7 +52,7 @@ impl ObjectFit {
         let image_ratio = image_size.width / image_size.height;
         let bounds_ratio = bounds.size.width / bounds.size.height;
 
-        let result_bounds = match self {
+        match self {
             ObjectFit::Fill => bounds,
             ObjectFit::Contain => {
                 let new_size = if bounds_ratio > image_ratio {
@@ -136,9 +136,7 @@ impl ObjectFit {
                 origin: bounds.origin,
                 size: image_size,
             },
-        };
-
-        result_bounds
+        }
     }
 }
 

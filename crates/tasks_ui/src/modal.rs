@@ -389,7 +389,7 @@ impl PickerDelegate for TasksModalDelegate {
             TaskSourceKind::Worktree { .. } => Some(Icon::new(IconName::FileTree)),
             TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
                 .get_type_icon(&name.to_lowercase())
-                .map(|icon_path| Icon::from_path(icon_path)),
+                .map(Icon::from_path),
         }
         .map(|icon| icon.color(Color::Muted).size(IconSize::Small));
         let history_run_icon = if Some(ix) <= self.divider_index {

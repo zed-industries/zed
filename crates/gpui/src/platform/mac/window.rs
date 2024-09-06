@@ -449,7 +449,7 @@ impl MacWindowState {
         window_frame.origin.y =
             screen_frame.size.height - window_frame.origin.y - window_frame.size.height;
 
-        let bounds = Bounds::new(
+        Bounds::new(
             point(
                 px((window_frame.origin.x - screen_frame.origin.x) as f32),
                 px((window_frame.origin.y + screen_frame.origin.y) as f32),
@@ -458,8 +458,7 @@ impl MacWindowState {
                 px(window_frame.size.width as f32),
                 px(window_frame.size.height as f32),
             ),
-        );
-        bounds
+        )
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -537,7 +536,7 @@ impl MacWindow {
 
             let display = display_id
                 .and_then(MacDisplay::find_by_id)
-                .unwrap_or_else(|| MacDisplay::primary());
+                .unwrap_or_else(MacDisplay::primary);
 
             let mut target_screen = nil;
             let mut screen_frame = None;
@@ -1981,13 +1980,10 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
             }
             window_state.lock().input_handler = Some(input_handler);
         } else {
-            match ime {
-                ImeInput::InsertText(text, range) => {
-                    if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
-                        ime_input.push((text, range));
-                    }
+            if let ImeInput::InsertText(text, range) = ime {
+                if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
+                    ime_input.push((text, range));
                 }
-                _ => {}
             }
         }
     }

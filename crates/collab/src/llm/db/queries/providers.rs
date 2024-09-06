@@ -82,7 +82,7 @@ impl LlmDatabase {
     pub async fn insert_models(&mut self, models: &[ModelParams]) -> Result<()> {
         let all_provider_ids = &self.provider_ids;
         self.transaction(|tx| async move {
-            model::Entity::insert_many(models.into_iter().map(|model_params| {
+            model::Entity::insert_many(models.iter().map(|model_params| {
                 let provider_id = all_provider_ids[&model_params.provider];
                 model::ActiveModel {
                     provider_id: ActiveValue::set(provider_id),

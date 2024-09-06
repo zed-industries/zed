@@ -63,6 +63,12 @@ pub struct BufferDiff {
     tree: SumTree<DiffHunk<Anchor>>,
 }
 
+impl Default for BufferDiff {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BufferDiff {
     pub fn new() -> BufferDiff {
         BufferDiff {

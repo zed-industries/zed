@@ -234,13 +234,13 @@ impl ProjectSearch {
                 .search_history_mut(SearchInputKind::Query)
                 .add(&mut self.search_history_cursor, query.as_str().to_string());
             let included = query.as_inner().files_to_include().sources().join(",");
-            if included.len() > 0 {
+            if !included.is_empty() {
                 project
                     .search_history_mut(SearchInputKind::Include)
                     .add(&mut self.search_included_history_cursor, included);
             }
             let excluded = query.as_inner().files_to_exclude().sources().join(",");
-            if excluded.len() > 0 {
+            if !excluded.is_empty() {
                 project
                     .search_history_mut(SearchInputKind::Exclude)
                     .add(&mut self.search_excluded_history_cursor, excluded);
@@ -692,20 +692,16 @@ impl ProjectSearchView {
         // Subscribe to query_editor in order to reraise editor events for workspace item activation purposes
         subscriptions.push(
             cx.subscribe(&query_editor, |this, _, event: &EditorEvent, cx| {
-                match event {
-                    EditorEvent::Edited { .. } => {
-                        if EditorSettings::get_global(cx).use_smartcase_search {
-                            let query = this.search_query_text(cx);
-                            if !query.is_empty() {
-                                if this.search_options.contains(SearchOptions::CASE_SENSITIVE)
-                                    != is_contains_uppercase(&query)
-                                {
-                                    this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
-                                }
-                            }
+                if let EditorEvent::Edited { .. } = event {
+                    if EditorSettings::get_global(cx).use_smartcase_search {
+                        let query = this.search_query_text(cx);
+                        if !query.is_empty()
+                            && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
+                                != is_contains_uppercase(&query)
+                        {
+                            this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                         }
                     }
-                    _ => {}
                 }
                 cx.emit(ViewEvent::EditorEvent(event.clone()))
             }),
@@ -904,11 +900,7 @@ impl ProjectSearchView {
                 .0
                 .get(&workspace.project().downgrade());
 
-            let settings = if let Some(settings) = settings {
-                Some(settings.clone())
-            } else {
-                None
-            };
+            let settings = settings.cloned();
 
             let weak_workspace = cx.view().downgrade();
 
@@ -1075,13 +1067,12 @@ impl ProjectSearchView {
         if let Some(index) = self.active_match_index {
             let match_ranges = self.model.read(cx).match_ranges.clone();
 
-            if !EditorSettings::get_global(cx).search_wrap {
-                if (direction == Direction::Next && index + 1 >= match_ranges.len())
-                    || (direction == Direction::Prev && index == 0)
-                {
-                    crate::show_no_more_matches(cx);
-                    return;
-                }
+            if !EditorSettings::get_global(cx).search_wrap
+                && ((direction == Direction::Next && index + 1 >= match_ranges.len())
+                    || (direction == Direction::Prev && index == 0))
+            {
+                crate::show_no_more_matches(cx);
+                return;
             }
 
             let new_index = self.results_editor.update(cx, |editor, cx| {
@@ -1109,14 +1100,12 @@ impl ProjectSearchView {
 
     fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
         self.set_search_editor(SearchInputKind::Query, query, cx);
-        if EditorSettings::get_global(cx).use_smartcase_search {
-            if !query.is_empty() {
-                if self.search_options.contains(SearchOptions::CASE_SENSITIVE)
-                    != is_contains_uppercase(query)
-                {
-                    self.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx)
-                }
-            }
+        if EditorSettings::get_global(cx).use_smartcase_search
+            && !query.is_empty()
+            && self.search_options.contains(SearchOptions::CASE_SENSITIVE)
+                != is_contains_uppercase(query)
+        {
+            self.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx)
         }
     }
 
@@ -1258,13 +1247,19 @@ impl ProjectSearchView {
             && !self.model.read(cx).match_ranges.is_empty()
         {
             cx.stop_propagation();
-            return self.focus_results_editor(cx);
+            self.focus_results_editor(cx)
         }
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn results_editor(&self) -> &View<Editor> {
         &self.results_editor
+    }
+}
+
+impl Default for ProjectSearchBar {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1498,7 +1493,7 @@ impl ProjectSearchBar {
                                 .project
                                 .read(cx)
                                 .search_history(kind)
-                                .current(&search_view.model.read(cx).cursor(kind))
+                                .current(search_view.model.read(cx).cursor(kind))
                                 .map(str::to_string)
                             {
                                 search_view.set_search_editor(kind, &new_query, cx);
@@ -1511,7 +1506,7 @@ impl ProjectSearchBar {
                             project.update(cx, |project, _| {
                                 project
                                     .search_history_mut(kind)
-                                    .previous(&mut model.cursor_mut(kind))
+                                    .previous(model.cursor_mut(kind))
                                     .map(str::to_string)
                             })
                         }) {
@@ -1557,7 +1552,7 @@ impl ProjectSearchBar {
         };
 
         EditorElement::new(
-            &editor,
+            editor,
             EditorStyle {
                 background: cx.theme().colors().editor_background,
                 local_player: cx.theme().players().local(),
@@ -3115,7 +3110,7 @@ pub mod tests {
         let search_bar_2 = window.build_view(cx, |_| ProjectSearchBar::new());
 
         assert_eq!(panes.len(), 1);
-        let first_pane = panes.get(0).cloned().unwrap();
+        let first_pane = panes.first().cloned().unwrap();
         assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 0);
         window
             .update(cx, |workspace, cx| {
@@ -3327,7 +3322,7 @@ pub mod tests {
             .update(cx, |this, _| this.panes().to_owned())
             .unwrap();
         assert_eq!(panes.len(), 1);
-        let first_pane = panes.get(0).cloned().unwrap();
+        let first_pane = panes.first().cloned().unwrap();
         assert_eq!(cx.update(|cx| first_pane.read(cx).items_len()), 0);
         window
             .update(cx, |workspace, cx| {

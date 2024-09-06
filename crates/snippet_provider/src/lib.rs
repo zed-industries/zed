@@ -182,7 +182,7 @@ impl SnippetProvider {
     ) -> Vec<Arc<Snippet>> {
         let mut user_snippets: Vec<_> = self
             .snippets
-            .get(&language)
+            .get(language)
             .cloned()
             .unwrap_or_default()
             .into_iter()

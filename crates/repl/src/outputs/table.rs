@@ -73,7 +73,7 @@ pub struct TableView {
 }
 
 fn cell_content(row: &Value, field: &str) -> String {
-    match row.get(&field) {
+    match row.get(field) {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Number(n)) => n.to_string(),
         Some(Value::Bool(b)) => b.to_string(),
@@ -116,7 +116,7 @@ impl TableView {
             };
 
             for row in data {
-                let content = cell_content(&row, &field.name);
+                let content = cell_content(row, &field.name);
                 runs[0].len = content.len();
                 let cell_width = cx
                     .text_system()
@@ -130,7 +130,7 @@ impl TableView {
             widths.push(width)
         }
 
-        let cached_clipboard_content = Self::create_clipboard_content(&table);
+        let cached_clipboard_content = Self::create_clipboard_content(table);
 
         Self {
             table: table.clone(),
@@ -272,7 +272,7 @@ impl Render for TableView {
 
         let body = data
             .iter()
-            .map(|row| self.render_row(&self.table.schema, false, &row, cx));
+            .map(|row| self.render_row(&self.table.schema, false, row, cx));
 
         v_flex()
             .id("table")

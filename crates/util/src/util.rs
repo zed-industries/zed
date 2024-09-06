@@ -251,7 +251,7 @@ pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
 
     for line in env.split_terminator('\n') {
         if let Some(separator_index) = line.find('=') {
-            if &line[..separator_index] != "" {
+            if !line[..separator_index].is_empty() {
                 if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
                     f(key, value)
                 }

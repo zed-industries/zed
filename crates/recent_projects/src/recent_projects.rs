@@ -136,8 +136,8 @@ impl RecentProjects {
         let weak = cx.view().downgrade();
         workspace.toggle_modal(cx, |cx| {
             let delegate = RecentProjectsDelegate::new(weak, create_new_window, true);
-            let modal = Self::new(delegate, 34., cx);
-            modal
+
+            Self::new(delegate, 34., cx)
         })
     }
 }

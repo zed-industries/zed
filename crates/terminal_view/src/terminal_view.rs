@@ -645,7 +645,7 @@ fn subscribe_for_terminal_events(
                                 &path_like_target.maybe_path,
                                 cx,
                             );
-                            smol::block_on(valid_files_to_open_task).len() > 0
+                            !smol::block_on(valid_files_to_open_task).is_empty()
                         } else {
                             false
                         }
@@ -867,7 +867,7 @@ pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<Re
     if query == "." {
         return None;
     }
-    let searcher = RegexSearch::new(&query);
+    let searcher = RegexSearch::new(query);
     searcher.ok()
 }
 
@@ -1239,7 +1239,7 @@ impl SearchableItem for TerminalView {
         let searcher = match &*query {
             SearchQuery::Text { .. } => regex_search_for_query(
                 &(SearchQuery::text(
-                    regex_to_literal(&query.as_str()),
+                    regex_to_literal(query.as_str()),
                     query.whole_word(),
                     query.case_sensitive(),
                     query.include_ignored(),
@@ -1269,7 +1269,7 @@ impl SearchableItem for TerminalView {
         // Selection head might have a value if there's a selection that isn't
         // associated with a match. Therefore, if there are no matches, we should
         // report None, no matter the state of the terminal
-        let res = if matches.len() > 0 {
+        let res = if !matches.is_empty() {
             if let Some(selection_head) = self.terminal().read(cx).selection_head {
                 // If selection head is contained in a match. Return that match
                 if let Some(ix) = matches

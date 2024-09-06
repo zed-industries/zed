@@ -122,7 +122,7 @@ impl BufferSearchBar {
         };
 
         EditorElement::new(
-            &editor,
+            editor,
             EditorStyle {
                 background: cx.theme().colors().editor_background,
                 local_player: cx.theme().players().local(),
@@ -498,10 +498,10 @@ impl BufferSearchBar {
     }
 
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let query_editor = cx.new_view(|cx| Editor::single_line(cx));
+        let query_editor = cx.new_view(Editor::single_line);
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
-        let replacement_editor = cx.new_view(|cx| Editor::single_line(cx));
+        let replacement_editor = cx.new_view(Editor::single_line);
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
@@ -784,13 +784,12 @@ impl BufferSearchBar {
                     .filter(|matches| !matches.is_empty())
                 {
                     // If 'wrapscan' is disabled, searches do not wrap around the end of the file.
-                    if !EditorSettings::get_global(cx).search_wrap {
-                        if (direction == Direction::Next && index + count >= matches.len())
-                            || (direction == Direction::Prev && index < count)
-                        {
-                            crate::show_no_more_matches(cx);
-                            return;
-                        }
+                    if !EditorSettings::get_global(cx).search_wrap
+                        && ((direction == Direction::Next && index + count >= matches.len())
+                            || (direction == Direction::Prev && index < count))
+                    {
+                        crate::show_no_more_matches(cx);
+                        return;
                     }
                     let new_match_index = searchable_item
                         .match_index_for_direction(matches, index, direction, count, cx);
@@ -808,7 +807,7 @@ impl BufferSearchBar {
                 .searchable_items_with_matches
                 .get(&searchable_item.downgrade())
             {
-                if matches.len() == 0 {
+                if matches.is_empty() {
                     return;
                 }
                 let new_match_index = matches.len() - 1;
@@ -1100,7 +1099,7 @@ impl BufferSearchBar {
         cx.focus(handle);
     }
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
-        if let Some(_) = &self.active_searchable_item {
+        if self.active_searchable_item.is_some() {
             self.replace_enabled = !self.replace_enabled;
             let handle = if self.replace_enabled {
                 self.replacement_editor.focus_handle(cx)
@@ -1708,7 +1707,7 @@ mod tests {
         let last_match_selections = window
             .update(cx, |_, cx| {
                 assert!(
-                    editor.read(cx).is_focused(&cx),
+                    editor.read(cx).is_focused(cx),
                     "Should still have editor focused after SelectPrevMatch"
                 );
 

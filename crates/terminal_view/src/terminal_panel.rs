@@ -786,9 +786,9 @@ impl Panel for TerminalPanel {
         let settings = TerminalSettings::get_global(cx);
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => {
-                self.width.unwrap_or_else(|| settings.default_width)
+                self.width.unwrap_or(settings.default_width)
             }
-            DockPosition::Bottom => self.height.unwrap_or_else(|| settings.default_height),
+            DockPosition::Bottom => self.height.unwrap_or(settings.default_height),
         }
     }
 
@@ -886,9 +886,9 @@ fn retrieve_system_shell() -> Option<String> {
         use anyhow::Context;
         use util::ResultExt;
 
-        return std::env::var("SHELL")
+        std::env::var("SHELL")
             .context("Error finding SHELL in env.")
-            .log_err();
+            .log_err()
     }
     // `alacritty_terminal` uses this as default on Windows. See:
     // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130

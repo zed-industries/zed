@@ -13,7 +13,7 @@ pub use popover::SignatureHelpPopover;
 pub use state::SignatureHelpState;
 
 // Language-specific settings may define quotes as "brackets", so filter them out separately.
-const QUOTE_PAIRS: [(&'static str, &'static str); 3] = [("'", "'"), ("\"", "\""), ("`", "`")];
+const QUOTE_PAIRS: [(&str, &str); 3] = [("'", "'"), ("\"", "\""), ("`", "`")];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SignatureHelpHiddenBy {
@@ -167,10 +167,10 @@ impl Editor {
                         let language = editor.language_at(position, cx);
                         let project = editor.project.clone()?;
                         let (markdown, language_registry) = {
-                            project.update(cx, |project, mut cx| {
+                            project.update(cx, |project, cx| {
                                 let language_registry = project.languages().clone();
                                 (
-                                    project.signature_help(&buffer, buffer_position, &mut cx),
+                                    project.signature_help(&buffer, buffer_position, cx),
                                     language_registry,
                                 )
                             })

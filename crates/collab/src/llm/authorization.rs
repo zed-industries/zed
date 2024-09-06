@@ -26,19 +26,16 @@ fn authorize_access_to_model(
         return Ok(());
     }
 
-    match provider {
-        LanguageModelProvider::Anthropic => {
-            if model == "claude-3-5-sonnet" {
-                return Ok(());
-            }
-
-            if claims.has_llm_closed_beta_feature_flag
-                && Some(model) == config.llm_closed_beta_model_name.as_deref()
-            {
-                return Ok(());
-            }
+    if provider == LanguageModelProvider::Anthropic {
+        if model == "claude-3-5-sonnet" {
+            return Ok(());
         }
-        _ => {}
+
+        if claims.has_llm_closed_beta_feature_flag
+            && Some(model) == config.llm_closed_beta_model_name.as_deref()
+        {
+            return Ok(());
+        }
     }
 
     Err(Error::http(
