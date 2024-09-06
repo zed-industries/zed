@@ -1,10 +1,11 @@
+use std::fs;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::{sync::Arc, time::Duration};
 
+use ::fs::Fs;
 use anyhow::{anyhow, Result};
 use chrono::DateTime;
-use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
@@ -176,13 +177,16 @@ fn copilot_chat_config_path() -> &'static PathBuf {
     static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
     COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
-        if cfg!(target_os = "windows") {
+        let path = if cfg!(target_os = "windows") {
             home_dir().join("AppData").join("Local")
         } else {
             home_dir().join(".config")
         }
-        .join("github-copilot")
-        .join("hosts.json")
+        .join("github-copilot");
+
+        fs::create_dir_all(&path).expect("Failed to create copilot chat config directory");
+
+        path.join("hosts.json")
     })
 }
 
