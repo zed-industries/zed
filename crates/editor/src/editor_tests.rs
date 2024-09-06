@@ -200,7 +200,7 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
             buffer.edit([(0..1, "a")], None, cx);
             buffer.edit([(1..1, "b")], None, cx);
             buffer.end_transaction_at(now, cx);
-        });;
+        });
 
         assert_eq!(editor.text(cx), "ab2cde6");
         assert_eq!(editor.selections.ranges(cx), vec![3..3]);
@@ -1097,7 +1097,7 @@ fn test_move_cursor(cx: &mut TestAppContext) {
             None,
             cx,
         );
-    });;
+    });
     _ = view.update(cx, |view, cx| {
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -5029,7 +5029,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
                 Point::new(5, 0)..Point::new(5, 0)
             ]
         );
-    });;
+    });
 }
 
 #[gpui::test]
@@ -5809,7 +5809,7 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
                 DisplayPoint::new(DisplayRow(2), 1)..DisplayPoint::new(DisplayRow(2), 1)
             ]
         );
-    });;
+    });
 }
 
 #[gpui::test]
@@ -5916,7 +5916,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
                 Point::new(2, 1)..Point::new(2, 1)
             ]
         );
-    });;
+    });
 }
 
 #[gpui::test]
@@ -6088,7 +6088,7 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut gpui::TestAppContext) {
             editor.text(cx),
             "Hello 👋 😄👋:1: Test:wave: :wave:".unindent()
         );
-    });;
+    });
 }
 
 #[gpui::test]
@@ -6196,7 +6196,7 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
                 a.f(one, two, three)ˇ b
             "},
         );
-    });;
+    });
 }
 
 #[gpui::test]
@@ -6734,7 +6734,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
 
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));;
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
 
     let format = editor
         .update(cx, |editor, cx| {
@@ -6762,7 +6762,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         "one, two\nthree\n"
     );
 
-    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));;
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     // Ensure we don't lock if formatting hangs.
     fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
         assert_eq!(
@@ -7767,7 +7767,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
                 settings.show_completions_on_input = Some(false);
             });
         })
-    });;
+    });
     cx.set_state("editorˇ");
     cx.simulate_keystroke(".");
     assert!(cx.editor(|e, _| e.context_menu.read().is_none()));
@@ -8406,7 +8406,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
             view.selections.ranges(cx),
             [Point::new(0, 1)..Point::new(0, 1)]
         );
-    });;
+    });
 }
 
 #[gpui::test]
@@ -8480,7 +8480,7 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
         );
         assert_eq!(view.text(cx), expected_text);
         assert_eq!(view.selections.ranges(cx), expected_selections);
-    });;
+    });
 }
 
 #[gpui::test]
@@ -8543,7 +8543,7 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
 
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
-    });;
+    });
     _ = editor.update(cx, |editor, cx| {
         // Removing an excerpt causes the first selection to become degenerate.
         assert_eq!(
@@ -8610,7 +8610,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
 
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.remove_excerpts([excerpt1_id.unwrap()], cx);
-    });;
+    });
     _ = editor.update(cx, |editor, cx| {
         assert_eq!(
             editor.selections.ranges(cx),
@@ -8700,7 +8700,7 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
                 "}\n",     //
             )
         );
-    });;
+    });
 }
 
 #[gpui::test]
@@ -9043,7 +9043,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
                 cx,
             );
         });
-    });;
+    });
 
     // Apply the update of adding the excerpts.
     follower_1
@@ -9088,7 +9088,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
             multibuffer.remove_excerpts([excerpt_ids[1], excerpt_ids[2]], cx);
             multibuffer.remove_excerpts([excerpt_ids[0]], cx);
         });
-    });;
+    });
 
     // Apply the update of removing the excerpts.
     follower_1
@@ -9164,8 +9164,8 @@ async fn go_to_prev_overlapping_diagnostic(
                     cx,
                 )
                 .unwrap()
-        });;
-    });;
+        });
+    });
 
     executor.run_until_parked();
 
@@ -9570,7 +9570,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
             "fn main() { let a = {5}; }",
             "No extra braces from on type formatting should appear in the buffer"
         )
-    });;
+    });
 }
 
 #[gpui::test]
@@ -9967,7 +9967,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     let buffer_text = "one\ntwo\nthree\n";
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|cx| build_editor(buffer, cx));
-    editor.update(cx, |editor, cx| editor.set_text(buffer_text, cx));;
+    editor.update(cx, |editor, cx| editor.set_text(buffer_text, cx));
 
     editor
         .update(cx, |editor, cx| {
@@ -12685,7 +12685,7 @@ async fn setup_indent_guides_editor(
     let buffer_id = cx.update_editor(|editor, cx| {
         editor.set_text(text, cx);
         let buffer_ids = editor.buffer().read(cx).excerpt_buffer_ids();
-        
+
         buffer_ids[0]
     });
 
@@ -13616,7 +13616,7 @@ pub(crate) fn update_test_language_settings(
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, f);
         });
-    });;
+    });
 }
 
 pub(crate) fn update_test_project_settings(
@@ -13627,7 +13627,7 @@ pub(crate) fn update_test_project_settings(
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<ProjectSettings>(cx, f);
         });
-    });;
+    });
 }
 
 pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
@@ -13642,7 +13642,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         Project::init_settings(cx);
         workspace::init_settings(cx);
         crate::init(cx);
-    });;
+    });
 
     update_test_language_settings(cx, f);
 }
