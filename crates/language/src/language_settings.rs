@@ -1,6 +1,6 @@
 //! Provides `language`-related settings.
 
-use crate::{File, Language, LanguageServerName};
+use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
@@ -41,7 +41,7 @@ pub fn language_settings<'a>(
     cx: &'a AppContext,
 ) -> &'a LanguageSettings {
     let language_name = language.map(|l| l.name());
-    all_language_settings(file, cx).language(language_name.as_deref())
+    all_language_settings(file, cx).language(language_name)
 }
 
 /// Returns the settings for all languages from the provided file.
@@ -59,7 +59,7 @@ pub struct AllLanguageSettings {
     /// The inline completion settings.
     pub inline_completions: InlineCompletionSettings,
     defaults: LanguageSettings,
-    languages: HashMap<Arc<str>, LanguageSettings>,
+    languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
 }
 
@@ -210,7 +210,7 @@ pub struct AllLanguageSettingsContent {
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
     #[serde(default)]
-    pub languages: HashMap<Arc<str>, LanguageSettingsContent>,
+    pub languages: HashMap<LanguageName, LanguageSettingsContent>,
     /// Settings for associating file extensions and filenames
     /// with languages.
     #[serde(default)]
@@ -792,9 +792,9 @@ impl InlayHintSettings {
 
 impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
-    pub fn language<'a>(&'a self, language_name: Option<&str>) -> &'a LanguageSettings {
+    pub fn language<'a>(&'a self, language_name: Option<LanguageName>) -> &'a LanguageSettings {
         if let Some(name) = language_name {
-            if let Some(overrides) = self.languages.get(name) {
+            if let Some(overrides) = self.languages.get(&name) {
                 return overrides;
             }
         }
@@ -822,7 +822,7 @@ impl AllLanguageSettings {
             }
         }
 
-        self.language(language.map(|l| l.name()).as_deref())
+        self.language(language.map(|l| l.name()))
             .show_inline_completions
     }
 }

@@ -457,8 +457,7 @@ impl LspStore {
                     self.unregister_buffer_from_language_servers(&buffer, old_file, cx);
                 }
 
-                self.detect_language_for_buffer(&buffer, cx);
-                self.register_buffer_with_language_servers(&buffer, cx);
+                self.register_buffer_with_language_servers(buffer, cx);
             }
             BufferStoreEvent::BufferDropped(_) => {}
         }
@@ -523,7 +522,6 @@ impl LspStore {
         })
         .detach();
 
-        self.detect_language_for_buffer(buffer, cx);
         self.register_buffer_with_language_servers(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
@@ -600,7 +598,6 @@ impl LspStore {
                             buffers_with_unknown_injections.len()
                         );
                         for buffer in plain_text_buffers {
-                            this.detect_language_for_buffer(&buffer, cx);
                             this.register_buffer_with_language_servers(&buffer, cx);
                         }
 
@@ -618,37 +615,32 @@ impl LspStore {
         &mut self,
         buffer_handle: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Option<language::AvailableLanguage> {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let buffer = buffer_handle.read(cx);
         let Some(file) = buffer.file() else {
             dbg!("bye!");
-            return;
-        };
-        let content = buffer.as_rope();
-        let Some(new_language_result) = self
-            .languages
-            .language_for_file(file, Some(content), cx)
-            .now_or_never()
-        else {
-            dbg!("bye!");
-            return;
+            return None;
         };
 
-        match new_language_result {
-            Err(e) => {
-                dbg!(&e);
-                if e.is::<language::LanguageNotFound>() {
-                    cx.emit(LspStoreEvent::LanguageDetected {
-                        buffer: buffer_handle.clone(),
-                        new_language: None,
-                    });
-                }
-            }
-            Ok(new_language) => {
+        let content = buffer.as_rope();
+        let available_language = self.languages.language_for_file(file, Some(content), cx);
+        if let Some(available_language) = &available_language {
+            if let Some(Ok(Ok(new_language))) = self
+                .languages
+                .load_language(available_language)
+                .now_or_never()
+            {
                 self.set_language_for_buffer(buffer_handle, new_language, cx);
             }
-        };
+        } else {
+            cx.emit(LspStoreEvent::LanguageDetected {
+                buffer: buffer_handle.clone(),
+                new_language: None,
+            });
+        }
+
+        available_language
     }
 
     pub fn set_language_for_buffer(
@@ -1089,7 +1081,7 @@ impl LspStore {
                     let language_name = buffer.read(cx).language_at(position)?.name();
                     Some(
                         AllLanguageSettings::get_global(cx)
-                            .language(Some(&language_name))
+                            .language(Some(language_name))
                             .linked_edits,
                     )
                 }) == Some(true)
@@ -1356,9 +1348,12 @@ impl LspStore {
             // In the future, we should provide project guests with the names of LSP adapters,
             // so that they can use the correct LSP adapter when computing labels. For now,
             // guests just use the first LSP adapter associated with the buffer's language.
-            let lsp_adapter = language
-                .as_ref()
-                .and_then(|language| language_registry.lsp_adapters(language).first().cloned());
+            let lsp_adapter = language.as_ref().and_then(|language| {
+                language_registry
+                    .lsp_adapters(&language.name())
+                    .first()
+                    .cloned()
+            });
 
             cx.foreground_executor().spawn(async move {
                 let completions = task.await.map_err(|e| {
@@ -2489,6 +2484,8 @@ impl LspStore {
         buffer_handle: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) {
+        let available_language = self.detect_language_for_buffer(buffer_handle, cx);
+
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
 
@@ -2502,7 +2499,6 @@ impl LspStore {
                 return;
             };
             let initial_snapshot = buffer.text_snapshot();
-            let language = buffer.language().cloned();
             let worktree_id = file.worktree_id(cx);
 
             if let Some(diagnostics) = self.diagnostics.get(&worktree_id) {
@@ -2514,8 +2510,8 @@ impl LspStore {
                 }
             }
 
-            if let Some(language) = language {
-                for adapter in self.languages.lsp_adapters(&language) {
+            if let Some(language) = available_language {
+                for adapter in self.languages.lsp_adapters(&language.name()) {
                     let server = self
                         .language_server_ids
                         .get(&(worktree_id, adapter.name.clone()))
@@ -2537,7 +2533,7 @@ impl LspStore {
                             lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem::new(
                                     uri.clone(),
-                                    adapter.language_id(&language),
+                                    adapter.language_id(&language.name()),
                                     0,
                                     initial_snapshot.text(),
                                 ),
@@ -2587,7 +2583,7 @@ impl LspStore {
             let ids = &self.language_server_ids;
 
             if let Some(language) = buffer.language().cloned() {
-                for adapter in self.languages.lsp_adapters(&language) {
+                for adapter in self.languages.lsp_adapters(&language.name()) {
                     if let Some(server_id) = ids.get(&(worktree_id, adapter.name.clone())) {
                         buffer.update_diagnostics(*server_id, Default::default(), cx);
                     }
@@ -4243,7 +4239,7 @@ impl LspStore {
             return;
         }
 
-        let available_lsp_adapters = self.languages.clone().lsp_adapters(&language);
+        let available_lsp_adapters = self.languages.clone().lsp_adapters(&language.name());
         let available_language_servers = available_lsp_adapters
             .iter()
             .map(|lsp_adapter| lsp_adapter.name.clone())
@@ -4367,6 +4363,7 @@ impl LspStore {
                     binary: Some(proto::LanguageServerCommand { path, arguments }),
                     initialization_options,
                     code_action_kinds,
+                    language: proto::AvailableLanguage {}
                 }))
                 .await
         });
@@ -4424,7 +4421,7 @@ impl LspStore {
 
         let pending_server = match self.languages.create_pending_language_server(
             stderr_capture.clone(),
-            language.clone().map(|l| l.name()).unwrap_or_default(),
+            language.clone().map(|l| l.name()),
             adapter.clone(),
             Arc::clone(&worktree_path),
             lsp_adapter_delegate.clone(),
@@ -4790,8 +4787,16 @@ impl LspStore {
                     let language = self
                         .languages
                         .language_for_file(file, Some(buffer.as_rope()), cx)
-                        .now_or_never()?
-                        .ok()?;
+                        .and_then(|language| {
+                            Some(
+                                self.languages
+                                    .load_language(&language)
+                                    .now_or_never()?
+                                    .ok()?
+                                    .ok()?,
+                            )
+                        })?;
+
                     Some((worktree, language))
                 })
                 .collect();
@@ -4814,7 +4819,7 @@ impl LspStore {
         let stop_tasks = self
             .languages
             .clone()
-            .lsp_adapters(&language)
+            .lsp_adapters(&language.name())
             .iter()
             .map(|adapter| {
                 let stop_task = self.stop_language_server(worktree_id, adapter.name.clone(), cx);
@@ -5607,7 +5612,7 @@ impl LspStore {
                 if file.worktree.read(cx).id() != key.0
                     || !self
                         .languages
-                        .lsp_adapters(&language)
+                        .lsp_adapters(&language.name())
                         .iter()
                         .any(|a| a.name == key.1)
                 {
@@ -5639,7 +5644,7 @@ impl LspStore {
                     lsp::DidOpenTextDocumentParams {
                         text_document: lsp::TextDocumentItem::new(
                             uri,
-                            adapter.language_id(&language),
+                            adapter.language_id(&language.name()),
                             version,
                             initial_snapshot.text(),
                         ),
@@ -5920,7 +5925,7 @@ impl LspStore {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
             let worktree_id = file.worktree_id(cx);
             self.languages
-                .lsp_adapters(&language)
+                .lsp_adapters(&language.name())
                 .iter()
                 .flat_map(|adapter| {
                     let key = (worktree_id, adapter.name.clone());
@@ -6767,9 +6772,12 @@ async fn populate_labels_for_symbols(
 
         let mut labels = Vec::new();
         if let Some(language) = language {
-            let lsp_adapter = lsp_adapter
-                .clone()
-                .or_else(|| language_registry.lsp_adapters(&language).first().cloned());
+            let lsp_adapter = lsp_adapter.clone().or_else(|| {
+                language_registry
+                    .lsp_adapters(&language.name())
+                    .first()
+                    .cloned()
+            });
             if let Some(lsp_adapter) = lsp_adapter {
                 labels = lsp_adapter
                     .labels_for_symbols(&label_params, &language)

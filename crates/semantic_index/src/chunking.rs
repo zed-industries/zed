@@ -27,7 +27,11 @@ pub struct Chunk {
     pub digest: [u8; 32],
 }
 
-pub fn chunk_text(text: &str, language: Option<&Arc<Language>>, path: &Path) -> Vec<Chunk> {
+pub fn chunk_text(
+    text: &str,
+    language: Option<&Arc<Language>>,
+    path: &Path,
+) -> Vec<Chunk> {
     chunk_text_with_size_range(text, language, path, CHUNK_SIZE_RANGE)
 }
 

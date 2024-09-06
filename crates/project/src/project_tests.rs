@@ -6,7 +6,7 @@ use http_client::Url;
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, FakeLspAdapter,
-    LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, ToPoint,
+    LanguageConfig, LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
 use lsp::{DiagnosticSeverity, NumberOrString};
 use parking_lot::Mutex;
@@ -1559,7 +1559,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
         SettingsStore::update_global(cx, |settings, cx| {
             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.languages.insert(
-                    Arc::from("Rust"),
+                    "Rust".into(),
                     LanguageSettingsContent {
                         enable_language_server: Some(false),
                         ..Default::default()
@@ -1578,14 +1578,14 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
         SettingsStore::update_global(cx, |settings, cx| {
             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.languages.insert(
-                    Arc::from("Rust"),
+                    LanguageName::new("Rust"),
                     LanguageSettingsContent {
                         enable_language_server: Some(true),
                         ..Default::default()
                     },
                 );
                 settings.languages.insert(
-                    Arc::from("JavaScript"),
+                    LanguageName::new("JavaScript"),
                     LanguageSettingsContent {
                         enable_language_server: Some(false),
                         ..Default::default()
@@ -2983,7 +2983,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         buffer.edit([(0..0, "abc")], None, cx);
         assert!(buffer.is_dirty());
         assert!(!buffer.has_conflict());
-        assert_eq!(buffer.language().unwrap().name().as_ref(), "Plain Text");
+        assert_eq!(buffer.language().unwrap().name(), "Plain Text".into());
     });
     project
         .update(cx, |project, cx| {
@@ -3006,7 +3006,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         );
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
-        assert_eq!(buffer.language().unwrap().name().as_ref(), "Rust");
+        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
     });
 
     let opened_buffer = project
@@ -5308,7 +5308,7 @@ fn json_lang() -> Arc<Language> {
 fn js_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
-            name: Arc::from("JavaScript"),
+            name: "JavaScript".into(),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["js".to_string()],
                 ..Default::default()

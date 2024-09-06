@@ -1212,7 +1212,7 @@ impl Project {
             let language = languages.iter().find_map(|l| {
                 let adapter = self
                     .languages
-                    .lsp_adapters(l)
+                    .lsp_adapters(&l.name())
                     .iter()
                     .find(|adapter| adapter.name == started_lsp_name)?
                     .clone();

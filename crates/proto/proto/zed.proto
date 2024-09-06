@@ -2505,6 +2505,12 @@ message LanguageServerCommand {
    repeated string arguments = 2;
 }
 
+message AvailableLanguage {
+    string language_name = 7;
+    repeated string path_suffixes = 8;
+    optional string first_line_pattern = 9;
+}
+
 message CreateLanguageServer {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
@@ -2513,6 +2519,8 @@ message CreateLanguageServer {
     LanguageServerCommand binary = 4;
     optional string initialization_options = 5;
     optional string code_action_kinds = 6;
+
+    AvailableLanguage language = 7;
 }
 
 // message RestartLanguageServer {

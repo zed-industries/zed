@@ -35,7 +35,9 @@ mod tests {
     use super::*;
     use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
     use indoc::indoc;
-    use language::{BracketPair, BracketPairConfig, Language, LanguageConfig, LanguageMatcher};
+    use language::{
+        Language, BracketPair, BracketPairConfig, LanguageConfig, LanguageMatcher,
+    };
 
     #[gpui::test]
     async fn test_matching_bracket_highlights(cx: &mut gpui::TestAppContext) {
