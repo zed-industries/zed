@@ -9,7 +9,6 @@ use editor::{
     items::active_match_index,
     scroll::{Autoscroll, Axis},
     Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer,
-    SearchMode,
     MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
@@ -629,11 +628,7 @@ impl ProjectSearchView {
         let (mut options, filters_enabled) = if let Some(settings) = settings {
             (settings.search_options, settings.filters_enabled)
         } else {
-            let search_options = if EditorSettings::get_global(cx).search_mode == SearchMode::Regex {
-                SearchOptions::REGEX
-            } else {
-                SearchOptions::NONE
-            };
+            let search_options = SearchOptions::from_defaults(&EditorSettings::get_global(cx).search_defaults);
             (search_options, false)
         };
 

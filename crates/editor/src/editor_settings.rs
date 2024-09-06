@@ -28,7 +28,7 @@ pub struct EditorSettings {
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
     pub search_wrap: bool,
     #[serde(default)]
-    pub search_mode: SearchMode,
+    pub search_defaults: SearchDefaults,
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
@@ -157,13 +157,18 @@ pub enum ScrollBeyondLastLine {
     VerticalScrollMargin,
 }
 
-/// Default search mode, text or regex
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// Default match options; all false
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum SearchMode {
-    #[default]
-    Text,
-    Regex,
+pub struct SearchDefaults {
+    #[serde(default)]
+    pub whole_word: bool,
+    #[serde(default)]
+    pub case_sensitive: bool,
+    #[serde(default)]
+    pub include_ignored: bool,
+    #[serde(default)]
+    pub regex: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -260,10 +265,10 @@ pub struct EditorSettingsContent {
     /// Default: true
     pub search_wrap: Option<bool>,
 
-    /// Default search mode, (text or regex)
+    /// Defaults for search options (case sensitive, whole word, include ignored, regex)
     ///
-    /// Default: text
-    pub search_mode: Option<SearchMode>,
+    /// Default: all false
+    pub search_defaults: Option<SearchDefaults>,
 
     /// Whether to automatically show a signature help pop-up or not.
     ///
