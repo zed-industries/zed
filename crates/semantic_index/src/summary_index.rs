@@ -570,18 +570,17 @@ impl SummaryIndex {
             let stream = model.stream_completion(request, &cx);
             cx.background_executor()
                 .spawn(async move {
-                    let mut events = stream.await?;
-                    let answer = {
-                        let mut completion = String::new();
-
-                        while let Some(event) = events.next().await {
+                    let answer: String = stream
+                        .await?
+                        .filter_map(|event| async {
                             if let Ok(LanguageModelCompletionEvent::Text(text)) = event {
-                                completion.push_str(&text);
+                                Some(text)
+                            } else {
+                                None
                             }
-                        }
-
-                        completion
-                    };
+                        })
+                        .collect()
+                        .await;
 
                     log::info!(
                         "It took {:?} to summarize {:?} bytes of code.",

@@ -279,16 +279,19 @@ async fn commands_for_summaries(
                 .enumerate()
                 .map(|(ix, (stream, tx))| async move {
                     let start = std::time::Instant::now();
-                    let mut events = stream.await?;
+                    let events = stream.await?;
                     log::info!("Time taken for awaiting /await chunk stream #{ix}: {:?}", start.elapsed());
 
-                    let mut completion = String::new();
-
-                    while let Some(event) = events.next().await {
-                        if let Ok(LanguageModelCompletionEvent::Text(text)) = event {
-                            completion.push_str(&text);
-                        }
-                    }
+                    let completion: String = events
+                        .filter_map(|event| async {
+                            if let Ok(LanguageModelCompletionEvent::Text(text)) = event {
+                                Some(text)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                        .await;
 
                     log::info!("Time taken for all /auto chunks to come back for #{ix}: {:?}", start.elapsed());
 
