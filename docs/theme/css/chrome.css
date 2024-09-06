@@ -305,7 +305,8 @@ pre > .playground {
   border: none;
   margin: 0;
   box-shadow: none;
-  // HACK: The HTML rendered for code snippets that trigger the "playground" feature ends up being a <pre> element wrapping another <pre> element. These styles serve to not make that visible visually. The correct fix would be to tackle the rendered HTML somehow.
+  /* HACK: This serves to visually hide nested <pre> elements in "playground" code snippets.
+  A more robust solution would involve modifying the rendered HTML. */
 }
 
 @media (pointer: coarse) {
