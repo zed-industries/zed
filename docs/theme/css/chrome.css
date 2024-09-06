@@ -279,7 +279,7 @@ pre:hover > .buttons {
 }
 pre > .buttons :hover {
   color: var(--sidebar-active);
-  border-color: var(--icons-hover);
+  border-color: var(--border-hover);
   background-color: var(--theme-hover);
 }
 pre > .buttons i {
@@ -287,19 +287,20 @@ pre > .buttons i {
 }
 pre > .buttons button {
   cursor: inherit;
-  margin: 0px 5px;
-  padding: 3px 5px;
+  margin: 0 4px;
+  height: 26px;
+  width: 26px;
   font-size: 14px;
-
   border-style: solid;
   border-width: 1px;
   border-radius: 4px;
-  border-color: var(--icons);
+  border-color: var(--border);
   background-color: var(--theme-popup-bg);
   transition: 100ms;
   transition-property: color, border-color, background-color;
   color: var(--icons);
 }
+
 @media (pointer: coarse) {
   pre > .buttons button {
     /* On mobile, make it easier to tap buttons. */
