@@ -504,7 +504,7 @@ impl BufferSearchBar {
         let replacement_editor = cx.new_view(|cx| Editor::single_line(cx));
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
-        let search_options = SearchOptions::from_defaults(&EditorSettings::get_global(cx).search_defaults);
+        let search_options = SearchOptions::from_defaults(&EditorSettings::get_global(cx).search);
 
         Self {
             query_editor,

@@ -628,7 +628,7 @@ impl ProjectSearchView {
         let (mut options, filters_enabled) = if let Some(settings) = settings {
             (settings.search_options, settings.filters_enabled)
         } else {
-            let search_options = SearchOptions::from_defaults(&EditorSettings::get_global(cx).search_defaults);
+            let search_options = SearchOptions::from_defaults(&EditorSettings::get_global(cx).search);
             (search_options, false)
         };
 
