@@ -111,7 +111,6 @@ struct XKBStateNotiy {
 #[derive(Debug, Default)]
 pub struct Xdnd {
     other_window: xproto::Window,
-    dragging: bool,
     drag_type: u32,
     retrieved: bool,
     position: Point<Pixels>,
@@ -648,13 +647,19 @@ impl X11Client {
 
                 if event.type_ == state.atoms.XdndEnter {
                     state.xdnd_state.other_window = atom;
-                    state.xdnd_state.dragging = true;
                     if (arg1 & 0x1) == 0x1 {
                         state.xdnd_state.drag_type = xdnd_get_supported_atom(
                             &state.xcb_connection,
                             &state.atoms,
                             state.xdnd_state.other_window,
                         );
+                    } else {
+                        if let Some(atom) = [arg2, arg3, arg4]
+                            .into_iter()
+                            .find(|atom| xdnd_is_atom_supported(atom.clone(), &state.atoms))
+                        {
+                            state.xdnd_state.drag_type = atom;
+                        }
                     }
                 } else if event.type_ == state.atoms.XdndLeave {
                     window.handle_input(PlatformInput::FileDrop(FileDropEvent::Pending {
@@ -695,33 +700,33 @@ impl X11Client {
                         position: state.xdnd_state.position,
                     }));
                 } else if event.type_ == state.atoms.XdndDrop {
-                    window.handle_input(PlatformInput::FileDrop(FileDropEvent::Submit {
-                        position: state.xdnd_state.position,
-                    }));
                     xdnd_send_finished(
                         &state.xcb_connection,
                         &state.atoms,
                         event.window,
                         state.xdnd_state.other_window,
                     );
+                    window.handle_input(PlatformInput::FileDrop(FileDropEvent::Submit {
+                        position: state.xdnd_state.position,
+                    }));
                     state.xdnd_state = Xdnd::default();
                 }
             }
             Event::SelectionNotify(event) => {
                 let window = self.get_window(event.requestor)?;
                 let mut state = self.0.borrow_mut();
-                let property = state
-                    .xcb_connection
-                    .get_property(
-                        false,
-                        event.requestor,
-                        state.atoms.XDND_DATA,
-                        AtomEnum::ANY,
-                        0,
-                        1024,
-                    )
-                    .unwrap();
-                if let Ok(reply) = property.reply() {
+                let property = state.xcb_connection.get_property(
+                    false,
+                    event.requestor,
+                    state.atoms.XDND_DATA,
+                    AtomEnum::ANY,
+                    0,
+                    1024,
+                );
+                if property.as_ref().log_err().is_none() {
+                    return Some(());
+                }
+                if let Ok(reply) = property.unwrap().reply() {
                     match str::from_utf8(&reply.value) {
                         Ok(file_list) => {
                             let paths: SmallVec<[_; 2]> = file_list
