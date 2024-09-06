@@ -2501,16 +2501,18 @@ message UpdateUserSettings {
 }
 
 message LanguageServerCommand {
-   optional string path = 1;
-   repeated string args = 2;
+   string path = 1;
+   repeated string arguments = 2;
 }
 
 message CreateLanguageServer {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
-    string name = 4;
+    string name = 3;
 
-    LanguageServerCommand binary = 5;
+    LanguageServerCommand binary = 4;
+    optional string initialization_options = 5;
+    optional string code_action_kinds = 6;
 }
 
 // message RestartLanguageServer {

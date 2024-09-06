@@ -945,6 +945,7 @@ impl LanguageServer {
 
     pub fn update_capabilities(&self, update: impl FnOnce(&mut ServerCapabilities)) {
         update(self.capabilities.write().deref_mut());
+        dbg!(&self.capabilities);
     }
 
     /// Get the id of the running language server.
@@ -994,6 +995,7 @@ impl LanguageServer {
             params,
         })
         .unwrap();
+        dbg!(&message);
 
         let (tx, rx) = oneshot::channel();
         let handle_response = response_handlers

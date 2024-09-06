@@ -723,7 +723,7 @@ impl LanguageRegistry {
     pub fn create_pending_language_server(
         self: &Arc<Self>,
         stderr_capture: Arc<Mutex<Option<String>>>,
-        language_name_for_tests: Arc<str>,
+        _language_name_for_tests: Arc<str>,
         adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
@@ -815,7 +815,7 @@ impl LanguageRegistry {
                                         .state
                                         .write()
                                         .fake_server_txs
-                                        .get_mut(language_name_for_tests.as_ref())
+                                        .get_mut(_language_name_for_tests.as_ref())
                                     {
                                         for tx in txs {
                                             tx.unbounded_send(fake_server.clone()).ok();

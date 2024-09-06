@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use client::{proto, TypedEnvelope};
 use collections::{btree_map, BTreeMap, HashMap, HashSet};
 use futures::{
-    future::{join_all, Shared},
+    future::{join_all, BoxFuture, Shared},
     select,
     stream::FuturesUnordered,
     Future, FutureExt, StreamExt,
@@ -25,7 +25,7 @@ use gpui::{
     AppContext, AsyncAppContext, Entity, EventEmitter, Model, ModelContext, PromptLevel, Task,
     WeakModel,
 };
-use http_client::HttpClient;
+use http_client::{AsyncBody, Error, HttpClient, Request, Response, Uri};
 use itertools::Itertools;
 use language::{
     language_settings::{language_settings, AllLanguageSettings, LanguageSettings},
@@ -37,10 +37,11 @@ use language::{
     PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
-    CompletionContext, DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    Edit, FileSystemWatcher, InsertTextFormat, LanguageServer, LanguageServerBinary,
-    LanguageServerId, LspRequestFuture, MessageActionItem, MessageType, OneOf, ServerHealthStatus,
-    ServerStatus, SymbolKind, TextEdit, WorkDoneProgressCancelParams,
+    CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
+    DidChangeWatchedFilesRegistrationOptions, Edit, FileSystemWatcher, InsertTextFormat,
+    LanguageServer, LanguageServerBinary, LanguageServerId, LspRequestFuture, MessageActionItem,
+    MessageType, OneOf, ServerHealthStatus, ServerStatus, SymbolKind, TextEdit,
+    WorkDoneProgressCancelParams,
 };
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -316,6 +317,7 @@ impl LspStore {
         fs: Arc<dyn Fs>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        dbg!("new local");
         let yarn = YarnPathStore::new(fs.clone(), cx);
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
             .detach();
@@ -372,6 +374,40 @@ impl LspStore {
         })
     }
 
+    pub fn new_ssh(
+        buffer_store: Model<BufferStore>,
+        worktree_store: Model<WorktreeStore>,
+        languages: Arc<LanguageRegistry>,
+        upstream_client: AnyProtoClient,
+        project_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        dbg!("new ssh");
+        cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+            .detach();
+        cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+            .detach();
+
+        Self {
+            mode: LspStoreMode::Ssh(SshLspStore { upstream_client }),
+            downstream_client: None,
+            project_id,
+            buffer_store,
+            worktree_store,
+            languages: languages.clone(),
+            language_server_ids: Default::default(),
+            language_server_statuses: Default::default(),
+            nonce: StdRng::from_entropy().gen(),
+            buffer_snapshots: Default::default(),
+            next_diagnostic_group_id: Default::default(),
+            diagnostic_summaries: Default::default(),
+            diagnostics: Default::default(),
+            active_entry: None,
+            _maintain_workspace_config: Self::maintain_workspace_config(cx),
+            _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
+        }
+    }
+
     pub fn new_remote(
         buffer_store: Model<BufferStore>,
         worktree_store: Model<WorktreeStore>,
@@ -380,6 +416,7 @@ impl LspStore {
         project_id: u64,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        dbg!("new remote");
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
             .detach();
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
@@ -476,6 +513,7 @@ impl LspStore {
         buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        dbg!("registeR_buffer");
         buffer.update(cx, |buffer, _| {
             buffer.set_language_registry(self.languages.clone())
         });
@@ -513,10 +551,13 @@ impl LspStore {
         languages: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Task<()> {
+        dbg!("a");
         let mut subscription = languages.subscribe();
         let mut prev_reload_count = languages.reload_count();
         cx.spawn(move |this, mut cx| async move {
+            dbg!("b");
             while let Some(()) = subscription.next().await {
+                dbg!("c");
                 if let Some(this) = this.upgrade() {
                     // If the language registry has been reloaded, then remove and
                     // re-assign the languages on all open buffers.
@@ -554,6 +595,10 @@ impl LspStore {
                             }
                         }
 
+                        dbg!(
+                            plain_text_buffers.len(),
+                            buffers_with_unknown_injections.len()
+                        );
                         for buffer in plain_text_buffers {
                             this.detect_language_for_buffer(&buffer, cx);
                             this.register_buffer_with_language_servers(&buffer, cx);
@@ -577,6 +622,7 @@ impl LspStore {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let buffer = buffer_handle.read(cx);
         let Some(file) = buffer.file() else {
+            dbg!("bye!");
             return;
         };
         let content = buffer.as_rope();
@@ -585,11 +631,13 @@ impl LspStore {
             .language_for_file(file, Some(content), cx)
             .now_or_never()
         else {
+            dbg!("bye!");
             return;
         };
 
         match new_language_result {
             Err(e) => {
+                dbg!(&e);
                 if e.is::<language::LanguageNotFound>() {
                     cx.emit(LspStoreEvent::LanguageDetected {
                         buffer: buffer_handle.clone(),
@@ -609,6 +657,7 @@ impl LspStore {
         new_language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
+        dbg!("set_language_for_buffer", &new_language);
         buffer.update(cx, |buffer, cx| {
             if buffer.language().map_or(true, |old_language| {
                 !Arc::ptr_eq(old_language, &new_language)
@@ -622,9 +671,7 @@ impl LspStore {
 
         if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
-            if worktree.read(cx).is_local() {
-                self.start_language_servers(&worktree, new_language.clone(), cx)
-            }
+            self.start_language_servers(&worktree, new_language.clone(), cx)
         }
 
         cx.emit(LspStoreEvent::LanguageDetected {
@@ -690,6 +737,7 @@ impl LspStore {
                 .map(|(_, server)| Arc::clone(server)),
         };
         let file = File::from_dyn(buffer.file()).and_then(File::as_local);
+        dbg!(&language_server.is_some(), file.is_some());
         if let (Some(file), Some(language_server)) = (file, language_server) {
             let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
             let status = request.status();
@@ -1296,6 +1344,7 @@ impl LspStore {
         let language_registry = self.languages.clone();
 
         if let Some(upstream_client) = self.upstream_client() {
+            dbg!(&position, &context);
             let task = self.send_lsp_proto_request(
                 buffer.clone(),
                 upstream_client,
@@ -1312,7 +1361,11 @@ impl LspStore {
                 .and_then(|language| language_registry.lsp_adapters(language).first().cloned());
 
             cx.foreground_executor().spawn(async move {
-                let completions = task.await?;
+                let completions = task.await.map_err(|e| {
+                    dbg!(&e);
+                    e
+                })?;
+                dbg!(&completions);
                 let mut result = Vec::new();
                 populate_labels_for_completions(
                     completions,
@@ -1322,6 +1375,7 @@ impl LspStore {
                     &mut result,
                 )
                 .await;
+                dbg!(&result);
                 Ok(result)
             })
         } else {
@@ -2226,7 +2280,7 @@ impl LspStore {
             uri: lsp::Url::from_file_path(abs_path).log_err()?,
         };
 
-        for (_, _, server) in self.language_servers_for_worktree(worktree_id) {
+        for server in self.language_servers_for_worktree(worktree_id) {
             if let Some(include_text) = include_text(server.as_ref()) {
                 let text = if include_text {
                     Some(buffer.read(cx).text())
@@ -2270,7 +2324,8 @@ impl LspStore {
                                 .read(cx)
                                 .worktree_for_id(*worktree_id, cx)?;
                             let state = this.as_local()?.language_servers.get(server_id)?;
-                            let delegate = ProjectLspAdapterDelegate::new(this, &worktree, cx);
+                            let delegate =
+                                ProjectLspAdapterDelegate::for_local(this, &worktree, cx);
                             match state {
                                 LanguageServerState::Starting(_) => None,
                                 LanguageServerState::Running {
@@ -2325,19 +2380,15 @@ impl LspStore {
     fn language_servers_for_worktree(
         &self,
         worktree_id: WorktreeId,
-    ) -> impl Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<Language>, &Arc<LanguageServer>)> {
+    ) -> impl Iterator<Item = &Arc<LanguageServer>> {
         self.language_server_ids
             .iter()
             .filter_map(move |((language_server_worktree_id, _), id)| {
                 if *language_server_worktree_id == worktree_id {
-                    if let Some(LanguageServerState::Running {
-                        adapter,
-                        language,
-                        server,
-                        ..
-                    }) = self.as_local()?.language_servers.get(id)
+                    if let Some(LanguageServerState::Running { server, .. }) =
+                        self.as_local()?.language_servers.get(id)
                     {
-                        return Some((adapter, language, server));
+                        return Some(server);
                     }
                 }
                 None
@@ -2928,7 +2979,7 @@ impl LspStore {
         <T::LspRequest as lsp::request::Request>::Params: Send,
         <T::LspRequest as lsp::request::Request>::Result: Send,
     {
-        let sender_id = envelope.original_sender_id()?;
+        let sender_id = envelope.original_sender_id().unwrap_or_default();
         let buffer_id = T::buffer_id_from_proto(&envelope.payload)?;
         let buffer_handle = this.update(&mut cx, |this, cx| {
             this.buffer_store.read(cx).get_existing(buffer_id)
@@ -2966,7 +3017,7 @@ impl LspStore {
         envelope: TypedEnvelope<proto::MultiLspQuery>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::MultiLspQueryResponse> {
-        let sender_id = envelope.original_sender_id()?;
+        let sender_id = envelope.original_sender_id().unwrap_or_default();
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
         let buffer = this.update(&mut cx, |this, cx| {
@@ -3106,7 +3157,7 @@ impl LspStore {
         envelope: TypedEnvelope<proto::ApplyCodeAction>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ApplyCodeActionResponse> {
-        let sender_id = envelope.original_sender_id()?;
+        let sender_id = envelope.original_sender_id().unwrap_or_default();
         let action = Self::deserialize_code_action(
             envelope
                 .payload
@@ -3916,7 +3967,7 @@ impl LspStore {
         envelope: TypedEnvelope<proto::InlayHints>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::InlayHintsResponse> {
-        let sender_id = envelope.original_sender_id()?;
+        let sender_id = envelope.original_sender_id().unwrap_or_default();
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let buffer = this.update(&mut cx, |this, cx| {
             this.buffer_store.read(cx).get_existing(buffer_id)
@@ -3992,7 +4043,7 @@ impl LspStore {
         envelope: TypedEnvelope<proto::OpenBufferForSymbol>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferForSymbolResponse> {
-        let peer_id = envelope.original_sender_id()?;
+        let peer_id = envelope.original_sender_id().unwrap_or_default();
         let symbol = envelope
             .payload
             .symbol
@@ -4094,17 +4145,30 @@ impl LspStore {
         Ok(proto::Ack {})
     }
 
-    async fn handle_create_language_server(
+    pub async fn handle_create_language_server(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::CreateLanguageServer>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
-        // We're on SSH host, using a local LSP adapter
-        let local = self.as_local().ok_or_else(|| anyhow!("not a local lsp"))?;
-        let adapter = SshLspAdapter::new(local, envelope.payload);
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let name = LanguageServerName::from_proto(envelope.payload.name);
+        let binary = envelope
+            .payload
+            .binary
+            .ok_or_else(|| anyhow!("missing binary"))?;
+        let binary = LanguageServerBinary {
+            path: PathBuf::from(binary.path),
+            env: None,
+            arguments: binary.arguments.into_iter().map(Into::into).collect(),
+        };
 
         this.update(&mut cx, |this, cx| {
+            let adapter = CachedLspAdapter::new(Arc::new(SshLspAdapter::new(
+                name,
+                binary,
+                envelope.payload.initialization_options,
+                envelope.payload.code_action_kinds,
+            )));
             let Some(worktree) = this
                 .worktree_store
                 .read(cx)
@@ -4113,9 +4177,11 @@ impl LspStore {
                 return Err(anyhow!("worktree not found"));
             };
 
-            this.start_language_server(&worktree, adapter, language, cx);
+            this.start_language_server(&worktree, adapter, None, cx);
             Ok(())
-        })
+        })??;
+
+        Ok(proto::Ack {})
     }
 
     async fn handle_apply_additional_edits_for_completion(
@@ -4170,10 +4236,10 @@ impl LspStore {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        let (root_file, is_local) =
-            worktree.update(cx, |tree, cx| (tree.root_file(cx), tree.is_local()));
+        dbg!("start_language_servers", &language);
+        let root_file = worktree.update(cx, |tree, cx| tree.root_file(cx));
         let settings = language_settings(Some(&language), root_file.map(|f| f as _).as_ref(), cx);
-        if !settings.enable_language_server || !is_local {
+        if !settings.enable_language_server || self.mode.is_remote() {
             return;
         }
 
@@ -4222,7 +4288,7 @@ impl LspStore {
         );
 
         for adapter in &enabled_lsp_adapters {
-            self.start_language_server(worktree, adapter.clone(), language.clone(), cx);
+            self.start_language_server(worktree, adapter.clone(), Some(language.clone()), cx);
         }
 
         // After starting all the language servers, reorder them to reflect the desired order
@@ -4257,9 +4323,21 @@ impl LspStore {
         let configured_binary = ProjectSettings::get_global(cx)
             .lsp
             .get(&adapter.name())
-            .and_then(|s| s.binary.clone());
-
-        let Some(configured_binary) = configured_binary else {
+            .and_then(|c| c.binary.as_ref())
+            .and_then(|config| {
+                if let Some(path) = &config.path {
+                    Some((path.clone(), config.arguments.clone().unwrap_or_default()))
+                } else {
+                    None
+                }
+            });
+        let delegate =
+            ProjectLspAdapterDelegate::for_ssh(self, worktree, cx) as Arc<dyn LspAdapterDelegate>;
+        let project_id = self.project_id;
+        let worktree_id = worktree.read(cx).id().to_proto();
+        let upstream_client = ssh.upstream_client.clone();
+        let name = adapter.name().to_string();
+        let Some((path, arguments)) = configured_binary else {
             cx.emit(LspStoreEvent::Notification(format!(
                 "ssh-remoting currently requires manually configuring {} in your settings",
                 adapter.name()
@@ -4267,24 +4345,38 @@ impl LspStore {
             return;
         };
 
-        let request = ssh.upstream_client.request(proto::CreateLanguageServer {
-            project_id: self.project_id,
-            worktree_id: worktree.read(cx).id().to_proto(),
-            language_server_id: self.languages.next_language_server_id().to_proto(),
-            name: adapter.name().to_string(),
-            binary: Some(proto::LanguageServerCommand {
-                path: configured_binary.path,
-                args: configured_binary.arguments.unwrap_or_default(),
-            }),
+        let task = cx.spawn(|_, _| async move {
+            let delegate = delegate;
+            let name = adapter.name().to_string();
+            let code_action_kinds = adapter
+                .adapter
+                .code_action_kinds()
+                .map(|kinds| serde_json::to_string(&kinds))
+                .transpose()?;
+            let get_options = adapter.adapter.clone().initialization_options(&delegate);
+            let initialization_options = get_options
+                .await?
+                .map(|options| serde_json::to_string(&options))
+                .transpose()?;
+
+            upstream_client
+                .request(dbg!(proto::CreateLanguageServer {
+                    project_id,
+                    worktree_id,
+                    name,
+                    binary: Some(proto::LanguageServerCommand { path, arguments }),
+                    initialization_options,
+                    code_action_kinds,
+                }))
+                .await
         });
 
         cx.spawn(|this, mut cx| async move {
-            if let Err(e) = request.await {
+            if let Err(e) = task.await {
                 this.update(&mut cx, |_this, cx| {
                     cx.emit(LspStoreEvent::Notification(format!(
                         "failed to start {}: {}",
-                        adapter.name(),
-                        e
+                        name, e
                     )))
                 })
                 .ok();
@@ -4322,7 +4414,7 @@ impl LspStore {
         }
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
-        let lsp_adapter_delegate = ProjectLspAdapterDelegate::new(self, worktree_handle, cx);
+        let lsp_adapter_delegate = ProjectLspAdapterDelegate::for_local(self, worktree_handle, cx);
         let cli_environment = self
             .as_local()
             .unwrap()
@@ -4332,7 +4424,7 @@ impl LspStore {
 
         let pending_server = match self.languages.create_pending_language_server(
             stderr_capture.clone(),
-            language.map(|l| l.name()).unwrap_or_default(),
+            language.clone().map(|l| l.name()).unwrap_or_default(),
             adapter.clone(),
             Arc::clone(&worktree_path),
             lsp_adapter_delegate.clone(),
@@ -4675,6 +4767,7 @@ impl LspStore {
         buffers: impl IntoIterator<Item = Model<Buffer>>,
         cx: &mut ModelContext<Self>,
     ) {
+        dbg!("restart language servers for buffers");
         if let Some(client) = self.upstream_client() {
             let request = client.request(proto::RestartLanguageServers {
                 project_id: self.project_id,
@@ -4715,6 +4808,7 @@ impl LspStore {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
+        dbg!("restart language servers");
         let worktree_id = worktree.read(cx).id();
 
         let stop_tasks = self
@@ -4840,6 +4934,7 @@ impl LspStore {
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<LanguageServer>> {
+        dbg!("setup_pending_language_server");
         let workspace_config = adapter
             .adapter
             .clone()
@@ -4849,26 +4944,6 @@ impl LspStore {
         let (language_server, mut initialization_options) = pending_server.task.await?;
 
         let name = language_server.name();
-
-        // 1. Make a SshLspAdapter, that blocks or awaits on a network round trip for these cases
-        //  - Problem: sticks a bunch of network requests in strange places
-        // 2. Move the adapter up into the server, theoretically workable, requires language integration surgery (and builting language server)
-        //  - Problem: More complexity than we want to take
-        // 3. Move the message processing down to the client,
-        //  - Problem: Lots of messages we could handle quickly on the server, can't do that with this
-
-        // Constraints:
-        //  - Some things are on the UI path (e.g. completion labels) MUST be on client
-        //  - We want a minimal server binary, doesn't link in a bunch of UI nonsense
-        //  - Ideally: the code is easy to understand.
-
-        // Create an SshLspAdapter that special cases some langauges but just does it's thing
-        // -----
-        // Fork LspAdapter, create SshLspAdapter,
-        //  fork languages for the stuff we need on the host side, and then redefine the existing languages in
-        //  terms of this subset
-
-        // This has to be on server, Can we make it on the client?
         language_server
             .on_notification::<lsp::notification::PublishDiagnostics, _>({
                 let adapter = adapter.clone();
@@ -4876,7 +4951,6 @@ impl LspStore {
                 move |mut params, mut cx| {
                     let adapter = adapter.clone();
                     if let Some(this) = this.upgrade() {
-                        // This has to be on client
                         adapter.process_diagnostics(&mut params);
                         // Everything else has to be on the server, Can we make it on the client?
                         this.update(&mut cx, |this, cx| {
@@ -6412,19 +6486,57 @@ fn glob_literal_prefix(glob: &str) -> &str {
 }
 
 pub struct SshLspAdapter {
-    id: LanguageServerId,
-    name: String,
+    name: LanguageServerName,
     binary: LanguageServerBinary,
+    initialization_options: Option<String>,
+    code_action_kinds: Option<Vec<CodeActionKind>>,
 }
 
 impl SshLspAdapter {
-    pub fn new() {}
+    pub fn new(
+        name: LanguageServerName,
+        binary: LanguageServerBinary,
+        initialization_options: Option<String>,
+        code_action_kinds: Option<String>,
+    ) -> Self {
+        Self {
+            name,
+            binary,
+            initialization_options,
+            code_action_kinds: code_action_kinds
+                .as_ref()
+                .and_then(|c| serde_json::from_str(c).ok()),
+        }
+    }
 }
 
 #[async_trait(?Send)]
 impl LspAdapter for SshLspAdapter {
     fn name(&self) -> LanguageServerName {
-        todo!()
+        self.name.clone()
+    }
+
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        let Some(options) = &self.initialization_options else {
+            return Ok(None);
+        };
+        let result = serde_json::from_str(options)?;
+        Ok(result)
+    }
+
+    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        self.code_action_kinds.clone()
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        Some(self.binary.clone())
     }
 
     async fn cached_server_binary(
@@ -6432,7 +6544,7 @@ impl LspAdapter for SshLspAdapter {
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        return Some(self.binary.clone());
+        None
     }
 
     async fn fetch_latest_server_version(
@@ -6459,21 +6571,47 @@ impl LspAdapter for SshLspAdapter {
 pub struct ProjectLspAdapterDelegate {
     lsp_store: WeakModel<LspStore>,
     worktree: worktree::Snapshot,
-    fs: Arc<dyn Fs>,
+    fs: Option<Arc<dyn Fs>>,
     http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
     load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
 }
 
 impl ProjectLspAdapterDelegate {
-    pub fn new(
+    fn for_local(
         lsp_store: &LspStore,
         worktree: &Model<Worktree>,
         cx: &mut ModelContext<LspStore>,
     ) -> Arc<Self> {
+        let local = lsp_store
+            .as_local()
+            .expect("ProjectLspAdapterDelegate cannot be constructed on a remote");
+
+        let http_client = local
+            .http_client
+            .clone()
+            .unwrap_or_else(|| Arc::new(BlockedHttpClient));
+
+        Self::new(lsp_store, worktree, http_client, Some(local.fs.clone()), cx)
+    }
+
+    fn for_ssh(
+        lsp_store: &LspStore,
+        worktree: &Model<Worktree>,
+        cx: &mut ModelContext<LspStore>,
+    ) -> Arc<Self> {
+        Self::new(lsp_store, worktree, Arc::new(BlockedHttpClient), None, cx)
+    }
+
+    pub fn new(
+        lsp_store: &LspStore,
+        worktree: &Model<Worktree>,
+        http_client: Arc<dyn HttpClient>,
+        fs: Option<Arc<dyn Fs>>,
+        cx: &mut ModelContext<LspStore>,
+    ) -> Arc<Self> {
         let worktree_id = worktree.read(cx).id();
         let worktree_abs_path = worktree.read(cx).abs_path();
-
         let load_shell_env_task = if let Some(environment) =
             &lsp_store.as_local().map(|local| local.environment.clone())
         {
@@ -6483,19 +6621,6 @@ impl ProjectLspAdapterDelegate {
         } else {
             Task::ready(None).shared()
         };
-
-        let Some(http_client) = lsp_store
-            .as_local()
-            .and_then(|local| local.http_client.clone())
-        else {
-            panic!("ProjectLspAdapterDelegate cannot be constructedd on an ssh-remote yet")
-        };
-
-        let fs = lsp_store
-            .as_local()
-            .expect("ProjectLspAdapterDelegate cannot be constructedd on an ssh-remote yet")
-            .fs
-            .clone();
 
         Arc::new(Self {
             lsp_store: cx.weak_model(),
@@ -6508,6 +6633,26 @@ impl ProjectLspAdapterDelegate {
     }
 }
 
+struct BlockedHttpClient;
+
+impl HttpClient for BlockedHttpClient {
+    fn send(
+        &self,
+        _req: Request<AsyncBody>,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
+        Box::pin(async {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "ssh host blocked http connection",
+            )
+            .into())
+        })
+    }
+
+    fn proxy(&self) -> Option<&Uri> {
+        None
+    }
+}
 #[async_trait]
 impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     fn show_notification(&self, message: &str, cx: &mut AppContext) {
@@ -6537,6 +6682,9 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
 
     #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
+        if self.fs.is_none() {
+            return None;
+        }
         let worktree_abs_path = self.worktree.abs_path();
         let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), &worktree_abs_path).ok()
@@ -6544,6 +6692,9 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
 
     #[cfg(target_os = "windows")]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
+        if self.fs.is_none() {
+            return None;
+        }
         // todo(windows) Getting the shell env variables in a current directory on Windows is more complicated than other platforms
         //               there isn't a 'default shell' necessarily. The closest would be the default profile on the windows terminal
         //               SEE: https://learn.microsoft.com/en-us/windows/terminal/customize-settings/startup
@@ -6562,10 +6713,13 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     async fn read_text_file(&self, path: PathBuf) -> Result<String> {
         if self.worktree.entry_for_path(&path).is_none() {
             return Err(anyhow!("no such path {path:?}"));
+        };
+        if let Some(fs) = &self.fs {
+            let content = fs.load(&path).await?;
+            Ok(content)
+        } else {
+            return Err(anyhow!("cannot open {path:?} on ssh host (yet!)"));
         }
-        let path = self.worktree.absolutize(path.as_ref())?;
-        let content = self.fs.load(&path).await?;
-        Ok(content)
     }
 }
 
