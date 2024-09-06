@@ -516,7 +516,7 @@ impl BufferSearchBar {
             active_match_index: None,
             searchable_items_with_matches: Default::default(),
             default_options: search_options,
-            search_options: search_options,
+            search_options,
             pending_search: None,
             query_contains_error: false,
             dismissed: true,
