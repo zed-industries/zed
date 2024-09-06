@@ -15,15 +15,27 @@ impl zed::Extension for DartExtension {
         _language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let path = worktree
-            .which("dart")
-            .ok_or_else(|| "dart must be installed from dart.dev/get-dart".to_string())?;
+        if let Some(path) = worktree.which("dart") {
+            return Ok(zed::Command {
+                command: path,
+                args: vec!["language-server".to_string(), "--protocol=lsp".to_string()],
+                env: Default::default(),
+            });
+        }
 
-        Ok(zed::Command {
-            command: path,
-            args: vec!["language-server".to_string(), "--protocol=lsp".to_string()],
-            env: Default::default(),
-        })
+        if let Some(fvm_path) = worktree.which("fvm") {
+            return Ok(zed::Command {
+                command: fvm_path,
+                args: vec![
+                    "dart".to_string(),
+                    "language-server".to_string(),
+                    "--protocol=lsp".to_string(),
+                ],
+                env: Default::default(),
+            });
+        }
+
+        Err("Either 'dart' or 'fvm' must be installed".to_string().into())
     }
 
     fn language_server_workspace_configuration(
