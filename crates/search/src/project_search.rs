@@ -21,7 +21,7 @@ use gpui::{
 use language::Buffer;
 use menu::Confirm;
 use project::{
-    search::{SearchQuery},
+    search::{SearchInputKind, SearchQuery},
     search_history::SearchHistoryCursor,
     Project, ProjectPath,
 };
