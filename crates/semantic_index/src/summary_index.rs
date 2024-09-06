@@ -9,7 +9,8 @@ use heed::{
     RoTxn,
 };
 use language_model::{
-    LanguageModelId, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
 };
 use log;
 use parking_lot::Mutex;
@@ -566,16 +567,17 @@ impl SummaryIndex {
 
         let code_len = code.len();
         cx.spawn(|cx| async move {
-            let response = model.stream_completion(request, &cx);
+            let stream = model.stream_completion(request, &cx);
             cx.background_executor()
                 .spawn(async move {
+                    let mut events = stream.await?;
                     let answer = {
-                        let mut chunks = response.await?;
                         let mut completion = String::new();
 
-                        while let Some(chunk) = chunks.next().await {
-                            let chunk = chunk?;
-                            completion.push_str(&chunk);
+                        while let Some(event) = events.next().await {
+                            if let Ok(LanguageModelCompletionEvent::Text(text)) = event {
+                                completion.push_str(&text);
+                            }
                         }
 
                         completion

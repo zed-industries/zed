@@ -7,7 +7,8 @@ use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
 };
 use semantic_index::{FileSummary, SemanticDb};
 use smol::channel;
@@ -278,14 +279,15 @@ async fn commands_for_summaries(
                 .enumerate()
                 .map(|(ix, (stream, tx))| async move {
                     let start = std::time::Instant::now();
-                    let mut chunks = stream.await?;
+                    let mut events = stream.await?;
                     log::info!("Time taken for awaiting /await chunk stream #{ix}: {:?}", start.elapsed());
 
                     let mut completion = String::new();
 
-                    while let Some(chunk) = chunks.next().await {
-                        let chunk = chunk?;
-                        completion.push_str(&chunk);
+                    while let Some(event) = events.next().await {
+                        if let Ok(LanguageModelCompletionEvent::Text(text)) = event {
+                            completion.push_str(&text);
+                        }
                     }
 
                     log::info!("Time taken for all /auto chunks to come back for #{ix}: {:?}", start.elapsed());
