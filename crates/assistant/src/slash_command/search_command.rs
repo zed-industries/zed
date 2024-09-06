@@ -165,6 +165,7 @@ impl SlashCommand for SearchSlashCommand {
                         range: 0..text.len(),
                         icon: IconName::MagnifyingGlass,
                         label: query,
+                        path: None,
                     });
 
                     SlashCommandOutput {

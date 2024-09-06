@@ -162,6 +162,7 @@ impl ContextOperation {
                                 )?,
                                 icon: section.icon_name.parse()?,
                                 label: section.label.into(),
+                                path: section.path.map(Into::into),
                             })
                         })
                         .collect::<Result<Vec<_>>>()?,
@@ -242,6 +243,10 @@ impl ContextOperation {
                                     )),
                                     icon_name: icon_name.to_string(),
                                     label: section.label.to_string(),
+                                    path: section
+                                        .path
+                                        .as_ref()
+                                        .map(|p| p.to_string_lossy().to_string()),
                                 }
                             })
                             .collect(),
@@ -641,6 +646,7 @@ impl Context {
                             range,
                             icon: section.icon,
                             label: section.label.clone(),
+                            path: section.path.clone(),
                         })
                     } else {
                         None
@@ -1825,6 +1831,7 @@ impl Context {
                                         ..buffer.anchor_before(start + section.range.end),
                                     icon: section.icon,
                                     label: section.label,
+                                    path: section.path,
                                 })
                                 .collect::<Vec<_>>();
                             sections.sort_by(|a, b| a.range.cmp(&b.range, buffer));
@@ -2977,6 +2984,7 @@ impl SavedContext {
                             ..buffer.anchor_before(section.range.end),
                         icon: section.icon,
                         label: section.label,
+                        path: section.path,
                     }
                 })
                 .collect(),

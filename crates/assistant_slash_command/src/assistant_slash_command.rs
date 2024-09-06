@@ -100,10 +100,10 @@ pub struct SlashCommandOutput {
     pub sections: Vec<SlashCommandOutputSection<usize>>,
     pub run_commands_in_text: bool,
 }
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlashCommandOutputSection<T> {
     pub range: Range<T>,
     pub icon: IconName,
     pub label: SharedString,
+    pub path: Option<std::path::PathBuf>,
 }

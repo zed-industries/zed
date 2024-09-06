@@ -77,6 +77,7 @@ impl SlashCommand for OutlineSlashCommand {
                         range: 0..outline_text.len(),
                         icon: IconName::ListTree,
                         label: path.to_string_lossy().to_string().into(),
+                        path: None,
                     }],
                     text: outline_text,
                     run_commands_in_text: false,

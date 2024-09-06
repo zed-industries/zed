@@ -161,6 +161,7 @@ impl SlashCommand for FetchSlashCommand {
                     range,
                     icon: IconName::AtSign,
                     label: format!("fetch {}", url).into(),
+                    path: None,
                 }],
                 run_commands_in_text: false,
             })

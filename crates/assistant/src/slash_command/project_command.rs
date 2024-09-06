@@ -140,6 +140,7 @@ impl SlashCommand for ProjectSlashCommand {
                         range,
                         icon: IconName::FileTree,
                         label: "Project".into(),
+                        path: None,
                     }],
                     run_commands_in_text: false,
                 })

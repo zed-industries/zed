@@ -91,6 +91,7 @@ impl SlashCommand for TerminalSlashCommand {
                 range,
                 icon: IconName::Terminal,
                 label: "Terminal".into(),
+                path: None,
             }],
             run_commands_in_text: false,
         }))

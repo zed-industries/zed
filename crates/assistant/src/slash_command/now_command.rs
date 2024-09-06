@@ -57,6 +57,7 @@ impl SlashCommand for NowSlashCommand {
                 range,
                 icon: IconName::CountdownTimer,
                 label: now.to_rfc2822().into(),
+                path: None,
             }],
             run_commands_in_text: false,
         }))

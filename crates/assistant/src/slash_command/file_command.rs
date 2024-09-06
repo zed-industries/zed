@@ -171,7 +171,6 @@ impl SlashCommand for FileSlashCommand {
                 .collect())
         })
     }
-
     fn run(
         self: Arc<Self>,
         arguments: &[String],
@@ -428,7 +427,6 @@ pub fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<Range<u32
     text.push('\n');
     text
 }
-
 pub fn build_entry_output_section(
     range: Range<usize>,
     path: Option<&Path>,
@@ -454,6 +452,7 @@ pub fn build_entry_output_section(
         range,
         icon,
         label: label.into(),
+        path: path.map(|p| p.to_path_buf()),
     }
 }
 
