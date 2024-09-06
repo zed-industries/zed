@@ -267,7 +267,7 @@ pub struct EditorSettingsContent {
 
     /// Defaults for search options (case sensitive, whole word, include ignored, regex)
     ///
-    /// Default: all false
+    /// Default: nothing is enabled
     pub search_defaults: Option<SearchDefaults>,
 
     /// Whether to automatically show a signature help pop-up or not.
