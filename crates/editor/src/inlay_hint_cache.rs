@@ -3424,7 +3424,7 @@ pub mod tests {
 
     pub fn cached_hint_labels(editor: &Editor) -> Vec<String> {
         let mut labels = Vec::new();
-        for excerpt_hints in &editor.inlay_hint_cache().hints.values() {
+        for excerpt_hints in editor.inlay_hint_cache().hints.values() {
             let excerpt_hints = excerpt_hints.read();
             for id in &excerpt_hints.ordered_hints {
                 labels.push(excerpt_hints.hints_by_id[id].text());
