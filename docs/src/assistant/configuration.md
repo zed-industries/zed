@@ -165,7 +165,7 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### OpenAI Custom Models {#openai-custom-models}
 
-The Zed Assistant comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini).  If you wish to use alternate models, perhaps a preview release or a dated model release, you can do so by adding the following to your Zed `settings.json`:
+The Zed Assistant comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini). If you wish to use alternate models, perhaps a preview release or a dated model release, you can do so by adding the following to your Zed `settings.json`:
 
 ```json
 {
