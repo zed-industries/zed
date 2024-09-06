@@ -22,7 +22,7 @@ use x11rb::protocol::xinput::ConnectionExt;
 use x11rb::protocol::xkb::ConnectionExt as _;
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent, ConnectionExt as _,
-    EventMask, KeyPressEvent,
+    EventMask, KeyPressEvent, SelectionNotifyEvent,
 };
 use x11rb::protocol::{randr, render, xinput, xkb, xproto, Event};
 use x11rb::resource_manager::Database;
@@ -712,12 +712,15 @@ impl X11Client {
                     state.xdnd_state = Xdnd::default();
                 }
             }
-            Event::SelectionNotify(event) => {
-                let window = self.get_window(event.requestor)?;
+            Event::SelectionNotify(SelectionNotifyEvent {
+                requestor: window_id,
+                ..
+            }) => {
+                let window = self.get_window(window_id)?;
                 let mut state = self.0.borrow_mut();
                 let property = state.xcb_connection.get_property(
                     false,
-                    event.requestor,
+                    window_id,
                     state.atoms.XDND_DATA,
                     AtomEnum::ANY,
                     0,
