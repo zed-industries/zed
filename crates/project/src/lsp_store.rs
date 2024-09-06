@@ -58,7 +58,7 @@ use similar::{ChangeTag, TextDiff};
 use smol::channel::Sender;
 use snippet::Snippet;
 use std::{
-    any::Any,
+    any::{type_name, Any},
     cmp::Ordering,
     convert::TryInto,
     ffi::OsStr,
@@ -95,7 +95,7 @@ pub struct LocalLspStore {
     environment: Model<ProjectEnvironment>,
     fs: Arc<dyn Fs>,
     yarn: Model<YarnPathStore>,
-    language_servers: HashMap<LanguageServerId, LanguageServerState>,
+    pub language_servers: HashMap<LanguageServerId, LanguageServerState>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
     language_server_watched_paths: HashMap<LanguageServerId, HashMap<WorktreeId, GlobSet>>,
     language_server_watcher_registrations:
@@ -169,7 +169,7 @@ pub struct LspStore {
     buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     pub languages: Arc<LanguageRegistry>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
-    language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
+    pub language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     active_entry: Option<ProjectEntryId>,
     _maintain_workspace_config: Task<Result<()>>,
     _maintain_buffer_languages: Task<()>,
@@ -4129,6 +4129,7 @@ impl LspStore {
         envelope: TypedEnvelope<proto::CreateLanguageServer>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
+        dbg!("handle_create");
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let name = LanguageServerName::from_proto(envelope.payload.name);
 
@@ -4136,19 +4137,23 @@ impl LspStore {
             .payload
             .binary
             .ok_or_else(|| anyhow!("missing binary"))?;
+        dbg!("got here");
         let binary = LanguageServerBinary {
             path: PathBuf::from(binary.path),
             env: None,
             arguments: binary.arguments.into_iter().map(Into::into).collect(),
         };
+        dbg!("got here");
         let language = envelope
             .payload
             .language
             .ok_or_else(|| anyhow!("missing language"))?;
         let language_name = LanguageName::from_proto(language.name);
+        dbg!("got here");
         let matcher: LanguageMatcher = serde_json::from_str(&language.matcher)?;
-
-        this.update(&mut cx, |this, cx| {
+        dbg!("got here");
+        let result = this.update(&mut cx, |this, cx| {
+            dbg!("got here");
             this.languages
                 .register_language(language_name.clone(), None, matcher.clone(), {
                     let language_name = language_name.clone();
@@ -4165,9 +4170,12 @@ impl LspStore {
                         ))
                     }
                 });
+            dbg!("got herE");
             cx.background_executor()
                 .spawn(this.languages.language_for_name(language_name.0.as_ref()))
                 .detach();
+
+            dbg!("got here");
 
             let adapter = Arc::new(SshLspAdapter::new(
                 name,
@@ -4183,8 +4191,10 @@ impl LspStore {
                 .read(cx)
                 .worktree_for_id(worktree_id, cx)
             else {
+                dbg!("got here");
                 return Err(anyhow!("worktree not found"));
             };
+            dbg!("got here");
             this.start_language_server(
                 &worktree,
                 CachedLspAdapter::new(adapter),
@@ -4192,7 +4202,12 @@ impl LspStore {
                 cx,
             );
             Ok(())
-        })??;
+        });
+        dbg!("hi");
+        let result = result?;
+        dbg!("hi");
+        let result = result?;
+        dbg!("got here");
         Ok(proto::Ack {})
     }
 
@@ -4386,7 +4401,7 @@ impl LspStore {
                 .transpose()?;
 
             upstream_client
-                .request(proto::CreateLanguageServer {
+                .request(dbg!(proto::CreateLanguageServer {
                     project_id,
                     worktree_id,
                     name,
@@ -4397,7 +4412,7 @@ impl LspStore {
                         name: language.to_proto(),
                         matcher: serde_json::to_string(&available_language.matcher())?,
                     }),
-                })
+                }))
                 .await
         });
         cx.spawn(|this, mut cx| async move {
@@ -4421,6 +4436,7 @@ impl LspStore {
         language: LanguageName,
         cx: &mut ModelContext<Self>,
     ) {
+        dbg!("got here");
         if self.mode.is_remote() {
             return;
         }
@@ -4439,8 +4455,11 @@ impl LspStore {
         }
 
         if self.mode.is_ssh() {
+            dbg!("on client");
             self.start_language_server_on_ssh_host(worktree_handle, adapter, language, cx);
             return;
+        } else {
+            dbg!("on host");
         }
 
         if adapter.reinstall_attempt_count.load(SeqCst) > MAX_SERVER_REINSTALL_ATTEMPT_COUNT {
@@ -6442,6 +6461,20 @@ pub enum LanguageServerState {
         server: Arc<LanguageServer>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
     },
+}
+
+impl std::fmt::Debug for LanguageServerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LanguageServerState::Starting(_) => {
+                f.debug_struct("LangaugeServerState::Starting").finish()
+            }
+            LanguageServerState::Running { language, .. } => f
+                .debug_struct("LangaugeServerState::Running")
+                .field("language", &language)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]

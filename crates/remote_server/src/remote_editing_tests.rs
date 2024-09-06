@@ -349,16 +349,6 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         )
     });
 
-    // cx.read(|cx| {
-    //     let file = buffer.read(cx).file();
-    //     assert_eq!(
-    //         ProjectSettings::get(file.into(), cx)
-    //             .language(Some(&"Rust".into()))
-    //             .language_servers,
-    //         ["rust-analyzer".into()]
-    //     )
-    // });
-
     let buffer_id = cx.read(|cx| {
         let buffer = buffer.read(cx);
         assert_eq!(buffer.language().unwrap().name(), "Rust".into());
@@ -375,6 +365,18 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
         assert_eq!(buffer.read(cx).language().unwrap().name(), "Rust".into());
     });
+
+    server_cx.read(|cx| {
+        let lsp_store = headless.read(cx).lsp_store.read(cx);
+        dbg!(&lsp_store.as_local().unwrap().language_servers);
+        assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
+    });
+
+    cx.read(|cx| {
+        let lsp_store = project.read(cx).lsp_store().read(cx);
+        dbg!(&lsp_store.language_server_statuses);
+        assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
+    })
 }
 
 fn init_logger() {
