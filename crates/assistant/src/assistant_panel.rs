@@ -3292,7 +3292,7 @@ impl ContextEditor {
                     .snapshot(cx)
                     .crease_snapshot
                     .creases_in_range(
-                        MultiBufferRow(selection.start.row)..MultiBufferRow(selection.end.row),
+                        MultiBufferRow(selection.start.row)..MultiBufferRow(selection.end.row + 1),
                         &snapshot,
                     )
                     .filter_map(|crease| {
