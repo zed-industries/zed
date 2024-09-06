@@ -1034,6 +1034,7 @@ async fn load_login_shell_environment() -> Result<()> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+
     if let Some(env_output_start) = stdout.find(marker) {
         let env_output = &stdout[env_output_start + marker.len()..];
 
