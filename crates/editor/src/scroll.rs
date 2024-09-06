@@ -50,7 +50,7 @@ impl ScrollAnchor {
             scroll_position.y = 0.;
         } else {
             let scroll_top = self.anchor.to_display_point(snapshot).row().as_f32();
-            scroll_position.y = scroll_top + scroll_position.y;
+            scroll_position.y += scroll_top;
         }
         scroll_position
     }
@@ -224,7 +224,7 @@ impl ScrollManager {
             };
 
             let scroll_top_buffer_point =
-                DisplayPoint::new(DisplayRow(scroll_top as u32), 0).to_point(&map);
+                DisplayPoint::new(DisplayRow(scroll_top as u32), 0).to_point(map);
             let top_anchor = map
                 .buffer_snapshot
                 .anchor_at(scroll_top_buffer_point, Bias::Right);
@@ -234,7 +234,7 @@ impl ScrollManager {
                     anchor: top_anchor,
                     offset: point(
                         scroll_position.x.max(0.),
-                        scroll_top - top_anchor.to_display_point(&map).row().as_f32(),
+                        scroll_top - top_anchor.to_display_point(map).row().as_f32(),
                     ),
                 },
                 scroll_top_buffer_point.row,

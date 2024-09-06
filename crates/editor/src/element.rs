@@ -241,7 +241,7 @@ impl EditorElement {
             if text.is_empty() {
                 return;
             }
-            editor.handle_input(&text, cx);
+            editor.handle_input(text, cx);
         });
         register_action(view, cx, |editor, _: &HalfPageUp, cx| {
             editor.scroll_screen(&ScrollAmount::Page(-0.5), cx)
@@ -652,30 +652,8 @@ impl EditorElement {
             cx.stop_propagation();
         } else if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
-        } else if cfg!(target_os = "linux") && event.button == MouseButton::Middle {
-            if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
-                return;
-            }
-
-            #[cfg(target_os = "linux")]
-            if EditorSettings::get_global(cx).middle_click_paste {
-                if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
-                    let point_for_position =
-                        position_map.point_for_position(text_hitbox.bounds, event.position);
-                    let position = point_for_position.previous_valid;
-
-                    editor.select(
-                        SelectPhase::Begin {
-                            position,
-                            add: false,
-                            click_count: 1,
-                        },
-                        cx,
-                    );
-                    editor.insert(&text, cx);
-                }
-                cx.stop_propagation()
-            }
+        } else if cfg!(target_os = "linux") && event.button == MouseButton::Middle && (!text_hitbox.is_hovered(cx) || editor.read_only(cx)) {
+            return;
         }
     }
 
@@ -1315,7 +1293,7 @@ impl EditorElement {
                     let hitbox = match hunk {
                         DisplayDiffHunk::Unfolded { .. } => {
                             let hunk_bounds = Self::diff_hunk_bounds(
-                                &snapshot,
+                                snapshot,
                                 line_height,
                                 gutter_hitbox.bounds,
                                 &hunk,
@@ -1610,7 +1588,7 @@ impl EditorElement {
                         .tasks
                         .as_ref()
                         .map(|tasks| tasks.position.to_display_point(snapshot).row())
-                        .or_else(|| *deployed_from_indicator)
+                        .or(*deployed_from_indicator)
                 } else {
                     None
                 };
@@ -2794,7 +2772,7 @@ impl EditorElement {
         let hover_popovers = self.editor.update(cx, |editor, cx| {
             editor
                 .hover_state
-                .render(&snapshot, visible_display_row_range.clone(), max_size, cx)
+                .render(snapshot, visible_display_row_range.clone(), max_size, cx)
         });
         let Some((position, hover_popovers)) = hover_popovers else {
             return;
@@ -3199,7 +3177,7 @@ impl EditorElement {
                             &layout.position_map.snapshot,
                             line_height,
                             layout.gutter_hitbox.bounds,
-                            &hunk,
+                            hunk,
                         );
                         Some((
                             hunk_bounds,
@@ -3454,7 +3432,7 @@ impl EditorElement {
             let corner_radius = 0.15 * layout.position_map.line_height;
 
             for (player_color, selections) in &layout.selections {
-                for selection in selections.into_iter() {
+                for selection in selections.iter() {
                     self.paint_highlighted_range(
                         selection.range.clone(),
                         player_color.selection,
@@ -3773,7 +3751,7 @@ impl EditorElement {
                                         color.fade_out(0.5);
                                     }
                                     let marker_row_ranges =
-                                        background_ranges.into_iter().map(|range| {
+                                        background_ranges.iter().map(|range| {
                                             let display_start = range
                                                 .start
                                                 .to_display_point(&snapshot.display_snapshot);
@@ -4608,7 +4586,7 @@ impl LineWithInvisibles {
         }
 
         self.draw_invisibles(
-            &selection_ranges,
+            selection_ranges,
             layout,
             content_origin,
             line_y,
@@ -4661,7 +4639,7 @@ impl LineWithInvisibles {
 
         let invisible_iter = self.invisibles.iter().map(extract_whitespace_info);
         match whitespace_setting {
-            ShowWhitespaceSetting::None => return,
+            ShowWhitespaceSetting::None => (),
             ShowWhitespaceSetting::All => invisible_iter.for_each(|(_, paint)| paint(cx)),
             ShowWhitespaceSetting::Selection => invisible_iter.for_each(|([start, _], paint)| {
                 let invisible_point = DisplayPoint::new(row, start as u32);
@@ -4717,7 +4695,7 @@ impl LineWithInvisibles {
                     last_seen = Some((should_render, end, paint));
                 }
             }
-        };
+        }
     }
 
     pub fn x_for_index(&self, index: usize) -> Pixels {
@@ -5452,7 +5430,7 @@ impl Element for EditorElement {
 
                             let show_code_actions = snapshot
                                 .show_code_actions
-                                .unwrap_or_else(|| gutter_settings.code_actions);
+                                .unwrap_or(gutter_settings.code_actions);
                             if show_code_actions {
                                 let newest_selection_point =
                                     newest_selection_head.to_point(&snapshot.display_snapshot);
@@ -6605,7 +6583,7 @@ mod tests {
         });
 
         let actual_invisibles =
-            collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, px(500.0));
+            collect_invisibles_from_new_editor(cx, EditorMode::Full, input_text, px(500.0));
 
         assert_eq!(expected_invisibles, actual_invisibles);
     }
@@ -6730,7 +6708,7 @@ mod tests {
             editor_width.0
         );
         let window = cx.add_window(|cx| {
-            let buffer = MultiBuffer::build_simple(&input_text, cx);
+            let buffer = MultiBuffer::build_simple(input_text, cx);
             Editor::new(editor_mode, buffer, None, true, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
@@ -6779,7 +6757,7 @@ fn compute_auto_height_layout(
     available_width: AvailableSpace,
     cx: &mut ViewContext<Editor>,
 ) -> Option<Size<Pixels>> {
-    let width = known_dimensions.width.or_else(|| {
+    let width = known_dimensions.width.or({
         if let AvailableSpace::Definite(available_width) = available_width {
             Some(available_width)
         } else {

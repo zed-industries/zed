@@ -466,7 +466,7 @@ impl InlayHintCache {
                                             to_insert.push(Inlay::hint(
                                                 cached_hint_id.id(),
                                                 anchor,
-                                                &cached_hint,
+                                                cached_hint,
                                             ));
                                         }
                                     }
@@ -490,7 +490,7 @@ impl InlayHintCache {
                         to_insert.push(Inlay::hint(
                             cached_hint_id.id(),
                             anchor,
-                            &maybe_missed_cached_hint,
+                            maybe_missed_cached_hint,
                         ));
                     }
                 }
@@ -844,7 +844,7 @@ fn new_update_task(
                             .get_mut(&query.excerpt_id)
                         {
                             let buffer_snapshot = excerpt_buffer.read(cx).snapshot();
-                            task_ranges.invalidate_range(&buffer_snapshot, &range);
+                            task_ranges.invalidate_range(&buffer_snapshot, range);
                         }
                     })
                     .ok()

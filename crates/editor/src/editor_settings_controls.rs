@@ -14,6 +14,12 @@ use crate::EditorSettings;
 #[derive(IntoElement)]
 pub struct EditorSettingsControls {}
 
+impl Default for EditorSettingsControls {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EditorSettingsControls {
     pub fn new() -> Self {
         Self {}
@@ -238,7 +244,7 @@ impl EditableSettingControl for BufferFontLigaturesControl {
             .map(|features| {
                 features
                     .tag_value_list()
-                    .into_iter()
+                    .iter()
                     .cloned()
                     .collect::<Vec<_>>()
             })

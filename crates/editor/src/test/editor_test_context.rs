@@ -121,7 +121,7 @@ impl EditorTestContext {
         F: FnOnce(&Editor, &ViewContext<Editor>) -> T,
     {
         self.editor
-            .update(&mut self.cx, |this, cx| read(&this, &cx))
+            .update(&mut self.cx, |this, cx| read(this, cx))
     }
 
     #[track_caller]
@@ -327,8 +327,8 @@ impl EditorTestContext {
                 .background_highlights
                 .get(&TypeId::of::<Tag>())
                 .map(|h| h.1.clone())
-                .unwrap_or_else(|| Arc::default())
-                .into_iter()
+                .unwrap_or_else(Arc::default)
+                .iter()
                 .map(|range| range.to_offset(&snapshot.buffer_snapshot))
                 .collect()
         });
@@ -422,6 +422,12 @@ impl DerefMut for EditorTestContext {
 pub struct AssertionContextManager {
     id: Arc<AtomicUsize>,
     contexts: Arc<RwLock<BTreeMap<usize, String>>>,
+}
+
+impl Default for AssertionContextManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AssertionContextManager {
