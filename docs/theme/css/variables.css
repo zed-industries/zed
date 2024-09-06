@@ -19,6 +19,7 @@
   --title-color: hsl(220, 92%, 42%);
 
   --border: hsl(220, 13%, 80%);
+  --border-light: hsl(220, 13%, 90%);
   --border-hover: hsl(220, 13%, 70%);
 
   --sidebar-fg: hsl(0, 0%, 0%);
