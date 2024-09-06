@@ -146,16 +146,14 @@ impl LspAdapter for YamlLspAdapter {
         })?;
         let mut options = serde_json::json!({"[yaml]": {"editor.tabSize": tab_size}});
 
-        let override_options = cx.update(|cx| {
+        let project_options = cx.update(|cx| {
             ProjectSettings::get_global(cx)
                 .lsp
                 .get(Self::SERVER_NAME)
                 .and_then(|s| s.initialization_options.clone())
         })?;
-
-        match override_options {
-            Some(override_options) => merge_json_value_into(override_options, &mut options),
-            _ => {}
+        if let Some(override_options) = project_options {
+            merge_json_value_into(override_options, &mut options);
         }
         Ok(options)
     }
