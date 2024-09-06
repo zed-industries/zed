@@ -7781,21 +7781,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 
 [[package]]
-name = "performance"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "gpui",
- "log",
- "schemars",
- "serde",
- "settings",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "perplexity"
 version = "0.1.0"
 dependencies = [
@@ -14169,7 +14154,6 @@ dependencies = [
  "outline_panel",
  "parking_lot",
  "paths",
- "performance",
  "profiling",
  "project",
  "project_panel",

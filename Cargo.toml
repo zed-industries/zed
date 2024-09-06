@@ -71,7 +71,6 @@ members = [
     "crates/outline",
     "crates/outline_panel",
     "crates/paths",
-    "crates/performance",
     "crates/picker",
     "crates/prettier",
     "crates/project",
@@ -244,7 +243,6 @@ open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 paths = { path = "crates/paths" }
-performance = { path = "crates/performance" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
