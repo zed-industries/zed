@@ -199,7 +199,7 @@ fn prompt_arguments(prompt: &PromptInfo, arguments: &[String]) -> Result<HashMap
 pub fn acceptable_prompt(prompt: &PromptInfo) -> bool {
     match &prompt.arguments {
         None => true,
-        Some(args) if args.len() == 1 => true,
+        Some(args) if args.len() <= 1 => true,
         _ => false,
     }
 }
