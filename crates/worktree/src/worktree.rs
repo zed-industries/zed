@@ -572,6 +572,14 @@ impl Worktree {
         !self.is_local()
     }
 
+    pub fn settings_location(&self, cx: &ModelContext<Self>) -> SettingsLocation<'static> {
+        let worktree_id = cx.handle().entity_id().as_u64();
+        SettingsLocation {
+            worktree_id: worktree_id as usize,
+            path: Path::new(EMPTY_PATH),
+        }
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         match self {
             Worktree::Local(worktree) => worktree.snapshot.snapshot.clone(),

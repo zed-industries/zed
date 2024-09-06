@@ -1180,15 +1180,12 @@ impl Project {
     }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
-        dbg!("settings changed?");
         let mut language_servers_to_start = Vec::new();
         let mut language_formatters_to_check = Vec::new();
         for buffer in self.buffer_store.read(cx).buffers() {
             let buffer = buffer.read(cx);
             let buffer_file = File::from_dyn(buffer.file());
-            dbg!(buffer_file.is_some());
             let buffer_language = buffer.language();
-            dbg!(&buffer_language);
             let settings = language_settings(buffer_language, buffer.file(), cx);
             if let Some(language) = buffer_language {
                 if settings.enable_language_server {
