@@ -32,7 +32,7 @@ Note, settings keys must be nested, so `yaml.keyOrdering` becomes `{"yaml": { "k
 
 ## Schemas
 
-By default yaml-language-server will attempt to determine the correct schema for a given yaml file and retreive the appropriate JSON Schema from [Json Schema Store].
+By default yaml-language-server will attempt to determine the correct schema for a given yaml file and retrieve the appropriate JSON Schema from [Json Schema Store].
 
 You can override this by [using an inlined schema] reference via a modeline comment at the top of your yaml file:
 
@@ -40,9 +40,8 @@ You can override this by [using an inlined schema] reference via a modeline comm
 # yaml-language-server: $schema=https://json.schemastore.org/github-action.json
 name: Issue Assignment
 on:
-    issues:
-        types: [oppened]
-...
+  issues:
+    types: [oppened]
 ```
 
 You can disable this functionality entirely if desired:
