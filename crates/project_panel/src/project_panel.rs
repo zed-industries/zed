@@ -484,7 +484,7 @@ impl ProjectPanel {
                             .when(cfg!(not(target_os = "macos")), |menu| {
                                 menu.action("Reveal in File Manager", Box::new(RevealInFileManager))
                             })
-                            .action("Open with System Application", Box::new(OpenWithSystem))
+                            .action("Open in Default App", Box::new(OpenWithSystem))
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
                                 menu.separator()
