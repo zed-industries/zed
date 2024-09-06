@@ -235,7 +235,7 @@ blockquote {
   margin: auto;
   margin-top: 1rem;
   padding: 1rem 1.25rem;
-  color: var(--fg);
+  color: #000;
   background-color: var(--quote-bg);
   border: 1px solid var(--quote-border);
 }
@@ -268,6 +268,7 @@ blockquote .warning:before {
 .warning {
   margin: auto;
   padding: 1rem 1.25rem;
+  color: #000;
   background-color: var(--warning-bg);
   border: 1px solid var(--warning-border);
 }
@@ -311,8 +312,10 @@ kbd {
   margin-block-start: 2em;
 }
 .footnote-definition {
-  font-size: 0.9em;
+  font-size: 1.4rem;
   margin: 0.5em 0;
+  border-bottom: 1px solid;
+  border-color: var(--border-light);
 }
 .footnote-definition p {
   display: inline;

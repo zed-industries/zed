@@ -14,11 +14,12 @@
   --code-font-size: 0.875em
     /* please adjust the ace font size accordingly in editor.js */;
 
-  --bg: hsl(48, 30%, 95%);
+  --bg: hsla(50, 25%, 96%);
   --fg: hsl(220, 13%, 34%);
   --title-color: hsl(220, 92%, 42%);
 
   --border: hsl(220, 13%, 80%);
+  --border-light: hsl(220, 13%, 90%);
   --border-hover: hsl(220, 13%, 70%);
 
   --sidebar-fg: hsl(0, 0%, 0%);
