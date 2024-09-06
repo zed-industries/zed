@@ -9125,7 +9125,7 @@ async fn go_to_prev_overlapping_diagnostic(
         }
     "});
 
-    _ = cx.update(|cx| {
+    cx.update(|cx| {
         project.update(cx, |project, cx| {
             project
                 .update_diagnostics(
@@ -9165,7 +9165,7 @@ async fn go_to_prev_overlapping_diagnostic(
                 )
                 .unwrap()
         });;
-    });
+    });;
 
     executor.run_until_parked();
 

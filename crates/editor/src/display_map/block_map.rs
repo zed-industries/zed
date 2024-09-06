@@ -1734,7 +1734,7 @@ mod tests {
 
     #[gpui::test]
     fn test_replace_with_heights(cx: &mut gpui::TestAppContext) {
-        let _update = cx.update(init_test);
+        cx.update(init_test);
 
         let text = "aaa\nbbb\nccc\nddd";
 

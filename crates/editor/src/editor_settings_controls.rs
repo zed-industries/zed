@@ -243,10 +243,7 @@ impl EditableSettingControl for BufferFontLigaturesControl {
             .as_ref()
             .map(|features| {
                 features
-                    .tag_value_list()
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<_>>()
+                    .tag_value_list().to_vec()
             })
             .unwrap_or_default();
 
