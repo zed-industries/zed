@@ -301,6 +301,13 @@ pre > .buttons button {
   color: var(--icons);
 }
 
+pre > .playground {
+  border: none;
+  margin: 0;
+  box-shadow: none;
+  // HACK: The HTML rendered for code snippets that trigger the "playground" feature ends up being a <pre> element wrapping another <pre> element. These styles serve to not make that visible visually. The correct fix would be to tackle the rendered HTML somehow.
+}
+
 @media (pointer: coarse) {
   pre > .buttons button {
     /* On mobile, make it easier to tap buttons. */

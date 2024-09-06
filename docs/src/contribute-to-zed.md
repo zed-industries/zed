@@ -12,4 +12,4 @@ If you're wanting to contribute by building out a feature, we recommend taking a
 
 ## Zed GitHub Repository
 
-Our codebase can be found [here](https://github.com/zed-industries/zed).
+Check [our codebase out on GitHub](https://github.com/zed-industries/zed).
