@@ -267,7 +267,6 @@ fn init_ui(
     welcome::init(cx);
     settings_ui::init(cx);
     extensions_ui::init(cx);
-    performance::init(cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -317,7 +316,6 @@ fn init_ui(
 }
 
 fn main() {
-    let start_time = std::time::Instant::now();
     menu::init();
     zed_actions::init();
 
@@ -329,9 +327,7 @@ fn main() {
     init_logger();
 
     log::info!("========== starting zed ==========");
-    let app = App::new()
-        .with_assets(Assets)
-        .measure_time_to_first_window_draw(start_time);
+    let app = App::new().with_assets(Assets);
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()
