@@ -629,7 +629,7 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
 
     let (range, query) = VimCommand::parse_range(input);
     let range_prefix = input[0..(input.len() - query.len())].to_string();
-    let query = query.as_str();
+    let query = query.as_str().trim();
 
     let action = if range.is_some() && query == "" {
         Some(
