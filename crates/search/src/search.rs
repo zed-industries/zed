@@ -7,7 +7,7 @@ use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, IconButton};
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
-use editor::SearchDefaults;
+use editor::SearchSettings;
 
 pub mod buffer_search;
 pub mod project_search;
@@ -94,12 +94,12 @@ impl SearchOptions {
         options
     }
 
-    pub fn from_defaults(defaults: &SearchDefaults) -> SearchOptions {
+    pub fn from_settings(settings: &SearchSettings) -> SearchOptions {
         let mut options = SearchOptions::NONE;
-        options.set(SearchOptions::WHOLE_WORD, defaults.whole_word);
-        options.set(SearchOptions::CASE_SENSITIVE, defaults.case_sensitive);
-        options.set(SearchOptions::INCLUDE_IGNORED, defaults.include_ignored);
-        options.set(SearchOptions::REGEX, defaults.regex);
+        options.set(SearchOptions::WHOLE_WORD, settings.whole_word);
+        options.set(SearchOptions::CASE_SENSITIVE, settings.case_sensitive);
+        options.set(SearchOptions::INCLUDE_IGNORED, settings.include_ignored);
+        options.set(SearchOptions::REGEX, settings.regex);
         options
     }
 

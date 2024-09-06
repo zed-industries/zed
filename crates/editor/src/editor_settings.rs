@@ -28,7 +28,7 @@ pub struct EditorSettings {
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
     pub search_wrap: bool,
     #[serde(default)]
-    pub search: SearchDefaults,
+    pub search: SearchSettings,
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
@@ -159,7 +159,7 @@ pub enum ScrollBeyondLastLine {
 
 /// Default options for buffer and project search items.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct SearchDefaults {
+pub struct SearchSettings {
     #[serde(default)]
     pub whole_word: bool,
     #[serde(default)]
@@ -267,7 +267,7 @@ pub struct EditorSettingsContent {
     /// Defaults to use when opening a new buffer and project search items.
     ///
     /// Default: nothing is enabled
-    pub search: Option<SearchDefaults>,
+    pub search: Option<SearchSettings>,
 
     /// Whether to automatically show a signature help pop-up or not.
     ///
