@@ -3283,8 +3283,9 @@ impl ContextEditor {
     }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
-        let creases_metadata = self.editor.update(cx, |editor, cx| {
+        let creases = self.editor.update(cx, |editor, cx| {
             let selection = editor.selections.newest::<Point>(cx);
+            let selection_start = editor.selections.newest::<usize>(cx).start;
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             editor.display_map.update(cx, |display_map, cx| {
                 display_map
@@ -3296,19 +3297,27 @@ impl ContextEditor {
                     )
                     .filter_map(|crease| {
                         if let Some(metadata) = &crease.metadata {
-                            let start_row = crease.range.start.to_point(&snapshot).row;
-                            let end_row = crease.range.end.to_point(&snapshot).row;
+                            let start = crease
+                                .range
+                                .start
+                                .to_offset(&snapshot)
+                                .saturating_sub(selection_start);
+                            let end = crease
+                                .range
+                                .end
+                                .to_offset(&snapshot)
+                                .saturating_sub(selection_start);
 
-                            let start_row_relative_to_selection =
-                                start_row.saturating_sub(selection.start.row);
-                            let end_row_relative_to_selection =
-                                end_row.saturating_sub(selection.start.row) + 1;
+                            let range_relative_to_selection = start..end;
 
-                            Some(SelectedCreaseMetadata {
-                                row_range_relative_to_selection: start_row_relative_to_selection
-                                    ..end_row_relative_to_selection,
-                                crease: metadata.clone(),
-                            })
+                            if range_relative_to_selection.is_empty() {
+                                None
+                            } else {
+                                Some(SelectedCreaseMetadata {
+                                    range_relative_to_selection,
+                                    crease: metadata.clone(),
+                                })
+                            }
                         } else {
                             None
                         }
@@ -3319,10 +3328,8 @@ impl ContextEditor {
 
         let editor = self.editor.read(cx);
         let context = self.context.read(cx);
-        let mut message_role_blocks = Vec::new();
         if editor.selections.count() == 1 {
             let selection = editor.selections.newest::<usize>(cx);
-            let start_row = editor.selections.newest::<Point>(cx).start.row;
             let mut copied_text = String::new();
             for message in context.messages(cx) {
                 if message.offset_range.start >= selection.range().end {
@@ -3331,7 +3338,6 @@ impl ContextEditor {
                     let range = cmp::max(message.offset_range.start, selection.range().start)
                         ..cmp::min(message.offset_range.end, selection.range().end);
                     if !range.is_empty() {
-                        message_role_blocks.push((start_row + 0, message.role)); // todo: Get the right row
                         for chunk in context.buffer().read(cx).text_for_range(range) {
                             copied_text.push_str(chunk);
                         }
@@ -3342,10 +3348,7 @@ impl ContextEditor {
 
             cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
                 copied_text,
-                CopyMetadata {
-                    creases_metadata,
-                    message_role_blocks,
-                },
+                CopyMetadata { creases },
             ));
             cx.stop_propagation();
             return;
@@ -3385,7 +3388,7 @@ impl ContextEditor {
 
         if images.is_empty() {
             self.editor.update(cx, |editor, cx| {
-                let paste_position = editor.selections.newest::<Point>(cx).head();
+                let paste_position = editor.selections.newest::<usize>(cx).head();
                 editor.paste(action, cx);
 
                 if let Some(metadata) = metadata {
@@ -3394,15 +3397,14 @@ impl ContextEditor {
                     let mut buffer_rows_to_fold = BTreeSet::new();
                     let weak_editor = cx.view().downgrade();
                     editor.insert_creases(
-                        metadata.creases_metadata.into_iter().map(|metadata| {
-                            let start = buffer.anchor_before(Point::new(
-                                paste_position.row + metadata.row_range_relative_to_selection.start,
-                                0,
-                            ));
-                            let end = buffer.anchor_after(Point::new(
-                                paste_position.row + metadata.row_range_relative_to_selection.end,
-                                0,
-                            ));
+                        metadata.creases.into_iter().map(|metadata| {
+                            let start = buffer.anchor_after(
+                                paste_position + metadata.range_relative_to_selection.start,
+                            );
+                            let end = buffer.anchor_before(
+                                paste_position + metadata.range_relative_to_selection.end,
+                            );
+
                             let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                             buffer_rows_to_fold.insert(buffer_row);
                             Crease::new(
@@ -3411,14 +3413,15 @@ impl ContextEditor {
                                     constrain_width: false,
                                     render: render_fold_icon_button(
                                         weak_editor.clone(),
-                                        metadata.crease.icon,
-                                        metadata.crease.label,
+                                        metadata.crease.icon.clone(),
+                                        metadata.crease.label.clone(),
                                     ),
                                     merge_adjacent: false,
                                 },
                                 render_slash_command_output_toggle,
                                 |_, _, _| Empty.into_any(),
                             )
+                            .with_metadata(metadata.crease.clone())
                         }),
                         cx,
                     );
@@ -4096,15 +4099,14 @@ fn render_fold_icon_button(
     })
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CopyMetadata {
-    creases_metadata: Vec<SelectedCreaseMetadata>,
-    message_role_blocks: Vec<(u32, Role)>,
+    creases: Vec<SelectedCreaseMetadata>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SelectedCreaseMetadata {
-    row_range_relative_to_selection: Range<u32>,
+    range_relative_to_selection: Range<usize>,
     crease: CreaseMetadata,
 }
 
