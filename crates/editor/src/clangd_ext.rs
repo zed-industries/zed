@@ -12,7 +12,7 @@ use crate::{element::register_action, Editor, SwitchSourceHeader};
 static CLANGD_SERVER_NAME: &str = "clangd";
 
 fn is_c_language(language: &Language) -> bool {
-    return language.name().as_ref() == "C++" || language.name().as_ref() == "C";
+    return language.name() == "C++".into() || language.name() == "C".into();
 }
 
 pub fn switch_source_header(

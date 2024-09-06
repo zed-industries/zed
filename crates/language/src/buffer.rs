@@ -2,7 +2,7 @@ pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
     markdown::ParsedMarkdown,
-    proto, Language, Grammar, LanguageRegistry,
+    proto, Grammar, Language, LanguageRegistry,
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
@@ -695,11 +695,7 @@ impl Buffer {
     }
 
     /// Assign a language to the buffer, returning the buffer.
-    pub fn with_language(
-        mut self,
-        language: Arc<Language>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
+    pub fn with_language(mut self, language: Arc<Language>, cx: &mut ModelContext<Self>) -> Self {
         self.set_language(Some(language), cx);
         self
     }
@@ -807,11 +803,7 @@ impl Buffer {
     }
 
     /// Assign a language to the buffer.
-    pub fn set_language(
-        &mut self,
-        language: Option<Arc<Language>>,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear();
         self.language = language;

@@ -4,7 +4,7 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::AssetSource;
 use handlebars::{Handlebars, RenderError};
-use language::BufferSnapshot;
+use language::{BufferSnapshot, LanguageName};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{ops::Range, path::PathBuf, sync::Arc, time::Duration};
@@ -204,11 +204,11 @@ impl PromptBuilder {
     pub fn generate_content_prompt(
         &self,
         user_prompt: String,
-        language_name: Option<&str>,
+        language_name: Option<&LanguageName>,
         buffer: BufferSnapshot,
         range: Range<usize>,
     ) -> Result<String, RenderError> {
-        let content_type = match language_name {
+        let content_type = match language_name.as_ref().map(|l| l.0.as_ref()) {
             None | Some("Markdown" | "Plain Text") => "text",
             Some(_) => "code",
         };

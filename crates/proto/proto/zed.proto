@@ -2506,9 +2506,8 @@ message LanguageServerCommand {
 }
 
 message AvailableLanguage {
-    string language_name = 7;
-    repeated string path_suffixes = 8;
-    optional string first_line_pattern = 9;
+    string name = 7;
+    string matcher = 8;
 }
 
 message CreateLanguageServer {

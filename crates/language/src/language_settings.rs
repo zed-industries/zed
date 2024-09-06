@@ -41,7 +41,7 @@ pub fn language_settings<'a>(
     cx: &'a AppContext,
 ) -> &'a LanguageSettings {
     let language_name = language.map(|l| l.name());
-    all_language_settings(file, cx).language(language_name)
+    all_language_settings(file, cx).language(language_name.as_ref())
 }
 
 /// Returns the settings for all languages from the provided file.
@@ -792,9 +792,9 @@ impl InlayHintSettings {
 
 impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
-    pub fn language<'a>(&'a self, language_name: Option<LanguageName>) -> &'a LanguageSettings {
+    pub fn language<'a>(&'a self, language_name: Option<&LanguageName>) -> &'a LanguageSettings {
         if let Some(name) = language_name {
-            if let Some(overrides) = self.languages.get(&name) {
+            if let Some(overrides) = self.languages.get(name) {
                 return overrides;
             }
         }
@@ -822,7 +822,7 @@ impl AllLanguageSettings {
             }
         }
 
-        self.language(language.map(|l| l.name()))
+        self.language(language.map(|l| l.name()).as_ref())
             .show_inline_completions
     }
 }

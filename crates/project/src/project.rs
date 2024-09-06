@@ -1193,8 +1193,7 @@ impl Project {
             if let Some(language) = buffer_language {
                 if settings.enable_language_server {
                     if let Some(file) = buffer_file {
-                        language_servers_to_start
-                            .push((file.worktree.clone(), Arc::clone(language)));
+                        language_servers_to_start.push((file.worktree.clone(), language.name()));
                     }
                 }
                 language_formatters_to_check
@@ -1233,11 +1232,11 @@ impl Project {
                     ) {
                         (None, None) => {}
                         (Some(_), None) | (None, Some(_)) => {
-                            language_servers_to_restart.push((worktree, Arc::clone(language)));
+                            language_servers_to_restart.push((worktree, language.name()));
                         }
                         (Some(current_lsp_settings), Some(new_lsp_settings)) => {
                             if current_lsp_settings != new_lsp_settings {
-                                language_servers_to_restart.push((worktree, Arc::clone(language)));
+                                language_servers_to_restart.push((worktree, language.name()));
                             }
                         }
                     }

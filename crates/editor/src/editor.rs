@@ -90,9 +90,9 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
-    markdown, point_from_lsp, AutoindentMode, Language, BracketPair, Buffer, Capability,
-    CharKind, CodeLabel, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize,
-    OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
+    markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
+    CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
+    Point, Selection, SelectionGoal, TransactionId,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -2162,11 +2162,7 @@ impl Editor {
         }
     }
 
-    pub fn language_at<T: ToOffset>(
-        &self,
-        point: T,
-        cx: &AppContext,
-    ) -> Option<Arc<Language>> {
+    pub fn language_at<T: ToOffset>(&self, point: T, cx: &AppContext) -> Option<Arc<Language>> {
         self.buffer.read(cx).language_at(point, cx)
     }
 
@@ -12463,7 +12459,7 @@ fn inlay_hint_settings(
     let language = snapshot.language_at(location);
     let settings = all_language_settings(file, cx);
     settings
-        .language(language.map(|l| l.name()).as_deref())
+        .language(language.map(|l| l.name()).as_ref())
         .inlay_hints
 }
 

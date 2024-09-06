@@ -43,6 +43,13 @@ impl LanguageName {
     pub fn new(s: &str) -> Self {
         Self(Arc::from(s))
     }
+
+    pub fn from_proto(s: String) -> Self {
+        Self(Arc::from(s))
+    }
+    pub fn to_proto(self) -> String {
+        self.0.to_string()
+    }
     pub fn lsp_id(&self) -> String {
         match self.0.as_ref() {
             "Plain Text" => "plaintext".to_string(),
@@ -135,6 +142,10 @@ pub struct AvailableLanguage {
 impl AvailableLanguage {
     pub fn name(&self) -> LanguageName {
         self.name.clone()
+    }
+
+    pub fn matcher(&self) -> &LanguageMatcher {
+        &self.matcher
     }
 }
 
@@ -241,7 +252,7 @@ impl LanguageRegistry {
     /// appended to the end.
     pub fn reorder_language_servers(
         &self,
-        language: &Arc<Language>,
+        language: &LanguageName,
         ordered_lsp_adapters: Vec<Arc<CachedLspAdapter>>,
     ) {
         self.state
@@ -260,7 +271,7 @@ impl LanguageRegistry {
             .remove_languages(languages_to_remove, grammars_to_remove)
     }
 
-    pub fn remove_lsp_adapter(&self, language_name: &str, name: &LanguageServerName) {
+    pub fn remove_lsp_adapter(&self, language_name: &LanguageName, name: &LanguageServerName) {
         let mut state = self.state.write();
         if let Some(adapters) = state.lsp_adapters.get_mut(language_name) {
             adapters.retain(|adapter| &adapter.name != name)
@@ -518,6 +529,18 @@ impl LanguageRegistry {
             }
         });
         async move { rx.await? }
+    }
+
+    pub fn available_language_for_name(
+        self: &Arc<Self>,
+        name: &LanguageName,
+    ) -> Option<AvailableLanguage> {
+        let state = self.state.read();
+        state
+            .available_languages
+            .iter()
+            .find(|l| &l.name == name)
+            .cloned()
     }
 
     pub fn language_for_file(
@@ -796,7 +819,7 @@ impl LanguageRegistry {
     pub fn create_pending_language_server(
         self: &Arc<Self>,
         stderr_capture: Arc<Mutex<Option<String>>>,
-        _language_name_for_tests: Option<LanguageName>,
+        _language_name_for_tests: LanguageName,
         adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
@@ -884,10 +907,12 @@ impl LanguageRegistry {
                                 .is_some()
                             {
                                 if let Some(this) = this.upgrade() {
-                                    if let Some(txs) = this.state.write().fake_server_txs.get_mut(
-                                        &_language_name_for_tests
-                                            .unwrap_or_else(|| LanguageName::new("")),
-                                    ) {
+                                    if let Some(txs) = this
+                                        .state
+                                        .write()
+                                        .fake_server_txs
+                                        .get_mut(&_language_name_for_tests)
+                                    {
                                         for tx in txs {
                                             tx.unbounded_send(fake_server.clone()).ok();
                                         }
@@ -996,10 +1021,10 @@ impl LanguageRegistryState {
     /// appended to the end.
     fn reorder_language_servers(
         &mut self,
-        language: &Arc<Language>,
+        language_name: &LanguageName,
         ordered_lsp_adapters: Vec<Arc<CachedLspAdapter>>,
     ) {
-        let Some(lsp_adapters) = self.lsp_adapters.get_mut(&language.config.name) else {
+        let Some(lsp_adapters) = self.lsp_adapters.get_mut(language_name) else {
             return;
         };
 

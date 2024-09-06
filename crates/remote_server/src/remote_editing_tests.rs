@@ -202,7 +202,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     server_cx.read(|cx| {
         assert_eq!(
             AllLanguageSettings::get_global(cx)
-                .language(Some("Rust"))
+                .language(Some(&"Rust".into()))
                 .language_servers,
             ["custom-rust-analyzer".into()]
         )
@@ -247,7 +247,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
                 }),
                 cx
             )
-            .language(Some("Rust"))
+            .language(Some(&"Rust".into()))
             .language_servers,
             ["override-rust-analyzer".into()]
         )
@@ -257,7 +257,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
         let file = buffer.read(cx).file();
         assert_eq!(
             all_language_settings(file, cx)
-                .language(Some("Rust"))
+                .language(Some(&"Rust".into()))
                 .language_servers,
             ["override-rust-analyzer".into()]
         )

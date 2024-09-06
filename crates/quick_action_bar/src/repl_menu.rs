@@ -62,7 +62,7 @@ impl QuickActionBar {
                 return self.render_repl_launch_menu(spec, cx);
             }
             SessionSupport::RequiresSetup(language) => {
-                return self.render_repl_setup(&language, cx);
+                return self.render_repl_setup(&language.0, cx);
             }
             SessionSupport::Unsupported => return None,
         };
