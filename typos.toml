@@ -56,5 +56,7 @@ extend-ignore-re = [
     "doas",
     # ProtoLS crate with tree-sitter Protobuf grammar.
     "protols"
+    # x11rb SelectionNotifyEvent struct field
+    "requestor"
 ]
 check-filename = true
