@@ -432,13 +432,11 @@ mod test {
                 the laˇzy dog"});
         // paste in visual mode
         cx.simulate_shared_keystrokes("v i w p").await;
-        cx.shared_state().await.assert_eq(
-            "
+        cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown
                 the•
                 ˇfox jumps over
-                 dog",
-        );
+                 dog"});
         cx.shared_clipboard().await.assert_eq("lazy");
         cx.set_shared_state(indoc! {"
             The quick brown
