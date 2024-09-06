@@ -157,7 +157,7 @@ pub enum ScrollBeyondLastLine {
     VerticalScrollMargin,
 }
 
-/// Default match options; all false
+/// Default options for buffer and project search items.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct SearchDefaults {
