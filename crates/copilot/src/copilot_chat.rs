@@ -1,11 +1,10 @@
-use std::fs;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::{sync::Arc, time::Duration};
 
-use ::fs::Fs;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use chrono::DateTime;
+use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
@@ -15,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use settings::watch_config_file;
 use strum::EnumIter;
 use ui::Context;
+use util::ResultExt;
 
 pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
 pub const COPILOT_CHAT_AUTH_URL: &str = "https://api.github.com/copilot_internal/v2/token";
@@ -177,16 +177,13 @@ fn copilot_chat_config_path() -> &'static PathBuf {
     static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
     COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
-        let path = if cfg!(target_os = "windows") {
+        if cfg!(target_os = "windows") {
             home_dir().join("AppData").join("Local")
         } else {
             home_dir().join(".config")
         }
-        .join("github-copilot");
-
-        fs::create_dir_all(&path).expect("Failed to create copilot chat config directory");
-
-        path.join("hosts.json")
+        .join("github-copilot")
+        .join("hosts.json")
     })
 }
 
@@ -197,11 +194,16 @@ impl CopilotChat {
     }
 
     pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &AppContext) -> Self {
-        let mut config_file_rx = watch_config_file(
-            cx.background_executor(),
-            fs,
-            copilot_chat_config_path().clone(),
-        );
+        let config_path = copilot_chat_config_path();
+
+        if let Some(copilot_chat_config_dir) = config_path.parent() {
+            std::fs::create_dir_all(copilot_chat_config_dir)
+                .context("failed to create Copilot Chat config directory")
+                .log_err();
+        }
+
+        let mut config_file_rx =
+            watch_config_file(cx.background_executor(), fs, config_path.clone());
 
         cx.spawn(|cx| async move {
             while let Some(contents) = config_file_rx.next().await {
