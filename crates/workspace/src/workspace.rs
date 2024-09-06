@@ -2063,7 +2063,7 @@ impl Workspace {
         .detach_and_log_err(cx);
     }
 
-    fn project_path_for_path(
+    pub fn project_path_for_path(
         project: Model<Project>,
         abs_path: &Path,
         visible: bool,

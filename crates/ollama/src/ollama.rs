@@ -83,7 +83,7 @@ fn get_max_tokens(name: &str) -> usize {
         "llama3" | "gemma2" | "gemma" | "codegemma" | "starcoder" | "aya" => 8192,
         "codellama" | "starcoder2" => 16384,
         "mistral" | "codestral" | "mixstral" | "llava" | "qwen2" | "dolphin-mixtral" => 32768,
-        "llama3.1" | "phi3" | "phi3.5" | "command-r" | "deepseek-coder-v2" => 128000,
+        "llama3.1" | "phi3" | "phi3.5" | "command-r" | "deepseek-coder-v2" | "yi-coder" => 128000,
         _ => DEFAULT_TOKENS,
     }
     .clamp(1, MAXIMUM_TOKENS)

@@ -270,6 +270,19 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     })
 }
 
+/// Returns a position of the previous word boundary, where a word character is defined as either
+/// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
+pub fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let raw_point = point.to_point(map);
+    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
+
+    find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
+        (classifier.kind(left) != classifier.kind(right) && !right.is_whitespace())
+            || left == '\n'
+            || right == '\n'
+    })
+}
+
 /// Returns a position of the previous subword boundary, where a subword is defined as a run of
 /// word characters of the same "subkind" - where subcharacter kinds are '_' character,
 /// lowerspace characters and uppercase characters.
@@ -295,6 +308,24 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
 
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(left))
+            || right == '\n'
+    })
+}
+
+/// Returns a position of the next word boundary, where a word character is defined as either
+/// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
+pub fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let raw_point = point.to_point(map);
+    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
+
+    let mut on_starting_row = true;
+    find_boundary(map, point, FindRange::MultiLine, |left, right| {
+        if left == '\n' {
+            on_starting_row = false;
+        }
+        (classifier.kind(left) != classifier.kind(right)
+            && ((on_starting_row && !left.is_whitespace())
+                || (!on_starting_row && !right.is_whitespace())))
             || right == '\n'
     })
 }

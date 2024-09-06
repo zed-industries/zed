@@ -1794,12 +1794,15 @@ impl PromptEditor {
             CodegenStatus::Pending => {
                 cx.emit(PromptEditorEvent::DismissRequested);
             }
-            CodegenStatus::Done | CodegenStatus::Error(_) => {
+            CodegenStatus::Done => {
                 if self.edited_since_done {
                     cx.emit(PromptEditorEvent::StartRequested);
                 } else {
                     cx.emit(PromptEditorEvent::ConfirmRequested);
                 }
+            }
+            CodegenStatus::Error(_) => {
+                cx.emit(PromptEditorEvent::StartRequested);
             }
         }
     }
@@ -2341,7 +2344,7 @@ impl Codegen {
                 self.build_request(user_prompt, assistant_panel_context, edit_range.clone(), cx)?;
 
             let chunks =
-                cx.spawn(|_, cx| async move { model.stream_completion(request, &cx).await });
+                cx.spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await });
             async move { Ok(chunks.await?.boxed()) }.boxed_local()
         };
         self.handle_stream(telemetry_id, edit_range, chunks, cx);

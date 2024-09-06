@@ -5,22 +5,70 @@ use std::{
     time::Duration,
 };
 
+use sysinfo::System;
+
 use release_channel::ReleaseChannel;
 
 const LOCALHOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(10);
 const RECEIVE_TIMEOUT: Duration = Duration::from_millis(35);
 const SEND_TIMEOUT: Duration = Duration::from_millis(20);
+const USER_BLOCK: u16 = 100;
 
 fn address() -> SocketAddr {
+    // These port numbers are offset by the user ID to avoid conflicts between
+    // different users on the same machine. In addition to that the ports for each
+    // release channel are spaced out by 100 to avoid conflicts between different
+    // users running different release channels on the same machine. This ends up
+    // interleaving the ports between different users and different release channels.
+    //
+    // On macOS user IDs start at 501 and on Linux they start at 1000. The first user
+    // on a Mac with ID 501 running a dev channel build will use port 44238, and the
+    // second user with ID 502 will use port 44239, and so on. User 501 will use ports
+    // 44338, 44438, and 44538 for the preview, stable, and nightly channels,
+    // respectively. User 502 will use ports 44339, 44439, and 44539 for the preview,
+    // stable, and nightly channels, respectively.
     let port = match *release_channel::RELEASE_CHANNEL {
         ReleaseChannel::Dev => 43737,
-        ReleaseChannel::Preview => 43738,
-        ReleaseChannel::Stable => 43739,
-        ReleaseChannel::Nightly => 43740,
+        ReleaseChannel::Preview => 43737 + USER_BLOCK,
+        ReleaseChannel::Stable => 43737 + (2 * USER_BLOCK),
+        ReleaseChannel::Nightly => 43737 + (3 * USER_BLOCK),
     };
+    let mut user_port = port;
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    if let Ok(current_pid) = sysinfo::get_current_pid() {
+        if let Some(uid) = sys
+            .process(current_pid)
+            .and_then(|process| process.user_id())
+        {
+            let uid_u32 = get_uid_as_u32(uid);
+            // Ensure that the user ID is not too large to avoid overflow when
+            // calculating the port number. This seems unlikely but it doesn't
+            // hurt to be safe.
+            let max_port = 65535;
+            let max_uid: u32 = max_port - port as u32;
+            let wrapped_uid: u16 = (uid_u32 % max_uid) as u16;
+            user_port += wrapped_uid;
+        }
+    }
 
-    SocketAddr::V4(SocketAddrV4::new(LOCALHOST, port))
+    SocketAddr::V4(SocketAddrV4::new(LOCALHOST, user_port))
+}
+
+#[cfg(unix)]
+fn get_uid_as_u32(uid: &sysinfo::Uid) -> u32 {
+    *uid.clone()
+}
+
+#[cfg(windows)]
+fn get_uid_as_u32(uid: &sysinfo::Uid) -> u32 {
+    // Extract the RID which is an integer
+    uid.to_string()
+        .rsplit('-')
+        .next()
+        .and_then(|rid| rid.parse::<u32>().ok())
+        .unwrap_or(0)
 }
 
 fn instance_handshake() -> &'static str {

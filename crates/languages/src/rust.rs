@@ -230,7 +230,11 @@ impl LspAdapter for RustLspAdapter {
                     && completion.insert_text_format != Some(lsp::InsertTextFormat::SNIPPET) =>
             {
                 let name = &completion.label;
-                let text = format!("{}: {}", name, detail.unwrap());
+                let text = format!(
+                    "{}: {}",
+                    name,
+                    completion.detail.as_ref().or(detail.as_ref()).unwrap()
+                );
                 let source = Rope::from(format!("let {} = ();", text).as_str());
                 let runs = language.highlight_text(&source, 4..4 + text.len());
                 return Some(CodeLabel {
@@ -263,19 +267,32 @@ impl LspAdapter for RustLspAdapter {
                 });
                 // fn keyword should be followed by opening parenthesis.
                 if let Some((prefix, suffix)) = fn_keyword {
+                    let mut text = REGEX.replace(&completion.label, suffix).to_string();
+                    let source = Rope::from(format!("{prefix} {} {{}}", text).as_str());
+                    let run_start = prefix.len() + 1;
+                    let runs = language.highlight_text(&source, run_start..run_start + text.len());
                     if detail.starts_with(" (") {
-                        let mut text = REGEX.replace(&completion.label, suffix).to_string();
-                        let source = Rope::from(format!("{prefix} {} {{}}", text).as_str());
-                        let run_start = prefix.len() + 1;
-                        let runs =
-                            language.highlight_text(&source, run_start..run_start + text.len());
                         text.push_str(&detail);
-                        return Some(CodeLabel {
-                            filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
-                            text,
-                            runs,
-                        });
                     }
+
+                    return Some(CodeLabel {
+                        filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
+                        text,
+                        runs,
+                    });
+                } else if completion
+                    .detail
+                    .as_ref()
+                    .map_or(false, |detail| detail.starts_with("macro_rules! "))
+                {
+                    let source = Rope::from(completion.label.as_str());
+                    let runs = language.highlight_text(&source, 0..completion.label.len());
+
+                    return Some(CodeLabel {
+                        filter_range: 0..completion.label.len(),
+                        text: completion.label.clone(),
+                        runs,
+                    });
                 }
             }
             Some(kind) => {

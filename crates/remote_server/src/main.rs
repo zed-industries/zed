@@ -47,6 +47,7 @@ fn main() {
     }
 
     gpui::App::headless().run(move |cx| {
+        settings::init(cx);
         HeadlessProject::init(cx);
 
         let (incoming_tx, incoming_rx) = mpsc::unbounded();

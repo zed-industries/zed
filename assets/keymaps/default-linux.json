@@ -169,7 +169,8 @@
       "ctrl-shift-g": "search::SelectPrevMatch",
       "alt-m": "assistant::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
-      "ctrl-k l": "assistant::DeployPromptLibrary"
+      "ctrl-k l": "assistant::DeployPromptLibrary",
+      "ctrl-n": "assistant::NewContext"
     }
   },
   {
@@ -261,7 +262,8 @@
       "alt-r": "search::ToggleRegex",
       "alt-ctrl-f": "project_search::ToggleFilters",
       "ctrl-alt-shift-r": "search::ToggleRegex",
-      "ctrl-alt-shift-x": "search::ToggleRegex"
+      "ctrl-alt-shift-x": "search::ToggleRegex",
+      "ctrl-k shift-enter": "pane::TogglePinTab"
     }
   },
   // Bindings from VS Code
@@ -521,7 +523,7 @@
     }
   },
   {
-    "context": "OutlinePanel",
+    "context": "OutlinePanel && not_editing",
     "bindings": {
       "escape": "menu::Cancel",
       "left": "outline_panel::CollapseSelectedEntry",

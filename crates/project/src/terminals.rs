@@ -264,7 +264,8 @@ impl Project {
             .into_iter()
             .map(|virtual_environment_name| abs_path.join(virtual_environment_name))
             .find(|venv_path| {
-                self.find_worktree(&venv_path, cx)
+                let bin_path = venv_path.join("bin");
+                self.find_worktree(&bin_path, cx)
                     .and_then(|(worktree, relative_path)| {
                         worktree.read(cx).entry_for_path(&relative_path)
                     })

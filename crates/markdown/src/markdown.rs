@@ -663,7 +663,7 @@ impl Element for MarkdownElement {
                         builder.pop_div();
                         builder.pop_text_style()
                     }
-                    MarkdownTagEnd::BlockQuote => {
+                    MarkdownTagEnd::BlockQuote(_kind) => {
                         builder.pop_text_style();
                         builder.pop_div()
                     }

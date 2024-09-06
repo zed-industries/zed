@@ -1,4 +1,5 @@
 use super::open_ai::count_open_ai_tokens;
+use crate::provider::anthropic::map_to_language_model_completion_events;
 use crate::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
@@ -33,7 +34,7 @@ use std::{
 use strum::IntoEnumIterator;
 use ui::{prelude::*, TintColor};
 
-use crate::{LanguageModelAvailability, LanguageModelProvider};
+use crate::{LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider};
 
 use super::anthropic::count_anthropic_tokens;
 
@@ -496,7 +497,7 @@ impl LanguageModel for CloudLanguageModel {
         &self,
         request: LanguageModelRequest,
         _cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let request = request.into_anthropic(model.id().into(), model.max_output_tokens());
@@ -515,17 +516,11 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    Ok(anthropic::extract_content_from_events(Box::pin(
+                    Ok(map_to_language_model_completion_events(Box::pin(
                         response_lines(response).map_err(AnthropicError::Other),
                     )))
                 });
-                async move {
-                    Ok(future
-                        .await?
-                        .map(|result| result.map_err(|err| anyhow!(err)))
-                        .boxed())
-                }
-                .boxed()
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
@@ -546,7 +541,13 @@ impl LanguageModel for CloudLanguageModel {
                     .await?;
                     Ok(open_ai::extract_text_from_events(response_lines(response)))
                 });
-                async move { Ok(future.await?.boxed()) }.boxed()
+                async move {
+                    Ok(future
+                        .await?
+                        .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                        .boxed())
+                }
+                .boxed()
             }
             CloudModel::Google(model) => {
                 let client = self.client.clone();
@@ -569,7 +570,13 @@ impl LanguageModel for CloudLanguageModel {
                         response,
                     )))
                 });
-                async move { Ok(future.await?.boxed()) }.boxed()
+                async move {
+                    Ok(future
+                        .await?
+                        .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                        .boxed())
+                }
+                .boxed()
             }
             CloudModel::Zed(model) => {
                 let client = self.client.clone();
@@ -591,7 +598,13 @@ impl LanguageModel for CloudLanguageModel {
                     .await?;
                     Ok(open_ai::extract_text_from_events(response_lines(response)))
                 });
-                async move { Ok(future.await?.boxed()) }.boxed()
+                async move {
+                    Ok(future
+                        .await?
+                        .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                        .boxed())
+                }
+                .boxed()
             }
         }
     }

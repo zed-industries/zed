@@ -150,7 +150,7 @@ impl ActivityIndicator {
     ) -> impl Iterator<Item = PendingWork<'a>> {
         self.project
             .read(cx)
-            .language_server_statuses()
+            .language_server_statuses(cx)
             .rev()
             .filter_map(|(server_id, status)| {
                 if status.pending_work.is_empty() {

@@ -250,6 +250,7 @@ async fn test_channel_notes_participant_indices(
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
     // Clients A and B open the same file.
+    executor.start_waiting();
     let editor_a = workspace_a
         .update(cx_a, |workspace, cx| {
             workspace.open_path((worktree_id_a, "file.txt"), None, true, cx)
@@ -258,6 +259,7 @@ async fn test_channel_notes_participant_indices(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
+    executor.start_waiting();
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id_a, "file.txt"), None, true, cx)

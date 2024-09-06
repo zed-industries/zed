@@ -25,6 +25,13 @@ pub enum SearchResult {
     LimitReached,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum SearchInputKind {
+    Query,
+    Include,
+    Exclude,
+}
+
 #[derive(Clone, Debug)]
 pub struct SearchInputs {
     query: Arc<str>,

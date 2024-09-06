@@ -4780,8 +4780,8 @@ async fn test_references(
 
     // User is informed that a request is pending.
     executor.run_until_parked();
-    project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().unwrap().1;
+    project_b.read_with(cx_b, |project, cx| {
+        let status = project.language_server_statuses(cx).next().unwrap().1;
         assert_eq!(status.name, "my-fake-lsp-adapter");
         assert_eq!(
             status.pending_work.values().next().unwrap().message,
@@ -4811,7 +4811,7 @@ async fn test_references(
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, cx| {
         // User is informed that a request is no longer pending.
-        let status = project.language_server_statuses().next().unwrap().1;
+        let status = project.language_server_statuses(cx).next().unwrap().1;
         assert!(status.pending_work.is_empty());
 
         assert_eq!(references.len(), 3);
@@ -4838,8 +4838,8 @@ async fn test_references(
 
     // User is informed that a request is pending.
     executor.run_until_parked();
-    project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().unwrap().1;
+    project_b.read_with(cx_b, |project, cx| {
+        let status = project.language_server_statuses(cx).next().unwrap().1;
         assert_eq!(status.name, "my-fake-lsp-adapter");
         assert_eq!(
             status.pending_work.values().next().unwrap().message,
@@ -4855,8 +4855,8 @@ async fn test_references(
 
     // User is informed that the request is no longer pending.
     executor.run_until_parked();
-    project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().unwrap().1;
+    project_b.read_with(cx_b, |project, cx| {
+        let status = project.language_server_statuses(cx).next().unwrap().1;
         assert!(status.pending_work.is_empty());
     });
 }
