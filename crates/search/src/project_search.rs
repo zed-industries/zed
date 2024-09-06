@@ -8,7 +8,7 @@ use editor::{
     actions::SelectAll,
     items::active_match_index,
     scroll::{Autoscroll, Axis},
-    Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer, SearchSettings,
+    Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer,
     MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
@@ -20,8 +20,12 @@ use gpui::{
 };
 use language::Buffer;
 use menu::Confirm;
-use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
-use settings::{Settings, SettingsStore};
+use project::{
+    search::{SearchQuery},
+    search_history::SearchHistoryCursor,
+    Project, ProjectPath,
+};
+use settings::Settings;
 use std::{
     any::{Any, TypeId},
     mem,
@@ -56,7 +60,6 @@ impl Global for ActiveSettings {}
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSettings::default());
-    SearchSettings::register(cx);
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         register_workspace_action(workspace, move |search_bar, _: &FocusSearch, cx| {
             search_bar.focus_search(cx);
@@ -629,17 +632,7 @@ impl ProjectSearchView {
         let (mut options, filters_enabled) = if let Some(settings) = settings {
             (settings.search_options, settings.filters_enabled)
         } else {
-            let mut search_settings = *SearchSettings::get_global(cx);
-            let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
-                let new_settings = *SearchSettings::get_global(cx);
-                if search_settings != new_settings {
-                    this.search_options = SearchOptions::from_settings(&new_settings);
-                    search_settings = new_settings;
-                    cx.notify();
-                }
-            });
-            subscriptions.push(settings_subscription);
-            let search_options = SearchOptions::from_settings(&search_settings);
+            let search_options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
             (search_options, false)
         };
 
