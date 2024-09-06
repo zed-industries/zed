@@ -779,9 +779,7 @@ impl Pane {
     }
 
     pub fn close_current_preview_item(&mut self, cx: &mut ViewContext<Self>) -> Option<usize> {
-        let Some(item_idx) = self.preview_item_idx() else {
-            return None;
-        };
+        let item_idx = self.preview_item_idx()?;
 
         let prev_active_item_index = self.active_item_index;
         self.remove_item(item_idx, false, false, cx);
@@ -1598,12 +1596,10 @@ impl Pane {
         project: Model<Project>,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
-        let format =
-            if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
-                false
-            } else {
-                true
-            };
+        let format = !matches!(
+            item.workspace_settings(cx).autosave,
+            AutosaveSetting::AfterDelay { .. }
+        );
         if Self::can_autosave_item(item, cx) {
             item.save(format, project, cx)
         } else {
@@ -2889,7 +2885,7 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
     format!("{path} contains unsaved edits. Do you want to save it?")
 }
 
-pub fn tab_details(items: &Vec<Box<dyn ItemHandle>>, cx: &AppContext) -> Vec<usize> {
+pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &AppContext) -> Vec<usize> {
     let mut tab_details = items.iter().map(|_| 0).collect::<Vec<_>>();
     let mut tab_descriptions = HashMap::default();
     let mut done = false;

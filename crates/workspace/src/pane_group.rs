@@ -631,7 +631,7 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, Along, AnyElement, Axis, Bounds, Element, GlobalElementId, IntoElement,
+        px, relative, size, Along, AnyElement, Axis, Bounds, Element, GlobalElementId, IntoElement,
         MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
         WeakView, WindowContext,
     };
@@ -838,12 +838,13 @@ mod element {
             _global_id: Option<&GlobalElementId>,
             cx: &mut ui::prelude::WindowContext,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-            let mut style = Style::default();
-            style.flex_grow = 1.;
-            style.flex_shrink = 1.;
-            style.flex_basis = relative(0.).into();
-            style.size.width = relative(1.).into();
-            style.size.height = relative(1.).into();
+            let style = Style {
+                flex_grow: 1.,
+                flex_shrink: 1.,
+                flex_basis: relative(0.).into(),
+                size: size(relative(1.).into(), relative(1.).into()),
+                ..Style::default()
+            };
             (cx.request_layout(style, None), ())
         }
 

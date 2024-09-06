@@ -259,13 +259,13 @@ impl Room {
                 None
             };
 
-            match room
+            let did_join = room
                 .update(&mut cx, |room, cx| {
                     room.leave_when_empty = true;
                     room.call(called_user_id, initial_project_id, cx)
                 })?
-                .await
-            {
+                .await;
+            match did_join {
                 Ok(()) => Ok(room),
                 Err(error) => Err(error.context("room creation failed")),
             }

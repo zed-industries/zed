@@ -2877,9 +2877,7 @@ impl Workspace {
         direction: SplitDirection,
         cx: &WindowContext,
     ) -> Option<View<Pane>> {
-        let Some(bounding_box) = self.center.bounding_box_for_pane(&self.active_pane) else {
-            return None;
-        };
+        let bounding_box = self.center.bounding_box_for_pane(&self.active_pane)?;
         let cursor = self.active_pane.read(cx).pixel_position_of_cursor(cx);
         let center = match cursor {
             Some(cursor) if bounding_box.contains(&cursor) => cursor,
@@ -4958,7 +4956,7 @@ impl ViewId {
         })
     }
 
-    pub(crate) fn to_proto(&self) -> proto::ViewId {
+    pub(crate) fn to_proto(self) -> proto::ViewId {
         proto::ViewId {
             creator: Some(self.creator),
             id: self.id,
