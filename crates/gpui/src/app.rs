@@ -362,6 +362,7 @@ impl AppContext {
         let result = update(self);
         if !self.flushing_effects && self.pending_updates == 1 {
             self.flushing_effects = true;
+            println!("flushing effects");
             self.flush_effects();
             self.flushing_effects = false;
         }
@@ -706,6 +707,7 @@ impl AppContext {
         };
 
         self.pending_effects.push_back(effect);
+        // If we're not in an update call; schedule one (somehow)
     }
 
     /// Called at the end of [`AppContext::update`] to complete any side effects
@@ -765,7 +767,7 @@ impl AppContext {
     /// reference count has become zero. We invoke any release observers before dropping
     /// each entity.
     fn release_dropped_entities(&mut self) {
-        println!("releasing dropped entities");
+        // println!("releasing dropped entities");
         loop {
             let dropped = self.entities.take_dropped();
             if dropped.is_empty() {
@@ -1399,6 +1401,7 @@ impl Context for AppContext {
             if window.removed {
                 cx.window_handles.remove(&handle.id);
                 cx.windows.remove(handle.id);
+                cx.flush_effects();
             } else {
                 cx.windows
                     .get_mut(handle.id)

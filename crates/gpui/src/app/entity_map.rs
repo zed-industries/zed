@@ -293,7 +293,7 @@ impl Drop for AnyModel {
 
         // #[cfg(any(test, feature = "test-support"))]
         if let Some(entity_map) = self.entity_map.upgrade() {
-            println!("dropped model");
+            // println!("dropped model");
             entity_map
                 .write()
                 .leak_detector

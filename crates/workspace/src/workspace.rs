@@ -1635,7 +1635,7 @@ impl Workspace {
     }
 
     pub fn close_window(&mut self, _: &CloseWindow, cx: &mut ViewContext<Self>) {
-        // let project = self.project.downgrade();
+        let project = self.project.downgrade();
         // let handle = cx.model();
         // let weak = self.weak_handle();
 
@@ -1648,14 +1648,22 @@ impl Workspace {
                     cx.remove_window();
                 })?;
 
-                // cx.spawn(|cx| async move {
-                //     println!("going to sleep for 8 sec");
-                //     cx.background_executor().timer(Duration::from_secs(8)).await;
-                //     println!("slept for 8 sec");
-                //     println!("asserting the project weak handle is released");
-                //     project.assert_released();
-                // })
-                // .detach();
+                cx.spawn(|cx| async move {
+                    println!("going to sleep for 8 sec");
+                    cx.background_executor().timer(Duration::from_secs(8)).await;
+                    println!("slept for 8 sec");
+                    println!("asserting the project weak handle is released");
+                    project.assert_released();
+                })
+                .detach();
+
+                // for _ in 0..10 {
+                //     cx.background_executor().timer(Duration::from_secs(1)).await;
+                //     dbg!("refreshing");
+                //     AsyncAppContext::update(&mut cx, |cx| cx.new_model(|cx| ())).ok();
+                // }
+
+                println!("loop done");
             }
             anyhow::Ok(())
         })

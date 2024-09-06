@@ -928,6 +928,13 @@ impl<'a> WindowContext<'a> {
     pub fn remove_window(&mut self) {
         println!("remove window!");
         self.window.removed = true;
+
+        // self.spawn(|cx| {
+        // for _ in 0..10 {
+        //     cx.background_executor().timer(Duration::from_secs(1)).await;
+        //     AsyncAppContext::update(&mut cx, |cx| cx.update(|cx| {})).ok();
+        // })
+        // .detach()
     }
 
     /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus

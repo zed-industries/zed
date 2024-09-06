@@ -1061,19 +1061,19 @@ impl SerializableItem for Editor {
                     editor
                 });
 
-                let weak = editor.model.downgrade();
-                cx.spawn(|_, cx| async move {
-                    for i in 0..5 {
-                        println!("{i}/5: going to sleep for 5 seconds");
-                        cx.background_executor()
-                            .timer(std::time::Duration::from_secs(5))
-                            .await;
-                    }
+                // let weak = editor.model.downgrade();
+                // cx.spawn(|_, cx| async move {
+                //     for i in 0..5 {
+                //         println!("{i}/5: going to sleep for 5 seconds");
+                //         cx.background_executor()
+                //             .timer(std::time::Duration::from_secs(5))
+                //             .await;
+                //     }
 
-                    println!("done sleeping");
-                    weak.assert_released();
-                })
-                .detach();
+                //     println!("done sleeping");
+                //     weak.assert_released();
+                // })
+                // .detach();
 
                 editor
             })
