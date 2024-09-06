@@ -5248,7 +5248,7 @@ impl Editor {
     }
 
     fn insert_tasks(&mut self, key: (BufferId, BufferRow), value: RunnableTasks) {
-        if let Some(_) = self.tasks.insert(key, value) {
+        if self.tasks.insert(key, value).is_some() {
             // This case should hopefully be rare, but just in case...
             log::error!("multiple different run targets found on a single line, only the last target will be rendered")
         }

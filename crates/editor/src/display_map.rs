@@ -12,7 +12,7 @@
 //! - [`WrapMap`] that handles soft wrapping.
 //! - [`BlockMap`] that tracks custom blocks such as diagnostics that should be displayed within buffer.
 //! - [`DisplayMap`] that adds background highlights to the regions of text.
-//! Each one of those builds on top of preceding map.
+//!   Each one of those builds on top of preceding map.
 //!
 //! [Editor]: crate::Editor
 //! [EditorElement]: crate::element::EditorElement

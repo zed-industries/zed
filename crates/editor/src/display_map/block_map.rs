@@ -657,7 +657,7 @@ impl BlockMap {
             .flatten()
     }
 
-    pub(crate) fn sort_blocks<B: BlockLike>(blocks: &mut Vec<(u32, B)>) {
+    pub(crate) fn sort_blocks<B: BlockLike>(blocks: &mut [(u32, B)]) {
         // Place excerpt headers and footers above custom blocks on the same row
         blocks.sort_unstable_by(|(row_a, block_a), (row_b, block_b)| {
             row_a.cmp(row_b).then_with(|| {

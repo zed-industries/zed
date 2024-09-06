@@ -490,7 +490,7 @@ pub fn show_link_definition(
             .is_some_and(|d| matches!(d, HoverLink::Url(_)));
 
     if same_kind {
-        if is_cached && (&hovered_link_state.last_trigger_point == &trigger_point)
+        if is_cached && (hovered_link_state.last_trigger_point == trigger_point)
             || hovered_link_state
                 .symbol_range
                 .as_ref()
