@@ -91,7 +91,7 @@ pub struct OutlinePanel {
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
     project: Model<Project>,
-    workspace: View<Workspace>,
+    workspace: WeakView<Workspace>,
     active: bool,
     pinned: bool,
     scroll_handle: UniformListScrollHandle,
@@ -607,7 +607,7 @@ impl OutlinePanel {
 
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let project = workspace.project().clone();
-        let workspace_handle = cx.view().clone();
+        let workspace_handle = cx.view().downgrade();
         let outline_panel = cx.new_view(|cx| {
             let filter_editor = cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
@@ -865,7 +865,8 @@ impl OutlinePanel {
         };
 
         if let Some((offset, anchor)) = scroll_target {
-            self.workspace
+            let activate = self
+                .workspace
                 .update(cx, |workspace, cx| match self.active_item() {
                     Some(active_item) => {
                         workspace.activate_item(active_item.as_ref(), true, change_selection, cx)
@@ -873,21 +874,23 @@ impl OutlinePanel {
                     None => workspace.activate_item(&active_editor, true, change_selection, cx),
                 });
 
-            self.select_entry(entry.clone(), true, cx);
-            if change_selection {
-                active_editor.update(cx, |editor, cx| {
-                    editor.change_selections(
-                        Some(Autoscroll::Strategy(AutoscrollStrategy::Top)),
-                        cx,
-                        |s| s.select_ranges(Some(anchor..anchor)),
-                    );
-                });
-                active_editor.focus_handle(cx).focus(cx);
-            } else {
-                active_editor.update(cx, |editor, cx| {
-                    editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, cx);
-                });
-                self.focus_handle.focus(cx);
+            if activate.is_ok() {
+                self.select_entry(entry.clone(), true, cx);
+                if change_selection {
+                    active_editor.update(cx, |editor, cx| {
+                        editor.change_selections(
+                            Some(Autoscroll::Strategy(AutoscrollStrategy::Top)),
+                            cx,
+                            |s| s.select_ranges(Some(anchor..anchor)),
+                        );
+                    });
+                    active_editor.focus_handle(cx).focus(cx);
+                } else {
+                    active_editor.update(cx, |editor, cx| {
+                        editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, cx);
+                    });
+                    self.focus_handle.focus(cx);
+                }
             }
         }
     }
@@ -3316,7 +3319,11 @@ impl OutlinePanel {
         let buffer_search = self
             .active_item()
             .as_deref()
-            .and_then(|active_item| self.workspace.read(cx).pane_for(active_item))
+            .and_then(|active_item| {
+                self.workspace
+                    .upgrade()
+                    .and_then(|workspace| workspace.read(cx).pane_for(active_item))
+            })
             .and_then(|pane| {
                 pane.read(cx)
                     .toolbar()
@@ -3567,8 +3574,10 @@ impl OutlinePanel {
     ) {
         self.pinned = !self.pinned;
         if !self.pinned {
-            if let Some((active_item, active_editor)) =
-                workspace_active_editor(self.workspace.read(cx), cx)
+            if let Some((active_item, active_editor)) = self
+                .workspace
+                .upgrade()
+                .and_then(|workspace| workspace_active_editor(workspace.read(cx), cx))
             {
                 if self.should_replace_active_item(active_item.as_ref()) {
                     self.replace_active_editor(active_item, active_editor, cx);
@@ -3833,8 +3842,10 @@ impl Panel for OutlinePanel {
                     let old_active = outline_panel.active;
                     outline_panel.active = active;
                     if active && old_active != active {
-                        if let Some((active_item, active_editor)) =
-                            workspace_active_editor(outline_panel.workspace.read(cx), cx)
+                        if let Some((active_item, active_editor)) = outline_panel
+                            .workspace
+                            .upgrade()
+                            .and_then(|workspace| workspace_active_editor(workspace.read(cx), cx))
                         {
                             if outline_panel.should_replace_active_item(active_item.as_ref()) {
                                 outline_panel.replace_active_editor(active_item, active_editor, cx);
