@@ -576,7 +576,7 @@ new_ret_no_self = { level = "allow" }
 # We have a few `next` functions that differ in lifetimes
 # compared to Iterator::next. Yet, clippy complains about those.
 should_implement_trait = { level = "allow" }
-
+module_inception = { level = "deny" }
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"
 
