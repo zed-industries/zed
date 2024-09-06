@@ -3283,6 +3283,46 @@ impl ContextEditor {
     }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
+        if self.editor.read(cx).selections.count() == 1 {
+            let (copied_text, metadata) = self.get_clipboard_contents(cx);
+            cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+                copied_text,
+                metadata,
+            ));
+            cx.stop_propagation();
+            return;
+        }
+
+        cx.propagate();
+    }
+
+    fn cut(&mut self, _: &editor::actions::Cut, cx: &mut ViewContext<Self>) {
+        if self.editor.read(cx).selections.count() == 1 {
+            let (copied_text, metadata) = self.get_clipboard_contents(cx);
+
+            self.editor.update(cx, |editor, cx| {
+                let selections = editor.selections.all::<Point>(cx);
+
+                editor.transact(cx, |this, cx| {
+                    this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        s.select(selections);
+                    });
+                    this.insert("", cx);
+                    cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+                        copied_text,
+                        metadata,
+                    ));
+                });
+            });
+
+            cx.stop_propagation();
+            return;
+        }
+
+        cx.propagate();
+    }
+
+    fn get_clipboard_contents(&mut self, cx: &mut ViewContext<Self>) -> (String, CopyMetadata) {
         let creases = self.editor.update(cx, |editor, cx| {
             let selection = editor.selections.newest::<Point>(cx);
             let selection_start = editor.selections.newest::<usize>(cx).start;
@@ -3326,35 +3366,25 @@ impl ContextEditor {
             })
         });
 
-        let editor = self.editor.read(cx);
         let context = self.context.read(cx);
-        if editor.selections.count() == 1 {
-            let selection = editor.selections.newest::<usize>(cx);
-            let mut copied_text = String::new();
-            for message in context.messages(cx) {
-                if message.offset_range.start >= selection.range().end {
-                    break;
-                } else if message.offset_range.end >= selection.range().start {
-                    let range = cmp::max(message.offset_range.start, selection.range().start)
-                        ..cmp::min(message.offset_range.end, selection.range().end);
-                    if !range.is_empty() {
-                        for chunk in context.buffer().read(cx).text_for_range(range) {
-                            copied_text.push_str(chunk);
-                        }
-                        copied_text.push('\n');
+        let selection = self.editor.read(cx).selections.newest::<usize>(cx);
+        let mut text = String::new();
+        for message in context.messages(cx) {
+            if message.offset_range.start >= selection.range().end {
+                break;
+            } else if message.offset_range.end >= selection.range().start {
+                let range = cmp::max(message.offset_range.start, selection.range().start)
+                    ..cmp::min(message.offset_range.end, selection.range().end);
+                if !range.is_empty() {
+                    for chunk in context.buffer().read(cx).text_for_range(range) {
+                        text.push_str(chunk);
                     }
+                    text.push('\n');
                 }
             }
-
-            cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
-                copied_text,
-                CopyMetadata { creases },
-            ));
-            cx.stop_propagation();
-            return;
         }
 
-        cx.propagate();
+        (text, CopyMetadata { creases })
     }
 
     fn paste(&mut self, action: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
@@ -4135,6 +4165,7 @@ impl Render for ContextEditor {
             .capture_action(cx.listener(ContextEditor::cancel))
             .capture_action(cx.listener(ContextEditor::save))
             .capture_action(cx.listener(ContextEditor::copy))
+            .capture_action(cx.listener(ContextEditor::cut))
             .capture_action(cx.listener(ContextEditor::paste))
             .capture_action(cx.listener(ContextEditor::cycle_message_role))
             .capture_action(cx.listener(ContextEditor::confirm_command))
