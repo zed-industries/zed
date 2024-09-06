@@ -134,8 +134,11 @@ impl InlineAssistant {
         })
         .detach();
 
-        let workspace = workspace.clone();
+        let workspace = workspace.downgrade();
         cx.observe_global::<SettingsStore>(move |cx| {
+            let Some(workspace) = workspace.upgrade() else {
+                return;
+            };
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
                 return;
             };
