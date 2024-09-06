@@ -507,17 +507,10 @@ impl BufferSearchBar {
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
-        let mut search_settings = *SearchSettings::get_global(cx);
-        let search_options = SearchOptions::from_settings(&search_settings);
+        let search_options = SearchOptions::from_settings(&SearchSettings::get_global(cx));
 
         let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
-            let new_settings = *SearchSettings::get_global(cx);
-            if search_settings != new_settings {
-                this.default_options = SearchOptions::from_settings(&new_settings);
-                this.search_options = this.default_options;
-                search_settings = new_settings;
-                cx.notify();
-            }
+            this.default_options = SearchOptions::from_settings(&SearchSettings::get_global(cx));
         });
 
         Self {
@@ -617,6 +610,9 @@ impl BufferSearchBar {
         let Some(handle) = self.active_searchable_item.as_ref() else {
             return false;
         };
+        if self.default_options != self.search_options {
+            self.search_options = self.default_options;
+        }
 
         self.dismissed = false;
         handle.search_bar_visibility_changed(true, cx);
