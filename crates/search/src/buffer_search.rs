@@ -9,7 +9,7 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     actions::{Tab, TabPrev},
-    DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle
+    DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle, SearchSettings,
 };
 use futures::channel::oneshot;
 use gpui::{
@@ -22,7 +22,7 @@ use project::{
     search_history::{SearchHistory, SearchHistoryCursor},
 };
 use serde::Deserialize;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use theme::ThemeSettings;
 
@@ -70,6 +70,7 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut AppContext) {
+   SearchSettings::register(cx);
     cx.observe_new_views(|workspace: &mut Workspace, _| BufferSearchBar::register(workspace))
         .detach();
 }
@@ -96,6 +97,7 @@ pub struct BufferSearchBar {
     scroll_handle: ScrollHandle,
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl BufferSearchBar {
@@ -504,8 +506,19 @@ impl BufferSearchBar {
         let replacement_editor = cx.new_view(|cx| Editor::single_line(cx));
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
-        let search_options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
 
+        let mut search_settings = *SearchSettings::get_global(cx);
+        let search_options = SearchOptions::from_settings(&search_settings);
+
+        let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
+            let new_settings = *SearchSettings::get_global(cx);
+            if search_settings != new_settings {
+                this.default_options = SearchOptions::from_settings(&new_settings);
+                this.search_options = this.default_options;
+                search_settings = new_settings;
+                cx.notify();
+            }
+        });
 
         Self {
             query_editor,
@@ -532,6 +545,7 @@ impl BufferSearchBar {
             scroll_handle: ScrollHandle::new(),
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
+            _subscriptions: vec![settings_subscription],
         }
     }
 
