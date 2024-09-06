@@ -3331,7 +3331,8 @@ impl LspStore {
                                             .strip_prefix(std::path::MAIN_SEPARATOR)
                                             .unwrap_or(glob)
                                             .to_owned();
-                                        let path = if Path::new(path).components().next().is_none() {
+                                        let path = if Path::new(path).components().next().is_none()
+                                        {
                                             Arc::from(Path::new("/"))
                                         } else {
                                             PathBuf::from(path).into()
