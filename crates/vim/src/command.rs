@@ -586,6 +586,8 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("lp", "revious"), editor::actions::GoToPrevDiagnostic).count(),
         VimCommand::new(("lN", "ext"), editor::actions::GoToPrevDiagnostic).count(),
         VimCommand::new(("j", "oin"), JoinLines).range(),
+        VimCommand::new(("dif", "fupdate"), editor::actions::ToggleHunkDiff).range(),
+        VimCommand::new(("rev", "ert"), editor::actions::RevertSelectedHunks).range(),
         VimCommand::new(("d", "elete"), VisualDeleteLine).range(),
         VimCommand::new(("y", "ank"), VisualYankLine).range(),
         VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(),
