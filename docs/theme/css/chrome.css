@@ -545,6 +545,7 @@ ul#searchresults span.teaser em {
   list-style: none outside none;
   padding-inline-start: 0;
   line-height: 2.2em;
+  margin: 0;
 }
 
 .chapter ol {
@@ -676,7 +677,7 @@ ul#searchresults span.teaser em {
   background: hsl(220, 60%, 95%);
   color: hsl(220, 60%, 30%);
   padding: 4px 8px;
-  border: 1px solid hsla(220, 60%, 60%, 0.2);
+  border: 1px solid hsla(220, 60%, 40%, 0.2);
   font-size: 1.4rem;
   border-radius: 4px;
   box-shadow: hsla(220, 40%, 60%, 0.1) 0px -2px 0px 0px inset;
@@ -685,7 +686,7 @@ ul#searchresults span.teaser em {
 }
 
 .download-button:hover {
-  background: hsl(220, 60%, 92%);
+  background: hsl(220, 60%, 93%);
   border-color: hsla(220, 60%, 50%, 0.2);
   box-shadow: none;
 }
