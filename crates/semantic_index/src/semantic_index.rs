@@ -218,18 +218,36 @@ mod tests {
             let language_registry = project.read(cx).languages().clone();
             let node_runtime = project.read(cx).node_runtime().unwrap().clone();
             languages::init(language_registry, node_runtime, cx);
+
+            // Manually create and insert the ProjectIndex
+            let project_index = cx.new_model(|cx| {
+                ProjectIndex::new(
+                    project.clone(),
+                    semantic_index.db_connection.clone(),
+                    semantic_index.embedding_provider.clone(),
+                    cx,
+                )
+            });
+            semantic_index
+                .project_indices
+                .insert(project.downgrade(), project_index);
         });
 
         let project_index = cx
-            .update(|cx| semantic_index.project_index(project.clone(), cx))
+            .update(|_cx| {
+                semantic_index
+                    .project_indices
+                    .get(&project.downgrade())
+                    .cloned()
+            })
             .unwrap();
 
-        while project_index
-            .read_with(cx, |index, cx| index.path_count(cx))
+        while cx
+            .update(|cx| semantic_index.remaining_summaries(&project.downgrade(), cx))
             .unwrap()
-            == 0
+            > 0
         {
-            project_index.next_event(cx).await;
+            cx.run_until_parked();
         }
 
         let results = cx
