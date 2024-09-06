@@ -265,7 +265,7 @@ pub struct EditorSettingsContent {
     /// Default: true
     pub search_wrap: Option<bool>,
 
-    /// Defaults for search options (case sensitive, whole word, include ignored, regex)
+    /// Defaults to use when opening a new buffer and project search items.
     ///
     /// Default: nothing is enabled
     pub search_defaults: Option<SearchDefaults>,
