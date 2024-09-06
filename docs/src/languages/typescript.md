@@ -46,7 +46,7 @@ Prettier will also be used for TypeScript files by default. To disable this:
 
 ## Large projects
 
-`vtsls` may run out of memory on very large projects. We default the limit to 8092 (8 GiB) vs the default of 3072 but this may not be sufficient for you:
+`vtsls` may run out of memory on very large projects. We default the limit to 8092 (8 GiB) vs. the default of 3072 but this may not be sufficient for you:
 
 ```json
 {
@@ -66,7 +66,7 @@ Prettier will also be used for TypeScript files by default. To disable this:
 ## Inlay Hints
 
 Zed sets the following initialization options to make the language server send back inlay hints
-(when Zed has inlay hints enabled in the settings).
+(that is, when Zed has inlay hints enabled in the settings).
 
 You can override these settings in your configuration file:
 
@@ -88,8 +88,6 @@ You can override these settings in your configuration file:
     }
 }
 ```
-
-to override these settings.
 
 See [typescript-language-server inlayhints documentation](https://github.com/typescript-language-server/typescript-language-server?tab=readme-ov-file#inlay-hints-textdocumentinlayhint) for more information.
 
