@@ -166,7 +166,7 @@ members = [
     # Tooling
     #
 
-    "tooling/xtask"
+    "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 
@@ -322,9 +322,9 @@ async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
 cargo_metadata = "0.18"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
