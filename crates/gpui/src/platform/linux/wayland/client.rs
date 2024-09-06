@@ -194,6 +194,7 @@ pub(crate) struct WaylandClientState {
     primary_selection: Option<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1>,
     text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
     pre_edit_text: Option<String>,
+    ime_pre_edit: Option<String>,
     composing: bool,
     // Surface to Window mapping
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
@@ -315,7 +316,7 @@ impl WaylandClientStatePtr {
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
-        if state.composing || state.text_input.is_none() {
+        if state.composing || state.text_input.is_none() || state.pre_edit_text.is_some() {
             return;
         }
 
@@ -518,6 +519,7 @@ impl WaylandClient {
             primary_selection,
             text_input: None,
             pre_edit_text: None,
+            ime_pre_edit: None,
             composing: false,
             outputs: HashMap::default(),
             in_progress_outputs,
@@ -1223,13 +1225,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                 }
                                 xkb::Status::Cancelled => {
                                     let pre_edit = state.pre_edit_text.take();
+                                    let new_pre_edit = Keystroke::underlying_dead_key(keysym);
+                                    state.pre_edit_text = new_pre_edit.clone();
                                     drop(state);
                                     if let Some(pre_edit) = pre_edit {
                                         focused_window.handle_ime(ImeInput::InsertText(pre_edit));
                                     }
-                                    if let Some(current_key) =
-                                        Keystroke::underlying_dead_key(keysym)
-                                    {
+                                    if let Some(current_key) = new_pre_edit {
                                         focused_window
                                             .handle_ime(ImeInput::SetMarkedText(current_key));
                                     }
@@ -1347,7 +1349,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
             }
             zwp_text_input_v3::Event::PreeditString { text, .. } => {
                 state.composing = true;
-                state.pre_edit_text = text;
+                state.ime_pre_edit = text;
             }
             zwp_text_input_v3::Event::Done { serial } => {
                 let last_serial = state.serial_tracker.get(SerialKind::InputMethod);
@@ -1356,7 +1358,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                     return;
                 };
 
-                if let Some(text) = state.pre_edit_text.take() {
+                if let Some(text) = state.ime_pre_edit.take() {
                     drop(state);
                     window.handle_ime(ImeInput::SetMarkedText(text));
                     if let Some(area) = window.get_ime_area() {
