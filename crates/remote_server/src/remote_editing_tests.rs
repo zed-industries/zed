@@ -10,7 +10,6 @@ use language::{
 };
 use node_runtime::FakeNodeRuntime;
 use project::{
-    project_settings::{BinarySettings, ProjectSettings},
     search::{SearchQuery, SearchResult},
     Project,
 };
@@ -18,10 +17,7 @@ use remote::SshSession;
 use serde_json::json;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::stream::StreamExt;
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
