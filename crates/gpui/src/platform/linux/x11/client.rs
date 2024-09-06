@@ -109,12 +109,11 @@ struct XKBStateNotiy {
 }
 
 #[derive(Debug, Default)]
-struct Xdnd {
+pub struct Xdnd {
     other_window: xproto::Window,
     dragging: bool,
     drag_type: u32,
     retrieved: bool,
-    retrieve_timestamp: u32,
     position: Point<Pixels>,
 }
 
@@ -658,6 +657,9 @@ impl X11Client {
                         );
                     }
                 } else if event.type_ == state.atoms.XdndLeave {
+                    window.handle_input(PlatformInput::FileDrop(FileDropEvent::Pending {
+                        position: state.xdnd_state.position,
+                    }));
                     window.handle_input(PlatformInput::FileDrop(FileDropEvent::Exited {}));
                     state.xdnd_state = Xdnd::default();
                 } else if event.type_ == state.atoms.XdndPosition {
@@ -696,6 +698,12 @@ impl X11Client {
                     window.handle_input(PlatformInput::FileDrop(FileDropEvent::Submit {
                         position: state.xdnd_state.position,
                     }));
+                    xdnd_send_finished(
+                        &state.xcb_connection,
+                        &state.atoms,
+                        event.window,
+                        state.xdnd_state.other_window,
+                    );
                     state.xdnd_state = Xdnd::default();
                 }
             }
@@ -713,8 +721,8 @@ impl X11Client {
                         1024,
                     )
                     .unwrap();
-                if let Ok(a) = property.reply() {
-                    match str::from_utf8(&a.value) {
+                if let Ok(reply) = property.reply() {
+                    match str::from_utf8(&reply.value) {
                         Ok(file_list) => {
                             let paths: SmallVec<[_; 2]> = file_list
                                 .lines()
