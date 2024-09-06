@@ -658,6 +658,11 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
+            cx.on_release(|_, _| {
+                println!("project. on release");
+            })
+            .detach();
+
             Self {
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
@@ -1717,6 +1722,7 @@ impl Project {
     }
 
     pub fn close(&mut self, cx: &mut ModelContext<Self>) {
+        println!("Closing the project");
         cx.emit(Event::Closed);
     }
 

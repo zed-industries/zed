@@ -254,7 +254,12 @@ impl LspStore {
             yarn,
             _maintain_workspace_config: Self::maintain_workspace_config(cx),
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
-            _subscription: cx.on_app_quit(Self::shutdown_language_servers),
+            _subscription: cx.on_release(|this, cx| {
+                println!("lsp store released");
+                cx.background_executor()
+                    .spawn(this.shutdown_language_servers())
+                    .detach();
+            }),
         }
     }
 
@@ -494,10 +499,8 @@ impl LspStore {
         self.active_entry = active_entry;
     }
 
-    fn shutdown_language_servers(
-        &mut self,
-        _cx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = ()> {
+    fn shutdown_language_servers(&mut self) -> impl Future<Output = ()> {
+        println!("shutdown language servers");
         let shutdown_futures = self
             .language_servers
             .drain()
@@ -511,7 +514,9 @@ impl LspStore {
             .collect::<Vec<_>>();
 
         async move {
+            let count = shutdown_futures.len();
             futures::future::join_all(shutdown_futures).await;
+            println!("done shutting down {} servers", count);
         }
     }
 

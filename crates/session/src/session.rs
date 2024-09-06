@@ -68,15 +68,15 @@ impl AppSession {
         let _subscriptions = vec![cx.on_app_quit(Self::app_will_quit)];
 
         let _serialization_task = Some(cx.spawn(|_, cx| async move {
-            loop {
-                if let Some(windows) = cx.update(|cx| cx.window_stack()).ok().flatten() {
-                    store_window_stack(windows).await;
-                }
+            // loop {
+            //     if let Some(windows) = cx.update(|cx| cx.window_stack()).ok().flatten() {
+            //         store_window_stack(windows).await;
+            //     }
 
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
-            }
+            //     cx.background_executor()
+            //         .timer(Duration::from_millis(100))
+            //         .await;
+            // }
         }));
 
         Self {

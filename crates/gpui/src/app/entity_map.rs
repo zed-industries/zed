@@ -17,7 +17,7 @@ use std::{
     thread::panicking,
 };
 
-#[cfg(any(test, feature = "test-support"))]
+// #[cfg(any(test, feature = "test-support"))]
 use collections::HashMap;
 
 slotmap::new_key_type! {
@@ -57,7 +57,7 @@ pub(crate) struct EntityMap {
 struct EntityRefCounts {
     counts: SlotMap<EntityId, AtomicUsize>,
     dropped_entity_ids: Vec<EntityId>,
-    #[cfg(any(test, feature = "test-support"))]
+    // #[cfg(any(test, feature = "test-support"))]
     leak_detector: LeakDetector,
 }
 
@@ -68,7 +68,7 @@ impl EntityMap {
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
                 dropped_entity_ids: Vec::new(),
-                #[cfg(any(test, feature = "test-support"))]
+                // #[cfg(any(test, feature = "test-support"))]
                 leak_detector: LeakDetector {
                     next_handle_id: 0,
                     entity_handles: HashMap::default(),
@@ -193,7 +193,7 @@ pub struct AnyModel {
     pub(crate) entity_id: EntityId,
     pub(crate) entity_type: TypeId,
     entity_map: Weak<RwLock<EntityRefCounts>>,
-    #[cfg(any(test, feature = "test-support"))]
+    // #[cfg(any(test, feature = "test-support"))]
     handle_id: HandleId,
 }
 
@@ -203,7 +203,7 @@ impl AnyModel {
             entity_id: id,
             entity_type,
             entity_map: entity_map.clone(),
-            #[cfg(any(test, feature = "test-support"))]
+            // #[cfg(any(test, feature = "test-support"))]
             handle_id: entity_map
                 .upgrade()
                 .unwrap()
@@ -262,7 +262,7 @@ impl Clone for AnyModel {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
             entity_map: self.entity_map.clone(),
-            #[cfg(any(test, feature = "test-support"))]
+            // #[cfg(any(test, feature = "test-support"))]
             handle_id: self
                 .entity_map
                 .upgrade()
@@ -291,8 +291,9 @@ impl Drop for AnyModel {
             }
         }
 
-        #[cfg(any(test, feature = "test-support"))]
+        // #[cfg(any(test, feature = "test-support"))]
         if let Some(entity_map) = self.entity_map.upgrade() {
+            println!("dropped model");
             entity_map
                 .write()
                 .leak_detector
@@ -504,7 +505,7 @@ impl AnyWeakModel {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
             entity_map: self.entity_ref_counts.clone(),
-            #[cfg(any(test, feature = "test-support"))]
+            // #[cfg(any(test, feature = "test-support"))]
             handle_id: self
                 .entity_ref_counts
                 .upgrade()
@@ -516,7 +517,7 @@ impl AnyWeakModel {
     }
 
     /// Assert that model referenced by this weak handle has been released.
-    #[cfg(any(test, feature = "test-support"))]
+    // #[cfg(any(test, feature = "test-support"))]
     pub fn assert_released(&self) {
         self.entity_ref_counts
             .upgrade()
@@ -641,23 +642,23 @@ impl<T> PartialEq<Model<T>> for WeakModel<T> {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+// #[cfg(any(test, feature = "test-support"))]
 static LEAK_BACKTRACE: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty()));
 
-#[cfg(any(test, feature = "test-support"))]
+// #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
 pub(crate) struct HandleId {
     id: u64, // id of the handle itself, not the pointed at object
 }
 
-#[cfg(any(test, feature = "test-support"))]
+// #[cfg(any(test, feature = "test-support"))]
 pub(crate) struct LeakDetector {
     next_handle_id: u64,
     entity_handles: HashMap<EntityId, HashMap<HandleId, Option<backtrace::Backtrace>>>,
 }
 
-#[cfg(any(test, feature = "test-support"))]
+// #[cfg(any(test, feature = "test-support"))]
 impl LeakDetector {
     #[track_caller]
     pub fn handle_created(&mut self, entity_id: EntityId) -> HandleId {
@@ -666,7 +667,7 @@ impl LeakDetector {
         let handles = self.entity_handles.entry(entity_id).or_default();
         handles.insert(
             handle_id,
-            LEAK_BACKTRACE.then(backtrace::Backtrace::new_unresolved),
+            LEAK_BACKTRACE.then(|| backtrace::Backtrace::new_unresolved()),
         );
         handle_id
     }
@@ -679,7 +680,7 @@ impl LeakDetector {
     pub fn assert_released(&mut self, entity_id: EntityId) {
         let handles = self.entity_handles.entry(entity_id).or_default();
         if !handles.is_empty() {
-            for backtrace in handles.values_mut() {
+            for (_, backtrace) in handles {
                 if let Some(mut backtrace) = backtrace.take() {
                     backtrace.resolve();
                     eprintln!("Leaked handle: {:#?}", backtrace);

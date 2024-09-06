@@ -765,6 +765,7 @@ impl AppContext {
     /// reference count has become zero. We invoke any release observers before dropping
     /// each entity.
     fn release_dropped_entities(&mut self) {
+        println!("releasing dropped entities");
         loop {
             let dropped = self.entities.take_dropped();
             if dropped.is_empty() {

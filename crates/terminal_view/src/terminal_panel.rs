@@ -78,7 +78,7 @@ impl TerminalPanel {
         let pane = cx.new_view(|cx| {
             let mut pane = Pane::new(
                 workspace.weak_handle(),
-                workspace.project().clone(),
+                workspace.project().downgrade(),
                 Default::default(),
                 None,
                 NewTerminal.boxed_clone(),

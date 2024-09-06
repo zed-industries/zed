@@ -873,7 +873,7 @@ impl Workspace {
         let center_pane = cx.new_view(|cx| {
             Pane::new(
                 weak_handle.clone(),
-                project.clone(),
+                project.downgrade(),
                 pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
@@ -1004,6 +1004,7 @@ impl Workspace {
             cx.on_release(|this, window, cx| {
                 this.app_state.workspace_store.update(cx, |store, _| {
                     let window = window.downcast::<Self>().unwrap();
+                    println!("workspace released!");
                     store.workspaces.remove(&window);
                 })
             }),
@@ -1634,17 +1635,31 @@ impl Workspace {
     }
 
     pub fn close_window(&mut self, _: &CloseWindow, cx: &mut ViewContext<Self>) {
+        // let project = self.project.downgrade();
+        // let handle = cx.model();
+        // let weak = self.weak_handle();
+
         let prepare = self.prepare_to_close(CloseIntent::CloseWindow, cx);
         let window = cx.window_handle();
         cx.spawn(|_, mut cx| async move {
             if prepare.await? {
                 window.update(&mut cx, |_, cx| {
+                    println!("remove window");
                     cx.remove_window();
                 })?;
+
+                // cx.spawn(|cx| async move {
+                //     println!("going to sleep for 8 sec");
+                //     cx.background_executor().timer(Duration::from_secs(8)).await;
+                //     println!("slept for 8 sec");
+                //     println!("asserting the project weak handle is released");
+                //     project.assert_released();
+                // })
+                // .detach();
             }
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx)
+        .detach_and_log_err(cx);
     }
 
     pub fn prepare_to_close(
@@ -2408,7 +2423,7 @@ impl Workspace {
         let pane = cx.new_view(|cx| {
             Pane::new(
                 self.weak_handle(),
-                self.project.clone(),
+                self.project.downgrade(),
                 self.pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
@@ -4020,6 +4035,7 @@ impl Workspace {
     }
 
     fn serialize_workspace_internal(&self, cx: &mut WindowContext) -> Task<()> {
+        println!("--- serialize workspace internal start ---");
         let Some(database_id) = self.database_id() else {
             return Task::ready(());
         };
@@ -4161,7 +4177,10 @@ impl Workspace {
                 session_id: self.session_id.clone(),
                 window_id: Some(cx.window_handle().window_id().as_u64()),
             };
-            return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
+            return cx.spawn(|_| async move {
+                persistence::DB.save_workspace(serialized_workspace).await;
+                println!("--- serialize workspace internal END ---")
+            });
         }
         Task::ready(())
     }
@@ -4177,6 +4196,7 @@ impl Workspace {
         let mut serializable_items = items_rx.ready_chunks(CHUNK_SIZE);
 
         while let Some(items_received) = serializable_items.next().await {
+            println!("serializing item!");
             let unique_items =
                 items_received
                     .into_iter()
@@ -4199,6 +4219,7 @@ impl Workspace {
 
             cx.background_executor().timer(THROTTLE_TIME).await;
         }
+        println!("done serializing items");
 
         Ok(())
     }

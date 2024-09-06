@@ -251,47 +251,47 @@ pub fn initialize_workspace(
 
         let prompt_builder = prompt_builder.clone();
         cx.spawn(|workspace_handle, mut cx| async move {
-            let assistant_panel =
-                assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
+        //     // let assistant_panel =
+        //     //     assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
 
-            let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
+        //     // let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
-            let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
-            let channels_panel =
-                collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
-            let chat_panel =
-                collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
-            let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
-                workspace_handle.clone(),
-                cx.clone(),
-            );
+            // let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
+        //     // let channels_panel =
+        //     //     collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
+        //     // let chat_panel =
+        //     //     collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
+            // let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
+            //     workspace_handle.clone(),
+            //     cx.clone(),
+            // );
 
             let (
-                project_panel,
+                // project_panel,
                 outline_panel,
-                terminal_panel,
-                assistant_panel,
-                channels_panel,
-                chat_panel,
-                notification_panel,
+                // terminal_panel,
+                // assistant_panel,
+                // channels_panel,
+                // chat_panel,
+                // notification_panel,
             ) = futures::try_join!(
-                project_panel,
+                // project_panel,
                 outline_panel,
-                terminal_panel,
-                assistant_panel,
-                channels_panel,
-                chat_panel,
-                notification_panel,
+                // terminal_panel,
+                // assistant_panel,
+                // channels_panel,
+                // chat_panel,
+                // notification_panel,
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
-                workspace.add_panel(assistant_panel, cx);
-                workspace.add_panel(project_panel, cx);
+                // workspace.add_panel(assistant_panel, cx);
+                // workspace.add_panel(project_panel, cx);
                 workspace.add_panel(outline_panel, cx);
-                workspace.add_panel(terminal_panel, cx);
-                workspace.add_panel(channels_panel, cx);
-                workspace.add_panel(chat_panel, cx);
-                workspace.add_panel(notification_panel, cx);
+                // workspace.add_panel(terminal_panel, cx);
+                // workspace.add_panel(channels_panel, cx);
+                // workspace.add_panel(chat_panel, cx);
+                // workspace.add_panel(notification_panel, cx);
                 cx.focus_self();
             })
         })

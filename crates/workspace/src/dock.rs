@@ -368,9 +368,13 @@ impl Dock {
             cx.observe(&panel, |_, _, cx| cx.notify()),
             cx.observe_global::<SettingsStore>({
                 let workspace = workspace.clone();
-                let panel = panel.clone();
+                let panel = panel.downgrade();
 
                 move |this, cx| {
+                    let Some(panel) = panel.upgrade() else {
+                        return;
+                    };
+
                     let new_position = panel.read(cx).position(cx);
                     if new_position == this.position {
                         return;

@@ -1054,12 +1054,28 @@ impl SerializableItem for Editor {
             let buffer = buffer_task.await?;
 
             pane.update(&mut cx, |_, cx| {
-                cx.new_view(|cx| {
+                let editor = cx.new_view(|cx| {
                     let mut editor = Editor::for_buffer(buffer, Some(project), cx);
 
                     editor.read_scroll_position_from_db(item_id, workspace_id, cx);
                     editor
+                });
+
+                let weak = editor.model.downgrade();
+                cx.spawn(|_, cx| async move {
+                    for i in 0..5 {
+                        println!("{i}/5: going to sleep for 5 seconds");
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_secs(5))
+                            .await;
+                    }
+
+                    println!("done sleeping");
+                    weak.assert_released();
                 })
+                .detach();
+
+                editor
             })
         })
     }

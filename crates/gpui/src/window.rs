@@ -926,6 +926,7 @@ impl<'a> WindowContext<'a> {
 
     /// Close this window.
     pub fn remove_window(&mut self) {
+        println!("remove window!");
         self.window.removed = true;
     }
 

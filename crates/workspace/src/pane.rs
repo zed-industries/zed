@@ -18,8 +18,8 @@ use gpui::{
     AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId,
     EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
     MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
-    WindowContext,
+    ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakModel,
+    WeakView, WindowContext,
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -255,7 +255,7 @@ pub struct Pane {
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
     pub(crate) workspace: WeakView<Workspace>,
-    project: Model<Project>,
+    project: WeakModel<Project>,
     drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>>,
     custom_drop_handle:
@@ -337,7 +337,7 @@ impl EventEmitter<Event> for Pane {}
 impl Pane {
     pub fn new(
         workspace: WeakView<Workspace>,
-        project: Model<Project>,
+        project: WeakModel<Project>,
         next_timestamp: Arc<AtomicUsize>,
         can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool + 'static>>,
         double_click_dispatch_action: Box<dyn Action>,
@@ -802,14 +802,15 @@ impl Pane {
     ) {
         if item.is_singleton(cx) {
             if let Some(&entry_id) = item.project_entry_ids(cx).first() {
-                let project = self.project.read(cx);
-                if let Some(project_path) = project.path_for_entry(entry_id, cx) {
-                    let abs_path = project.absolute_path(&project_path, cx);
-                    self.nav_history
-                        .0
-                        .lock()
-                        .paths_by_item
-                        .insert(item.item_id(), (project_path, abs_path));
+                if let Some(project) = self.project.upgrade().map(|project| project.read(cx)) {
+                    if let Some(project_path) = project.path_for_entry(entry_id, cx) {
+                        let abs_path = project.absolute_path(&project_path, cx);
+                        self.nav_history
+                            .0
+                            .lock()
+                            .paths_by_item
+                            .insert(item.item_id(), (project_path, abs_path));
+                    }
                 }
             }
         }
@@ -1811,7 +1812,7 @@ impl Pane {
         let icon_color = if ItemSettings::get_global(cx).git_status {
             project_path
                 .as_ref()
-                .and_then(|path| self.project.read(cx).entry_for_path(path, cx))
+                .and_then(|path| self.project.upgrade()?.read(cx).entry_for_path(path, cx))
                 .map(|entry| {
                     Self::git_aware_icon_color(entry.git_status, entry.is_ignored, is_active)
                 })
@@ -2057,11 +2058,13 @@ impl Pane {
                                     entry_id: Some(entry_id),
                                 })),
                                 cx.handler_for(&pane, move |pane, cx| {
-                                    pane.project.update(cx, |_, cx| {
-                                        cx.emit(project::Event::RevealInProjectPanel(
-                                            ProjectEntryId::from_proto(entry_id),
-                                        ))
-                                    });
+                                    pane.project
+                                        .update(cx, |_, cx| {
+                                            cx.emit(project::Event::RevealInProjectPanel(
+                                                ProjectEntryId::from_proto(entry_id),
+                                            ))
+                                        })
+                                        .log_err();
                                 }),
                             )
                             .when_some(parent_abs_path, |menu, parent_abs_path| {
@@ -2605,9 +2608,11 @@ impl Render for Pane {
                         .map(ProjectEntryId::from_proto)
                         .or_else(|| pane.active_item()?.project_entry_ids(cx).first().copied());
                     if let Some(entry_id) = entry_id {
-                        pane.project.update(cx, |_, cx| {
-                            cx.emit(project::Event::RevealInProjectPanel(entry_id))
-                        });
+                        pane.project
+                            .update(cx, |_, cx| {
+                                cx.emit(project::Event::RevealInProjectPanel(entry_id))
+                            })
+                            .log_err();
                     }
                 }),
             )
@@ -2615,7 +2620,11 @@ impl Render for Pane {
                 pane.child(self.render_tab_bar(cx))
             })
             .child({
-                let has_worktrees = self.project.read(cx).worktrees(cx).next().is_some();
+                let has_worktrees = self
+                    .project
+                    .upgrade()
+                    .and_then(|project| project.read(cx).worktrees(cx).next())
+                    .is_some();
                 // main content
                 div()
                     .flex_1()
