@@ -2116,7 +2116,8 @@ impl Snapshot {
         self.repository_entries.retain(|_, entry| {
             update
                 .removed_repositories
-                .binary_search(&entry.work_directory.to_proto()).is_err()
+                .binary_search(&entry.work_directory.to_proto())
+                .is_err()
         });
 
         for repository in update.updated_repositories {

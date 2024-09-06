@@ -1009,7 +1009,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapPoint {
 fn consolidate_wrap_edits(edits: Vec<WrapEdit>) -> Vec<WrapEdit> {
     let _old_alloc_ptr = edits.as_ptr();
     let mut wrap_edits = edits.into_iter();
-    
 
     if let Some(mut first_edit) = wrap_edits.next() {
         // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.

@@ -21,7 +21,7 @@ use crate::{
         JoinLines,
     },
     state::Mode,
-    visual::VisualDeleteLine,
+    visual::{VisualDeleteLine, VisualYankLine},
     Vim,
 };
 
@@ -586,7 +586,10 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("lp", "revious"), editor::actions::GoToPrevDiagnostic).count(),
         VimCommand::new(("lN", "ext"), editor::actions::GoToPrevDiagnostic).count(),
         VimCommand::new(("j", "oin"), JoinLines).range(),
+        VimCommand::new(("dif", "fupdate"), editor::actions::ToggleHunkDiff).range(),
+        VimCommand::new(("rev", "ert"), editor::actions::RevertSelectedHunks).range(),
         VimCommand::new(("d", "elete"), VisualDeleteLine).range(),
+        VimCommand::new(("y", "ank"), VisualYankLine).range(),
         VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(),
         VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
@@ -628,7 +631,7 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
 
     let (range, query) = VimCommand::parse_range(input);
     let range_prefix = input[0..(input.len() - query.len())].to_string();
-    let query = query.as_str();
+    let query = query.as_str().trim();
 
     let action = if range.is_some() && query.is_empty() {
         Some(

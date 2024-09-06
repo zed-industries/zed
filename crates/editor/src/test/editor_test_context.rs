@@ -120,8 +120,7 @@ impl EditorTestContext {
     where
         F: FnOnce(&Editor, &ViewContext<Editor>) -> T,
     {
-        self.editor
-            .update(&mut self.cx, |this, cx| read(this, cx))
+        self.editor.update(&mut self.cx, |this, cx| read(this, cx))
     }
 
     #[track_caller]

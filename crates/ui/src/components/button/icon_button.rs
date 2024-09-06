@@ -1,7 +1,7 @@
 use gpui::{AnyView, DefiniteLength};
 
-use crate::{prelude::*, ElevationIndex, SelectableButton};
 use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
+use crate::{prelude::*, ElevationIndex, SelectableButton};
 use crate::{IconName, IconSize};
 
 use super::button_icon::ButtonIcon;

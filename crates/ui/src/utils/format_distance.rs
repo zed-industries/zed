@@ -42,7 +42,6 @@ impl FormatDistance {
         Self::new(date, DateTimeType::Local(Local::now()))
     }
 
-
     pub fn include_seconds(mut self, include_seconds: bool) -> Self {
         self.include_seconds = include_seconds;
         self
@@ -60,15 +59,18 @@ impl FormatDistance {
 }
 
 impl std::fmt::Display for FormatDistance {
-
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", format_distance(
-            self.date,
-            self.base_date.to_naive(),
-            self.include_seconds,
-            self.add_suffix,
-            self.hide_prefix,
-        ))
+        write!(
+            f,
+            "{}",
+            format_distance(
+                self.date,
+                self.base_date.to_naive(),
+                self.include_seconds,
+                self.add_suffix,
+                self.hide_prefix,
+            )
+        )
     }
 }
 /// Calculates the distance in seconds between two [`NaiveDateTime`] objects.

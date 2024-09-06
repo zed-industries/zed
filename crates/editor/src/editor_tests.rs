@@ -4650,13 +4650,8 @@ let foo = «2ˇ»;"#,
 async fn test_select_previous_multibuffer(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new_multibuffer(
-        cx,
-        [
-            "aaa\n«bbb\nccc\n»ddd",
-            "aaa\n«bbb\nccc\n»ddd",
-        ],
-    );
+    let mut cx =
+        EditorTestContext::new_multibuffer(cx, ["aaa\n«bbb\nccc\n»ddd", "aaa\n«bbb\nccc\n»ddd"]);
 
     cx.assert_editor_state(indoc! {"
         ˇbbb

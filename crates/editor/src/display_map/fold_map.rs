@@ -850,7 +850,6 @@ fn consolidate_inlay_edits(mut edits: Vec<InlayEdit>) -> Vec<InlayEdit> {
 
     let _old_alloc_ptr = edits.as_ptr();
     let mut inlay_edits = edits.into_iter();
-    
 
     if let Some(mut first_edit) = inlay_edits.next() {
         // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
@@ -886,7 +885,6 @@ fn consolidate_fold_edits(mut edits: Vec<FoldEdit>) -> Vec<FoldEdit> {
     });
     let _old_alloc_ptr = edits.as_ptr();
     let mut fold_edits = edits.into_iter();
-    
 
     if let Some(mut first_edit) = fold_edits.next() {
         // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.

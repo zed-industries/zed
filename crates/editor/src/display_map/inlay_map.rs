@@ -451,7 +451,10 @@ impl InlayMap {
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let snapshot = &mut self.snapshot;
 
-        if buffer_edits.is_empty() && snapshot.buffer.trailing_excerpt_update_count() != buffer_snapshot.trailing_excerpt_update_count() {
+        if buffer_edits.is_empty()
+            && snapshot.buffer.trailing_excerpt_update_count()
+                != buffer_snapshot.trailing_excerpt_update_count()
+        {
             buffer_edits.push(Edit {
                 old: snapshot.buffer.len()..snapshot.buffer.len(),
                 new: buffer_snapshot.len()..buffer_snapshot.len(),

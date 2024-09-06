@@ -1444,7 +1444,8 @@ mod tests {
                 fn main() {
                     let variable« »= TestNewType(TestStruct);
                 }
-        "}).first()
+        "})
+            .first()
             .cloned()
             .unwrap();
         let new_type_hint_part_hover_position = cx.update_editor(|editor, cx| {

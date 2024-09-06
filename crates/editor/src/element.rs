@@ -652,7 +652,10 @@ impl EditorElement {
             cx.stop_propagation();
         } else if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
-        } else if cfg!(target_os = "linux") && event.button == MouseButton::Middle && (!text_hitbox.is_hovered(cx) || editor.read_only(cx)) {
+        } else if cfg!(target_os = "linux")
+            && event.button == MouseButton::Middle
+            && (!text_hitbox.is_hovered(cx) || editor.read_only(cx))
+        {
             return;
         }
     }
@@ -3750,20 +3753,18 @@ impl EditorElement {
                                     if is_symbol_occurrences {
                                         color.fade_out(0.5);
                                     }
-                                    let marker_row_ranges =
-                                        background_ranges.iter().map(|range| {
-                                            let display_start = range
-                                                .start
-                                                .to_display_point(&snapshot.display_snapshot);
-                                            let display_end = range
-                                                .end
-                                                .to_display_point(&snapshot.display_snapshot);
-                                            ColoredRange {
-                                                start: display_start.row(),
-                                                end: display_end.row(),
-                                                color,
-                                            }
-                                        });
+                                    let marker_row_ranges = background_ranges.iter().map(|range| {
+                                        let display_start = range
+                                            .start
+                                            .to_display_point(&snapshot.display_snapshot);
+                                        let display_end =
+                                            range.end.to_display_point(&snapshot.display_snapshot);
+                                        ColoredRange {
+                                            start: display_start.row(),
+                                            end: display_end.row(),
+                                            color,
+                                        }
+                                    });
                                     marker_quads.extend(
                                         scrollbar_layout
                                             .marker_quads_for_ranges(marker_row_ranges, Some(1)),

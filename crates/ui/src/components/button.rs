@@ -10,9 +10,7 @@ pub use toggle_button::*;
 use gpui::{AnyView, DefiniteLength};
 
 use crate::{prelude::*, ElevationIndex, KeyBinding, Spacing};
-use crate::{
-     IconName, IconSize, Label, LineHeightStyle,
-};
+use crate::{IconName, IconSize, Label, LineHeightStyle};
 
 use button_icon::ButtonIcon;
 

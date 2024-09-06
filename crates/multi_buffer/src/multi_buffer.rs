@@ -3330,25 +3330,25 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = Range<usize>> + 'a {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.excerpts_for_range(range.clone())
-            .filter(move |&(excerpt, _)| redaction_enabled(excerpt.buffer.file())).flat_map(move |(excerpt, excerpt_offset)| {
-                    let excerpt_buffer_start =
-                        excerpt.range.context.start.to_offset(&excerpt.buffer);
+            .filter(move |&(excerpt, _)| redaction_enabled(excerpt.buffer.file()))
+            .flat_map(move |(excerpt, excerpt_offset)| {
+                let excerpt_buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
 
-                    excerpt
-                        .buffer
-                        .redacted_ranges(excerpt.range.context.clone())
+                excerpt
+                    .buffer
+                    .redacted_ranges(excerpt.range.context.clone())
                     .map(move |mut redacted_range| {
-                            // Re-base onto the excerpts coordinates in the multibuffer
-                            redacted_range.start = excerpt_offset
-                                + redacted_range.start.saturating_sub(excerpt_buffer_start);
-                            redacted_range.end = excerpt_offset
-                                + redacted_range.end.saturating_sub(excerpt_buffer_start);
+                        // Re-base onto the excerpts coordinates in the multibuffer
+                        redacted_range.start = excerpt_offset
+                            + redacted_range.start.saturating_sub(excerpt_buffer_start);
+                        redacted_range.end = excerpt_offset
+                            + redacted_range.end.saturating_sub(excerpt_buffer_start);
 
-                            redacted_range
-                        })
-                        .skip_while(move |redacted_range| redacted_range.end < range.start)
-                        .take_while(move |redacted_range| redacted_range.start < range.end)
-                })
+                        redacted_range
+                    })
+                    .skip_while(move |redacted_range| redacted_range.end < range.start)
+                    .take_while(move |redacted_range| redacted_range.start < range.end)
+            })
     }
 
     pub fn runnable_ranges(

@@ -1257,7 +1257,8 @@ mod tests {
                 fn main() {
                     let variable« »= TestStruct;
                 }
-            "}).first()
+            "})
+            .first()
             .cloned()
             .unwrap();
         let midpoint = cx.update_editor(|editor, cx| {

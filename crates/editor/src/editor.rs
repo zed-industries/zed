@@ -2977,7 +2977,9 @@ impl Editor {
             return;
         }
 
-        if self.mode == EditorMode::Full && self.change_selections(Some(Autoscroll::fit()), cx, |s| s.try_cancel()) {
+        if self.mode == EditorMode::Full
+            && self.change_selections(Some(Autoscroll::fit()), cx, |s| s.try_cancel())
+        {
             return;
         }
 
@@ -4619,32 +4621,30 @@ impl Editor {
                             && code_actions
                                 .as_ref()
                                 .map_or(true, |actions| actions.is_empty());
-                        if let Ok(task) = editor
-                            .update(&mut cx, |editor, cx| {
-                                *editor.context_menu.write() =
-                                    Some(ContextMenu::CodeActions(CodeActionsMenu {
-                                        buffer,
-                                        actions: CodeActionContents {
-                                            tasks: resolved_tasks,
-                                            actions: code_actions,
-                                        },
-                                        selected_item: Default::default(),
-                                        scroll_handle: UniformListScrollHandle::default(),
-                                        deployed_from_indicator,
-                                    }));
-                                if spawn_straight_away {
-                                    if let Some(task) = editor.confirm_code_action(
-                                        &ConfirmCodeAction { item_ix: Some(0) },
-                                        cx,
-                                    ) {
-                                        cx.notify();
-                                        return task;
-                                    }
+                        if let Ok(task) = editor.update(&mut cx, |editor, cx| {
+                            *editor.context_menu.write() =
+                                Some(ContextMenu::CodeActions(CodeActionsMenu {
+                                    buffer,
+                                    actions: CodeActionContents {
+                                        tasks: resolved_tasks,
+                                        actions: code_actions,
+                                    },
+                                    selected_item: Default::default(),
+                                    scroll_handle: UniformListScrollHandle::default(),
+                                    deployed_from_indicator,
+                                }));
+                            if spawn_straight_away {
+                                if let Some(task) = editor.confirm_code_action(
+                                    &ConfirmCodeAction { item_ix: Some(0) },
+                                    cx,
+                                ) {
+                                    cx.notify();
+                                    return task;
                                 }
-                                cx.notify();
-                                Task::ready(Ok(()))
-                            })
-                        {
+                            }
+                            cx.notify();
+                            Task::ready(Ok(()))
+                        }) {
                             task.await
                         } else {
                             Ok(())
@@ -9779,7 +9779,11 @@ impl Editor {
                         }
                         editor
                     });
-                    cx.subscribe(&rename_editor, |_, _, e: &EditorEvent, cx| if e == &EditorEvent::Focused { cx.emit(EditorEvent::FocusedIn) })
+                    cx.subscribe(&rename_editor, |_, _, e: &EditorEvent, cx| {
+                        if e == &EditorEvent::Focused {
+                            cx.emit(EditorEvent::FocusedIn)
+                        }
+                    })
                     .detach();
 
                     let write_highlights =
@@ -10565,9 +10569,7 @@ impl Editor {
 
     pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
         let settings = self.buffer.read(cx).settings_at(0, cx);
-        let mode = self
-            .soft_wrap_mode_override
-            .unwrap_or(settings.soft_wrap);
+        let mode = self.soft_wrap_mode_override.unwrap_or(settings.soft_wrap);
         match mode {
             language_settings::SoftWrap::None => SoftWrap::None,
             language_settings::SoftWrap::PreferLine => SoftWrap::PreferLine,
@@ -12335,10 +12337,7 @@ fn snippet_completions(
                     filter_range: 0..matching_prefix.len(),
                 },
                 server_id: LanguageServerId(usize::MAX),
-                documentation: snippet
-                    .description
-                    .clone()
-                    .map(Documentation::SingleLine),
+                documentation: snippet.description.clone().map(Documentation::SingleLine),
                 lsp_completion: lsp::CompletionItem {
                     label: snippet.prefix.first().unwrap().clone(),
                     kind: Some(CompletionItemKind::SNIPPET),

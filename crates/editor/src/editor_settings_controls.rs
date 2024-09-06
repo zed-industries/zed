@@ -241,10 +241,7 @@ impl EditableSettingControl for BufferFontLigaturesControl {
         let mut features = settings
             .buffer_font_features
             .as_ref()
-            .map(|features| {
-                features
-                    .tag_value_list().to_vec()
-            })
+            .map(|features| features.tag_value_list().to_vec())
             .unwrap_or_default();
 
         if let Some(calt_index) = features.iter().position(|(tag, _)| tag == "calt") {

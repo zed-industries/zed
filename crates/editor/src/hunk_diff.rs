@@ -337,7 +337,7 @@ impl Editor {
                         .offset_to_point(hunk.diff_base_byte_range.start)
                         .row;
                     let diff_end_row = diff_base.offset_to_point(hunk.diff_base_byte_range.end).row;
-                    
+
                     diff_end_row - diff_start_row
                 })?;
                 Some((diff_base_buffer, deleted_text_lines))
