@@ -3331,7 +3331,11 @@ impl LspStore {
                                             .strip_prefix(std::path::MAIN_SEPARATOR)
                                             .unwrap_or(glob)
                                             .to_owned();
-                                        let path = PathBuf::from(path).into();
+                                        let path = if Path::new(path).components().next().is_none() {
+                                            Arc::from(Path::new("/"))
+                                        } else {
+                                            PathBuf::from(path).into()
+                                        };
 
                                         PathToWatch::Absolute { path, pattern }
                                     }
@@ -3365,10 +3369,12 @@ impl LspStore {
                                             .to_owned();
                                         base_uri.push(path);
 
-                                        PathToWatch::Absolute {
-                                            path: base_uri.into(),
-                                            pattern,
-                                        }
+                                        let path = if base_uri.components().next().is_none() {
+                                            Arc::from(Path::new("/"))
+                                        } else {
+                                            base_uri.into()
+                                        };
+                                        PathToWatch::Absolute { path, pattern }
                                     }
                                 }
                             }
