@@ -18,11 +18,11 @@ impl Render for ToolbarControls {
             let editor = editor.read(cx);
             include_warnings = editor.include_warnings;
             has_stale_excerpts = !editor.paths_to_update.is_empty();
-            is_updating = editor.update_paths_tx.len() > 0
+            is_updating = !editor.update_paths_tx.is_empty()
                 || editor
                     .project
                     .read(cx)
-                    .language_servers_running_disk_based_diagnostics()
+                    .language_servers_running_disk_based_diagnostics(cx)
                     .next()
                     .is_some();
         }
@@ -81,6 +81,12 @@ impl ToolbarItemView for ToolbarControls {
         } else {
             ToolbarItemLocation::Hidden
         }
+    }
+}
+
+impl Default for ToolbarControls {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

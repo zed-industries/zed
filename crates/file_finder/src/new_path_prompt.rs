@@ -107,8 +107,10 @@ impl Match {
 
         if let Some(path_match) = &self.path_match {
             text.push_str(&path_match.path.to_string_lossy());
+            let mut whole_path = PathBuf::from(path_match.path_prefix.to_string());
+            whole_path = whole_path.join(path_match.path.clone());
             for (range, style) in highlight_ranges(
-                &path_match.path.to_string_lossy(),
+                &whole_path.to_string_lossy(),
                 &path_match.positions,
                 gpui::HighlightStyle::color(Color::Accent.color(cx)),
             ) {

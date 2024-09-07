@@ -657,14 +657,14 @@ where
             if let Err(err) = result.as_ref() {
                 log::error!("{err:?}");
                 if let Ok(prompt) = cx.update(|cx| {
-                    let detail = f(&err, cx).unwrap_or_else(|| format!("{err}. Please try again."));
+                    let detail = f(err, cx).unwrap_or_else(|| format!("{err}. Please try again."));
                     cx.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"])
                 }) {
                     prompt.await.ok();
                 }
                 return None;
             }
-            return Some(result.unwrap());
+            Some(result.unwrap())
         })
     }
 

@@ -7,7 +7,7 @@ use editor::{
     Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset,
 };
 use gpui::{actions, impl_actions, px, ViewContext};
-use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
+use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 use std::ops::Range;
@@ -65,6 +65,8 @@ pub enum Motion {
     EndOfLine {
         display_lines: bool,
     },
+    SentenceBackward,
+    SentenceForward,
     StartOfParagraph,
     EndOfParagraph,
     StartOfDocument,
@@ -228,6 +230,8 @@ actions!(
         Right,
         Space,
         CurrentLine,
+        SentenceForward,
+        SentenceBackward,
         StartOfParagraph,
         EndOfParagraph,
         StartOfDocument,
@@ -305,6 +309,13 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &EndOfParagraph, cx| {
         vim.motion(Motion::EndOfParagraph, cx)
+    });
+
+    Vim::action(editor, cx, |vim, _: &SentenceForward, cx| {
+        vim.motion(Motion::SentenceForward, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &SentenceBackward, cx| {
+        vim.motion(Motion::SentenceBackward, cx)
     });
     Vim::action(editor, cx, |vim, _: &StartOfDocument, cx| {
         vim.motion(Motion::StartOfDocument, cx)
@@ -483,12 +494,14 @@ impl Motion {
             | NextLineStart
             | PreviousLineStart
             | StartOfLineDownward
+            | SentenceBackward
+            | SentenceForward
             | StartOfParagraph
+            | EndOfParagraph
             | WindowTop
             | WindowMiddle
             | WindowBottom
-            | Jump { line: true, .. }
-            | EndOfParagraph => true,
+            | Jump { line: true, .. } => true,
             EndOfLine { .. }
             | Matching
             | FindForward { .. }
@@ -533,6 +546,8 @@ impl Motion {
             | StartOfLine { .. }
             | StartOfParagraph
             | EndOfParagraph
+            | SentenceBackward
+            | SentenceForward
             | StartOfLineDownward
             | EndOfLineDownward
             | GoToColumn
@@ -586,6 +601,8 @@ impl Motion {
             | StartOfLineDownward
             | StartOfParagraph
             | EndOfParagraph
+            | SentenceBackward
+            | SentenceForward
             | GoToColumn
             | NextWordStart { .. }
             | PreviousWordStart { .. }
@@ -617,16 +634,16 @@ impl Motion {
             Backspace => (backspace(map, point, times), SelectionGoal::None),
             Down {
                 display_lines: false,
-            } => up_down_buffer_rows(map, point, goal, times as isize, &text_layout_details),
+            } => up_down_buffer_rows(map, point, goal, times as isize, text_layout_details),
             Down {
                 display_lines: true,
-            } => down_display(map, point, goal, times, &text_layout_details),
+            } => down_display(map, point, goal, times, text_layout_details),
             Up {
                 display_lines: false,
-            } => up_down_buffer_rows(map, point, goal, 0 - times as isize, &text_layout_details),
+            } => up_down_buffer_rows(map, point, goal, 0 - times as isize, text_layout_details),
             Up {
                 display_lines: true,
-            } => up_display(map, point, goal, times, &text_layout_details),
+            } => up_display(map, point, goal, times, text_layout_details),
             Right => (right(map, point, times), SelectionGoal::None),
             Space => (space(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (
@@ -673,6 +690,8 @@ impl Motion {
                 end_of_line(map, *display_lines, point, times),
                 SelectionGoal::None,
             ),
+            SentenceBackward => (sentence_backwards(map, point, times), SelectionGoal::None),
+            SentenceForward => (sentence_forwards(map, point, times), SelectionGoal::None),
             StartOfParagraph => (
                 movement::start_of_paragraph(map, point, times),
                 SelectionGoal::None,
@@ -783,9 +802,9 @@ impl Motion {
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
             EndOfLineDownward => (last_non_whitespace(map, point, times), SelectionGoal::None),
             GoToColumn => (go_to_column(map, point, times), SelectionGoal::None),
-            WindowTop => window_top(map, point, &text_layout_details, times - 1),
-            WindowMiddle => window_middle(map, point, &text_layout_details),
-            WindowBottom => window_bottom(map, point, &text_layout_details, times - 1),
+            WindowTop => window_top(map, point, text_layout_details, times - 1),
+            WindowMiddle => window_middle(map, point, text_layout_details),
+            WindowBottom => window_bottom(map, point, text_layout_details, times - 1),
             Jump { line, anchor } => mark::jump_motion(map, *anchor, *line),
             ZedSearchResult { new_selections, .. } => {
                 // There will be only one selection, as
@@ -845,7 +864,7 @@ impl Motion {
             selection.head(),
             selection.goal,
             times,
-            &text_layout_details,
+            text_layout_details,
         ) {
             let mut selection = selection.clone();
             selection.set_head(new_head, goal);
@@ -877,11 +896,11 @@ impl Motion {
                     ignore_punctuation: _,
                 } = self
                 {
-                    let start_row = MultiBufferRow(selection.start.to_point(&map).row);
-                    if selection.end.to_point(&map).row > start_row.0 {
+                    let start_row = MultiBufferRow(selection.start.to_point(map).row);
+                    if selection.end.to_point(map).row > start_row.0 {
                         selection.end =
                             Point::new(start_row.0, map.buffer_snapshot.line_len(start_row))
-                                .to_display_point(&map)
+                                .to_display_point(map)
                     }
                 }
 
@@ -890,8 +909,8 @@ impl Motion {
                 // becomes inclusive. Example: "}" moves to the first line after a paragraph,
                 // but "d}" will not include that line.
                 let mut inclusive = self.inclusive();
-                let start_point = selection.start.to_point(&map);
-                let mut end_point = selection.end.to_point(&map);
+                let start_point = selection.start.to_point(map);
+                let mut end_point = selection.end.to_point(map);
 
                 // DisplayPoint
 
@@ -1089,7 +1108,7 @@ fn up_display(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     for _ in 0..times {
-        (point, goal) = movement::up(map, point, goal, true, &text_layout_details);
+        (point, goal) = movement::up(map, point, goal, true, text_layout_details);
     }
 
     (point, goal)
@@ -1131,12 +1150,15 @@ pub(crate) fn next_word_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut crossed_newline = false;
         let new_point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+            let left_kind = classifier.kind(left);
+            let right_kind = classifier.kind(right);
             let at_newline = right == '\n';
 
             let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
@@ -1161,7 +1183,10 @@ pub(crate) fn next_word_end(
     times: usize,
     allow_cross_newline: bool,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let new_point = next_char(map, point, allow_cross_newline);
         let mut need_next_char = false;
@@ -1170,8 +1195,8 @@ pub(crate) fn next_word_end(
             new_point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
                 if !allow_cross_newline && at_newline {
@@ -1202,7 +1227,10 @@ fn previous_word_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         // This works even though find_preceding_boundary is called for every character in the line containing
         // cursor because the newline is checked only once.
@@ -1211,8 +1239,8 @@ fn previous_word_start(
             point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
 
                 (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
             },
@@ -1231,7 +1259,10 @@ fn previous_word_end(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
     if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
@@ -1243,8 +1274,8 @@ fn previous_word_end(
             point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
                 match (left_kind, right_kind) {
                     (CharKind::Punctuation, CharKind::Whitespace)
                     | (CharKind::Punctuation, CharKind::Word)
@@ -1269,12 +1300,15 @@ fn next_subword_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut crossed_newline = false;
         let new_point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-            let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+            let left_kind = classifier.kind(left);
+            let right_kind = classifier.kind(right);
             let at_newline = right == '\n';
 
             let is_word_start = (left_kind != right_kind) && !left.is_alphanumeric();
@@ -1303,7 +1337,10 @@ pub(crate) fn next_subword_end(
     times: usize,
     allow_cross_newline: bool,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let new_point = next_char(map, point, allow_cross_newline);
 
@@ -1311,8 +1348,8 @@ pub(crate) fn next_subword_end(
         let mut need_backtrack = false;
         let new_point =
             movement::find_boundary(map, new_point, FindRange::MultiLine, |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
                 if !allow_cross_newline && at_newline {
@@ -1350,7 +1387,10 @@ fn previous_subword_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut crossed_newline = false;
         // This works even though find_preceding_boundary is called for every character in the line containing
@@ -1360,8 +1400,8 @@ fn previous_subword_start(
             point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
                 let is_word_start = (left_kind != right_kind) && !left.is_alphanumeric();
@@ -1391,7 +1431,10 @@ fn previous_subword_end(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
     if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
@@ -1403,8 +1446,8 @@ fn previous_subword_end(
             point,
             FindRange::MultiLine,
             |left, right| {
-                let left_kind = coerce_punctuation(char_kind(&scope, left), ignore_punctuation);
-                let right_kind = coerce_punctuation(char_kind(&scope, right), ignore_punctuation);
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
 
                 let is_subword_end =
                     left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
@@ -1435,7 +1478,7 @@ pub(crate) fn first_non_whitespace(
     from: DisplayPoint,
 ) -> DisplayPoint {
     let mut start_offset = start_of_line(map, display_lines, from).to_offset(map, Bias::Left);
-    let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
+    let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
     for (ch, offset) in map.buffer_chars_at(start_offset) {
         if ch == '\n' {
             return from;
@@ -1443,7 +1486,7 @@ pub(crate) fn first_non_whitespace(
 
         start_offset = offset;
 
-        if char_kind(&scope, ch) != CharKind::Whitespace {
+        if classifier.kind(ch) != CharKind::Whitespace {
             break;
         }
     }
@@ -1457,11 +1500,11 @@ pub(crate) fn last_non_whitespace(
     count: usize,
 ) -> DisplayPoint {
     let mut end_of_line = end_of_line(map, false, from, count).to_offset(map, Bias::Left);
-    let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
+    let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
 
     // NOTE: depending on clip_at_line_end we may already be one char back from the end.
     if let Some((ch, _)) = map.buffer_chars_at(end_of_line).next() {
-        if char_kind(&scope, ch) != CharKind::Whitespace {
+        if classifier.kind(ch) != CharKind::Whitespace {
             return end_of_line.to_display_point(map);
         }
     }
@@ -1471,7 +1514,7 @@ pub(crate) fn last_non_whitespace(
             break;
         }
         end_of_line = offset;
-        if char_kind(&scope, ch) != CharKind::Whitespace || ch == '\n' {
+        if classifier.kind(ch) != CharKind::Whitespace || ch == '\n' {
             break;
         }
     }
@@ -1508,6 +1551,129 @@ pub(crate) fn end_of_line(
     } else {
         map.clip_point(map.next_line_boundary(point.to_point(map)).1, Bias::Left)
     }
+}
+
+fn sentence_backwards(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    mut times: usize,
+) -> DisplayPoint {
+    let mut start = point.to_point(map).to_offset(&map.buffer_snapshot);
+    let mut chars = map.reverse_buffer_chars_at(start).peekable();
+
+    let mut was_newline = map
+        .buffer_chars_at(start)
+        .next()
+        .is_some_and(|(c, _)| c == '\n');
+
+    while let Some((ch, offset)) = chars.next() {
+        let start_of_next_sentence = if was_newline && ch == '\n' {
+            Some(offset + ch.len_utf8())
+        } else if ch == '\n' && chars.peek().is_some_and(|(c, _)| *c == '\n') {
+            Some(next_non_blank(map, offset + ch.len_utf8()))
+        } else if ch == '.' || ch == '?' || ch == '!' {
+            start_of_next_sentence(map, offset + ch.len_utf8())
+        } else {
+            None
+        };
+
+        if let Some(start_of_next_sentence) = start_of_next_sentence {
+            if start_of_next_sentence < start {
+                times = times.saturating_sub(1);
+            }
+            if times == 0 || offset == 0 {
+                return map.clip_point(
+                    start_of_next_sentence
+                        .to_offset(&map.buffer_snapshot)
+                        .to_display_point(map),
+                    Bias::Left,
+                );
+            }
+        }
+        if was_newline {
+            start = offset;
+        }
+        was_newline = ch == '\n';
+    }
+
+    DisplayPoint::zero()
+}
+
+fn sentence_forwards(map: &DisplaySnapshot, point: DisplayPoint, mut times: usize) -> DisplayPoint {
+    let start = point.to_point(map).to_offset(&map.buffer_snapshot);
+    let mut chars = map.buffer_chars_at(start).peekable();
+
+    let mut was_newline = map
+        .reverse_buffer_chars_at(start)
+        .next()
+        .is_some_and(|(c, _)| c == '\n')
+        && chars.peek().is_some_and(|(c, _)| *c == '\n');
+
+    while let Some((ch, offset)) = chars.next() {
+        if was_newline && ch == '\n' {
+            continue;
+        }
+        let start_of_next_sentence = if was_newline {
+            Some(next_non_blank(map, offset))
+        } else if ch == '\n' && chars.peek().is_some_and(|(c, _)| *c == '\n') {
+            Some(next_non_blank(map, offset + ch.len_utf8()))
+        } else if ch == '.' || ch == '?' || ch == '!' {
+            start_of_next_sentence(map, offset + ch.len_utf8())
+        } else {
+            None
+        };
+
+        if let Some(start_of_next_sentence) = start_of_next_sentence {
+            times = times.saturating_sub(1);
+            if times == 0 {
+                return map.clip_point(
+                    start_of_next_sentence
+                        .to_offset(&map.buffer_snapshot)
+                        .to_display_point(map),
+                    Bias::Right,
+                );
+            }
+        }
+
+        was_newline = ch == '\n' && chars.peek().is_some_and(|(c, _)| *c == '\n');
+    }
+
+    map.max_point()
+}
+
+fn next_non_blank(map: &DisplaySnapshot, start: usize) -> usize {
+    for (c, o) in map.buffer_chars_at(start) {
+        if c == '\n' || !c.is_whitespace() {
+            return o;
+        }
+    }
+
+    map.buffer_snapshot.len()
+}
+
+// given the offset after a ., !, or ? find the start of the next sentence.
+// if this is not a sentence boundary, returns None.
+fn start_of_next_sentence(map: &DisplaySnapshot, end_of_sentence: usize) -> Option<usize> {
+    let chars = map.buffer_chars_at(end_of_sentence);
+    let mut seen_space = false;
+
+    for (char, offset) in chars {
+        if !seen_space && (char == ')' || char == ']' || char == '"' || char == '\'') {
+            continue;
+        }
+
+        if char == '\n' && seen_space {
+            return Some(offset);
+        } else if char.is_whitespace() {
+            seen_space = true;
+        } else if seen_space {
+            return Some(offset);
+        } else {
+            return None;
+        }
+    }
+
+    Some(map.buffer_snapshot.len())
 }
 
 fn start_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) -> DisplayPoint {
@@ -1673,7 +1839,7 @@ fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> 
 }
 
 fn previous_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let correct_line = start_of_relative_buffer_row(map, point, (times as isize) * -1);
+    let correct_line = start_of_relative_buffer_row(map, point, -(times as isize));
     first_non_whitespace(map, false, correct_line)
 }
 
@@ -1784,14 +1950,6 @@ fn window_bottom(
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
     } else {
         (point, SelectionGoal::None)
-    }
-}
-
-pub fn coerce_punctuation(kind: CharKind, treat_punctuation_as_word: bool) -> CharKind {
-    if treat_punctuation_as_word && kind == CharKind::Punctuation {
-        CharKind::Word
-    } else {
-        kind
     }
 }
 

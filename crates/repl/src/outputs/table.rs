@@ -62,7 +62,7 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled};
 
-use crate::outputs::SupportsClipboard;
+use crate::outputs::OutputContent;
 
 /// TableView renders a static table inline in a buffer.
 /// It uses the https://specs.frictionlessdata.io/tabular-data-resource/ specification for data interchange.
@@ -73,7 +73,7 @@ pub struct TableView {
 }
 
 fn cell_content(row: &Value, field: &str) -> String {
-    match row.get(&field) {
+    match row.get(field) {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Number(n)) => n.to_string(),
         Some(Value::Bool(b)) => b.to_string(),
@@ -87,7 +87,7 @@ fn cell_content(row: &Value, field: &str) -> String {
 const TABLE_Y_PADDING_MULTIPLE: f32 = 0.5;
 
 impl TableView {
-    pub fn new(table: TabularDataResource, cx: &mut WindowContext) -> Self {
+    pub fn new(table: &TabularDataResource, cx: &mut WindowContext) -> Self {
         let mut widths = Vec::with_capacity(table.schema.fields.len());
 
         let text_system = cx.text_system();
@@ -116,7 +116,7 @@ impl TableView {
             };
 
             for row in data {
-                let content = cell_content(&row, &field.name);
+                let content = cell_content(row, &field.name);
                 runs[0].len = content.len();
                 let cell_width = cx
                     .text_system()
@@ -130,10 +130,10 @@ impl TableView {
             widths.push(width)
         }
 
-        let cached_clipboard_content = Self::create_clipboard_content(&table);
+        let cached_clipboard_content = Self::create_clipboard_content(table);
 
         Self {
-            table,
+            table: table.clone(),
             widths,
             cached_clipboard_content: ClipboardItem::new_string(cached_clipboard_content),
         }
@@ -192,31 +192,6 @@ impl TableView {
         }
 
         markdown
-    }
-
-    pub fn render(&self, cx: &WindowContext) -> AnyElement {
-        let data = match &self.table.data {
-            Some(data) => data,
-            None => return div().into_any_element(),
-        };
-
-        let mut headings = serde_json::Map::new();
-        for field in &self.table.schema.fields {
-            headings.insert(field.name.clone(), Value::String(field.name.clone()));
-        }
-        let header = self.render_row(&self.table.schema, true, &Value::Object(headings), cx);
-
-        let body = data
-            .iter()
-            .map(|row| self.render_row(&self.table.schema, false, &row, cx));
-
-        v_flex()
-            .id("table")
-            .overflow_x_scroll()
-            .w_full()
-            .child(header)
-            .children(body)
-            .into_any_element()
     }
 
     pub fn render_row(
@@ -282,7 +257,34 @@ impl TableView {
     }
 }
 
-impl SupportsClipboard for TableView {
+impl Render for TableView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let data = match &self.table.data {
+            Some(data) => data,
+            None => return div().into_any_element(),
+        };
+
+        let mut headings = serde_json::Map::new();
+        for field in &self.table.schema.fields {
+            headings.insert(field.name.clone(), Value::String(field.name.clone()));
+        }
+        let header = self.render_row(&self.table.schema, true, &Value::Object(headings), cx);
+
+        let body = data
+            .iter()
+            .map(|row| self.render_row(&self.table.schema, false, row, cx));
+
+        v_flex()
+            .id("table")
+            .overflow_x_scroll()
+            .w_full()
+            .child(header)
+            .children(body)
+            .into_any_element()
+    }
+}
+
+impl OutputContent for TableView {
     fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
         Some(self.cached_clipboard_content.clone())
     }

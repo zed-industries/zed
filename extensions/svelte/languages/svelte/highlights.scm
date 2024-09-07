@@ -1,8 +1,15 @@
 ; Special identifiers
 ;--------------------
 
+; Treat capitalized tag names as constructors and types
+((tag_name) @type
+ (#match? @type "^[A-Z]"))
+
+; Regular (lowercase) tag names
+((tag_name) @tag
+ (#match? @tag "^[a-z]"))
+
 ; TODO:
-(tag_name) @tag
 (attribute_name) @property
 (erroneous_end_tag_name) @keyword
 (comment) @comment
@@ -15,6 +22,7 @@
 [
   (text)
   (raw_text_expr)
+  (raw_text_each)
 ] @none
 
 [

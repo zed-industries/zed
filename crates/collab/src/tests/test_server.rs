@@ -263,8 +263,7 @@ impl TestServer {
                 })
             });
 
-        let git_hosting_provider_registry =
-            cx.update(|cx| GitHostingProviderRegistry::default_global(cx));
+        let git_hosting_provider_registry = cx.update(GitHostingProviderRegistry::default_global);
         git_hosting_provider_registry
             .register_hosting_provider(Arc::new(git_hosting_providers::Github));
 
@@ -301,7 +300,7 @@ impl TestServer {
             dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
             language_model::LanguageModelRegistry::test(cx);
-            assistant::context_store::init(&client);
+            assistant::context_store::init(&client.clone().into());
         });
 
         client
@@ -916,6 +915,7 @@ impl TestClient {
                 self.app_state.user_store.clone(),
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
+                None,
                 cx,
             )
         })

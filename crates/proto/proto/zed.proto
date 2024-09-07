@@ -278,7 +278,10 @@ message Envelope {
         LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
 
         FindSearchCandidates find_search_candidates = 243;
-        FindSearchCandidatesResponse find_search_candidates_response = 244; // current max
+        FindSearchCandidatesResponse find_search_candidates_response = 244;
+
+        CloseBuffer close_buffer = 245;
+        UpdateUserSettings update_user_settings = 246; // current max
     }
 
     reserved 158 to 161;
@@ -654,6 +657,7 @@ message CopyProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
     string new_path = 3;
+    optional string relative_worktree_source_path = 4;
 }
 
 message DeleteProjectEntry {
@@ -867,6 +871,11 @@ message SaveBuffer {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     optional ProjectPath new_path = 4;
+}
+
+message CloseBuffer {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
 }
 
 message ProjectPath {
@@ -2476,9 +2485,15 @@ message GetLlmTokenResponse {
 // Remote FS
 
 message AddWorktree {
+    uint64 project_id = 2;
     string path = 1;
 }
 
 message AddWorktreeResponse {
     uint64 worktree_id = 1;
+}
+
+message UpdateUserSettings {
+    uint64 project_id = 1;
+    string content = 2;
 }

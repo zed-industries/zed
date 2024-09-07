@@ -15,6 +15,36 @@ impl Render for HelloWorld {
             .bg(gpui::white())
             .child(
                 div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .border_1()
+                            .border_color(gpui::red())
+                            .text_ellipsis()
+                            .child("longer text in flex 1"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .border_1()
+                            .border_color(gpui::red())
+                            .text_ellipsis()
+                            .child("short flex"),
+                    )
+                    .child(
+                        div()
+                            .overflow_hidden()
+                            .border_1()
+                            .border_color(gpui::red())
+                            .text_ellipsis()
+                            .child("A short text in normal div"),
+                    ),
+            )
+            .child(
+                div()
                     .text_xl()
                     .overflow_hidden()
                     .text_ellipsis()

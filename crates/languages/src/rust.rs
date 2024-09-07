@@ -230,7 +230,11 @@ impl LspAdapter for RustLspAdapter {
                     && completion.insert_text_format != Some(lsp::InsertTextFormat::SNIPPET) =>
             {
                 let name = &completion.label;
-                let text = format!("{}: {}", name, detail.unwrap());
+                let text = format!(
+                    "{}: {}",
+                    name,
+                    completion.detail.as_ref().or(detail.as_ref()).unwrap()
+                );
                 let source = Rope::from(format!("let {} = ();", text).as_str());
                 let runs = language.highlight_text(&source, 4..4 + text.len());
                 return Some(CodeLabel {
@@ -245,7 +249,7 @@ impl LspAdapter for RustLspAdapter {
                 static REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("\\(…?\\)").unwrap());
 
                 let detail = detail.unwrap();
-                const FUNCTION_PREFIXES: [&'static str; 6] = [
+                const FUNCTION_PREFIXES: [&str; 6] = [
                     "async fn",
                     "async unsafe fn",
                     "const fn",
@@ -263,19 +267,32 @@ impl LspAdapter for RustLspAdapter {
                 });
                 // fn keyword should be followed by opening parenthesis.
                 if let Some((prefix, suffix)) = fn_keyword {
+                    let mut text = REGEX.replace(&completion.label, suffix).to_string();
+                    let source = Rope::from(format!("{prefix} {} {{}}", text).as_str());
+                    let run_start = prefix.len() + 1;
+                    let runs = language.highlight_text(&source, run_start..run_start + text.len());
                     if detail.starts_with(" (") {
-                        let mut text = REGEX.replace(&completion.label, suffix).to_string();
-                        let source = Rope::from(format!("{prefix} {} {{}}", text).as_str());
-                        let run_start = prefix.len() + 1;
-                        let runs =
-                            language.highlight_text(&source, run_start..run_start + text.len());
                         text.push_str(&detail);
-                        return Some(CodeLabel {
-                            filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
-                            text,
-                            runs,
-                        });
                     }
+
+                    return Some(CodeLabel {
+                        filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
+                        text,
+                        runs,
+                    });
+                } else if completion
+                    .detail
+                    .as_ref()
+                    .map_or(false, |detail| detail.starts_with("macro_rules! "))
+                {
+                    let source = Rope::from(completion.label.as_str());
+                    let runs = language.highlight_text(&source, 0..completion.label.len());
+
+                    return Some(CodeLabel {
+                        filter_range: 0..completion.label.len(),
+                        text: completion.label.clone(),
+                        runs,
+                    });
                 }
             }
             Some(kind) => {
@@ -404,8 +421,8 @@ impl ContextProvider for RustContextProvider {
             .is_some();
 
         if is_main_function {
-            if let Some((package_name, bin_name)) = local_abs_path
-                .and_then(|local_abs_path| package_name_and_bin_name_from_abs_path(local_abs_path))
+            if let Some((package_name, bin_name)) =
+                local_abs_path.and_then(package_name_and_bin_name_from_abs_path)
             {
                 return Ok(TaskVariables::from_iter([
                     (RUST_PACKAGE_TASK_VARIABLE.clone(), package_name),
@@ -432,7 +449,7 @@ impl ContextProvider for RustContextProvider {
         file: Option<Arc<dyn language::File>>,
         cx: &AppContext,
     ) -> Option<TaskTemplates> {
-        const DEFAULT_RUN_NAME_STR: &'static str = "RUST_DEFAULT_PACKAGE_RUN";
+        const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         let package_to_run = all_language_settings(file.as_ref(), cx)
             .language(Some("Rust"))
             .tasks

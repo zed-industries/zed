@@ -1,12 +1,10 @@
 use anyhow::Result;
 use base64::prelude::*;
-use gpui::{
-    img, AnyElement, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, WindowContext,
-};
+use gpui::{img, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, WindowContext};
 use std::sync::Arc;
 use ui::{div, prelude::*, IntoElement, Styled};
 
-use crate::outputs::SupportsClipboard;
+use crate::outputs::OutputContent;
 
 /// ImageView renders an image inline in an editor, adapting to the line height to fit the image.
 pub struct ImageView {
@@ -52,15 +50,17 @@ impl ImageView {
             id: gpui_image_data.id.0 as u64,
         });
 
-        return Ok(ImageView {
+        Ok(ImageView {
             clipboard_image,
             height,
             width,
             image: Arc::new(gpui_image_data),
-        });
+        })
     }
+}
 
-    pub fn render(&self, cx: &mut WindowContext) -> AnyElement {
+impl Render for ImageView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let line_height = cx.line_height();
 
         let (height, width) = if self.height as f32 / line_height.0 == u8::MAX as f32 {
@@ -73,15 +73,11 @@ impl ImageView {
 
         let image = self.image.clone();
 
-        div()
-            .h(Pixels(height))
-            .w(Pixels(width))
-            .child(img(image))
-            .into_any_element()
+        div().h(Pixels(height)).w(Pixels(width)).child(img(image))
     }
 }
 
-impl SupportsClipboard for ImageView {
+impl OutputContent for ImageView {
     fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
         Some(ClipboardItem::new_image(self.clipboard_image.as_ref()))
     }

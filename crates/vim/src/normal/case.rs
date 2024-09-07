@@ -139,7 +139,7 @@ impl Vim {
                     }
                     Mode::VisualBlock => {
                         ranges.push(selection.start..selection.end);
-                        if cursor_positions.len() == 0 {
+                        if cursor_positions.is_empty() {
                             cursor_positions.push(selection.start..selection.start);
                         }
                     }
@@ -165,7 +165,7 @@ impl Vim {
                         let text = snapshot
                             .text_for_range(range.start..range.end)
                             .flat_map(|s| s.chars())
-                            .flat_map(|c| transform(c))
+                            .flat_map(transform)
                             .collect::<String>();
 
                         buffer.edit([(range, text)], None, cx)

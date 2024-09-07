@@ -121,7 +121,7 @@ impl Vim {
                 if is_first {
                     is_first = false;
                 } else {
-                    text.push_str("\n");
+                    text.push('\n');
                 }
                 let initial_len = text.len();
 
@@ -147,7 +147,7 @@ impl Vim {
                     text.push_str(chunk);
                 }
                 if is_last_line {
-                    text.push_str("\n");
+                    text.push('\n');
                 }
                 clipboard_selections.push(ClipboardSelection {
                     len: text.len() - initial_len,

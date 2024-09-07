@@ -356,7 +356,7 @@ async fn update_editor_from_message(
                 .collect::<Vec<_>>();
             removed_excerpt_ids.sort_by({
                 let multibuffer = multibuffer.read(cx);
-                move |a, b| a.cmp(&b, &multibuffer)
+                move |a, b| a.cmp(b, &multibuffer)
             });
 
             let mut insertions = message.inserted_excerpts.into_iter().peekable();
@@ -604,7 +604,7 @@ impl Item for Editor {
                     .and_then(|path| FileIcons::get_icon(path.path.as_ref(), cx))
             })
             .flatten()
-            .map(|icon| Icon::from_path(icon))
+            .map(Icon::from_path)
     }
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
@@ -631,7 +631,7 @@ impl Item for Editor {
                 return None;
             }
 
-            Some(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN))
+            Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
         });
 
         h_flex()
@@ -829,7 +829,7 @@ impl Item for Editor {
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = &self.buffer().read(cx);
         let (buffer_id, symbols) =
-            multibuffer.symbols_containing(cursor, Some(&variant.syntax()), cx)?;
+            multibuffer.symbols_containing(cursor, Some(variant.syntax()), cx)?;
         let buffer = multibuffer.buffer(buffer_id)?;
 
         let buffer = buffer.read(cx);
@@ -844,7 +844,13 @@ impl Item for Editor {
                         .unwrap_or_default(),
                 )
                 .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_else(|| "untitled".to_string())
+                .unwrap_or_else(|| {
+                    if multibuffer.is_singleton() {
+                        multibuffer.title(cx).to_string()
+                    } else {
+                        "untitled".to_string()
+                    }
+                })
         });
 
         let settings = ThemeSettings::get_global(cx);
@@ -1147,7 +1153,7 @@ impl SearchableItem for Editor {
         self.background_highlights
             .get(&TypeId::of::<BufferSearchHighlights>())
             .map_or(Vec::new(), |(_color, ranges)| {
-                ranges.iter().map(|range| range.clone()).collect()
+                ranges.iter().cloned().collect()
             })
     }
 
@@ -1218,7 +1224,7 @@ impl SearchableItem for Editor {
             }
             SeedQuerySetting::Selection => String::new(),
             SeedQuerySetting::Always => {
-                let (range, kind) = snapshot.surrounding_word(selection.start);
+                let (range, kind) = snapshot.surrounding_word(selection.start, true);
                 if kind == Some(CharKind::Word) {
                     let text: String = snapshot.text_for_range(range).collect();
                     if !text.trim().is_empty() {
@@ -1247,7 +1253,7 @@ impl SearchableItem for Editor {
         self.unfold_ranges(matches.to_vec(), false, false, cx);
         let mut ranges = Vec::new();
         for m in matches {
-            ranges.push(self.range_for_match(&m))
+            ranges.push(self.range_for_match(m))
         }
         self.change_selections(None, cx, |s| s.select_ranges(ranges));
     }
@@ -1328,7 +1334,7 @@ impl SearchableItem for Editor {
                     .cmp(&current_index_position, &buffer)
                     .is_gt()
                 {
-                    count = count - 1
+                    count -= 1
                 }
 
                 (current_index + count) % matches.len()
@@ -1339,7 +1345,7 @@ impl SearchableItem for Editor {
                     .cmp(&current_index_position, &buffer)
                     .is_lt()
                 {
-                    count = count - 1;
+                    count -= 1;
                 }
 
                 if current_index >= count {
@@ -1361,7 +1367,7 @@ impl SearchableItem for Editor {
             .background_highlights
             .get(&TypeId::of::<SearchWithinRange>())
             .map_or(vec![], |(_color, ranges)| {
-                ranges.iter().map(|range| range.clone()).collect::<Vec<_>>()
+                ranges.iter().cloned().collect::<Vec<_>>()
             });
 
         cx.background_executor().spawn(async move {
@@ -1404,7 +1410,7 @@ impl SearchableItem for Editor {
                     if !search_range.is_empty() {
                         ranges.extend(
                             query
-                                .search(&search_buffer, Some(search_range.clone()))
+                                .search(search_buffer, Some(search_range.clone()))
                                 .await
                                 .into_iter()
                                 .map(|match_range| {

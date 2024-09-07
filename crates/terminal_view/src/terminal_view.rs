@@ -645,7 +645,7 @@ fn subscribe_for_terminal_events(
                                 &path_like_target.maybe_path,
                                 cx,
                             );
-                            smol::block_on(valid_files_to_open_task).len() > 0
+                            !smol::block_on(valid_files_to_open_task).is_empty()
                         } else {
                             false
                         }
@@ -749,7 +749,10 @@ fn subscribe_for_terminal_events(
             },
             Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
             Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
-            Event::SelectionsChanged => cx.emit(SearchEvent::ActiveMatchChanged),
+            Event::SelectionsChanged => {
+                cx.invalidate_character_coordinates();
+                cx.emit(SearchEvent::ActiveMatchChanged)
+            }
         });
     vec![terminal_subscription, terminal_events_subscription]
 }
@@ -864,7 +867,7 @@ pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<Re
     if query == "." {
         return None;
     }
-    let searcher = RegexSearch::new(&query);
+    let searcher = RegexSearch::new(query);
     searcher.ok()
 }
 
@@ -887,6 +890,7 @@ impl TerminalView {
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
         self.terminal.read(cx).focus_in();
         self.blink_cursors(self.blink_epoch, cx);
+        cx.invalidate_character_coordinates();
         cx.notify();
     }
 
@@ -1235,12 +1239,13 @@ impl SearchableItem for TerminalView {
         let searcher = match &*query {
             SearchQuery::Text { .. } => regex_search_for_query(
                 &(SearchQuery::text(
-                    regex_to_literal(&query.as_str()),
+                    regex_to_literal(query.as_str()),
                     query.whole_word(),
                     query.case_sensitive(),
                     query.include_ignored(),
                     query.files_to_include().clone(),
                     query.files_to_exclude().clone(),
+                    None,
                 )
                 .unwrap()),
             ),
@@ -1264,7 +1269,7 @@ impl SearchableItem for TerminalView {
         // Selection head might have a value if there's a selection that isn't
         // associated with a match. Therefore, if there are no matches, we should
         // report None, no matter the state of the terminal
-        let res = if matches.len() > 0 {
+        let res = if !matches.is_empty() {
             if let Some(selection_head) = self.terminal().read(cx).selection_head {
                 // If selection head is contained in a match. Return that match
                 if let Some(ix) = matches

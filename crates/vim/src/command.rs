@@ -21,7 +21,7 @@ use crate::{
         JoinLines,
     },
     state::Mode,
-    visual::VisualDeleteLine,
+    visual::{VisualDeleteLine, VisualYankLine},
     Vim,
 };
 
@@ -202,9 +202,7 @@ impl VimCommand {
             query = &query[..query.len() - 1];
         }
 
-        let Some(suffix) = query.strip_prefix(self.prefix) else {
-            return None;
-        };
+        let suffix = query.strip_prefix(self.prefix)?;
         if !self.suffix.starts_with(suffix) {
             return None;
         }
@@ -586,7 +584,10 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("lp", "revious"), editor::actions::GoToPrevDiagnostic).count(),
         VimCommand::new(("lN", "ext"), editor::actions::GoToPrevDiagnostic).count(),
         VimCommand::new(("j", "oin"), JoinLines).range(),
+        VimCommand::new(("dif", "fupdate"), editor::actions::ToggleHunkDiff).range(),
+        VimCommand::new(("rev", "ert"), editor::actions::RevertSelectedHunks).range(),
         VimCommand::new(("d", "elete"), VisualDeleteLine).range(),
+        VimCommand::new(("y", "ank"), VisualYankLine).range(),
         VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(),
         VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
@@ -628,9 +629,9 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
 
     let (range, query) = VimCommand::parse_range(input);
     let range_prefix = input[0..(input.len() - query.len())].to_string();
-    let query = query.as_str();
+    let query = query.as_str().trim();
 
-    let action = if range.is_some() && query == "" {
+    let action = if range.is_some() && query.is_empty() {
         Some(
             GoToLine {
                 range: range.clone().unwrap(),
@@ -656,13 +657,11 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
             query.next();
         }
         if let Some(replacement) = Replacement::parse(query) {
-            Some(
-                ReplaceCommand {
-                    replacement,
-                    range: range.clone(),
-                }
-                .boxed_clone(),
-            )
+            let range = range.clone().unwrap_or(CommandRange {
+                start: Position::CurrentLine { offset: 0 },
+                end: None,
+            });
+            Some(ReplaceCommand { replacement, range }.boxed_clone())
         } else {
             None
         }
@@ -680,7 +679,7 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
     }
 
     for command in commands(cx).iter() {
-        if let Some(action) = command.parse(&query, cx) {
+        if let Some(action) = command.parse(query, cx) {
             let string = ":".to_owned() + &range_prefix + command.prefix + command.suffix;
             let positions = generate_positions(&string, &(range_prefix + query));
 
@@ -789,11 +788,13 @@ mod test {
         cx.set_shared_state(indoc! {"
             ˇa
             b
+            b
             c"})
             .await;
         cx.simulate_shared_keystrokes(": % s / b / d enter").await;
         cx.shared_state().await.assert_eq(indoc! {"
             a
+            d
             ˇd
             c"});
         cx.simulate_shared_keystrokes(": % s : . : \\ 0 \\ 0 enter")
@@ -801,7 +802,14 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             aa
             dd
+            dd
             ˇcc"});
+        cx.simulate_shared_keystrokes("k : s / dd / ee enter").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            aa
+            dd
+            ˇee
+            cc"});
     }
 
     #[gpui::test]
@@ -837,7 +845,7 @@ mod test {
         cx.simulate_keystrokes("i @ escape");
         cx.simulate_keystrokes(": w enter");
 
-        assert_eq!(fs.load(&path).await.unwrap(), "@\n");
+        assert_eq!(fs.load(path).await.unwrap(), "@\n");
 
         fs.as_fake().insert_file(path, b"oops\n".to_vec()).await;
 
@@ -847,12 +855,12 @@ mod test {
         assert!(cx.has_pending_prompt());
         // "Cancel"
         cx.simulate_prompt_answer(0);
-        assert_eq!(fs.load(&path).await.unwrap(), "oops\n");
+        assert_eq!(fs.load(path).await.unwrap(), "oops\n");
         assert!(!cx.has_pending_prompt());
         // force overwrite
         cx.simulate_keystrokes(": w ! enter");
         assert!(!cx.has_pending_prompt());
-        assert_eq!(fs.load(&path).await.unwrap(), "@@\n");
+        assert_eq!(fs.load(path).await.unwrap(), "@@\n");
     }
 
     #[gpui::test]

@@ -9,12 +9,12 @@ use git::diff::DiffHunk;
 use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext};
 use itertools::Itertools;
 use language::{
-    char_kind,
     language_settings::{language_settings, LanguageSettings},
-    AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharKind, Chunk,
-    CursorShape, DiagnosticEntry, File, IndentGuide, IndentSize, Language, LanguageScope,
-    OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension,
-    ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
+    AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
+    CharKind, Chunk, CursorShape, DiagnosticEntry, File, IndentGuide, IndentSize, Language,
+    LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
+    TextDimension, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _,
+    TransactionId, Unclipped,
 };
 use smallvec::SmallVec;
 use std::{
@@ -595,7 +595,7 @@ impl MultiBuffer {
             if start_excerpt.id == end_excerpt.id {
                 buffer_edits
                     .entry(start_excerpt.buffer_id)
-                    .or_insert(Vec::new())
+                    .or_default()
                     .push(BufferEdit {
                         range: buffer_start..buffer_end,
                         new_text,
@@ -618,7 +618,7 @@ impl MultiBuffer {
                     ..buffer_end;
                 buffer_edits
                     .entry(start_excerpt.buffer_id)
-                    .or_insert(Vec::new())
+                    .or_default()
                     .push(BufferEdit {
                         range: start_excerpt_range,
                         new_text: new_text.clone(),
@@ -627,7 +627,7 @@ impl MultiBuffer {
                     });
                 buffer_edits
                     .entry(end_excerpt.buffer_id)
-                    .or_insert(Vec::new())
+                    .or_default()
                     .push(BufferEdit {
                         range: end_excerpt_range,
                         new_text: new_text.clone(),
@@ -643,7 +643,7 @@ impl MultiBuffer {
                     }
                     buffer_edits
                         .entry(excerpt.buffer_id)
-                        .or_insert(Vec::new())
+                        .or_default()
                         .push(BufferEdit {
                             range: excerpt.range.context.to_offset(&excerpt.buffer),
                             new_text: new_text.clone(),
@@ -844,7 +844,7 @@ impl MultiBuffer {
         let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>();
 
         for (buffer_id, buffer_transaction) in &transaction.buffer_transactions {
-            let Some(buffer_state) = buffers.get(&buffer_id) else {
+            let Some(buffer_state) = buffers.get(buffer_id) else {
                 continue;
             };
 
@@ -891,26 +891,24 @@ impl MultiBuffer {
             buffer.update(cx, |buffer, _| {
                 buffer.merge_transactions(transaction, destination)
             });
-        } else {
-            if let Some(transaction) = self.history.forget(transaction) {
-                if let Some(destination) = self.history.transaction_mut(destination) {
-                    for (buffer_id, buffer_transaction_id) in transaction.buffer_transactions {
-                        if let Some(destination_buffer_transaction_id) =
-                            destination.buffer_transactions.get(&buffer_id)
-                        {
-                            if let Some(state) = self.buffers.borrow().get(&buffer_id) {
-                                state.buffer.update(cx, |buffer, _| {
-                                    buffer.merge_transactions(
-                                        buffer_transaction_id,
-                                        *destination_buffer_transaction_id,
-                                    )
-                                });
-                            }
-                        } else {
-                            destination
-                                .buffer_transactions
-                                .insert(buffer_id, buffer_transaction_id);
+        } else if let Some(transaction) = self.history.forget(transaction) {
+            if let Some(destination) = self.history.transaction_mut(destination) {
+                for (buffer_id, buffer_transaction_id) in transaction.buffer_transactions {
+                    if let Some(destination_buffer_transaction_id) =
+                        destination.buffer_transactions.get(&buffer_id)
+                    {
+                        if let Some(state) = self.buffers.borrow().get(&buffer_id) {
+                            state.buffer.update(cx, |buffer, _| {
+                                buffer.merge_transactions(
+                                    buffer_transaction_id,
+                                    *destination_buffer_transaction_id,
+                                )
+                            });
                         }
+                    } else {
+                        destination
+                            .buffer_transactions
+                            .insert(buffer_id, buffer_transaction_id);
                     }
                 }
             }
@@ -2202,10 +2200,8 @@ impl MultiBuffer {
                 if excerpt.locator <= Locator::min() {
                     panic!("invalid first excerpt locator {:?}", excerpt.locator);
                 }
-            } else {
-                if excerpt.locator <= excerpts[ix - 1].locator {
-                    panic!("excerpts are out-of-order: {:?}", excerpts);
-                }
+            } else if excerpt.locator <= excerpts[ix - 1].locator {
+                panic!("excerpts are out-of-order: {:?}", excerpts);
             }
         }
 
@@ -2214,10 +2210,8 @@ impl MultiBuffer {
                 if entry.id.cmp(&ExcerptId::min(), &snapshot).is_le() {
                     panic!("invalid first excerpt id {:?}", entry.id);
                 }
-            } else {
-                if entry.id <= excerpt_ids[ix - 1].id {
-                    panic!("excerpt ids are out-of-order: {:?}", excerpt_ids);
-                }
+            } else if entry.id <= excerpt_ids[ix - 1].id {
+                panic!("excerpt ids are out-of-order: {:?}", excerpt_ids);
             }
         }
     }
@@ -2295,21 +2289,27 @@ impl MultiBufferSnapshot {
                 .eq(needle.bytes())
     }
 
-    pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
+    pub fn surrounding_word<T: ToOffset>(
+        &self,
+        start: T,
+        for_completion: bool,
+    ) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
 
-        let scope = self.language_scope_at(start);
-        let kind = |c| char_kind(&scope, c);
+        let classifier = self
+            .char_classifier_at(start)
+            .for_completion(for_completion);
+
         let word_kind = cmp::max(
-            prev_chars.peek().copied().map(kind),
-            next_chars.peek().copied().map(kind),
+            prev_chars.peek().copied().map(|c| classifier.kind(c)),
+            next_chars.peek().copied().map(|c| classifier.kind(c)),
         );
 
         for ch in prev_chars {
-            if Some(kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
                 start -= ch.len_utf8();
             } else {
                 break;
@@ -2317,7 +2317,7 @@ impl MultiBufferSnapshot {
         }
 
         for ch in next_chars {
-            if Some(kind(ch)) == word_kind && ch != '\n' {
+            if Some(classifier.kind(ch)) == word_kind && ch != '\n' {
                 end += ch.len_utf8();
             } else {
                 break;
@@ -3330,28 +3330,25 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = Range<usize>> + 'a {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.excerpts_for_range(range.clone())
-            .filter_map(move |(excerpt, excerpt_offset)| {
-                redaction_enabled(excerpt.buffer.file()).then(move || {
-                    let excerpt_buffer_start =
-                        excerpt.range.context.start.to_offset(&excerpt.buffer);
+            .filter(move |&(excerpt, _)| redaction_enabled(excerpt.buffer.file()))
+            .flat_map(move |(excerpt, excerpt_offset)| {
+                let excerpt_buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
 
-                    excerpt
-                        .buffer
-                        .redacted_ranges(excerpt.range.context.clone())
-                        .map(move |mut redacted_range| {
-                            // Re-base onto the excerpts coordinates in the multibuffer
-                            redacted_range.start = excerpt_offset
-                                + redacted_range.start.saturating_sub(excerpt_buffer_start);
-                            redacted_range.end = excerpt_offset
-                                + redacted_range.end.saturating_sub(excerpt_buffer_start);
+                excerpt
+                    .buffer
+                    .redacted_ranges(excerpt.range.context.clone())
+                    .map(move |mut redacted_range| {
+                        // Re-base onto the excerpts coordinates in the multibuffer
+                        redacted_range.start = excerpt_offset
+                            + redacted_range.start.saturating_sub(excerpt_buffer_start);
+                        redacted_range.end = excerpt_offset
+                            + redacted_range.end.saturating_sub(excerpt_buffer_start);
 
-                            redacted_range
-                        })
-                        .skip_while(move |redacted_range| redacted_range.end < range.start)
-                        .take_while(move |redacted_range| redacted_range.start < range.end)
-                })
+                        redacted_range
+                    })
+                    .skip_while(move |redacted_range| redacted_range.end < range.start)
+                    .take_while(move |redacted_range| redacted_range.start < range.end)
             })
-            .flatten()
     }
 
     pub fn runnable_ranges(
@@ -3476,6 +3473,12 @@ impl MultiBufferSnapshot {
     pub fn language_scope_at<T: ToOffset>(&self, point: T) -> Option<LanguageScope> {
         self.point_to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_scope_at(offset))
+    }
+
+    pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {
+        self.point_to_buffer_offset(point)
+            .map(|(buffer, offset)| buffer.char_classifier_at(offset))
+            .unwrap_or_default()
     }
 
     pub fn language_indent_size_at<T: ToOffset>(
@@ -4455,9 +4458,9 @@ impl ExcerptId {
     }
 }
 
-impl Into<usize> for ExcerptId {
-    fn into(self) -> usize {
-        self.0
+impl From<ExcerptId> for usize {
+    fn from(val: ExcerptId) -> Self {
+        val.0
     }
 }
 
@@ -4746,7 +4749,6 @@ impl<'a> ReversedMultiBufferBytes<'a> {
                     self.excerpt_bytes = Some(excerpt_bytes);
                 }
             }
-        } else {
         }
     }
 }
@@ -5830,7 +5832,7 @@ mod tests {
                         );
                     }
                     let snapshot = multibuffer.read(cx).read(cx);
-                    ids_to_remove.sort_unstable_by(|a, b| a.cmp(&b, &snapshot));
+                    ids_to_remove.sort_unstable_by(|a, b| a.cmp(b, &snapshot));
                     drop(snapshot);
                     multibuffer.update(cx, |multibuffer, cx| {
                         multibuffer.remove_excerpts(ids_to_remove, cx)
@@ -6384,13 +6386,13 @@ mod tests {
     }
 
     fn validate_excerpts(
-        actual: &Vec<(ExcerptId, BufferId, Range<Anchor>)>,
+        actual: &[(ExcerptId, BufferId, Range<Anchor>)],
         expected: &Vec<(ExcerptId, BufferId, Range<Anchor>)>,
     ) {
         assert_eq!(actual.len(), expected.len());
 
         actual
-            .into_iter()
+            .iter()
             .zip(expected)
             .map(|(actual, expected)| {
                 assert_eq!(actual.0, expected.0);
@@ -6425,7 +6427,7 @@ mod tests {
         (
             excerpt_id,
             buffer.read(cx).remote_id(),
-            map_range_from_excerpt(&snapshot, excerpt_id, &buffer.read(cx).snapshot(), range),
+            map_range_from_excerpt(snapshot, excerpt_id, &buffer.read(cx).snapshot(), range),
         )
     }
 

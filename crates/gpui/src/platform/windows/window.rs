@@ -92,7 +92,7 @@ impl WindowsWindowState {
         let input_handler = None;
         let system_key_handled = false;
         let click_state = ClickState::new();
-        let system_settings = WindowsSystemSettings::new();
+        let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
 
@@ -660,8 +660,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow_mut().callbacks.appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene, on_complete: Option<oneshot::Sender<()>>) {
-        self.0.state.borrow_mut().renderer.draw(scene, on_complete)
+    fn draw(&self, scene: &Scene) {
+        self.0.state.borrow_mut().renderer.draw(scene)
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -676,8 +676,8 @@ impl PlatformWindow for WindowsWindow {
         Some(self.0.state.borrow().renderer.gpu_specs())
     }
 
-    fn fps(&self) -> Option<f32> {
-        None
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+        // todo(windows)
     }
 }
 

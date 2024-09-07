@@ -668,7 +668,7 @@ impl LanguageRegistry {
                                     .ok_or_else(|| anyhow!("invalid grammar filename"))?;
                                 anyhow::Ok(with_parser(|parser| {
                                     let mut store = parser.take_wasm_store().unwrap();
-                                    let grammar = store.load_language(&grammar_name, &wasm_bytes);
+                                    let grammar = store.load_language(grammar_name, &wasm_bytes);
                                     parser.set_wasm_store(store).unwrap();
                                     grammar
                                 })?)
@@ -699,7 +699,7 @@ impl LanguageRegistry {
     }
 
     pub fn to_vec(&self) -> Vec<Arc<Language>> {
-        self.state.read().languages.iter().cloned().collect()
+        self.state.read().languages.to_vec()
     }
 
     pub fn lsp_adapters(&self, language: &Arc<Language>) -> Vec<Arc<CachedLspAdapter>> {
@@ -719,6 +719,7 @@ impl LanguageRegistry {
         self.lsp_binary_status_tx.send(server_name, status);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_pending_language_server(
         self: &Arc<Self>,
         stderr_capture: Arc<Mutex<Option<String>>>,
@@ -726,6 +727,7 @@ impl LanguageRegistry {
         adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
+        cli_environment: Option<HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Option<PendingLanguageServer> {
         let server_id = self.state.write().next_language_server_id();
@@ -764,7 +766,19 @@ impl LanguageRegistry {
 
                 delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
 
-                let binary = binary_result?;
+                let mut binary = binary_result?;
+
+                // If this Zed project was opened from the CLI and the language server command itself
+                // doesn't have an environment (which it would have, if it was found in $PATH), then
+                // we pass along the CLI environment that we inherited.
+                if binary.env.is_none() && cli_environment.is_some() {
+                    log::info!(
+                        "using CLI environment for language server {:?}, id: {server_id}",
+                        adapter.name.0
+                    );
+                    binary.env = cli_environment.clone();
+                }
+
                 let options = adapter
                     .adapter
                     .clone()
@@ -957,7 +971,7 @@ impl LanguageRegistryState {
         self.available_languages
             .retain(|language| !languages_to_remove.contains(&language.name));
         self.grammars
-            .retain(|name, _| !grammars_to_remove.contains(&name));
+            .retain(|name, _| !grammars_to_remove.contains(name));
         self.version += 1;
         self.reload_count += 1;
         *self.subscription.0.borrow_mut() = ();

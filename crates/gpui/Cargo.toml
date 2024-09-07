@@ -15,6 +15,7 @@ default = []
 test-support = [
     "backtrace",
     "collections/test-support",
+    "rand",
     "util/test-support",
     "http_client/test-support",
 ]
@@ -36,7 +37,6 @@ bytemuck = { version = "1", optional = true }
 collections.workspace = true
 ctor.workspace = true
 derive_more.workspace = true
-env_logger.workspace = true
 etagere = "0.2"
 futures.workspace = true
 gpui_macros.workspace = true
@@ -50,7 +50,7 @@ parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
 profiling.workspace = true
-rand.workspace = true
+rand = { optional = true, workspace = true}
 raw-window-handle = "0.6"
 refineable.workspace = true
 resvg = { version = "0.41.0", default-features = false }
@@ -68,7 +68,6 @@ strum.workspace = true
 sum_tree.workspace = true
 taffy = "0.4.3"
 thiserror.workspace = true
-time.workspace = true
 util.workspace = true
 uuid.workspace = true
 waker-fn = "1.2.0"
@@ -76,6 +75,8 @@ waker-fn = "1.2.0"
 [dev-dependencies]
 backtrace = "0.3"
 collections = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
+rand.workspace = true
 util = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
@@ -84,8 +85,8 @@ unicode-segmentation.workspace = true
 embed-resource = "2.4"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.65.1"
-cbindgen = { version = "0.26.0", default-features = false }
+bindgen = "0.70.0"
+cbindgen = { version = "0.27.0", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
@@ -152,6 +153,7 @@ font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7"
 x11-clipboard = "0.9.2"
 
 [target.'cfg(windows)'.dependencies]
+rand.workspace = true
 windows.workspace = true
 windows-core = "0.58"
 
@@ -180,5 +182,17 @@ name = "shadow"
 path = "examples/shadow.rs"
 
 [[example]]
+name = "svg"
+path = "examples/svg/svg.rs"
+
+[[example]]
 name = "text_wrapper"
 path = "examples/text_wrapper.rs"
+
+[[example]]
+name = "opacity"
+path = "examples/opacity.rs"
+
+[[example]]
+name = "uniform_list"
+path = "examples/uniform_list.rs"

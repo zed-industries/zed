@@ -167,7 +167,7 @@ impl Render for CopilotCodeVerification {
         let prompt = match &self.status {
             Status::SigningIn {
                 prompt: Some(prompt),
-            } => Self::render_prompting_modal(self.connect_clicked, &prompt, cx).into_any_element(),
+            } => Self::render_prompting_modal(self.connect_clicked, prompt, cx).into_any_element(),
             Status::Unauthorized => {
                 self.connect_clicked = false;
                 Self::render_unauthorized_modal(cx).into_any_element()

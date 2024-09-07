@@ -17,6 +17,7 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::ResultExt;
 
+use crate::LanguageModelCompletionEvent;
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
@@ -50,7 +51,7 @@ pub struct State {
     _subscription: Subscription,
 }
 
-const GOOGLE_AI_API_KEY_VAR: &'static str = "GOOGLE_AI_API_KEY";
+const GOOGLE_AI_API_KEY_VAR: &str = "GOOGLE_AI_API_KEY";
 
 impl State {
     fn is_authenticated(&self) -> bool {
@@ -256,10 +257,10 @@ impl LanguageModel for GoogleLanguageModel {
         let request = request.into_google(self.model.id().to_string());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .google
-            .api_url
-            .clone();
+
+        let settings = &AllLanguageModelSettings::get_global(cx).google;
+        let api_url = settings.api_url.clone();
+        let low_speed_timeout = settings.low_speed_timeout;
 
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
@@ -270,6 +271,7 @@ impl LanguageModel for GoogleLanguageModel {
                 google_ai::CountTokensRequest {
                     contents: request.contents,
                 },
+                low_speed_timeout,
             )
             .await?;
             Ok(response.total_tokens)
@@ -281,25 +283,43 @@ impl LanguageModel for GoogleLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
+    > {
         let request = request.into_google(self.model.id().to_string());
 
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
+        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).google;
-            (state.api_key.clone(), settings.api_url.clone())
+            (
+                state.api_key.clone(),
+                settings.api_url.clone(),
+                settings.low_speed_timeout,
+            )
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         let future = self.rate_limiter.stream(async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            let response =
-                stream_generate_content(http_client.as_ref(), &api_url, &api_key, request);
+            let response = stream_generate_content(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                low_speed_timeout,
+            );
             let events = response.await?;
             Ok(google_ai::extract_text_from_events(events).boxed())
         });
-        async move { Ok(future.await?.boxed()) }.boxed()
+        async move {
+            Ok(future
+                .await?
+                .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                .boxed())
+        }
+        .boxed()
     }
 
     fn use_any_tool(
@@ -423,9 +443,10 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        const GOOGLE_CONSOLE_URL: &str = "https://aistudio.google.com/app/apikey";
         const INSTRUCTIONS: [&str; 4] = [
             "To use the Google AI assistant, you need to add your Google AI API key.",
-            "You can create an API key at: https://makersuite.google.com/app/apikey",
+            "You can create an API key at:",
             "",
             "Paste your Google AI API key below and hit enter to use the assistant:",
         ];
@@ -438,9 +459,18 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .children(
-                    INSTRUCTIONS.map(|instruction| Label::new(instruction)),
+                .child(Label::new(INSTRUCTIONS[0]))
+                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
+                    Button::new("google_console", GOOGLE_CONSOLE_URL)
+                        .style(ButtonStyle::Subtle)
+                        .icon(IconName::ExternalLink)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .on_click(move |_, cx| cx.open_url(GOOGLE_CONSOLE_URL))
+                    )
                 )
+                .child(Label::new(INSTRUCTIONS[2]))
+                .child(Label::new(INSTRUCTIONS[3]))
                 .child(
                     h_flex()
                         .w_full()

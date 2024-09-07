@@ -365,7 +365,7 @@ mod tests {
 
         let result = map
             .iter_from(&"ba")
-            .take_while(|(key, _)| key.starts_with(&"ba"))
+            .take_while(|(key, _)| key.starts_with("ba"))
             .collect::<Vec<_>>();
 
         assert_eq!(result.len(), 2);
@@ -374,7 +374,7 @@ mod tests {
 
         let result = map
             .iter_from(&"c")
-            .take_while(|(key, _)| key.starts_with(&"c"))
+            .take_while(|(key, _)| key.starts_with("c"))
             .collect::<Vec<_>>();
 
         assert_eq!(result.len(), 1);
@@ -411,7 +411,7 @@ mod tests {
 
         impl MapSeekTarget<PathBuf> for PathDescendants<'_> {
             fn cmp_cursor(&self, key: &PathBuf) -> Ordering {
-                if key.starts_with(&self.0) {
+                if key.starts_with(self.0) {
                     Ordering::Greater
                 } else {
                     self.0.cmp(key)

@@ -20,9 +20,11 @@ pub struct EditorSettings {
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
+    pub use_smartcase_search: bool,
     pub multi_cursor_modifier: MultiCursorModifier,
     pub redact_private_values: bool,
     pub expand_excerpt_lines: u32,
+    pub middle_click_paste: bool,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
     pub search_wrap: bool,
@@ -217,6 +219,7 @@ pub struct EditorSettingsContent {
     ///
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
+    pub use_smartcase_search: Option<bool>,
     /// The key to use for adding multiple cursors
     ///
     /// Default: alt
@@ -232,6 +235,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 3
     pub expand_excerpt_lines: Option<u32>,
+
+    /// Whether to enable middle-click paste on Linux
+    ///
+    /// Default: true
+    pub middle_click_paste: Option<bool>,
 
     /// What to do when multibuffer is double clicked in some of its excerpts
     /// (parts of singleton buffers).
