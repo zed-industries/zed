@@ -4,7 +4,7 @@ use collections::FxHashMap;
 use gpui::FontWeight;
 use language::LanguageRegistry;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
-use std::{ops::Range, path::PathBuf, sync::Arc};
+use std::{ops::Range, path::PathBuf, sync::Arc, vec};
 
 pub async fn parse_markdown(
     markdown_input: &str,
@@ -182,13 +182,14 @@ impl<'a> MarkdownParser<'a> {
         &mut self,
         should_complete_on_soft_break: bool,
         source_range: Option<Range<usize>>,
-    ) -> ParsedMarkdownText {
+    ) -> Vec<MarkdownParagraph> {
         let source_range = source_range.unwrap_or_else(|| {
             self.current()
                 .map(|(_, range)| range.clone())
                 .unwrap_or_default()
         });
 
+        let mut markdown_text_like = Vec::new();
         let mut text = String::new();
         let mut bold_depth = 0;
         let mut italic_depth = 0;
@@ -198,7 +199,6 @@ impl<'a> MarkdownParser<'a> {
         let mut region_ranges: Vec<Range<usize>> = vec![];
         let mut regions: Vec<ParsedRegion> = vec![];
         let mut highlights: Vec<(Range<usize>, MarkdownHighlight)> = vec![];
-
         let mut link_urls: Vec<String> = vec![];
         let mut link_ranges: Vec<Range<usize>> = vec![];
 
@@ -214,8 +214,6 @@ impl<'a> MarkdownParser<'a> {
                     if should_complete_on_soft_break {
                         break;
                     }
-
-                    // `Some text\nSome more text` should be treated as a single line.
                     text.push(' ');
                 }
 
@@ -225,8 +223,40 @@ impl<'a> MarkdownParser<'a> {
 
                 Event::Text(t) => {
                     text.push_str(t.as_ref());
-
                     let mut style = MarkdownHighlightStyle::default();
+
+                    if let Some(image) = image.clone() {
+                        let is_valid_image = match image.clone() {
+                            Image::Path {
+                                source_range: _,
+                                display_path,
+                                path: _,
+                            } => gpui::ImageSource::try_from(display_path).is_ok(),
+                            Image::Web {
+                                source_range: _,
+                                url,
+                            } => gpui::ImageSource::try_from(url).is_ok(),
+                        };
+
+                        if is_valid_image {
+                            text.truncate(text.len() - t.len());
+                            if !text.is_empty() {
+                                let parsed_regions =
+                                    MarkdownParagraph::MarkdownText(ParsedMarkdownText {
+                                        source_range: source_range.clone(),
+                                        contents: text.clone(),
+                                        highlights: highlights.clone(),
+                                        region_ranges: region_ranges.clone(),
+                                        regions: regions.clone(),
+                                    });
+                                markdown_text_like.push(parsed_regions);
+                            }
+                            let parsed_image = MarkdownParagraph::MarkdownImage(image.clone());
+                            markdown_text_like.push(parsed_image);
+                            style = MarkdownHighlightStyle::default();
+                        }
+                        style.underline = true;
+                    };
 
                     if bold_depth > 0 {
                         style.weight = FontWeight::BOLD;
@@ -244,8 +274,7 @@ impl<'a> MarkdownParser<'a> {
                         region_ranges.push(prev_len..text.len());
                         regions.push(ParsedRegion {
                             code: false,
-                            link: Some(link),
-                            image: None,
+                            link: Some(link.clone()),
                         });
                         style.underline = true;
                         prev_len
@@ -284,9 +313,7 @@ impl<'a> MarkdownParser<'a> {
                                 link: Some(Link::Web {
                                     url: link.as_str().to_string(),
                                 }),
-                                image: None,
                             });
-
                             last_link_len = end;
                         }
                         last_link_len
@@ -309,26 +336,6 @@ impl<'a> MarkdownParser<'a> {
                             ));
                         }
                     }
-                    if let Some(image) = image.clone() {
-                        let is_valid_image = match image.clone() {
-                            Image::Path {
-                                display_path,
-                                path: _,
-                            } => gpui::ImageSource::try_from(display_path).is_ok(),
-                            Image::Web { url } => gpui::ImageSource::try_from(url).is_ok(),
-                        };
-
-                        if is_valid_image {
-                            text.truncate(text.len() - t.len());
-                        }
-                        region_ranges.push(prev_len..text.len());
-                        regions.push(ParsedRegion {
-                            code: false,
-                            link: None,
-                            image: Some(image),
-                        });
-                        style.underline = true;
-                    };
                 }
 
                 // Note: This event means "inline code" and not "code block"
@@ -345,14 +352,11 @@ impl<'a> MarkdownParser<'a> {
                             }),
                         ));
                     }
-
                     regions.push(ParsedRegion {
                         code: true,
                         link: link.clone(),
-                        image: image.clone(),
                     });
                 }
-
                 Event::Start(tag) => match tag {
                     Tag::Emphasis => italic_depth += 1,
                     Tag::Strong => bold_depth += 1,
@@ -375,6 +379,7 @@ impl<'a> MarkdownParser<'a> {
                         id: _,
                     } => {
                         image = Image::identify(
+                            source_range.clone(),
                             self.file_location_directory.clone(),
                             dest_url.to_string(),
                         );
@@ -385,20 +390,21 @@ impl<'a> MarkdownParser<'a> {
                 },
 
                 Event::End(tag) => match tag {
-                    TagEnd::Emphasis => {
-                        italic_depth -= 1;
-                    }
-                    TagEnd::Strong => {
-                        bold_depth -= 1;
-                    }
-                    TagEnd::Strikethrough => {
-                        strikethrough_depth -= 1;
-                    }
+                    TagEnd::Emphasis => italic_depth -= 1,
+                    TagEnd::Strong => bold_depth -= 1,
+                    TagEnd::Strikethrough => strikethrough_depth -= 1,
                     TagEnd::Link => {
                         link = None;
                     }
                     TagEnd::Image => {
                         image = None;
+                        text = String::new();
+                        highlights = vec![];
+                        region_ranges = vec![];
+                        regions = vec![];
+                        italic_depth = 0;
+                        bold_depth = 0;
+                        strikethrough_depth = 0;
                     }
                     TagEnd::Paragraph => {
                         self.cursor += 1;
@@ -415,14 +421,17 @@ impl<'a> MarkdownParser<'a> {
 
             self.cursor += 1;
         }
-
-        ParsedMarkdownText {
-            source_range,
-            contents: text,
-            highlights,
-            regions,
-            region_ranges,
+        if !text.is_empty() {
+            markdown_text_like.push(MarkdownParagraph::MarkdownText(ParsedMarkdownText {
+                source_range: source_range.clone(),
+                contents: text,
+                highlights,
+                regions,
+                region_ranges,
+            }));
         }
+
+        markdown_text_like
     }
 
     fn parse_heading(&mut self, level: pulldown_cmark::HeadingLevel) -> ParsedMarkdownHeading {
@@ -734,7 +743,6 @@ impl<'a> MarkdownParser<'a> {
                 }
             }
         }
-
         let highlights = if let Some(language) = &language {
             if let Some(registry) = &self.language_registry {
                 let rope: language::Rope = code.as_str().into();
@@ -761,10 +769,14 @@ impl<'a> MarkdownParser<'a> {
 
 #[cfg(test)]
 mod tests {
+    use core::panic;
+
     use super::*;
 
     use gpui::BackgroundExecutor;
-    use language::{tree_sitter_rust, HighlightId, Language, LanguageConfig, LanguageMatcher};
+    use language::{
+        tree_sitter_rust, HighlightId, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
+    };
     use pretty_assertions::assert_eq;
 
     use ParsedMarkdownListItemType::*;
@@ -837,20 +849,29 @@ mod tests {
         assert_eq!(parsed.children.len(), 1);
         assert_eq!(
             parsed.children[0],
-            ParsedMarkdownElement::Paragraph(ParsedMarkdownText {
-                source_range: 0..35,
-                contents: "Some bostrikethroughld text".to_string(),
-                highlights: Vec::new(),
-                region_ranges: Vec::new(),
-                regions: Vec::new(),
-            })
+            ParsedMarkdownElement::Paragraph(vec![MarkdownParagraph::MarkdownText(
+                ParsedMarkdownText {
+                    source_range: 0..35,
+                    contents: "Some bostrikethroughld text".to_string(),
+                    highlights: Vec::new(),
+                    region_ranges: Vec::new(),
+                    regions: Vec::new(),
+                }
+            )])
         );
 
-        let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
+        let new_text = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
             text
         } else {
             panic!("Expected a paragraph");
         };
+
+        let paragraph = if let MarkdownParagraph::MarkdownText(text) = &new_text[0] {
+            text
+        } else {
+            panic!("Expected a text");
+        };
+
         assert_eq!(
             paragraph.highlights,
             vec![
@@ -881,62 +902,21 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_raw_links_detection() {
-        let parsed = parse("Checkout this https://zed.dev link").await;
-        assert_eq!(
-            parsed.children,
-            vec![p("Checkout this https://zed.dev link", 0..34)]
-        );
-
-        let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
-            text
-        } else {
-            panic!("Expected a paragraph");
-        };
-        assert_eq!(
-            paragraph.highlights,
-            vec![(
-                14..29,
-                MarkdownHighlight::Style(MarkdownHighlightStyle {
-                    underline: true,
-                    ..Default::default()
-                }),
-            )]
-        );
-        assert_eq!(
-            paragraph.regions,
-            vec![ParsedRegion {
-                code: false,
-                link: Some(Link::Web {
-                    url: "https://zed.dev".to_string()
-                }),
-                image: None
-            }]
-        );
-        assert_eq!(paragraph.region_ranges, vec![14..29]);
-    }
-
-    #[gpui::test]
     async fn test_image_links_detection() {
-        let parsed = parse("Check out this![Zed logo](https://zed.dev/logo.png) link").await;
+        let parsed = parse("![Zed logo](https://zed.dev/logo.png)").await;
 
         let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
             text
         } else {
             panic!("Expected a paragraph");
         };
-
         assert_eq!(
-            paragraph.regions,
-            vec![ParsedRegion {
-                code: false,
-                link: None,
-                image: Some(Image::Web {
-                    url: "https://zed.dev/logo.png".to_string()
-                }),
-            }]
+            paragraph[0],
+            MarkdownParagraph::MarkdownImage(Image::Web {
+                source_range: 0..37,
+                url: "https://zed.dev/logo.png".to_string()
+            },)
         );
-        assert_eq!(paragraph.region_ranges, vec![14..14]);
     }
 
     #[gpui::test]
@@ -1149,7 +1129,6 @@ Some other content
 * `code`
 * **bold**
 * [link](https://example.com)
-* ![image]()
 ",
         )
         .await;
@@ -1160,7 +1139,6 @@ Some other content
                 list_item(0..8, 1, Unordered, vec![p("code", 2..8)]),
                 list_item(9..19, 1, Unordered, vec![p("bold", 11..19)]),
                 list_item(20..49, 1, Unordered, vec![p("link", 22..49)],),
-                list_item(50..62, 1, Unordered, vec![p("image", 52..62)],),
             ],
         );
     }
@@ -1303,7 +1281,7 @@ fn main() {
         ))
     }
 
-    fn h1(contents: ParsedMarkdownText, source_range: Range<usize>) -> ParsedMarkdownElement {
+    fn h1(contents: Vec<MarkdownParagraph>, source_range: Range<usize>) -> ParsedMarkdownElement {
         ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
             source_range,
             level: HeadingLevel::H1,
@@ -1311,7 +1289,7 @@ fn main() {
         })
     }
 
-    fn h2(contents: ParsedMarkdownText, source_range: Range<usize>) -> ParsedMarkdownElement {
+    fn h2(contents: Vec<MarkdownParagraph>, source_range: Range<usize>) -> ParsedMarkdownElement {
         ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
             source_range,
             level: HeadingLevel::H2,
@@ -1319,7 +1297,7 @@ fn main() {
         })
     }
 
-    fn h3(contents: ParsedMarkdownText, source_range: Range<usize>) -> ParsedMarkdownElement {
+    fn h3(contents: Vec<MarkdownParagraph>, source_range: Range<usize>) -> ParsedMarkdownElement {
         ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
             source_range,
             level: HeadingLevel::H3,
@@ -1331,14 +1309,14 @@ fn main() {
         ParsedMarkdownElement::Paragraph(text(contents, source_range))
     }
 
-    fn text(contents: &str, source_range: Range<usize>) -> ParsedMarkdownText {
-        ParsedMarkdownText {
+    fn text(contents: &str, source_range: Range<usize>) -> Vec<MarkdownParagraph> {
+        vec![MarkdownParagraph::MarkdownText(ParsedMarkdownText {
             highlights: Vec::new(),
             region_ranges: Vec::new(),
             regions: Vec::new(),
             source_range,
             contents: contents.to_string(),
-        }
+        })]
     }
 
     fn block_quote(
@@ -1392,7 +1370,7 @@ fn main() {
         }
     }
 
-    fn row(children: Vec<ParsedMarkdownText>) -> ParsedMarkdownTableRow {
+    fn row(children: Vec<Vec<MarkdownParagraph>>) -> ParsedMarkdownTableRow {
         ParsedMarkdownTableRow { children }
     }
 

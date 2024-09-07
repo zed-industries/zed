@@ -15,7 +15,7 @@ pub enum ParsedMarkdownElement {
     BlockQuote(ParsedMarkdownBlockQuote),
     CodeBlock(ParsedMarkdownCodeBlock),
     /// A paragraph of text and other inline elements.
-    Paragraph(ParsedMarkdownText),
+    Paragraph(Vec<MarkdownParagraph>),
     HorizontalRule(Range<usize>),
 }
 
@@ -27,7 +27,13 @@ impl ParsedMarkdownElement {
             Self::Table(table) => table.source_range.clone(),
             Self::BlockQuote(block_quote) => block_quote.source_range.clone(),
             Self::CodeBlock(code_block) => code_block.source_range.clone(),
-            Self::Paragraph(text) => text.source_range.clone(),
+            Self::Paragraph(text) => match &text[0] {
+                MarkdownParagraph::MarkdownText(t) => t.source_range.clone(),
+                MarkdownParagraph::MarkdownImage(image) => match image {
+                    Image::Web { source_range, .. } => source_range.clone(),
+                    Image::Path { source_range, .. } => source_range.clone(),
+                },
+            },
             Self::HorizontalRule(range) => range.clone(),
         }
     }
@@ -35,6 +41,13 @@ impl ParsedMarkdownElement {
     pub fn is_list_item(&self) -> bool {
         matches!(self, Self::ListItem(_))
     }
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+pub enum MarkdownParagraph {
+    MarkdownText(ParsedMarkdownText),
+    MarkdownImage(Image),
 }
 
 #[derive(Debug)]
@@ -75,7 +88,7 @@ pub struct ParsedMarkdownCodeBlock {
 pub struct ParsedMarkdownHeading {
     pub source_range: Range<usize>,
     pub level: HeadingLevel,
-    pub contents: ParsedMarkdownText,
+    pub contents: Vec<MarkdownParagraph>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -109,7 +122,7 @@ pub enum ParsedMarkdownTableAlignment {
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownTableRow {
-    pub children: Vec<ParsedMarkdownText>,
+    pub children: Vec<Vec<MarkdownParagraph>>,
 }
 
 impl ParsedMarkdownTableRow {
@@ -119,7 +132,7 @@ impl ParsedMarkdownTableRow {
         }
     }
 
-    pub fn with_children(children: Vec<ParsedMarkdownText>) -> Self {
+    pub fn with_children(children: Vec<Vec<MarkdownParagraph>>) -> Self {
         Self { children }
     }
 }
@@ -212,8 +225,6 @@ pub struct ParsedRegion {
     pub code: bool,
     /// The link contained in this region, if it has one.
     pub link: Option<Link>,
-    /// The image contained in this region, if it has one.
-    pub image: Option<Image>,
 }
 
 /// A Markdown link.
@@ -277,11 +288,13 @@ impl Display for Link {
 #[cfg_attr(test, derive(PartialEq))]
 pub enum Image {
     Web {
+        source_range: Range<usize>,
         /// The URL of the Image.
         url: String,
     },
     ///  Image path on the filesystem.
     Path {
+        source_range: Range<usize>,
         /// The path as provided in the Markdown document.
         display_path: PathBuf,
         /// The absolute path to the item.
@@ -290,13 +303,21 @@ pub enum Image {
 }
 
 impl Image {
-    pub fn identify(file_location_directory: Option<PathBuf>, text: String) -> Option<Image> {
+    pub fn identify(
+        source_range: Range<usize>,
+        file_location_directory: Option<PathBuf>,
+        text: String,
+    ) -> Option<Image> {
         if text.starts_with("http") {
-            return Some(Image::Web { url: text });
+            return Some(Image::Web {
+                source_range,
+                url: text,
+            });
         }
         let path = PathBuf::from(&text);
         if path.is_absolute() && path.exists() {
             return Some(Image::Path {
+                source_range,
                 display_path: path.clone(),
                 path,
             });
@@ -305,7 +326,11 @@ impl Image {
             let display_path = path;
             let path = file_location_directory.join(text);
             if path.exists() {
-                return Some(Image::Path { display_path, path });
+                return Some(Image::Path {
+                    source_range,
+                    display_path,
+                    path,
+                });
             }
         }
         None
@@ -315,8 +340,12 @@ impl Image {
 impl Display for Image {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Image::Web { url } => write!(f, "{}", url),
+            Image::Web {
+                source_range: _,
+                url,
+            } => write!(f, "{}", url),
             Image::Path {
+                source_range: _,
                 display_path,
                 path: _,
             } => write!(f, "{}", display_path.display()),
@@ -327,7 +356,7 @@ impl Display for Image {
 impl RenderOnce for Image {
     fn render(self, _: &mut ui::WindowContext) -> impl ui::IntoElement {
         let image_src = match self {
-            Image::Web { url } => ImageSource::Uri(url.into()),
+            Image::Web { url, .. } => ImageSource::Uri(url.into()),
             Image::Path { path, .. } => ImageSource::File(path.into()),
         };
         div().child(div().flex_row().size_full().child(img(image_src)))
