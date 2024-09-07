@@ -952,6 +952,8 @@
     //    "typescript": "deno"
     // }
   },
+  // Show diagnostics inline or not default
+  "show_diagnostics_inline": false,
   // Vim settings
   "vim": {
     "toggle_relative_line_numbers": false,

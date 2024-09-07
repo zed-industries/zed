@@ -500,7 +500,7 @@ pub struct Editor {
     ime_transaction: Option<TransactionId>,
     active_diagnostics: HashMap<usize, ActiveDiagnosticGroup>,
     focused_diagnostic: Option<usize>,
-    show_all_diagnostics: bool,
+    show_diagnostics_inline: bool,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     project: Option<Model<Project>>,
     completion_provider: Option<Box<dyn CompletionProvider>>,
@@ -1847,7 +1847,7 @@ impl Editor {
             ime_transaction: Default::default(),
             active_diagnostics: HashMap::default(),
             focused_diagnostic: None,
-            show_all_diagnostics: false,
+            show_diagnostics_inline: EditorSettings::get_global(cx).show_diagnostics_inline,
             soft_wrap_mode_override,
             completion_provider: project.clone().map(|project| Box::new(project) as _),
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
@@ -9037,7 +9037,7 @@ impl Editor {
     }
 
     fn toggle_diagnostics(&mut self, _: &ToggleDiagnostics, cx: &mut ViewContext<Self>) {
-        self.show_all_diagnostics = !self.show_all_diagnostics;
+        self.show_diagnostics_inline = !self.show_diagnostics_inline;
         self.refresh_active_diagnostics(cx);
     }
 
@@ -10050,7 +10050,7 @@ impl Editor {
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let mut new_groups = HashMap::default();
-        if self.show_all_diagnostics {
+        if self.show_diagnostics_inline {
             buffer
                 .diagnostics_in_range::<_, MultiBufferPoint>(0..buffer.len(), false)
                 .for_each(|entry| {
@@ -10166,7 +10166,7 @@ impl Editor {
                             render: diagnostic_block_renderer(
                                 diagnostic,
                                 None,
-                                !self.show_all_diagnostics,
+                                !self.show_diagnostics_inline,
                                 true,
                             ),
                             disposition: BlockDisposition::Below,
@@ -10197,7 +10197,7 @@ impl Editor {
             }
         }
         self.focused_diagnostic = Some(group_id);
-        if !self.show_all_diagnostics {
+        if !self.show_diagnostics_inline {
             self.refresh_active_diagnostics(cx);
         }
         true

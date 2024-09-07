@@ -30,6 +30,7 @@ pub struct EditorSettings {
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
+    pub show_diagnostics_inline: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -261,6 +262,16 @@ pub struct EditorSettingsContent {
 
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
+
+    /// Whether to show diagnostics inline or not by default.
+    ///
+    /// Currently, the top  level `diagnostics` key is "owned" by the
+    /// diagnostics crate settings. I'd prefer to have this key nested as
+    /// `diagnostics.show_inline` instead of the top level
+    /// `show_diagnostics_inline` but I don't know if that's kosher.
+    ///
+    /// Default: false
+    pub show_diagnostics_inline: Option<bool>,
 }
 
 // Toolbar related settings
