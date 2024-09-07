@@ -323,9 +323,14 @@
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
       "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
-      "ctrl-p": "editor::ShowCompletions",
-      "ctrl-n": "editor::ShowCompletions",
       "ctrl-r": ["vim::PushOperator", "Register"]
+    }
+  },
+  {
+    "context": "vim_mode == insert && !(showing_code_actions || showing_completions)",
+    "bindings": {
+      "ctrl-p": "editor::ShowCompletions",
+      "ctrl-n": "editor::ShowCompletions"
     }
   },
   {
