@@ -425,7 +425,7 @@ impl TerminalBuilder {
         // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
         // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
         let word_regex =
-            RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~]+(?:\((?:\d+|\d+,\d+)\))?"#).unwrap();
+            RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))?"#).unwrap();
 
         let terminal = Terminal {
             task,
