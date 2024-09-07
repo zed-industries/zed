@@ -145,7 +145,7 @@ impl super::LspAdapter for GoLspAdapter {
         let this = *self;
 
         if let Some(version) = *version {
-            let binary_path = container_dir.join(&format!("gopls_{version}"));
+            let binary_path = container_dir.join(format!("gopls_{version}"));
             if let Ok(metadata) = fs::metadata(&binary_path).await {
                 if metadata.is_file() {
                     remove_matching(&container_dir, |entry| {
@@ -198,7 +198,7 @@ impl super::LspAdapter for GoLspAdapter {
             .find(version_stdout)
             .with_context(|| format!("failed to parse golps version output '{version_stdout}'"))?
             .as_str();
-        let binary_path = container_dir.join(&format!("gopls_{version}"));
+        let binary_path = container_dir.join(format!("gopls_{version}"));
         fs::rename(&installed_binary_path, &binary_path).await?;
 
         Ok(LanguageServerBinary {

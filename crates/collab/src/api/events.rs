@@ -1326,9 +1326,7 @@ impl ActionEventRow {
 }
 
 pub fn calculate_json_checksum(app: Arc<AppState>, json: &impl AsRef<[u8]>) -> Option<Vec<u8>> {
-    let Some(checksum_seed) = app.config.zed_client_checksum_seed.as_ref() else {
-        return None;
-    };
+    let checksum_seed = app.config.zed_client_checksum_seed.as_ref()?;
 
     let mut summer = Sha256::new();
     summer.update(checksum_seed);

@@ -448,7 +448,7 @@ fn history_file_exists(abs_path: &PathBuf) -> bool {
 }
 
 #[cfg(test)]
-fn history_file_exists(abs_path: &PathBuf) -> bool {
+fn history_file_exists(abs_path: &Path) -> bool {
     !abs_path.ends_with("nonexistent.rs")
 }
 

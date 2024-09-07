@@ -529,7 +529,7 @@ mod test {
         let (a, b) = cx.update(|cx| {
             (
                 one_at_a_time.spawn(cx, |_| async {
-                    assert!(false);
+                    panic!("");
                     Ok(2)
                 }),
                 one_at_a_time.spawn(cx, |_| async { Ok(3) }),
