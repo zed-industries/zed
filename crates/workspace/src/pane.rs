@@ -1789,6 +1789,7 @@ impl Pane {
         ix: usize,
         item: &dyn ItemHandle,
         detail: usize,
+        focus_handle: &FocusHandle,
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
         let project_path = item.project_path(cx);
@@ -1899,7 +1900,11 @@ impl Pane {
             })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
+                let end_slot_action: &'static dyn Action;
+                let end_slot_tooltip_text: &'static str;
                 let end_slot = if is_pinned {
+                    end_slot_action = &TogglePinTab;
+                    end_slot_tooltip_text = "Unpin Tab";
                     IconButton::new("unpin tab", IconName::Pin)
                         .shape(IconButtonShape::Square)
                         .icon_color(Color::Muted)
@@ -1908,8 +1913,9 @@ impl Pane {
                         .on_click(cx.listener(move |pane, _, cx| {
                             pane.unpin_tab_at(ix, cx);
                         }))
-                        .tooltip(|cx| Tooltip::text("Unpin Tab", cx))
                 } else {
+                    end_slot_action = &CloseActiveItem { save_intent: None };
+                    end_slot_tooltip_text = "Close Tab";
                     IconButton::new("close tab", IconName::Close)
                         .visible_on_hover("")
                         .shape(IconButtonShape::Square)
@@ -1920,7 +1926,22 @@ impl Pane {
                             pane.close_item_by_id(item_id, SaveIntent::Close, cx)
                                 .detach_and_log_err(cx);
                         }))
-                };
+                }
+                .map(|this| {
+                    if is_active {
+                        let focus_handle = focus_handle.clone();
+                        this.tooltip(move |cx| {
+                            Tooltip::for_action_in(
+                                end_slot_tooltip_text,
+                                end_slot_action,
+                                &focus_handle,
+                                cx,
+                            )
+                        })
+                    } else {
+                        this.tooltip(move |cx| Tooltip::text(end_slot_tooltip_text, cx))
+                    }
+                });
                 this.end_slot(end_slot)
             })
             .child(
@@ -2121,7 +2142,7 @@ impl Pane {
             .iter()
             .enumerate()
             .zip(tab_details(&self.items, cx))
-            .map(|((ix, item), detail)| self.render_tab(ix, &**item, detail, cx))
+            .map(|((ix, item), detail)| self.render_tab(ix, &**item, detail, &focus_handle, cx))
             .collect::<Vec<_>>();
 
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
