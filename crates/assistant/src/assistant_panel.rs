@@ -329,7 +329,7 @@ impl AssistantPanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let model_selector_menu_handle = PopoverMenuHandle::default();
-        let model_summary_editor = cx.new_view(|cx| Editor::single_line(cx));
+        let model_summary_editor = cx.new_view(Editor::single_line);
         let context_editor_toolbar = cx.new_view(|_| {
             ContextEditorToolbarItem::new(
                 workspace,
@@ -1097,7 +1097,7 @@ impl AssistantPanel {
                 pane.activate_item(configuration_item_ix, true, true, cx);
             });
         } else {
-            let configuration = cx.new_view(|cx| ConfigurationView::new(cx));
+            let configuration = cx.new_view(ConfigurationView::new);
             self.configuration_subscription = Some(cx.subscribe(
                 &configuration,
                 |this, _, event: &ConfigurationViewEvent, cx| match event {
@@ -4222,8 +4222,7 @@ impl Item for ContextEditor {
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        self.editor
-            .update(cx, |editor, cx| Item::deactivated(editor, cx))
+        self.editor.update(cx, Item::deactivated)
     }
 }
 
