@@ -171,27 +171,6 @@ pub struct SearchSettings {
     pub regex: bool,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
-pub struct SearchSettingsContent {
-    pub whole_word: Option<bool>,
-    pub case_sensitive: Option<bool>,
-    pub include_ignored: Option<bool>,
-    pub regex: Option<bool>,
-}
-
-impl Settings for SearchSettings {
-    const KEY: Option<&'static str> = Some("search");
-
-    type FileContent = SearchSettingsContent;
-
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::AppContext,
-    ) -> anyhow::Result<Self> {
-        sources.json_merge()
-    }
-}
-
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
