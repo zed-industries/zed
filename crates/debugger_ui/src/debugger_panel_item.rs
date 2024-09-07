@@ -5,9 +5,7 @@ use crate::variable_list::VariableList;
 use anyhow::Result;
 use dap::client::{DebugAdapterClient, DebugAdapterClientId, ThreadState, ThreadStatus};
 use dap::debugger_settings::DebuggerSettings;
-use dap::{
-    OutputEvent, OutputEventCategory, Scope, StackFrame, StoppedEvent, ThreadEvent, Variable,
-};
+use dap::{OutputEvent, OutputEventCategory, StackFrame, StoppedEvent, ThreadEvent};
 use editor::Editor;
 use gpui::{
     impl_actions, list, AnyElement, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
@@ -33,17 +31,6 @@ enum ThreadItem {
     Output,
 }
 
-#[derive(Debug, Clone)]
-pub enum ThreadEntry {
-    Scope(Scope),
-    Variable {
-        depth: usize,
-        scope: Scope,
-        variable: Arc<Variable>,
-        has_children: bool,
-    },
-}
-
 pub struct DebugPanelItem {
     thread_id: u64,
     variable_list: View<VariableList>,
@@ -56,8 +43,6 @@ pub struct DebugPanelItem {
     _subscriptions: Vec<Subscription>,
     workspace: WeakView<Workspace>,
 }
-
-pub enum DebugPanelItemEvent {}
 
 impl_actions!(debug_panel_item, [DebugItemAction]);
 
@@ -291,8 +276,8 @@ impl DebugPanelItem {
 
         let thread_state = self.current_thread_state();
 
-        self.variable_list.update(cx, |variable_list, cx| {
-            variable_list.build_entries(thread_state, true, cx)
+        self.variable_list.update(cx, |variable_list, _| {
+            variable_list.build_entries(thread_state, true, false);
         });
     }
 
@@ -515,7 +500,6 @@ impl DebugPanelItem {
 }
 
 impl EventEmitter<Event> for DebugPanelItem {}
-impl EventEmitter<DebugPanelItemEvent> for DebugPanelItem {}
 
 impl FocusableView for DebugPanelItem {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
