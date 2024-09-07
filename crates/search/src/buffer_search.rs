@@ -70,7 +70,7 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut AppContext) {
-   SearchSettings::register(cx);
+    SearchSettings::register(cx);
     cx.observe_new_views(|workspace: &mut Workspace, _| BufferSearchBar::register(workspace))
         .detach();
 }

@@ -1,5 +1,6 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
+use editor::SearchSettings;
 use gpui::{actions, Action, AppContext, IntoElement};
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
@@ -7,7 +8,6 @@ use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, IconButton};
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
-use editor::SearchSettings;
 
 pub mod buffer_search;
 pub mod project_search;
