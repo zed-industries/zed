@@ -4,7 +4,6 @@ use editor::SearchSettings;
 use gpui::{actions, Action, AppContext, IntoElement};
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
-use settings::Settings;
 use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, IconButton};
 use workspace::notifications::NotificationId;
@@ -15,7 +14,6 @@ pub mod project_search;
 pub(crate) mod search_bar;
 
 pub fn init(cx: &mut AppContext) {
-    SearchSettings::register(cx);
     menu::init();
     buffer_search::init(cx);
     project_search::init(cx);
