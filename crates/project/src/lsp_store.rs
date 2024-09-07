@@ -4250,7 +4250,7 @@ impl LspStore {
 
         let project_settings = ProjectSettings::get(
             Some(SettingsLocation {
-                worktree_id: worktree_id.to_proto() as usize,
+                worktree_id: worktree_id.to_usize(),
                 path: Path::new(""),
             }),
             cx,

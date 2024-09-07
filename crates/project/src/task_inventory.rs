@@ -581,7 +581,7 @@ impl ContextProvider for BasicContextProvider {
         }
         let worktree_abs_path = buffer
             .file()
-            .map(|file| WorktreeId::from_usize(file.worktree_id()))
+            .map(|file| WorktreeId::from_usize(file.worktree_id(cx)))
             .and_then(|worktree_id| {
                 self.project
                     .read(cx)

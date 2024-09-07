@@ -385,9 +385,9 @@ impl Worktree {
         });
 
         cx.new_model(move |cx: &mut ModelContext<Worktree>| {
-            let worktree_id = cx.handle().entity_id().as_u64();
+            let worktree_id = cx.handle().read(cx).id().to_usize();
             let settings_location = Some(SettingsLocation {
-                worktree_id: worktree_id as usize,
+                worktree_id,
                 path: Path::new(EMPTY_PATH),
             });
 
@@ -3123,8 +3123,8 @@ impl language::File for File {
             .unwrap_or_else(|| OsStr::new(&self.worktree.read(cx).root_name))
     }
 
-    fn worktree_id(&self) -> usize {
-        self.worktree.entity_id().as_u64() as usize
+    fn worktree_id(&self, cx: &AppContext) -> usize {
+        self.worktree.read(cx).id().to_usize()
     }
 
     fn is_deleted(&self) -> bool {

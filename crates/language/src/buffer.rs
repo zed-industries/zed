@@ -361,7 +361,7 @@ pub trait File: Send + Sync {
     /// Returns the id of the worktree to which this file belongs.
     ///
     /// This is needed for looking up project-specific settings.
-    fn worktree_id(&self) -> usize;
+    fn worktree_id(&self, cx: &AppContext) -> usize;
 
     /// Returns whether the file has been deleted.
     fn is_deleted(&self) -> bool;
@@ -4172,7 +4172,7 @@ impl File for TestFile {
         self.path().file_name().unwrap_or(self.root_name.as_ref())
     }
 
-    fn worktree_id(&self) -> usize {
+    fn worktree_id(&self, _: &AppContext) -> usize {
         0
     }
 

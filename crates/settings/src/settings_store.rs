@@ -151,9 +151,12 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
     }
 }
 
+// TODO kb move the id into core crate?
+type WorktreeId = usize;
+
 #[derive(Clone, Copy, Debug)]
 pub struct SettingsLocation<'a> {
-    pub worktree_id: usize,
+    pub worktree_id: WorktreeId,
     pub path: &'a Path,
 }
 
@@ -163,7 +166,7 @@ pub struct SettingsStore {
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
     raw_extension_settings: serde_json::Value,
-    raw_local_settings: BTreeMap<(usize, Arc<Path>), serde_json::Value>,
+    raw_local_settings: BTreeMap<(WorktreeId, Arc<Path>), serde_json::Value>,
     tab_size_callback: Option<(
         TypeId,
         Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>,
@@ -179,7 +182,7 @@ impl Global for SettingsStore {}
 #[derive(Debug)]
 struct SettingValue<T> {
     global_value: Option<T>,
-    local_values: Vec<(usize, Arc<Path>, T)>,
+    local_values: Vec<(WorktreeId, Arc<Path>, T)>,
 }
 
 trait AnySettingValue: 'static + Send + Sync {
@@ -193,7 +196,7 @@ trait AnySettingValue: 'static + Send + Sync {
     ) -> Result<Box<dyn Any>>;
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
     fn set_global_value(&mut self, value: Box<dyn Any>);
-    fn set_local_value(&mut self, root_id: usize, path: Arc<Path>, value: Box<dyn Any>);
+    fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<Path>, value: Box<dyn Any>);
     fn json_schema(
         &self,
         generator: &mut SchemaGenerator,
@@ -519,7 +522,7 @@ impl SettingsStore {
     /// Add or remove a set of local settings via a JSON string.
     pub fn set_local_settings(
         &mut self,
-        root_id: usize,
+        root_id: WorktreeId,
         path: Arc<Path>,
         settings_content: Option<&str>,
         cx: &mut AppContext,
@@ -552,13 +555,16 @@ impl SettingsStore {
     }
 
     /// Add or remove a set of local settings via a JSON string.
-    pub fn clear_local_settings(&mut self, root_id: usize, cx: &mut AppContext) -> Result<()> {
+    pub fn clear_local_settings(&mut self, root_id: WorktreeId, cx: &mut AppContext) -> Result<()> {
         self.raw_local_settings.retain(|k, _| k.0 != root_id);
         self.recompute_values(Some((root_id, "".as_ref())), cx)?;
         Ok(())
     }
 
-    pub fn local_settings(&self, root_id: usize) -> impl '_ + Iterator<Item = (Arc<Path>, String)> {
+    pub fn local_settings(
+        &self,
+        root_id: WorktreeId,
+    ) -> impl '_ + Iterator<Item = (Arc<Path>, String)> {
         self.raw_local_settings
             .range((root_id, Path::new("").into())..(root_id + 1, Path::new("").into()))
             .map(|((_, path), content)| (path.clone(), serde_json::to_string(content).unwrap()))
@@ -673,12 +679,12 @@ impl SettingsStore {
 
     fn recompute_values(
         &mut self,
-        changed_local_path: Option<(usize, &Path)>,
+        changed_local_path: Option<(WorktreeId, &Path)>,
         cx: &mut AppContext,
     ) -> Result<()> {
         // Reload the global and local values for every setting.
         let mut project_settings_stack = Vec::<DeserializedSetting>::new();
-        let mut paths_stack = Vec::<Option<(usize, &Path)>>::new();
+        let mut paths_stack = Vec::<Option<(WorktreeId, &Path)>>::new();
         for setting_value in self.setting_values.values_mut() {
             let default_settings = setting_value.deserialize_setting(&self.raw_default_settings)?;
 
@@ -859,7 +865,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         self.global_value = Some(*value.downcast().unwrap());
     }
 
-    fn set_local_value(&mut self, root_id: usize, path: Arc<Path>, value: Box<dyn Any>) {
+    fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<Path>, value: Box<dyn Any>) {
         let value = *value.downcast().unwrap();
         match self
             .local_values

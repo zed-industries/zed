@@ -1250,7 +1250,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn worktree_id(&self) -> usize {
+        fn worktree_id(&self, _: &AppContext) -> usize {
             0
         }
 
