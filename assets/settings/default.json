@@ -279,6 +279,13 @@
   "relative_line_numbers": false,
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
+  // Search options to enable by default when opening new project and buffer searches.
+  "search": {
+    "whole_word": false,
+    "case_sensitive": false,
+    "include_ignored": false,
+    "regex": false
+  },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
   //

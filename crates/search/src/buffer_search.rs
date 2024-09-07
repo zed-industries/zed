@@ -9,7 +9,7 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     actions::{Tab, TabPrev},
-    DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle,
+    DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle, SearchSettings,
 };
 use futures::channel::oneshot;
 use gpui::{
@@ -22,7 +22,7 @@ use project::{
     search_history::{SearchHistory, SearchHistoryCursor},
 };
 use serde::Deserialize;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use theme::ThemeSettings;
 
@@ -96,6 +96,7 @@ pub struct BufferSearchBar {
     scroll_handle: ScrollHandle,
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl BufferSearchBar {
@@ -505,6 +506,12 @@ impl BufferSearchBar {
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
+        let search_options = SearchOptions::from_settings(&SearchSettings::get_global(cx));
+
+        let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
+            this.default_options = SearchOptions::from_settings(&SearchSettings::get_global(cx));
+        });
+
         Self {
             query_editor,
             query_editor_focused: false,
@@ -514,8 +521,8 @@ impl BufferSearchBar {
             active_searchable_item_subscription: None,
             active_match_index: None,
             searchable_items_with_matches: Default::default(),
-            default_options: SearchOptions::NONE,
-            search_options: SearchOptions::NONE,
+            default_options: search_options,
+            search_options,
             pending_search: None,
             query_contains_error: false,
             dismissed: true,
@@ -530,6 +537,7 @@ impl BufferSearchBar {
             scroll_handle: ScrollHandle::new(),
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
+            _subscriptions: vec![settings_subscription],
         }
     }
 
@@ -602,6 +610,9 @@ impl BufferSearchBar {
         let Some(handle) = self.active_searchable_item.as_ref() else {
             return false;
         };
+        if self.default_options != self.search_options {
+            self.search_options = self.default_options;
+        }
 
         self.dismissed = false;
         handle.search_bar_visibility_changed(true, cx);
@@ -1203,6 +1214,7 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
+            crate::init(cx);
         });
     }
 

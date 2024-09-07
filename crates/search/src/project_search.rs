@@ -668,7 +668,9 @@ impl ProjectSearchView {
         let (mut options, filters_enabled) = if let Some(settings) = settings {
             (settings.search_options, settings.filters_enabled)
         } else {
-            (SearchOptions::NONE, false)
+            let search_options =
+                SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+            (search_options, false)
         };
 
         {
@@ -3537,7 +3539,7 @@ pub mod tests {
             editor::init(cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
-            super::init(cx);
+            crate::init(cx);
         });
     }
 
