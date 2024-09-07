@@ -81,7 +81,7 @@ impl DebugPanelItem {
 
         let model = cx.model().clone();
         let variable_list = cx.new_view(|cx| VariableList::new(model, cx));
-        let console = cx.new_view(|cx| Console::new(cx));
+        let console = cx.new_view(Console::new);
 
         let weakview = cx.view().downgrade();
         let stack_frame_list =

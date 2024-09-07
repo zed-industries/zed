@@ -67,7 +67,7 @@ impl VariableList {
                 .unwrap_or(div().into_any())
         });
 
-        let set_variable_editor = cx.new_view(|cx| Editor::single_line(cx));
+        let set_variable_editor = cx.new_view(Editor::single_line);
 
         cx.subscribe(
             &set_variable_editor,

@@ -20,7 +20,7 @@ impl Console {
             editor
         });
 
-        let query_bar = cx.new_view(|cx| Editor::single_line(cx));
+        let query_bar = cx.new_view(Editor::single_line);
 
         Self { console, query_bar }
     }
