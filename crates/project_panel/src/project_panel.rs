@@ -2107,8 +2107,7 @@ impl ProjectPanel {
                                         auto_folded_dirs
                                             .ancestors
                                             .iter()
-                                            .find(|entry_id| **entry_id == edit_state.entry_id)
-                                            .is_some()
+                                            .any(|entry_id| **entry_id == edit_state.entry_id)
                                     })
                         };
 
