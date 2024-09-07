@@ -149,6 +149,7 @@ actions!(
         GoBack,
         GoForward,
         JoinIntoNext,
+        JoinAll,
         ReopenClosedItem,
         SplitLeft,
         SplitUp,
@@ -188,6 +189,7 @@ pub enum Event {
         item_id: EntityId,
     },
     Split(SplitDirection),
+    JoinAll,
     JoinIntoNext,
     ChangeItemTitle,
     Focus,
@@ -220,6 +222,7 @@ impl fmt::Debug for Event {
                 .debug_struct("Split")
                 .field("direction", direction)
                 .finish(),
+            Event::JoinAll => f.write_str("JoinAll"),
             Event::JoinIntoNext => f.write_str("JoinIntoNext"),
             Event::ChangeItemTitle => f.write_str("ChangeItemTitle"),
             Event::Focus => f.write_str("Focus"),
@@ -677,6 +680,10 @@ impl Pane {
 
     fn join_into_next(&mut self, cx: &mut ViewContext<Self>) {
         cx.emit(Event::JoinIntoNext);
+    }
+
+    fn join_all(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::JoinAll);
     }
 
     fn history_updated(&mut self, cx: &mut ViewContext<Self>) {
@@ -1747,7 +1754,7 @@ impl Pane {
             self.workspace
                 .update(cx, |_, cx| {
                     cx.defer(move |this, cx| {
-                        this.move_item(pane.clone(), pane, id, destination_index, cx)
+                        this.move_item(&pane, &pane, id, destination_index, cx)
                     });
                 })
                 .ok()?;
@@ -1767,7 +1774,7 @@ impl Pane {
             self.workspace
                 .update(cx, |_, cx| {
                     cx.defer(move |this, cx| {
-                        this.move_item(pane.clone(), pane, id, destination_index, cx)
+                        this.move_item(&pane, &pane, id, destination_index, cx)
                     });
                 })
                 .ok()?;
@@ -2338,7 +2345,7 @@ impl Pane {
                             }
                         })
                     }
-                    workspace.move_item(from_pane.clone(), to_pane.clone(), item_id, ix, cx);
+                    workspace.move_item(&from_pane, &to_pane, item_id, ix, cx);
                 });
             })
             .log_err();
@@ -2545,6 +2552,7 @@ impl Render for Pane {
             .on_action(cx.listener(|pane, _: &GoBack, cx| pane.navigate_backward(cx)))
             .on_action(cx.listener(|pane, _: &GoForward, cx| pane.navigate_forward(cx)))
             .on_action(cx.listener(|pane, _: &JoinIntoNext, cx| pane.join_into_next(cx)))
+            .on_action(cx.listener(|pane, _: &JoinAll, cx| pane.join_all(cx)))
             .on_action(cx.listener(Pane::toggle_zoom))
             .on_action(cx.listener(|pane: &mut Pane, action: &ActivateItem, cx| {
                 pane.activate_item(action.0, true, true, cx);

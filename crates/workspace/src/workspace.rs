@@ -2965,6 +2965,7 @@ impl Workspace {
                 self.split_and_clone(pane, *direction, cx);
             }
             pane::Event::JoinIntoNext => self.join_pane_into_next(pane, cx),
+            pane::Event::JoinAll => self.join_all_panes(cx),
             pane::Event::Remove { focus_on_pane } => {
                 self.remove_pane(pane, focus_on_pane.clone(), cx)
             }
@@ -3094,7 +3095,7 @@ impl Workspace {
         };
 
         let new_pane = self.add_pane(cx);
-        self.move_item(from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
+        self.move_item(&from, &new_pane, item_id_to_move, 0, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
@@ -3122,6 +3123,51 @@ impl Workspace {
         }))
     }
 
+    pub fn join_all_panes(&mut self, cx: &mut ViewContext<Self>) {
+        let active_item = self.active_pane.read(cx).active_item().take();
+        for i in 0..self.panes.len() {
+            self.join_pane_into_active(&self.panes[i].clone(), cx);
+        }
+        if let Some(active_item) = active_item {
+            self.activate_item(&(*active_item), true, true, cx);
+        }
+        cx.notify();
+    }
+
+    fn join_pane_into_active(&mut self, pane: &View<Pane>, cx: &mut ViewContext<'_, Self>) {
+        if *pane == self.active_pane {
+            return;
+        } else if pane.read(cx).items_len() == 0 {
+            self.close_pane(pane, cx);
+        } else {
+            self.move_all_items(pane, &self.active_pane.clone(), cx);
+        }
+    }
+
+    fn close_pane(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) {
+        pane.update(cx, |_, cx| {
+            cx.emit(pane::Event::Remove {
+                focus_on_pane: None,
+            })
+        })
+    }
+
+    fn move_all_items(
+        &mut self,
+        from_pane: &View<Pane>,
+        to_pane: &View<Pane>,
+        cx: &mut ViewContext<'_, Self>,
+    ) {
+        let item_ids: Vec<EntityId> = from_pane
+            .read(cx)
+            .items()
+            .map(|item| item.item_id())
+            .collect();
+        for item_id in item_ids {
+            self.move_item(from_pane, to_pane, item_id, 0, cx);
+        }
+    }
+
     pub fn join_pane_into_next(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
         let next_pane = self
             .find_pane_in_direction(SplitDirection::Right, cx)
@@ -3131,18 +3177,14 @@ impl Workspace {
         let Some(next_pane) = next_pane else {
             return;
         };
-
-        let item_ids: Vec<EntityId> = pane.read(cx).items().map(|item| item.item_id()).collect();
-        for item_id in item_ids {
-            self.move_item(pane.clone(), next_pane.clone(), item_id, 0, cx);
-        }
+        self.move_all_items(&pane, &next_pane, cx);
         cx.notify();
     }
 
     pub fn move_item(
         &mut self,
-        source: View<Pane>,
-        destination: View<Pane>,
+        source: &View<Pane>,
+        destination: &View<Pane>,
         item_id_to_move: EntityId,
         destination_index: usize,
         cx: &mut ViewContext<Self>,
@@ -6854,6 +6896,80 @@ mod tests {
         });
     }
 
+    fn add_an_item_to_active_pane(
+        cx: &mut VisualTestContext,
+        workspace: &View<Workspace>,
+        item_id: u64,
+    ) -> View<TestItem> {
+        let item = cx.new_view(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(
+                item_id,
+                "item{item_id}.txt",
+                cx,
+            )])
+        });
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, false, cx);
+        });
+        return item;
+    }
+
+    fn split_pane(cx: &mut VisualTestContext, workspace: &View<Workspace>) -> View<Pane> {
+        return workspace.update(cx, |workspace, cx| {
+            let new_pane =
+                workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+            new_pane
+        });
+    }
+
+    #[gpui::test]
+    async fn test_join_all_panes(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+        add_an_item_to_active_pane(cx, &workspace, 1);
+        split_pane(cx, &workspace);
+        add_an_item_to_active_pane(cx, &workspace, 2);
+        split_pane(cx, &workspace); // empty pane
+        split_pane(cx, &workspace);
+        let last_item = add_an_item_to_active_pane(cx, &workspace, 3);
+
+        cx.executor().run_until_parked();
+
+        workspace.update(cx, |workspace, cx| {
+            let num_panes = workspace.panes().len();
+            let num_items_in_current_pane = workspace.active_pane().read(cx).items().count();
+            let active_item = workspace
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .expect("item is in focus");
+
+            assert_eq!(num_panes, 4);
+            assert_eq!(num_items_in_current_pane, 1);
+            assert_eq!(active_item.item_id(), last_item.item_id());
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.join_all_panes(cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            let num_panes = workspace.panes().len();
+            let num_items_in_current_pane = workspace.active_pane().read(cx).items().count();
+            let active_item = workspace
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .expect("item is in focus");
+
+            assert_eq!(num_panes, 1);
+            assert_eq!(num_items_in_current_pane, 3);
+            assert_eq!(active_item.item_id(), last_item.item_id());
+        });
+    }
     struct TestModal(FocusHandle);
 
     impl TestModal {
