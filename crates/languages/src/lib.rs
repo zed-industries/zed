@@ -103,8 +103,11 @@ pub fn init(
         };
     }
     language!("bash", Vec::new(), bash_task_context());
-    language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
-    language!("cpp", vec![Arc::new(c::CLspAdapter)]);
+    language!(
+        "c",
+        vec![Arc::new(c::ClangdAdapter::new(false)) as Arc<dyn LspAdapter>]
+    );
+    language!("cpp", vec![Arc::new(c::ClangdAdapter::new(true))]);
     language!(
         "css",
         vec![Arc::new(css::CssLspAdapter::new(node_runtime.clone())),]

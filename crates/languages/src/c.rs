@@ -6,19 +6,26 @@ use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lsp::LanguageServerBinary;
 use project::project_settings::{BinarySettings, ProjectSettings};
+use serde_json::json;
 use settings::Settings;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
 use util::{fs::remove_matching, maybe, ResultExt};
 
-pub struct CLspAdapter;
+pub struct ClangdAdapter {
+    use_cpp: bool,
+}
 
-impl CLspAdapter {
+impl ClangdAdapter {
     const SERVER_NAME: &'static str = "clangd";
+
+    pub fn new(use_cpp: bool) -> Self {
+        Self { use_cpp }
+    }
 }
 
 #[async_trait(?Send)]
-impl super::LspAdapter for CLspAdapter {
+impl super::LspAdapter for ClangdAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName(Self::SERVER_NAME.into())
     }
@@ -298,6 +305,21 @@ impl super::LspAdapter for CLspAdapter {
             text: text[display_range].to_string(),
             filter_range,
         })
+    }
+
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        if self.use_cpp {
+            Ok(None)
+        } else {
+            Ok(Some(json!({
+                "configSettings": {
+                    "clangd.arguments": ["-std=c11"]
+                }
+            })))
+        }
     }
 }
 
