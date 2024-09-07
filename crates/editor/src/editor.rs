@@ -116,14 +116,14 @@ use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{
     CodeAction, Completion, CompletionIntent, FormatTrigger, Item, Location, Project, ProjectPath,
-    ProjectTransaction, TaskSourceKind, WorktreeId,
+    ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsLocation, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
 use std::{
@@ -8742,7 +8742,7 @@ impl Editor {
             let (worktree_id, file) = project
                 .buffer_for_id(runnable.buffer, cx)
                 .and_then(|buffer| buffer.read(cx).file())
-                .map(|file| (WorktreeId::from_usize(file.worktree_id()), file.clone()))
+                .map(|file| (file.worktree_id(cx), file.clone()))
                 .unzip();
 
             (project.task_inventory().clone(), worktree_id, file)
@@ -11421,7 +11421,14 @@ impl Editor {
             .redacted_ranges(search_range, |file| {
                 if let Some(file) = file {
                     file.is_private()
-                        && EditorSettings::get(Some(file.as_ref().into()), cx).redact_private_values
+                        && EditorSettings::get(
+                            Some(SettingsLocation {
+                                worktree_id: file.worktree_id(cx),
+                                path: file.path().as_ref(),
+                            }),
+                            cx,
+                        )
+                        .redact_private_values
                 } else {
                     false
                 }

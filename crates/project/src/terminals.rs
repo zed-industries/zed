@@ -103,7 +103,7 @@ impl Project {
         if let Some(path) = path.as_ref() {
             if let Some((worktree, _)) = self.find_worktree(path, cx) {
                 settings_location = Some(SettingsLocation {
-                    worktree_id: worktree.read(cx).id().to_usize(),
+                    worktree_id: worktree.read(cx).id(),
                     path,
                 });
             }

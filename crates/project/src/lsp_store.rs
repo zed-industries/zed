@@ -4250,7 +4250,7 @@ impl LspStore {
 
         let project_settings = ProjectSettings::get(
             Some(SettingsLocation {
-                worktree_id: worktree_id.to_proto() as usize,
+                worktree_id,
                 path: Path::new(""),
             }),
             cx,
@@ -6408,8 +6408,8 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
         self.http_client.clone()
     }
 
-    fn worktree_id(&self) -> u64 {
-        self.worktree.id().to_proto()
+    fn worktree_id(&self) -> WorktreeId {
+        self.worktree.id()
     }
 
     fn worktree_root_path(&self) -> &Path {

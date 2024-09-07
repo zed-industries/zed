@@ -1250,8 +1250,8 @@ mod tests {
             unimplemented!()
         }
 
-        fn worktree_id(&self) -> usize {
-            0
+        fn worktree_id(&self, _: &AppContext) -> settings::WorktreeId {
+            settings::WorktreeId::from_usize(0)
         }
 
         fn is_private(&self) -> bool {

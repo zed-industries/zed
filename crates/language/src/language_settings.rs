@@ -20,15 +20,6 @@ use settings::{add_references_to_properties, Settings, SettingsLocation, Setting
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
-impl<'a> From<&'a dyn File> for SettingsLocation<'a> {
-    fn from(val: &'a dyn File) -> Self {
-        SettingsLocation {
-            worktree_id: val.worktree_id(),
-            path: val.path().as_ref(),
-        }
-    }
-}
-
 /// Initializes the language settings.
 pub fn init(cx: &mut AppContext) {
     AllLanguageSettings::register(cx);
@@ -49,7 +40,10 @@ pub fn all_language_settings<'a>(
     file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a AllLanguageSettings {
-    let location = file.map(|f| f.as_ref().into());
+    let location = file.map(|f| SettingsLocation {
+        worktree_id: f.worktree_id(cx),
+        path: f.path().as_ref(),
+    });
     AllLanguageSettings::get(location, cx)
 }
 
