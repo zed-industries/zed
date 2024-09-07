@@ -18,7 +18,7 @@ use tree_sitter::Query;
 use tree_sitter_json::language;
 use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
 
-use crate::SettingsJsonSchemaParams;
+use crate::{SettingsJsonSchemaParams, WorktreeId};
 
 /// A value that can be defined as a user setting.
 ///
@@ -150,9 +150,6 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
         Self::json_merge_with(self.defaults_and_customizations())
     }
 }
-
-// TODO kb move the id into core crate?
-type WorktreeId = usize;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SettingsLocation<'a> {
@@ -566,7 +563,13 @@ impl SettingsStore {
         root_id: WorktreeId,
     ) -> impl '_ + Iterator<Item = (Arc<Path>, String)> {
         self.raw_local_settings
-            .range((root_id, Path::new("").into())..(root_id + 1, Path::new("").into()))
+            .range(
+                (root_id, Path::new("").into())
+                    ..(
+                        WorktreeId::from_usize(root_id.to_usize() + 1),
+                        Path::new("").into(),
+                    ),
+            )
             .map(|((_, path), content)| (path.clone(), serde_json::to_string(content).unwrap()))
     }
 
@@ -1159,7 +1162,7 @@ mod tests {
 
         store
             .set_local_settings(
-                1,
+                WorktreeId::from_usize(1),
                 Path::new("/root1").into(),
                 Some(r#"{ "user": { "staff": true } }"#),
                 cx,
@@ -1167,7 +1170,7 @@ mod tests {
             .unwrap();
         store
             .set_local_settings(
-                1,
+                WorktreeId::from_usize(1),
                 Path::new("/root1/subdir").into(),
                 Some(r#"{ "user": { "name": "Jane Doe" } }"#),
                 cx,
@@ -1176,7 +1179,7 @@ mod tests {
 
         store
             .set_local_settings(
-                1,
+                WorktreeId::from_usize(1),
                 Path::new("/root2").into(),
                 Some(r#"{ "user": { "age": 42 }, "key2": "b" }"#),
                 cx,
@@ -1185,7 +1188,7 @@ mod tests {
 
         assert_eq!(
             store.get::<UserSettings>(Some(SettingsLocation {
-                worktree_id: 1,
+                worktree_id: WorktreeId::from_usize(1),
                 path: Path::new("/root1/something"),
             })),
             &UserSettings {
@@ -1196,7 +1199,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<UserSettings>(Some(SettingsLocation {
-                worktree_id: 1,
+                worktree_id: WorktreeId::from_usize(1),
                 path: Path::new("/root1/subdir/something")
             })),
             &UserSettings {
@@ -1207,7 +1210,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<UserSettings>(Some(SettingsLocation {
-                worktree_id: 1,
+                worktree_id: WorktreeId::from_usize(1),
                 path: Path::new("/root2/something")
             })),
             &UserSettings {
@@ -1218,7 +1221,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<MultiKeySettings>(Some(SettingsLocation {
-                worktree_id: 1,
+                worktree_id: WorktreeId::from_usize(1),
                 path: Path::new("/root2/something")
             })),
             &MultiKeySettings {

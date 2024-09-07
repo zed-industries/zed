@@ -249,7 +249,7 @@ impl SettingsObserver {
         let store = cx.global::<SettingsStore>();
         for worktree in self.worktree_store.read(cx).worktrees() {
             let worktree_id = worktree.read(cx).id().to_proto();
-            for (path, content) in store.local_settings(worktree.read(cx).id().to_usize()) {
+            for (path, content) in store.local_settings(worktree.read(cx).id()) {
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
@@ -421,12 +421,7 @@ impl SettingsObserver {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             for (directory, file_content) in settings_contents {
                 store
-                    .set_local_settings(
-                        worktree_id.to_usize(),
-                        directory.clone(),
-                        file_content.as_deref(),
-                        cx,
-                    )
+                    .set_local_settings(worktree_id, directory.clone(), file_content.as_deref(), cx)
                     .log_err();
                 if let Some(downstream_client) = &self.downstream_client {
                     downstream_client

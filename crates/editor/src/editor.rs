@@ -116,7 +116,7 @@ use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{
     CodeAction, Completion, CompletionIntent, FormatTrigger, Item, Location, Project, ProjectPath,
-    ProjectTransaction, TaskSourceKind, WorktreeId,
+    ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -8742,7 +8742,7 @@ impl Editor {
             let (worktree_id, file) = project
                 .buffer_for_id(runnable.buffer, cx)
                 .and_then(|buffer| buffer.read(cx).file())
-                .map(|file| (WorktreeId::from_usize(file.worktree_id(cx)), file.clone()))
+                .map(|file| (file.worktree_id(cx), file.clone()))
                 .unzip();
 
             (project.task_inventory().clone(), worktree_id, file)
