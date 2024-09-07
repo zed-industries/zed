@@ -908,7 +908,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_image_links_detection() {
-        let parsed = parse("![Zed logo](https://zed.dev/logo.png)").await;
+        let parsed = parse("![test](https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png)").await;
 
         let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
             text
@@ -918,8 +918,8 @@ mod tests {
         assert_eq!(
             paragraph[0],
             MarkdownParagraph::MarkdownImage(Image::Web {
-                source_range: 0..37,
-                url: "https://zed.dev/logo.png".to_string()
+                source_range: 0..111,
+                url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string()
             },)
         );
     }
