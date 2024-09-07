@@ -235,9 +235,15 @@ impl<'a> MarkdownParser<'a> {
                             Image::Web {
                                 source_range: _,
                                 url,
-                            } => gpui::ImageSource::try_from(url).is_ok(),
+                            } => match isahc::get(url) {
+                                //replace when ImageSource returns error for URL
+                                Ok(response) => match response.status().as_u16() {
+                                    200..299 => true,
+                                    _ => false,
+                                },
+                                Err(_) => false,
+                            },
                         };
-
                         if is_valid_image {
                             text.truncate(text.len() - t.len());
                             if !text.is_empty() {
@@ -249,6 +255,13 @@ impl<'a> MarkdownParser<'a> {
                                         region_ranges: region_ranges.clone(),
                                         regions: regions.clone(),
                                     });
+                                text = String::new();
+                                highlights = vec![];
+                                region_ranges = vec![];
+                                regions = vec![];
+                                italic_depth = 0;
+                                bold_depth = 0;
+                                strikethrough_depth = 0;
                                 markdown_text_like.push(parsed_regions);
                             }
                             let parsed_image = MarkdownParagraph::MarkdownImage(image.clone());
@@ -398,13 +411,6 @@ impl<'a> MarkdownParser<'a> {
                     }
                     TagEnd::Image => {
                         image = None;
-                        text = String::new();
-                        highlights = vec![];
-                        region_ranges = vec![];
-                        regions = vec![];
-                        italic_depth = 0;
-                        bold_depth = 0;
-                        strikethrough_depth = 0;
                     }
                     TagEnd::Paragraph => {
                         self.cursor += 1;
@@ -430,7 +436,6 @@ impl<'a> MarkdownParser<'a> {
                 region_ranges,
             }));
         }
-
         markdown_text_like
     }
 
