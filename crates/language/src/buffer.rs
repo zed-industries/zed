@@ -4301,7 +4301,7 @@ pub fn trailing_whitespace_ranges(rope: &Rope) -> Vec<Range<usize>> {
         let mut prev_line_trailing_whitespace_range = 0..0;
         for (i, line) in chunk.split('\n').enumerate() {
             let line_end_offset = offset + line.len();
-            let trimmed_line_len = line.trim_end_matches(|c| matches!(c, ' ' | '\t')).len();
+            let trimmed_line_len = line.trim_end_matches([' ', '\t']).len();
             let mut trailing_whitespace_range = (offset + trimmed_line_len)..line_end_offset;
 
             if i == 0 && trimmed_line_len == 0 {

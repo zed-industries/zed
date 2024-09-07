@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
                 .route("/healthz", get(handle_liveness_probe))
                 .layer(Extension(mode));
 
-            let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
+            let listener = TcpListener::bind(format!("0.0.0.0:{}", config.http_port))
                 .expect("failed to bind TCP listener");
 
             let mut on_shutdown = None;

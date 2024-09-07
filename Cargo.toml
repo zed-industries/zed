@@ -571,14 +571,18 @@ single_range_in_vec_init = "allow"
 # There are a bunch of rules currently failing in the `style` group, so
 # allow all of those, for now.
 style = { level = "allow", priority = -1 }
+
+# Temporary list of style lints that we've fixed so far.
+module_inception = { level = "deny" }
+question_mark = { level = "deny" }
+redundant_closure = { level = "deny" }
+# Individual rules that have violations in the codebase:
+type_complexity = "allow"
 # We often return trait objects from `new` functions.
 new_ret_no_self = { level = "allow" }
 # We have a few `next` functions that differ in lifetimes
 # compared to Iterator::next. Yet, clippy complains about those.
 should_implement_trait = { level = "allow" }
-module_inception = { level = "deny" }
-# Individual rules that have violations in the codebase:
-type_complexity = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]

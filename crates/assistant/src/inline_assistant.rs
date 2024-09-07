@@ -3073,7 +3073,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range,
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });
@@ -3145,7 +3145,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range.clone(),
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });
@@ -3220,7 +3220,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range.clone(),
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });
@@ -3294,7 +3294,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range.clone(),
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });

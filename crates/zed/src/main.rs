@@ -1075,9 +1075,8 @@ fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
             if arg.starts_with("file://")
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")
+                || parse_zed_link(arg, cx).is_some()
             {
-                Ok(arg.into())
-            } else if parse_zed_link(arg, cx).is_some() {
                 Ok(arg.into())
             } else {
                 Err(anyhow!("error parsing path argument: {}", error))

@@ -202,9 +202,7 @@ impl VimCommand {
             query = &query[..query.len() - 1];
         }
 
-        let Some(suffix) = query.strip_prefix(self.prefix) else {
-            return None;
-        };
+        let suffix = query.strip_prefix(self.prefix)?;
         if !self.suffix.starts_with(suffix) {
             return None;
         }

@@ -189,7 +189,7 @@ fn connect_to_cli(
 }
 
 pub async fn open_paths_with_positions(
-    path_positions: &Vec<PathWithPosition>,
+    path_positions: &[PathWithPosition],
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,

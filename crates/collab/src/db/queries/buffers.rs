@@ -872,7 +872,7 @@ fn operation_from_storage(
     })
 }
 
-fn version_to_storage(version: &Vec<proto::VectorClockEntry>) -> Vec<storage::VectorClockEntry> {
+fn version_to_storage(version: &[proto::VectorClockEntry]) -> Vec<storage::VectorClockEntry> {
     version
         .iter()
         .map(|entry| storage::VectorClockEntry {
@@ -882,7 +882,7 @@ fn version_to_storage(version: &Vec<proto::VectorClockEntry>) -> Vec<storage::Ve
         .collect()
 }
 
-fn version_from_storage(version: &Vec<storage::VectorClockEntry>) -> Vec<proto::VectorClockEntry> {
+fn version_from_storage(version: &[storage::VectorClockEntry]) -> Vec<proto::VectorClockEntry> {
     version
         .iter()
         .map(|entry| proto::VectorClockEntry {

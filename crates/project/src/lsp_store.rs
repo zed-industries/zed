@@ -5601,14 +5601,14 @@ impl LspStore {
             {
                 if let Some(watched_paths) = self
                     .language_server_watched_paths
-                    .get(&server_id)
+                    .get(server_id)
                     .and_then(|paths| paths.read(cx).worktree_paths.get(&worktree_id))
                 {
                     let params = lsp::DidChangeWatchedFilesParams {
                         changes: changes
                             .iter()
                             .filter_map(|(path, _, change)| {
-                                if !watched_paths.is_match(&path) {
+                                if !watched_paths.is_match(path) {
                                     return None;
                                 }
                                 let typ = match change {
