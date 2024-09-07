@@ -8,7 +8,6 @@ use futures::FutureExt;
 use gpui::{Task, WeakView, WindowContext};
 use language::LspAdapterDelegate;
 use ui::prelude::*;
-use wasmtime_wasi::WasiView;
 use workspace::Workspace;
 
 use crate::wasm_host::{WasmExtension, WasmHost};

@@ -21,7 +21,6 @@ use std::{
     sync::Arc,
 };
 use util::{maybe, ResultExt};
-use wasmtime_wasi::WasiView as _;
 
 pub struct ExtensionLspAdapter {
     pub(crate) extension: WasmExtension,

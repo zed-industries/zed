@@ -1,0 +1,6 @@
+package wasi:filesystem@0.2.0;
+
+world imports {
+    import types;
+    import preopens;
+}

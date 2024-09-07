@@ -1,0 +1,34 @@
+[package]
+name = "wasi_fs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/wasi_fs.rs"
+doctest = false
+
+[dependencies]
+async-trait.workspace = true
+anyhow.workspace = true
+collections.workspace = true
+fs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+util.workspace = true
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
+wasmparser.workspace = true
+wit-component.workspace = true
+
+[dev-dependencies]
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }

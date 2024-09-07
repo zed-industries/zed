@@ -26,7 +26,6 @@ use wasmtime::{
     component::{Component, ResourceTable},
     Engine, Store,
 };
-use wasmtime_wasi as wasi;
 use wit::Extension;
 
 pub(crate) struct WasmHost {
@@ -52,7 +51,7 @@ pub struct WasmExtension {
 pub(crate) struct WasmState {
     manifest: Arc<ExtensionManifest>,
     pub(crate) table: ResourceTable,
-    ctx: wasi::WasiCtx,
+    fs: Arc<dyn Fs>,
     pub(crate) host: Arc<WasmHost>,
 }
 
@@ -120,7 +119,7 @@ impl WasmHost {
             let mut store = wasmtime::Store::new(
                 &this.engine,
                 WasmState {
-                    ctx: this.build_wasi_ctx(&manifest).await?,
+                    fs: this.fs.clone(),
                     manifest: manifest.clone(),
                     table: ResourceTable::new(),
                     host: this.clone(),
@@ -156,30 +155,6 @@ impl WasmHost {
                 zed_api_version,
             })
         })
-    }
-
-    async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<wasi::WasiCtx> {
-        let extension_work_dir = self.work_dir.join(manifest.id.as_ref());
-        self.fs
-            .create_dir(&extension_work_dir)
-            .await
-            .context("failed to create extension work dir")?;
-
-        let file_perms = wasi::FilePerms::all();
-        let dir_perms = wasi::DirPerms::all();
-
-        Ok(wasi::WasiCtxBuilder::new()
-            .inherit_stdio()
-            .preopened_dir(&extension_work_dir, ".", dir_perms, file_perms)?
-            .preopened_dir(
-                &extension_work_dir,
-                &extension_work_dir.to_string_lossy(),
-                dir_perms,
-                file_perms,
-            )?
-            .env("PWD", &extension_work_dir.to_string_lossy())
-            .env("RUST_BACKTRACE", "full")
-            .build())
     }
 
     pub fn path_from_extension(&self, id: &Arc<str>, path: &Path) -> PathBuf {
@@ -288,14 +263,18 @@ impl WasmState {
     fn work_dir(&self) -> PathBuf {
         self.host.work_dir.join(self.manifest.id.as_ref())
     }
+
+    pub fn table(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
 }
 
-impl wasi::WasiView for WasmState {
+impl wasi_fs::WasiFsView for WasmState {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
 
-    fn ctx(&mut self) -> &mut wasi::WasiCtx {
-        &mut self.ctx
+    fn fs(&self) -> &Arc<dyn Fs> {
+        &self.fs
     }
 }

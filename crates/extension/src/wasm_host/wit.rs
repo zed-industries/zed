@@ -29,7 +29,7 @@ pub fn new_linker(
     f: impl Fn(&mut Linker<WasmState>, fn(&mut WasmState) -> &mut WasmState) -> Result<()>,
 ) -> Linker<WasmState> {
     let mut linker = Linker::new(&wasm_engine());
-    wasmtime_wasi::add_to_linker_async(&mut linker).unwrap();
+    wasi_fs::add_to_linker(&mut linker).unwrap();
     f(&mut linker, wasi_view).unwrap();
     linker
 }

@@ -5,7 +5,6 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::FutureExt;
 use indexed_docs::{IndexedDocsDatabase, IndexedDocsProvider, PackageName, ProviderId};
-use wasmtime_wasi::WasiView;
 
 use crate::wasm_host::{WasmExtension, WasmHost};
 

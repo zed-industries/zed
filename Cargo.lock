@@ -4066,6 +4066,7 @@ dependencies = [
  "ui",
  "url",
  "util",
+ "wasi_fs",
  "wasm-encoder 0.201.0",
  "wasmparser 0.201.0",
  "wasmtime",
@@ -12701,6 +12702,27 @@ name = "wasi"
 version = "0.11.0+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423"
+
+[[package]]
+name = "wasi_fs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "fs",
+ "futures 0.3.30",
+ "gpui",
+ "log",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "util",
+ "wasmparser 0.201.0",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wit-component",
+]
 
 [[package]]
 name = "wasite"
