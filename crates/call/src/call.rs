@@ -530,13 +530,12 @@ mod test {
             (
                 one_at_a_time.spawn(cx, |_| async {
                     panic!("");
-                    Ok(2)
                 }),
                 one_at_a_time.spawn(cx, |_| async { Ok(3) }),
             )
         });
 
-        assert_eq!(a.await.unwrap(), None);
+        assert_eq!(a.await.unwrap(), None::<u32>);
         assert_eq!(b.await.unwrap(), Some(3));
 
         let promise = cx.update(|cx| one_at_a_time.spawn(cx, |_| async { Ok(4) }));
