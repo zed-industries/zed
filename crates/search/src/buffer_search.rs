@@ -70,7 +70,6 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut AppContext) {
-    SearchSettings::register(cx);
     cx.observe_new_views(|workspace: &mut Workspace, _| BufferSearchBar::register(workspace))
         .detach();
 }
@@ -1186,6 +1185,7 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
+            crate::init(cx);
         });
     }
 

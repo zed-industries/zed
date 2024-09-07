@@ -20,11 +20,7 @@ use gpui::{
 };
 use language::Buffer;
 use menu::Confirm;
-use project::{
-    search::{SearchInputKind, SearchQuery},
-    search_history::SearchHistoryCursor,
-    Project, ProjectPath,
-};
+use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
@@ -3388,7 +3384,7 @@ pub mod tests {
             editor::init(cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
-            super::init(cx);
+            crate::init(cx);
         });
     }
 
