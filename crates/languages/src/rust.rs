@@ -249,7 +249,7 @@ impl LspAdapter for RustLspAdapter {
                 static REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("\\(…?\\)").unwrap());
 
                 let detail = detail.unwrap();
-                const FUNCTION_PREFIXES: [&'static str; 6] = [
+                const FUNCTION_PREFIXES: [&str; 6] = [
                     "async fn",
                     "async unsafe fn",
                     "const fn",
@@ -421,8 +421,8 @@ impl ContextProvider for RustContextProvider {
             .is_some();
 
         if is_main_function {
-            if let Some((package_name, bin_name)) = local_abs_path
-                .and_then(|local_abs_path| package_name_and_bin_name_from_abs_path(local_abs_path))
+            if let Some((package_name, bin_name)) =
+                local_abs_path.and_then(package_name_and_bin_name_from_abs_path)
             {
                 return Ok(TaskVariables::from_iter([
                     (RUST_PACKAGE_TASK_VARIABLE.clone(), package_name),
@@ -449,7 +449,7 @@ impl ContextProvider for RustContextProvider {
         file: Option<Arc<dyn language::File>>,
         cx: &AppContext,
     ) -> Option<TaskTemplates> {
-        const DEFAULT_RUN_NAME_STR: &'static str = "RUST_DEFAULT_PACKAGE_RUN";
+        const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         let package_to_run = all_language_settings(file.as_ref(), cx)
             .language(Some("Rust"))
             .tasks

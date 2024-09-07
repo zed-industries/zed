@@ -323,7 +323,7 @@ impl OutputContent for TerminalOutput {
     }
 
     fn buffer_content(&mut self, cx: &mut WindowContext) -> Option<Model<Buffer>> {
-        if let Some(_) = self.full_buffer.as_ref() {
+        if self.full_buffer.as_ref().is_some() {
             return self.full_buffer.clone();
         }
 

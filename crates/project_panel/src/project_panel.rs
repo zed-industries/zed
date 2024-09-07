@@ -252,7 +252,7 @@ impl ProjectPanel {
             })
             .detach();
 
-            let filename_editor = cx.new_view(|cx| Editor::single_line(cx));
+            let filename_editor = cx.new_view(Editor::single_line);
 
             cx.subscribe(&filename_editor, |this, _, event, cx| match event {
                 editor::EditorEvent::BufferEdited
@@ -575,7 +575,7 @@ impl ProjectPanel {
 
         if let Some(parent_path) = entry.path.parent() {
             let snapshot = worktree.snapshot();
-            let mut child_entries = snapshot.child_entries(&parent_path);
+            let mut child_entries = snapshot.child_entries(parent_path);
             if let Some(child) = child_entries.next() {
                 if child_entries.next().is_none() {
                     return child.kind.is_dir();
@@ -790,7 +790,7 @@ impl ProjectPanel {
                 worktree_id,
                 entry_id: NEW_ENTRY_ID,
             });
-            let new_path = entry.path.join(&filename.trim_start_matches('/'));
+            let new_path = entry.path.join(filename.trim_start_matches('/'));
             if path_already_exists(new_path.as_path()) {
                 return None;
             }
@@ -1581,7 +1581,6 @@ impl ProjectPanel {
                 .move_worktree(worktree_id, destination_id, cx)
                 .log_err();
         });
-        return;
     }
 
     fn move_worktree_entry(
@@ -1720,8 +1719,7 @@ impl ProjectPanel {
         let project = self.project.read(cx);
         self.last_worktree_root_id = project
             .visible_worktrees(cx)
-            .rev()
-            .next()
+            .next_back()
             .and_then(|worktree| worktree.read(cx).root_entry())
             .map(|entry| entry.id);
 
@@ -1880,10 +1878,7 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut paths: Vec<Arc<Path>> = paths
-            .into_iter()
-            .map(|path| Arc::from(path.clone()))
-            .collect();
+        let mut paths: Vec<Arc<Path>> = paths.iter().map(|path| Arc::from(path.clone())).collect();
 
         let open_file_after_drop = paths.len() == 1 && paths[0].is_file();
 
@@ -1968,7 +1963,7 @@ impl ProjectPanel {
                     .clone();
                 for selection in selections.items() {
                     let new_path = self.create_paste_path(
-                        &selection,
+                        selection,
                         (target_worktree.clone(), &target_entry),
                         cx,
                     )?;
@@ -2031,7 +2026,7 @@ impl ProjectPanel {
                         .collect()
                 });
                 for entry in visible_worktree_entries[entry_range].iter() {
-                    let status = git_status_setting.then(|| entry.git_status).flatten();
+                    let status = git_status_setting.then_some(entry.git_status).flatten();
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
                     let icon = match entry.kind {
                         EntryKind::File => {
@@ -2051,7 +2046,7 @@ impl ProjectPanel {
                     };
 
                     let (depth, difference) =
-                        ProjectPanel::calculate_depth_and_difference(entry, &entries);
+                        ProjectPanel::calculate_depth_and_difference(entry, entries);
 
                     let filename = match difference {
                         diff if diff > 1 => entry
@@ -2627,7 +2622,7 @@ impl ProjectPanel {
 
 impl Render for ProjectPanel {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
-        let has_worktree = self.visible_entries.len() != 0;
+        let has_worktree = !self.visible_entries.is_empty();
         let project = self.project.read(cx);
 
         if has_worktree {
@@ -2857,7 +2852,7 @@ impl Panel for ProjectPanel {
     fn icon(&self, cx: &WindowContext) -> Option<IconName> {
         ProjectPanelSettings::get_global(cx)
             .button
-            .then(|| IconName::FileTree)
+            .then_some(IconName::FileTree)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
@@ -2960,9 +2955,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
@@ -3059,9 +3052,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
@@ -3175,9 +3166,7 @@ mod tests {
                 cx,
             );
         });
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
@@ -3829,9 +3818,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
         panel.update(cx, |panel, cx| {
             panel.select_next(&Default::default(), cx);
@@ -3922,9 +3909,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
         select_path(&panel, "root1/three.txt", cx);
         panel.update(cx, |panel, cx| {
@@ -4020,9 +4005,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
         select_path(&panel, "root1/three.txt", cx);
         panel.update(cx, |panel, cx| {
@@ -4139,9 +4122,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
         select_path(&panel, "root/a", cx);
         panel.update(cx, |panel, cx| {
@@ -4232,9 +4213,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
         toggle_expand_dir(&panel, "src/test", cx);
         select_path(&panel, "src/test/first.rs", cx);
@@ -4493,9 +4472,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
         panel.update(cx, |panel, cx| panel.open(&Open, cx));
         cx.executor().run_until_parked();
@@ -4546,9 +4523,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
         panel.update(cx, |panel, cx| {
             panel.collapse_all_entries(&CollapseAllEntries, cx)
@@ -4585,9 +4560,7 @@ mod tests {
         let project = Project::test(fs, ["/root".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
         // Make a new buffer with no backing file
         workspace
@@ -4667,9 +4640,7 @@ mod tests {
             cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
         cx.update(|cx| {
             panel.update(cx, |this, cx| {
                 this.select_next(&Default::default(), cx);
@@ -4861,9 +4832,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
@@ -5099,9 +5068,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
-            .unwrap();
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),

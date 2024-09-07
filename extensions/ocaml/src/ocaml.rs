@@ -72,7 +72,7 @@ impl zed::Extension for OcamlExtension {
             }
 
             Some((CompletionKind::Field, detail)) => {
-                let filter_range_start = if name.starts_with(&['~', '?']) { 1 } else { 0 };
+                let filter_range_start = if name.starts_with(['~', '?']) { 1 } else { 0 };
 
                 let record_prefix = "type t = { ";
                 let record_suffix = "; }";

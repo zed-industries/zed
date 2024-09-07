@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::io::BufReader;
-use futures::{AsyncReadExt, Future};
+use futures::AsyncReadExt;
 use http_client::{AsyncBody, HttpClient, Request as HttpRequest};
 use paths::supermaven_dir;
 use serde::{Deserialize, Serialize};
@@ -225,71 +225,67 @@ pub async fn has_version(version_path: &Path) -> bool {
         .map_or(false, |m| m.is_file())
 }
 
-pub fn get_supermaven_agent_path(
-    client: Arc<dyn HttpClient>,
-) -> impl Future<Output = Result<PathBuf>> {
-    async move {
-        fs::create_dir_all(supermaven_dir())
-            .await
-            .with_context(|| {
-                format!(
-                    "Could not create Supermaven Agent Directory at {:?}",
-                    supermaven_dir()
-                )
-            })?;
+pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<PathBuf> {
+    fs::create_dir_all(supermaven_dir())
+        .await
+        .with_context(|| {
+            format!(
+                "Could not create Supermaven Agent Directory at {:?}",
+                supermaven_dir()
+            )
+        })?;
 
-        let platform = match std::env::consts::OS {
-            "macos" => "darwin",
-            "windows" => "windows",
-            "linux" => "linux",
-            _ => return Err(anyhow!("unsupported platform")),
-        };
+    let platform = match std::env::consts::OS {
+        "macos" => "darwin",
+        "windows" => "windows",
+        "linux" => "linux",
+        _ => return Err(anyhow!("unsupported platform")),
+    };
 
-        let arch = match std::env::consts::ARCH {
-            "x86_64" => "amd64",
-            "aarch64" => "arm64",
-            _ => return Err(anyhow!("unsupported architecture")),
-        };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        _ => return Err(anyhow!("unsupported architecture")),
+    };
 
-        let download_info = latest_release(client.clone(), platform, arch).await?;
+    let download_info = latest_release(client.clone(), platform, arch).await?;
 
-        let binary_path = version_path(download_info.version);
+    let binary_path = version_path(download_info.version);
 
-        if has_version(&binary_path).await {
-            return Ok(binary_path);
-        }
-
-        let request = HttpRequest::get(&download_info.download_url);
-
-        let mut response = client
-            .send(request.body(AsyncBody::default())?)
-            .await
-            .with_context(|| "Unable to download Supermaven Agent".to_string())?;
-
-        let mut file = File::create(&binary_path)
-            .await
-            .with_context(|| format!("Unable to create file at {:?}", binary_path))?;
-
-        futures::io::copy(BufReader::new(response.body_mut()), &mut file)
-            .await
-            .with_context(|| format!("Unable to write binary to file at {:?}", binary_path))?;
-
-        #[cfg(not(windows))]
-        {
-            file.set_permissions(<fs::Permissions as fs::unix::PermissionsExt>::from_mode(
-                0o755,
-            ))
-            .await?;
-        }
-
-        let mut old_binary_paths = fs::read_dir(supermaven_dir()).await?;
-        while let Some(old_binary_path) = old_binary_paths.next().await {
-            let old_binary_path = old_binary_path?;
-            if old_binary_path.path() != binary_path {
-                fs::remove_file(old_binary_path.path()).await?;
-            }
-        }
-
-        Ok(binary_path)
+    if has_version(&binary_path).await {
+        return Ok(binary_path);
     }
+
+    let request = HttpRequest::get(&download_info.download_url);
+
+    let mut response = client
+        .send(request.body(AsyncBody::default())?)
+        .await
+        .with_context(|| "Unable to download Supermaven Agent".to_string())?;
+
+    let mut file = File::create(&binary_path)
+        .await
+        .with_context(|| format!("Unable to create file at {:?}", binary_path))?;
+
+    futures::io::copy(BufReader::new(response.body_mut()), &mut file)
+        .await
+        .with_context(|| format!("Unable to write binary to file at {:?}", binary_path))?;
+
+    #[cfg(not(windows))]
+    {
+        file.set_permissions(<fs::Permissions as fs::unix::PermissionsExt>::from_mode(
+            0o755,
+        ))
+        .await?;
+    }
+
+    let mut old_binary_paths = fs::read_dir(supermaven_dir()).await?;
+    while let Some(old_binary_path) = old_binary_paths.next().await {
+        let old_binary_path = old_binary_path?;
+        if old_binary_path.path() != binary_path {
+            fs::remove_file(old_binary_path.path()).await?;
+        }
+    }
+
+    Ok(binary_path)
 }

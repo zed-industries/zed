@@ -319,14 +319,14 @@ async fn fetch_extensions_from_blob_store(
                 if let Some(extension) = fetch_extension_manifest(
                     blob_store_client,
                     blob_store_bucket,
-                    &extension_id,
-                    &published_version,
+                    extension_id,
+                    published_version,
                 )
                 .await
                 .log_err()
                 {
                     new_versions
-                        .entry(&extension_id)
+                        .entry(extension_id)
                         .or_default()
                         .push(extension);
                 }

@@ -2,6 +2,7 @@ use crate::tests::TestServer;
 use call::ActiveCall;
 use fs::{FakeFs, Fs as _};
 use gpui::{Context as _, TestAppContext};
+use language::language_settings::all_language_settings;
 use remote::SshSession;
 use remote_server::HeadlessProject;
 use serde_json::json;
@@ -29,6 +30,9 @@ async fn test_sharing_an_ssh_remote_project(
             "/code",
             json!({
                 "project1": {
+                    ".zed": {
+                        "settings.json": r#"{"languages":{"Rust":{"language_servers":["override-rust-analyzer"]}}}"#
+                    },
                     "README.md": "# project 1",
                     "src": {
                         "lib.rs": "fn one() -> usize { 1 }"
@@ -68,6 +72,8 @@ async fn test_sharing_an_ssh_remote_project(
         assert_eq!(
             worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
             vec![
+                Path::new(".zed"),
+                Path::new(".zed/settings.json"),
                 Path::new("README.md"),
                 Path::new("src"),
                 Path::new("src/lib.rs"),
@@ -86,6 +92,18 @@ async fn test_sharing_an_ssh_remote_project(
         assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
         let ix = buffer.text().find('1').unwrap();
         buffer.edit([(ix..ix + 1, "100")], None, cx);
+    });
+
+    executor.run_until_parked();
+
+    cx_b.read(|cx| {
+        let file = buffer_b.read(cx).file();
+        assert_eq!(
+            all_language_settings(file, cx)
+                .language(Some("Rust"))
+                .language_servers,
+            ["override-rust-analyzer".into()]
+        )
     });
 
     project_b

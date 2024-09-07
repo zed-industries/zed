@@ -11,39 +11,48 @@ use gpui::{AppContext, Context, Model, ModelContext, Task};
 use settings::Settings as _;
 use worktree::WorktreeId;
 
-use crate::project_settings::{DirenvSettings, ProjectSettings};
+use crate::{
+    project_settings::{DirenvSettings, ProjectSettings},
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
+};
 
-pub(crate) struct ProjectEnvironment {
+pub struct ProjectEnvironment {
     cli_environment: Option<HashMap<String, String>>,
     get_environment_task: Option<Shared<Task<Option<HashMap<String, String>>>>>,
     cached_shell_environments: HashMap<WorktreeId, HashMap<String, String>>,
 }
 
 impl ProjectEnvironment {
-    pub(crate) fn new(
+    pub fn new(
+        worktree_store: &Model<WorktreeStore>,
         cli_environment: Option<HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Model<Self> {
-        cx.new_model(|_| Self {
-            cli_environment,
-            get_environment_task: None,
-            cached_shell_environments: Default::default(),
+        cx.new_model(|cx| {
+            cx.subscribe(worktree_store, |this: &mut Self, _, event, _| {
+                if let WorktreeStoreEvent::WorktreeRemoved(_, id) = event {
+                    this.remove_worktree_environment(*id);
+                }
+            })
+            .detach();
+
+            Self {
+                cli_environment,
+                get_environment_task: None,
+                cached_shell_environments: Default::default(),
+            }
         })
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn test(
+    pub(crate) fn set_cached(
+        &mut self,
         shell_environments: &[(WorktreeId, HashMap<String, String>)],
-        cx: &mut AppContext,
-    ) -> Model<Self> {
-        cx.new_model(|_| Self {
-            cli_environment: None,
-            get_environment_task: None,
-            cached_shell_environments: shell_environments
-                .iter()
-                .cloned()
-                .collect::<HashMap<_, _>>(),
-        })
+    ) {
+        self.cached_shell_environments = shell_environments
+            .iter()
+            .cloned()
+            .collect::<HashMap<_, _>>();
     }
 
     pub(crate) fn remove_worktree_environment(&mut self, worktree_id: WorktreeId) {
@@ -150,9 +159,9 @@ enum EnvironmentOrigin {
     WorktreeShell,
 }
 
-impl Into<String> for EnvironmentOrigin {
-    fn into(self) -> String {
-        match self {
+impl From<EnvironmentOrigin> for String {
+    fn from(val: EnvironmentOrigin) -> Self {
+        match val {
             EnvironmentOrigin::Cli => "cli".into(),
             EnvironmentOrigin::WorktreeShell => "worktree-shell".into(),
         }

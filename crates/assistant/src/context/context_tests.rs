@@ -609,8 +609,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>«
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>fn one</symbol>
+        <operation>insert_after</operation>
+        <search>fn one</search>
         <description>add a `two` function</description>
         </edit>
         </step>
@@ -634,8 +634,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>fn one</symbol>
+        <operation>insert_after</operation>
+        <search>fn one</search>
         <description>add a `two` function</description>
         </edit>
         </step>»
@@ -643,8 +643,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertSiblingAfter {
-                symbol: "fn one".into(),
+            kind: WorkflowStepEditKind::InsertAfter {
+                search: "fn one".into(),
                 description: "add a `two` function".into(),
             },
         }]],
@@ -668,8 +668,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>«fn zero»</symbol>
+        <operation>insert_after</operation>
+        <search>«fn zero»</search>
         <description>add a `two` function</description>
         </edit>
         </step>
@@ -693,8 +693,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>fn zero</symbol>
+        <operation>insert_after</operation>
+        <search>fn zero</search>
         <description>add a `two` function</description>
         </edit>
         </step>»
@@ -702,8 +702,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertSiblingAfter {
-                symbol: "fn zero".into(),
+            kind: WorkflowStepEditKind::InsertAfter {
+                search: "fn zero".into(),
                 description: "add a `two` function".into(),
             },
         }]],
@@ -731,8 +731,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>fn zero</symbol>
+        <operation>insert_after</operation>
+        <search>fn zero</search>
         <description>add a `two` function</description>
         </edit>
         </step>
@@ -762,8 +762,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>fn zero</symbol>
+        <operation>insert_after</operation>
+        <search>fn zero</search>
         <description>add a `two` function</description>
         </edit>
         </step>»
@@ -771,8 +771,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertSiblingAfter {
-                symbol: "fn zero".into(),
+            kind: WorkflowStepEditKind::InsertAfter {
+                search: "fn zero".into(),
                 description: "add a `two` function".into(),
             },
         }]],
@@ -808,8 +808,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
         <edit>
         <path>src/lib.rs</path>
-        <operation>insert_sibling_after</operation>
-        <symbol>fn zero</symbol>
+        <operation>insert_after</operation>
+        <search>fn zero</search>
         <description>add a `two` function</description>
         </edit>
         </step>»
@@ -817,8 +817,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         also,",
         &[&[WorkflowStepEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertSiblingAfter {
-                symbol: "fn zero".into(),
+            kind: WorkflowStepEditKind::InsertAfter {
+                search: "fn zero".into(),
                 description: "add a `two` function".into(),
             },
         }]],

@@ -60,7 +60,7 @@ impl Project {
         let worktree = self.worktrees(cx).next()?;
         let worktree = worktree.read(cx);
         if worktree.root_entry()?.is_dir() {
-            return Some(worktree.abs_path().to_path_buf());
+            Some(worktree.abs_path().to_path_buf())
         } else {
             None
         }
@@ -261,10 +261,11 @@ impl Project {
         let venv_settings = settings.detect_venv.as_option()?;
         venv_settings
             .directories
-            .into_iter()
+            .iter()
             .map(|virtual_environment_name| abs_path.join(virtual_environment_name))
             .find(|venv_path| {
-                self.find_worktree(&venv_path, cx)
+                let bin_path = venv_path.join("bin");
+                self.find_worktree(&bin_path, cx)
                     .and_then(|(worktree, relative_path)| {
                         worktree.read(cx).entry_for_path(&relative_path)
                     })
@@ -334,7 +335,7 @@ pub fn wrap_for_ssh(
         }
     }
     if let Some(venv_directory) = venv_directory {
-        if let Some(str) = shlex::try_quote(venv_directory.to_string_lossy().as_ref()).ok() {
+        if let Ok(str) = shlex::try_quote(venv_directory.to_string_lossy().as_ref()) {
             env_changes.push_str(&format!("PATH={}:$PATH ", str));
         }
     }
@@ -348,7 +349,7 @@ pub fn wrap_for_ssh(
 
     let (program, mut args) = match ssh_command {
         SshCommand::DevServer(ssh_command) => {
-            let mut args = shlex::split(&ssh_command).unwrap_or_default();
+            let mut args = shlex::split(ssh_command).unwrap_or_default();
             let program = args.drain(0..1).next().unwrap_or("ssh".to_string());
             (program, args)
         }

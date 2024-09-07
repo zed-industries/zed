@@ -20,11 +20,11 @@ use settings::{add_references_to_properties, Settings, SettingsLocation, Setting
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
-impl<'a> Into<SettingsLocation<'a>> for &'a dyn File {
-    fn into(self) -> SettingsLocation<'a> {
+impl<'a> From<&'a dyn File> for SettingsLocation<'a> {
+    fn from(val: &'a dyn File) -> Self {
         SettingsLocation {
-            worktree_id: self.worktree_id(),
-            path: self.path().as_ref(),
+            worktree_id: val.worktree_id(),
+            path: val.path().as_ref(),
         }
     }
 }
@@ -155,10 +155,10 @@ impl LanguageSettings {
             );
 
         let rest = available_language_servers
-            .into_iter()
+            .iter()
             .filter(|&available_language_server| {
-                !disabled_language_servers.contains(&&available_language_server.0)
-                    && !enabled_language_servers.contains(&&available_language_server.0)
+                !disabled_language_servers.contains(&available_language_server.0)
+                    && !enabled_language_servers.contains(&available_language_server.0)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -414,13 +414,15 @@ impl JsonSchema for FormatOnSave {
             .into(),
         );
 
-        let mut valid_raw_values = SchemaObject::default();
-        valid_raw_values.enum_values = Some(vec![
-            Value::String("on".into()),
-            Value::String("off".into()),
-            Value::String("prettier".into()),
-            Value::String("language_server".into()),
-        ]);
+        let valid_raw_values = SchemaObject {
+            enum_values: Some(vec![
+                Value::String("on".into()),
+                Value::String("off".into()),
+                Value::String("prettier".into()),
+                Value::String("language_server".into()),
+            ]),
+            ..Default::default()
+        };
         let mut nested_values = SchemaObject::default();
 
         nested_values.array().items = Some(formatter_schema.clone().into());
@@ -545,12 +547,15 @@ impl JsonSchema for SelectedFormatter {
             .into(),
         );
 
-        let mut valid_raw_values = SchemaObject::default();
-        valid_raw_values.enum_values = Some(vec![
-            Value::String("auto".into()),
-            Value::String("prettier".into()),
-            Value::String("language_server".into()),
-        ]);
+        let valid_raw_values = SchemaObject {
+            enum_values: Some(vec![
+                Value::String("auto".into()),
+                Value::String("prettier".into()),
+                Value::String("language_server".into()),
+            ]),
+            ..Default::default()
+        };
+
         let mut nested_values = SchemaObject::default();
 
         nested_values.array().items = Some(formatter_schema.clone().into());
@@ -633,7 +638,7 @@ impl AsRef<[Formatter]> for FormatterList {
     fn as_ref(&self) -> &[Formatter] {
         match &self.0 {
             SingleOrVec::Single(single) => slice::from_ref(single),
-            SingleOrVec::Vec(v) => &v,
+            SingleOrVec::Vec(v) => v,
         }
     }
 }
@@ -1145,7 +1150,7 @@ mod tests {
     pub fn test_resolve_language_servers() {
         fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {
             names
-                .into_iter()
+                .iter()
                 .copied()
                 .map(|name| LanguageServerName(name.into()))
                 .collect::<Vec<_>>()

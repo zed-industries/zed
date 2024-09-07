@@ -293,8 +293,8 @@ impl MessageEditor {
         completion_fn: impl Fn(&StringMatch) -> (String, CodeLabel),
     ) -> Vec<Completion> {
         let matches = fuzzy::match_strings(
-            &candidates,
-            &query,
+            candidates,
+            query,
             true,
             10,
             &Default::default(),

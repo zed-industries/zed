@@ -63,6 +63,12 @@ pub struct LabelLike {
     underline: bool,
 }
 
+impl Default for LabelLike {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LabelLike {
     pub fn new() -> Self {
         Self {

@@ -158,7 +158,7 @@ impl SshSession {
         let mut remote_server_child = socket
             .ssh_command(&format!(
                 "RUST_LOG={} {:?} run",
-                std::env::var("RUST_LOG").unwrap_or(String::new()),
+                std::env::var("RUST_LOG").unwrap_or_default(),
                 remote_binary_path,
             ))
             .spawn()
@@ -241,7 +241,7 @@ impl SshSession {
                                     let line_ix = start_ix + ix;
                                     let content = &stderr_buffer[start_ix..line_ix];
                                     start_ix = line_ix + 1;
-                                    if let Ok(record) = serde_json::from_slice::<LogRecord>(&content) {
+                                    if let Ok(record) = serde_json::from_slice::<LogRecord>(content) {
                                         record.log(log::logger())
                                     } else {
                                         eprintln!("(remote) {}", String::from_utf8_lossy(content));
@@ -582,7 +582,7 @@ impl SshClientState {
         let mut server_binary_exists = false;
         if cfg!(not(debug_assertions)) {
             if let Ok(installed_version) =
-                run_cmd(self.socket.ssh_command(&dst_path).arg("version")).await
+                run_cmd(self.socket.ssh_command(dst_path).arg("version")).await
             {
                 if installed_version.trim() == version.to_string() {
                     server_binary_exists = true;
@@ -621,7 +621,7 @@ impl SshClientState {
             self.socket
                 .ssh_command("chmod")
                 .arg(format!("{:o}", server_mode))
-                .arg(&dst_path),
+                .arg(dst_path),
         )
         .await?;
 
@@ -660,7 +660,7 @@ impl SshClientState {
                     .map(|port| vec!["-P".to_string(), port.to_string()])
                     .unwrap_or_default(),
             )
-            .arg(&src_path)
+            .arg(src_path)
             .arg(&format!(
                 "{}:{}",
                 self.socket.connection_options.scp_url(),

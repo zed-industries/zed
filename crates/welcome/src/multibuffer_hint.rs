@@ -18,6 +18,12 @@ const NUMBER_OF_HINTS: usize = 10;
 
 const SHOWN_COUNT_KEY: &str = "MULTIBUFFER_HINT_SHOWN_COUNT";
 
+impl Default for MultibufferHint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MultibufferHint {
     pub fn new() -> Self {
         Self {

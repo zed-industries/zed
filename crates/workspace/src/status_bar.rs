@@ -121,7 +121,7 @@ impl StatusBar {
                 return Some(index + self.left_items.len());
             }
         }
-        return None;
+        None
     }
 
     pub fn insert_item_after<T>(
@@ -150,17 +150,6 @@ impl StatusBar {
         } else {
             self.right_items.remove(position - self.left_items.len());
         }
-        cx.notify();
-    }
-
-    pub fn remove_items_of_type<T>(&mut self, cx: &mut ViewContext<Self>)
-    where
-        T: 'static + StatusItemView,
-    {
-        self.left_items
-            .retain(|item| item.item_type() != TypeId::of::<T>());
-        self.right_items
-            .retain(|item| item.item_type() != TypeId::of::<T>());
         cx.notify();
     }
 

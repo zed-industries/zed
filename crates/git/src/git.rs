@@ -49,7 +49,7 @@ impl FromStr for Oid {
     fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
         libgit::Oid::from_str(s)
             .map_err(|error| anyhow!("failed to parse git oid: {}", error))
-            .map(|oid| Self(oid))
+            .map(Self)
     }
 }
 

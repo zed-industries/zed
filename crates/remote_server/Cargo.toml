@@ -36,6 +36,7 @@ serde_json.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
 worktree.workspace = true
+language.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

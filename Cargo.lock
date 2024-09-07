@@ -372,6 +372,7 @@ dependencies = [
  "anyhow",
  "assets",
  "assistant_slash_command",
+ "assistant_tool",
  "async-watch",
  "cargo_toml",
  "chrono",
@@ -450,6 +451,20 @@ dependencies = [
  "language",
  "parking_lot",
  "serde",
+ "workspace",
+]
+
+[[package]]
+name = "assistant_tool"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "derive_more",
+ "gpui",
+ "parking_lot",
+ "serde",
+ "serde_json",
  "workspace",
 ]
 
@@ -817,9 +832,9 @@ dependencies = [
 
 [[package]]
 name = "async-stripe"
-version = "0.38.1"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97ddaa6999d246ba2c6c84d830a1ba0cd16c9234d58701988b3869f0e5bd732d"
+checksum = "58d670cf4d47a1b8ffef54286a5625382e360a34ee76902fd93ad8c7032a0c30"
 dependencies = [
  "chrono",
  "futures-util",
@@ -838,9 +853,9 @@ dependencies = [
 
 [[package]]
 name = "async-tar"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c49359998a76e32ef6e870dbc079ebad8f1e53e8441c5dd39d27b44493fe331"
+checksum = "a42f905d4f623faf634bbd1e001e84e0efc24694afa64be9ad239bf6ca49e1f8"
 dependencies = [
  "async-std",
  "filetime",
@@ -1645,8 +1660,8 @@ dependencies = [
 
 [[package]]
 name = "blade-graphics"
-version = "0.4.0"
-source = "git+https://github.com/kvark/blade?rev=fee06c42f658b36dd9ac85444a9ee2a481383695#fee06c42f658b36dd9ac85444a9ee2a481383695"
+version = "0.5.0"
+source = "git+https://github.com/kvark/blade?rev=e142a3a5e678eb6a13e642ad8401b1f3aa38e969#e142a3a5e678eb6a13e642ad8401b1f3aa38e969"
 dependencies = [
  "ash",
  "ash-window",
@@ -1675,8 +1690,8 @@ dependencies = [
 
 [[package]]
 name = "blade-macros"
-version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=fee06c42f658b36dd9ac85444a9ee2a481383695#fee06c42f658b36dd9ac85444a9ee2a481383695"
+version = "0.3.0"
+source = "git+https://github.com/kvark/blade?rev=e142a3a5e678eb6a13e642ad8401b1f3aa38e969#e142a3a5e678eb6a13e642ad8401b1f3aa38e969"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1686,7 +1701,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/kvark/blade?rev=fee06c42f658b36dd9ac85444a9ee2a481383695#fee06c42f658b36dd9ac85444a9ee2a481383695"
+source = "git+https://github.com/kvark/blade?rev=e142a3a5e678eb6a13e642ad8401b1f3aa38e969#e142a3a5e678eb6a13e642ad8401b1f3aa38e969"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -3269,7 +3284,7 @@ version = "3.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90eeab0aa92f3f9b4e87f258c72b139c207d251f9cbc1080a0086b86a8870dd3"
 dependencies = [
- "nix 0.29.0",
+ "nix",
  "windows-sys 0.59.0",
 ]
 
@@ -4871,9 +4886,9 @@ dependencies = [
 
 [[package]]
 name = "glow"
-version = "0.13.1"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd348e04c43b32574f2de31c8bb397d96c9fcfa1371bd4ca6d8bdc464ab121b1"
+checksum = "f865cbd94bd355b89611211e49508da98a1fce0ad755c1e8448fb96711b24528"
 dependencies = [
  "js-sys",
  "slotmap",
@@ -4913,6 +4928,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.30",
  "http_client",
+ "isahc",
  "schemars",
  "serde",
  "serde_json",
@@ -6122,7 +6138,7 @@ dependencies = [
  "lsp",
  "parking_lot",
  "postage",
- "pulldown-cmark",
+ "pulldown-cmark 0.12.1",
  "rand 0.8.5",
  "regex",
  "rpc",
@@ -6642,7 +6658,7 @@ dependencies = [
  "linkify",
  "log",
  "node_runtime",
- "pulldown-cmark",
+ "pulldown-cmark 0.12.1",
  "settings",
  "theme",
  "ui",
@@ -6662,7 +6678,8 @@ dependencies = [
  "linkify",
  "log",
  "pretty_assertions",
- "pulldown-cmark",
+ "pulldown-cmark 0.12.1",
+ "settings",
  "theme",
  "ui",
  "workspace",
@@ -6757,7 +6774,7 @@ dependencies = [
  "once_cell",
  "opener",
  "pathdiff",
- "pulldown-cmark",
+ "pulldown-cmark 0.10.3",
  "regex",
  "serde",
  "serde_json",
@@ -7050,18 +7067,6 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
-
-[[package]]
-name = "nix"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
-dependencies = [
- "bitflags 2.6.0",
- "cfg-if",
- "cfg_aliases 0.1.1",
- "libc",
-]
 
 [[package]]
 name = "nix"
@@ -7864,21 +7869,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 
 [[package]]
-name = "performance"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "gpui",
- "log",
- "schemars",
- "serde",
- "settings",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "perplexity"
 version = "0.1.0"
 dependencies = [
@@ -8605,6 +8595,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulldown-cmark"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "666f0f59e259aea2d72e6012290c09877a780935cc3c18b1ceded41f3890d59c"
+dependencies = [
+ "bitflags 2.6.0",
+ "memchr",
+ "unicase",
+]
+
+[[package]]
 name = "pulldown-cmark-escape"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9182,7 +9183,7 @@ dependencies = [
  "gpui",
  "language",
  "linkify",
- "pulldown-cmark",
+ "pulldown-cmark 0.12.1",
  "theme",
  "ui",
  "util",
@@ -14154,7 +14155,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "hex",
- "nix 0.29.0",
+ "nix",
  "ordered-stream",
  "rand 0.8.5",
  "serde",
@@ -14196,7 +14197,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.152.0"
+version = "0.153.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -14252,14 +14253,13 @@ dependencies = [
  "markdown_preview",
  "menu",
  "mimalloc",
- "nix 0.28.0",
+ "nix",
  "node_runtime",
  "notifications",
  "outline",
  "outline_panel",
  "parking_lot",
  "paths",
- "performance",
  "profiling",
  "project",
  "project_panel",
@@ -14484,14 +14484,14 @@ dependencies = [
 
 [[package]]
 name = "zed_svelte"
-version = "0.0.3"
+version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "zed_terraform"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

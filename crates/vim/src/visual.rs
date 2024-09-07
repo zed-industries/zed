@@ -30,6 +30,7 @@ actions!(
         VisualDelete,
         VisualDeleteLine,
         VisualYank,
+        VisualYankLine,
         OtherEnd,
         SelectNext,
         SelectPrevious,
@@ -58,7 +59,12 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.record_current_action(cx);
         vim.visual_delete(true, cx);
     });
-    Vim::action(editor, cx, |vim, _: &VisualYank, cx| vim.visual_yank(cx));
+    Vim::action(editor, cx, |vim, _: &VisualYank, cx| {
+        vim.visual_yank(false, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &VisualYankLine, cx| {
+        vim.visual_yank(true, cx)
+    });
 
     Vim::action(editor, cx, Vim::select_next);
     Vim::action(editor, cx, Vim::select_previous);
@@ -77,7 +83,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
             return;
         };
         let ranges = start
-            .into_iter()
+            .iter()
             .zip(end)
             .zip(reversed)
             .map(|((start, end), reversed)| (*start, *end, reversed))
@@ -223,7 +229,7 @@ impl Vim {
                 head = movement::saturating_left(map, head);
             }
 
-            let Some((new_head, _)) = move_selection(&map, head, goal) else {
+            let Some((new_head, _)) = move_selection(map, head, goal) else {
                 return;
             };
             head = new_head;
@@ -440,10 +446,11 @@ impl Vim {
         self.switch_mode(Mode::Normal, true, cx);
     }
 
-    pub fn visual_yank(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn visual_yank(&mut self, line_mode: bool, cx: &mut ViewContext<Self>) {
         self.store_visual_marks(cx);
         self.update_editor(cx, |vim, editor, cx| {
-            let line_mode = editor.selections.line_mode;
+            let line_mode = line_mode || editor.selections.line_mode;
+            editor.selections.line_mode = line_mode;
             vim.yank_selections_content(editor, line_mode, cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
@@ -472,7 +479,7 @@ impl Vim {
                 let stable_anchors = editor
                     .selections
                     .disjoint_anchors()
-                    .into_iter()
+                    .iter()
                     .map(|selection| {
                         let start = selection.start.bias_left(&display_map.buffer_snapshot);
                         start..start
@@ -613,7 +620,7 @@ impl Vim {
                 self.stop_recording(cx);
                 self.visual_delete(false, cx)
             }
-            Some(Operator::Yank) => self.visual_yank(cx),
+            Some(Operator::Yank) => self.visual_yank(false, cx),
             _ => {} // Ignoring other operators
         }
     }

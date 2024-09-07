@@ -5,7 +5,6 @@ use crate::{
     SvgSize, UriOrPath, WindowContext,
 };
 use futures::{AsyncReadExt, Future};
-use http_client;
 use image::{
     codecs::gif::GifDecoder, AnimationDecoder, Frame, ImageBuffer, ImageError, ImageFormat,
 };
@@ -47,7 +46,7 @@ impl From<SharedUri> for ImageSource {
 
 impl From<&'static str> for ImageSource {
     fn from(s: &'static str) -> Self {
-        if is_uri(&s) {
+        if is_uri(s) {
             Self::Uri(s.into())
         } else {
             Self::Embedded(s.into())
@@ -187,18 +186,17 @@ impl Element for Img {
                         }
 
                         let image_size = data.size(frame_index);
-                        match (style.size.width, style.size.height) {
-                            (Length::Auto, Length::Auto) => {
-                                style.size = Size {
-                                    width: Length::Definite(DefiniteLength::Absolute(
-                                        AbsoluteLength::Pixels(px(image_size.width.0 as f32)),
-                                    )),
-                                    height: Length::Definite(DefiniteLength::Absolute(
-                                        AbsoluteLength::Pixels(px(image_size.height.0 as f32)),
-                                    )),
-                                }
+
+                        if let (Length::Auto, Length::Auto) = (style.size.width, style.size.height)
+                        {
+                            style.size = Size {
+                                width: Length::Definite(DefiniteLength::Absolute(
+                                    AbsoluteLength::Pixels(px(image_size.width.0 as f32)),
+                                )),
+                                height: Length::Definite(DefiniteLength::Absolute(
+                                    AbsoluteLength::Pixels(px(image_size.height.0 as f32)),
+                                )),
                             }
-                            _ => {}
                         }
 
                         if global_id.is_some() && data.frame_count() > 1 {

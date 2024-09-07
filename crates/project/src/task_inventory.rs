@@ -395,7 +395,7 @@ fn task_lru_comparator(
 ) -> cmp::Ordering {
     lru_score_a
         // First, display recently used templates above all.
-        .cmp(&lru_score_b)
+        .cmp(lru_score_b)
         // Then, ensure more specific sources are displayed first.
         .then(task_source_kind_preference(kind_a).cmp(&task_source_kind_preference(kind_b)))
         // After that, display first more specific tasks, using more template variables.

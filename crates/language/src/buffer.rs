@@ -68,7 +68,7 @@ pub use lsp::DiagnosticSeverity;
 
 /// A label for the background task spawned by the buffer to compute
 /// a diff against the contents of its file.
-pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(|| TaskLabel::new());
+pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
 /// Indicate whether a [Buffer] has permissions to edit.
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -1105,7 +1105,6 @@ impl Buffer {
         {
             Ok(new_syntax_snapshot) => {
                 self.did_finish_parsing(new_syntax_snapshot, cx);
-                return;
             }
             Err(parse_task) => {
                 self.parsing_in_background = true;
@@ -1938,25 +1937,23 @@ impl Buffer {
             );
         }
 
-        if space_above {
-            if position.row > 0 && !self.is_line_blank(position.row - 1) {
-                self.edit(
-                    [(position..position, "\n")],
-                    Some(AutoindentMode::EachLine),
-                    cx,
-                );
-                position.row += 1;
-            }
+        if space_above && position.row > 0 && !self.is_line_blank(position.row - 1) {
+            self.edit(
+                [(position..position, "\n")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            position.row += 1;
         }
 
-        if space_below {
-            if position.row == self.max_point().row || !self.is_line_blank(position.row + 1) {
-                self.edit(
-                    [(position..position, "\n")],
-                    Some(AutoindentMode::EachLine),
-                    cx,
-                );
-            }
+        if space_below
+            && (position.row == self.max_point().row || !self.is_line_blank(position.row + 1))
+        {
+            self.edit(
+                [(position..position, "\n")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
         }
 
         self.end_transaction(cx);
@@ -2094,7 +2091,7 @@ impl Buffer {
     ) {
         if lamport_timestamp > self.diagnostics_timestamp {
             let ix = self.diagnostics.binary_search_by_key(&server_id, |e| e.0);
-            if diagnostics.len() == 0 {
+            if diagnostics.is_empty() {
                 if let Ok(ix) = ix {
                     self.diagnostics.remove(ix);
                 }
@@ -2582,7 +2579,7 @@ impl BufferSnapshot {
         });
         let highlight_maps = captures
             .grammars()
-            .into_iter()
+            .iter()
             .map(|grammar| grammar.highlight_map())
             .collect();
         (captures, highlight_maps)
@@ -3422,31 +3419,35 @@ impl BufferSnapshot {
                 current_depth
             };
 
-            if depth < current_depth {
-                for _ in 0..(current_depth - depth) {
-                    let mut indent = indent_stack.pop().unwrap();
-                    if last_row != first_row {
-                        // In this case, we landed on an empty row, had to seek forward,
-                        // and discovered that the indent we where on is ending.
-                        // This means that the last display row must
-                        // be on line that ends this indent range, so we
-                        // should display the range up to the first non-empty line
-                        indent.end_row = first_row.saturating_sub(1);
-                    }
+            match depth.cmp(&current_depth) {
+                Ordering::Less => {
+                    for _ in 0..(current_depth - depth) {
+                        let mut indent = indent_stack.pop().unwrap();
+                        if last_row != first_row {
+                            // In this case, we landed on an empty row, had to seek forward,
+                            // and discovered that the indent we where on is ending.
+                            // This means that the last display row must
+                            // be on line that ends this indent range, so we
+                            // should display the range up to the first non-empty line
+                            indent.end_row = first_row.saturating_sub(1);
+                        }
 
-                    result_vec.push(indent)
+                        result_vec.push(indent)
+                    }
                 }
-            } else if depth > current_depth {
-                for next_depth in current_depth..depth {
-                    indent_stack.push(IndentGuide {
-                        buffer_id: self.remote_id(),
-                        start_row: first_row,
-                        end_row: last_row,
-                        depth: next_depth,
-                        tab_size,
-                        settings,
-                    });
+                Ordering::Greater => {
+                    for next_depth in current_depth..depth {
+                        indent_stack.push(IndentGuide {
+                            buffer_id: self.remote_id(),
+                            start_row: first_row,
+                            end_row: last_row,
+                            depth: next_depth,
+                            tab_size,
+                            settings,
+                        });
+                    }
                 }
+                _ => {}
             }
 
             for indent in indent_stack.iter_mut() {

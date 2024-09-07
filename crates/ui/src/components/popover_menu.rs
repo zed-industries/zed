@@ -156,7 +156,7 @@ impl<M: ManagedView> PopoverMenu<M> {
     }
 
     fn resolved_attach(&self) -> AnchorCorner {
-        self.attach.unwrap_or_else(|| match self.anchor {
+        self.attach.unwrap_or(match self.anchor {
             AnchorCorner::TopLeft => AnchorCorner::BottomLeft,
             AnchorCorner::TopRight => AnchorCorner::BottomRight,
             AnchorCorner::BottomLeft => AnchorCorner::TopLeft,
@@ -322,7 +322,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             menu.prepaint(cx);
         }
 
-        let hitbox_id = request_layout.child_layout_id.map(|layout_id| {
+        request_layout.child_layout_id.map(|layout_id| {
             let bounds = cx.layout_bounds(layout_id);
             cx.with_element_state(global_id.unwrap(), |element_state, _cx| {
                 let mut element_state: PopoverMenuElementState<M> = element_state.unwrap();
@@ -331,9 +331,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             });
 
             cx.insert_hitbox(bounds, false).id
-        });
-
-        hitbox_id
+        })
     }
 
     fn paint(

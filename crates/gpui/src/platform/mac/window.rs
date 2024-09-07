@@ -449,7 +449,7 @@ impl MacWindowState {
         window_frame.origin.y =
             screen_frame.size.height - window_frame.origin.y - window_frame.size.height;
 
-        let bounds = Bounds::new(
+        Bounds::new(
             point(
                 px((window_frame.origin.x - screen_frame.origin.x) as f32),
                 px((window_frame.origin.y + screen_frame.origin.y) as f32),
@@ -458,8 +458,7 @@ impl MacWindowState {
                 px(window_frame.size.width as f32),
                 px(window_frame.size.height as f32),
             ),
-        );
-        bounds
+        )
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -537,7 +536,7 @@ impl MacWindow {
 
             let display = display_id
                 .and_then(MacDisplay::find_by_id)
-                .unwrap_or_else(|| MacDisplay::primary());
+                .unwrap_or_else(MacDisplay::primary);
 
             let mut target_screen = nil;
             let mut screen_frame = None;
@@ -784,12 +783,12 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().bounds()
     }
 
-    fn is_maximized(&self) -> bool {
-        self.0.as_ref().lock().is_maximized()
-    }
-
     fn window_bounds(&self) -> WindowBounds {
         self.0.as_ref().lock().window_bounds()
+    }
+
+    fn is_maximized(&self) -> bool {
+        self.0.as_ref().lock().is_maximized()
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -975,6 +974,8 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn set_app_id(&mut self, _app_id: &str) {}
+
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut this = self.0.as_ref().lock();
         this.renderer
@@ -1003,6 +1004,30 @@ impl PlatformWindow for MacWindow {
             let window_number = this.native_window.windowNumber();
             CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
         }
+    }
+
+    fn set_edited(&mut self, edited: bool) {
+        unsafe {
+            let window = self.0.lock().native_window;
+            msg_send![window, setDocumentEdited: edited as BOOL]
+        }
+
+        // Changing the document edited state resets the traffic light position,
+        // so we have to move it again.
+        self.0.lock().move_traffic_light();
+    }
+
+    fn show_character_palette(&self) {
+        let this = self.0.lock();
+        let window = this.native_window;
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    let app = NSApplication::sharedApplication(nil);
+                    let _: () = msg_send![app, orderFrontCharacterPalette: window];
+                }
+            })
+            .detach();
     }
 
     fn minimize(&self) {
@@ -1081,40 +1106,14 @@ impl PlatformWindow for MacWindow {
         self.0.lock().appearance_changed_callback = Some(callback);
     }
 
-    fn draw(&self, scene: &crate::Scene, on_complete: Option<oneshot::Sender<()>>) {
+    fn draw(&self, scene: &crate::Scene) {
         let mut this = self.0.lock();
-        this.renderer.draw(scene, on_complete);
+        this.renderer.draw(scene);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
     }
-
-    fn set_edited(&mut self, edited: bool) {
-        unsafe {
-            let window = self.0.lock().native_window;
-            msg_send![window, setDocumentEdited: edited as BOOL]
-        }
-
-        // Changing the document edited state resets the traffic light position,
-        // so we have to move it again.
-        self.0.lock().move_traffic_light();
-    }
-
-    fn show_character_palette(&self) {
-        let this = self.0.lock();
-        let window = this.native_window;
-        this.executor
-            .spawn(async move {
-                unsafe {
-                    let app = NSApplication::sharedApplication(nil);
-                    let _: () = msg_send![app, orderFrontCharacterPalette: window];
-                }
-            })
-            .detach();
-    }
-
-    fn set_app_id(&mut self, _app_id: &str) {}
 
     fn gpu_specs(&self) -> Option<crate::GPUSpecs> {
         None
@@ -1125,10 +1124,6 @@ impl PlatformWindow for MacWindow {
             let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
             let _: () = msg_send![input_context, invalidateCharacterCoordinates];
         }
-    }
-
-    fn fps(&self) -> Option<f32> {
-        Some(self.0.lock().renderer.fps())
     }
 }
 
@@ -1981,13 +1976,10 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
             }
             window_state.lock().input_handler = Some(input_handler);
         } else {
-            match ime {
-                ImeInput::InsertText(text, range) => {
-                    if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
-                        ime_input.push((text, range));
-                    }
+            if let ImeInput::InsertText(text, range) = ime {
+                if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
+                    ime_input.push((text, range));
                 }
-                _ => {}
             }
         }
     }

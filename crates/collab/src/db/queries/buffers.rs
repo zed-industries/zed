@@ -391,7 +391,7 @@ impl Database {
         drop(rows);
 
         if collaborators.is_empty() {
-            self.snapshot_channel_buffer(channel_id, &tx).await?;
+            self.snapshot_channel_buffer(channel_id, tx).await?;
         }
 
         Ok(LeftChannelBuffer {
