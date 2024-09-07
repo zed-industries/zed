@@ -1,50 +1,91 @@
-; Special identifiers
-;--------------------
+; ; Special identifiers
+; ;--------------------
 
-; Treat capitalized tag names as constructors and types
-((tag_name) @type
- (#match? @type "^[A-Z]"))
-
-; Regular (lowercase) tag names
-((tag_name) @tag
- (#match? @tag "^[a-z]"))
-
-; TODO:
-(attribute_name) @property
-(erroneous_end_tag_name) @keyword
+; comments
 (comment) @comment
 
-[
-  (attribute_value)
-  (quoted_attribute_value)
-] @string
+; property attribute
+; TODO: we need to break this down in the source repository to distinguish between
+; - directives, eg: foo:bar="baz" and foo="baz"
+; - possibly --props
+(attribute_name) @attribute
 
-[
-  (text)
-  (raw_text_expr)
-  (raw_text_each)
-] @none
+; Style component attributes as @property
+(start_tag
+    (
+        (tag_name) @_tag_name
+        (#match? @_tag_name "^[A-Z]")
+    )
+    (attribute
+        (attribute_name) @property
+    )
+)
 
-[
-  (special_block_keyword)
-  (then)
-  (as)
-] @keyword
+(self_closing_tag
+    (
+        (tag_name) @_tag_name
+        (#match? @_tag_name "^[A-Z]")
+    )
+    (attribute
+        (attribute_name) @property
+    )
+)
 
-[
-  "{"
-  "}"
-] @punctuation.bracket
 
-"=" @operator
+; style elements starting with lowercase letters as tags
+(
+    (tag_name) @tag
+    (#match? @tag "^[a-z]")
+)
+
+; style elements starting with uppercase letters as components (types)
+; Also valid might be to treat them as constructors
+(
+    (tag_name) @tag @tag.component.type.constructor
+    (#match? @tag "^[A-Z]")
+)
 
 [
   "<"
   ">"
   "</"
   "/>"
+] @tag.punctuation.bracket
+
+
+[
+  "{"
+  "}"
+] @punctuation.bracket
+
+
+[
+  "@"
   "#"
   ":"
   "/"
-  "@"
-] @tag.delimiter
+] @tag.punctuation.special
+
+"=" @operator
+
+
+; Treating (if, each, ...) as a keyword inside of blocks
+; like {#if ...} or {#each ...}
+(block_start_tag
+    tag: _ @tag.keyword
+)
+
+(block_tag
+    tag: _ @tag.keyword
+)
+
+(block_end_tag
+    tag: _ @tag.keyword
+)
+
+(expression_tag
+    tag: _ @tag.keyword
+)
+
+; Style quoted string attribute values
+(quoted_attribute_value) @string
