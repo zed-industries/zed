@@ -3441,7 +3441,6 @@ dependencies = [
  "menu",
  "project",
  "serde",
- "serde_json",
  "settings",
  "task",
  "tasks_ui",

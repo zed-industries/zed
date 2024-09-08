@@ -18,7 +18,6 @@ log.workspace = true
 menu.workspace = true
 project.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 settings.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
