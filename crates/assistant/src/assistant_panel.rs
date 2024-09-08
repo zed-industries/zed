@@ -939,9 +939,16 @@ impl AssistantPanel {
         cx: &mut ViewContext<Workspace>,
     ) {
         if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-            panel.update(cx, |panel, cx| {
-                panel.new_context(cx);
-            });
+            let did_create_context = panel
+                .update(cx, |panel, cx| {
+                    panel.new_context(cx)?;
+
+                    Some(())
+                })
+                .is_some();
+            if did_create_context {
+                ContextEditor::quote_selection(workspace, &Default::default(), cx);
+            }
         }
     }
 
