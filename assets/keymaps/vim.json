@@ -214,7 +214,7 @@
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "y": ["vim::PushOperator", "Yank"],
-      "shift-y": "vim::YankToEndOfLine",
+      "shift-y": "vim::YankLine",
       "i": "vim::InsertBefore",
       "shift-i": "vim::InsertFirstNonWhitespace",
       "a": "vim::InsertAfter",
