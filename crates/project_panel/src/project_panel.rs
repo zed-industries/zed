@@ -68,7 +68,7 @@ pub struct ProjectPanel {
     last_external_paths_drag_over_entry: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     unfolded_dir_ids: HashSet<ProjectEntryId>,
-    // Currently selected entry in a file tree
+    // Currently selected leaf entry (see auto-folding for a definition of that) in a file tree
     selection: Option<SelectedEntry>,
     marked_entries: BTreeSet<SelectedEntry>,
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
@@ -1640,14 +1640,35 @@ impl ProjectPanel {
     // Returns list of entries that should be affected by an operation.
     // When currently selected entry is not marked, it's treated as the only marked entry.
     fn marked_entries(&self) -> BTreeSet<SelectedEntry> {
-        let Some(selection) = self.selection else {
+        let Some(mut selection) = self.selection else {
             return Default::default();
         };
         if self.marked_entries.contains(&selection) {
-            self.marked_entries.clone()
+            self.marked_entries
+                .iter()
+                .copied()
+                .map(|mut entry| {
+                    entry.entry_id = self.resolve_entry(entry.entry_id);
+                    entry
+                })
+                .collect()
         } else {
+            selection.entry_id = self.resolve_entry(selection.entry_id);
             BTreeSet::from_iter([selection])
         }
+    }
+
+    fn resolve_entry(&self, id: ProjectEntryId) -> ProjectEntryId {
+        self.ancestors
+            .get(&id)
+            .and_then(|ancestors| {
+                if ancestors.current_ancestor_depth == 0 {
+                    return None;
+                }
+                ancestors.ancestors.get(ancestors.current_ancestor_depth)
+            })
+            .copied()
+            .unwrap_or(id)
     }
     pub fn selected_entry<'a>(
         &self,
@@ -1666,18 +1687,9 @@ impl ProjectPanel {
         let (worktree, mut entry) = self.selected_entry_handle(cx)?;
 
         let worktree = worktree.read(cx);
-        if let Some(selected_entry_id) = self
-            .ancestors
-            .get(&entry.id)
-            .and_then(|ancestors| {
-                if ancestors.current_ancestor_depth == 0 {
-                    return None;
-                }
-                ancestors.ancestors.get(ancestors.current_ancestor_depth)
-            })
-            .copied()
-        {
-            entry = worktree.entry_for_id(selected_entry_id)?;
+        let resolved_id = self.resolve_entry(entry.id);
+        if resolved_id != entry.id {
+            entry = worktree.entry_for_id(resolved_id)?;
         }
         Some((worktree, entry))
     }
