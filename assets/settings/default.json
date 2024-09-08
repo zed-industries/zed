@@ -111,6 +111,18 @@
   "use_system_path_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
+  // Cursor shape for the default editor.
+  //  1. A vertical bar
+  //     "bar"
+  //  2. A block that surrounds the following character
+  //     "block"
+  //  3. An underline that runs along the following character
+  //     "underscore"
+  //  4. A box drawn around the following character
+  //     "hollow"
+  //
+  // Default: bar
+  "cursor_shape": "bar",
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:

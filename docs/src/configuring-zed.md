@@ -293,6 +293,38 @@ List of `string` values
 
 `boolean` values
 
+## Cursor Shape
+
+- Description: Cursor shape for the default editor.
+- Setting: `cursor_shape`
+- Default: `bar`
+
+**Options**
+
+1. A vertical bar:
+
+```json
+"cursor_shape": "bar"
+```
+
+2. A block that surrounds the following character:
+
+```json
+"cursor_shape": "block"
+```
+
+3. An underline that runs along the following character:
+
+```json
+"cursor_shape": "underline"
+```
+
+4. An box drawn around the following character:
+
+```json
+"cursor_shape": "hollow"
+```
+
 ## Default Dock Anchor
 
 - Description: The default anchor for new docks.
