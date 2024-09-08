@@ -82,15 +82,6 @@ pub enum DebugConnectionType {
     STDIO,
 }
 
-// "label" : "Name of debug task",
-// "command": "Null",
-// "task_type": "debug",
-// "debug_adapter or adapter or debugger": "name of adapter or custom",
-// "adapter_path": "Abs path to adapter (we would eventually remove this)",
-// "session_type": "launch|attach",
-// "program": "Program to debug (main.out)"
-//
-
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugTaskDefinition {
