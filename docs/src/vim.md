@@ -96,14 +96,18 @@ Finally, vim mode's search and replace functionality is backed by Zed's. This me
 You can edit your personal key bindings with `:keymap`.
 For vim-specific shortcuts, you may find the following template a good place to start.
 
-> **Note:** We made some breaking changes in Zed version `0.145.0`. For older versions, see [the previous version of this document](https://github.com/zed-industries/zed/blob/c67aeaa9c58619a58708722ac7d7a78c75c29336/docs/src/vim.md#L90).
-
 ```json
 [
   {
     "context": "VimControl && !menu",
     "bindings": {
       // put key-bindings here if you want them to work in normal & visual mode
+    }
+  },
+  {
+    "context": "vim_mode == normal && !menu",
+    "bindings": {
+      // "shift-y": ["workspace::SendKeystrokes", "y $"] // use nvim's Y behavior
     }
   },
   {
@@ -162,7 +166,7 @@ Vim mode allows you to enable Zed’s command palette with `:`. This means that 
 
 Additionally vim mode contains a number of aliases for popular vim commands to ensure that muscle memory works. For example `:w<enter>` will save the file.
 
-We do not (yet) emulate the full power of vim’s command line, in particular we special case specific patterns instead of using vim's range selection syntax, and we do not support arguments to commands yet. Please reach out on [GitHub](https://github.com/zed-industries/zed) as you find things that are missing from the command palette.
+We do not (yet) emulate the full power of vim’s command line, in particular we we do not support arguments to commands yet. Please reach out on [GitHub](https://github.com/zed-industries/zed) as you find things that are missing from the command palette.
 
 As mentioned above, one thing to be aware of is that the regex engine is slightly different from vim's in `:%s/a/b`.
 
@@ -191,6 +195,12 @@ Currently supported vim-specific commands:
 :cc, :ll
     to open the errors page
 
+# handling git diff
+:dif[fupdate]
+    to view the diff under the cursor ("d o" in normal mode)
+:rev[ert]
+    to revert the diff under the cursor ("d p" in normal mode)
+
 # jump to position
 :<number>
     to jump to a line number
@@ -200,11 +210,8 @@ Currently supported vim-specific commands:
     to jump to next/prev line matching foo
 
 # replacement (/g is always assumed and Zed uses different regex syntax to vim)
-:%s/foo/bar/
+:[range]s/foo/bar/
   to replace instances of foo with bar
-:X,Ys/foo/bar/
-    to limit replacement between line X and Y
-    other ranges are not yet implemented
 
 # editing
 :j[oin]
@@ -213,18 +220,18 @@ Currently supported vim-specific commands:
     to delete the current line (no range is yet supported)
 :s[ort] [i]
     to sort the current selection (with i, case-insensitively)
+:y[ank]
 ```
 
 As any Zed command is available, you may find that it's helpful to remember mnemonics that run the correct command. For example:
 
 ```
-:diff   Toggle Hunk [Diff]
 :diffs  Toggle all Hunk [Diffs]
-:revert Revert Selected Hunks
 :cpp    [C]o[p]y [P]ath to file
 :crp    [C]opy [r]elative [P]ath
 :reveal [Reveal] in finder
 :zlog   Open [Z]ed Log
+:clank  [C]ancel [lan]guage server work[k]
 ```
 
 ## Settings
