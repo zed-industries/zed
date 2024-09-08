@@ -415,7 +415,7 @@ pub struct ThemeColorsContent {
 
     /// Highlighted brackets background color.
     ///
-    /// Matching brackets in the cursor scope are hightlighted with this background color
+    /// Matching brackets in the cursor scope are highlighted with this background color.
     #[serde(rename = "editor.document_highlight.bracket_background")]
     pub editor_document_highlight_bracket_background: Option<String>,
 
