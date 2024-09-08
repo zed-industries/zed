@@ -27,6 +27,8 @@ pub use open_listener::*;
 use anyhow::Context as _;
 use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
+#[cfg(feature = "helix")]
+use helix::HelixModeSetting;
 use outline_panel::OutlinePanel;
 use project::{DirectoryLister, Item};
 use project_panel::ProjectPanel;
@@ -806,6 +808,8 @@ pub fn handle_keymap_file_changes(
 ) {
     BaseKeymap::register(cx);
     VimModeSetting::register(cx);
+    #[cfg(feature = "helix")]
+    HelixModeSetting::register(cx);
 
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
@@ -866,6 +870,10 @@ pub fn load_default_keymap(cx: &mut AppContext) {
     KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
     if VimModeSetting::get_global(cx).0 {
         KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+    }
+    #[cfg(feature = "helix")]
+    if HelixModeSetting::get_global(cx).0 {
+        KeymapFile::load_asset("keymaps/helix.json", cx).unwrap();
     }
 
     if let Some(asset_path) = base_keymap.asset_path() {

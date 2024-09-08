@@ -5353,6 +5353,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "helix"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "command_palette",
+ "command_palette_hooks",
+ "editor",
+ "futures 0.3.30",
+ "gpui",
+ "indoc",
+ "itertools 0.13.0",
+ "language",
+ "log",
+ "lsp",
+ "multi_buffer",
+ "parking_lot",
+ "regex",
+ "release_channel",
+ "schemars",
+ "search",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "settings",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15077,6 +15109,7 @@ dependencies = [
  "git_hosting_providers",
  "go_to_line",
  "gpui",
+ "helix",
  "http_client",
  "image_viewer",
  "inline_completion_button",
