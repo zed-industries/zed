@@ -422,7 +422,7 @@ fn render_markdown_text(
                 any_element.push(x);
             }
             MarkdownParagraph::MarkdownImage(img) => {
-                let element = div().child(gpui::img(img.to_string())).into_any();
+                let element = div().child(img.clone().into_any_element()).into_any();
                 any_element.push(element);
             }
         }
