@@ -154,8 +154,6 @@ pub trait DebugAdapter: Debug + Send + Sync + 'static {
 
     async fn connect(&self, cx: &mut AsyncAppContext) -> anyhow::Result<TransportParams>;
 
-    fn get_debug_adapter_start_command(&self) -> String;
-
     fn is_installed(&self) -> Option<DebugAdapterBinary>;
 
     fn download_adapter(&self) -> anyhow::Result<DebugAdapterBinary>;
@@ -188,16 +186,14 @@ impl DebugAdapter for PythonDebugAdapter {
 
     async fn connect(&self, _cx: &mut AsyncAppContext) -> Result<TransportParams> {
         let command = "python3".to_string();
-        let args = vec![self
-            .adapter_path
-            .clone()
-            .unwrap_or("/Users/eid/Developer/zed_debugger/".to_string())];
+
+        let args = if let Some(path) = self.adapter_path.clone() {
+            vec![path]
+        } else {
+            Vec::new()
+        };
 
         create_stdio_client(&command, &args)
-    }
-
-    fn get_debug_adapter_start_command(&self) -> String {
-        "fail".to_string()
     }
 
     fn is_installed(&self) -> Option<DebugAdapterBinary> {
@@ -238,22 +234,20 @@ impl DebugAdapter for PhpDebugAdapter {
 
     async fn connect(&self, cx: &mut AsyncAppContext) -> Result<TransportParams> {
         let command = "bun".to_string();
-        let args = vec![self
-            .adapter_path
-            .clone()
-            .unwrap_or("/Users/eid/Developer/zed_debugger/".to_string())];
+
+        let args = if let Some(path) = self.adapter_path.clone() {
+            vec![path, "--server=8132".into()]
+        } else {
+            Vec::new()
+        };
 
         let host = TCPHost {
-            port: None,
+            port: Some(8132),
             host: None,
-            delay: None,
+            delay: Some(1000),
         };
 
         create_tcp_client(host, &command, &args, cx).await
-    }
-
-    fn get_debug_adapter_start_command(&self) -> String {
-        "fail".to_string()
     }
 
     fn is_installed(&self) -> Option<DebugAdapterBinary> {
