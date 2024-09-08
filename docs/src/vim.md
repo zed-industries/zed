@@ -164,9 +164,9 @@ If you're using vim mode on Linux or Windows, you may find it overrides keybindi
 
 Vim mode allows you to enable Zed’s command palette with `:`. This means that you can use vim's command palette to run any action that Zed supports.
 
-Additionally vim mode contains a number of aliases for popular vim commands to ensure that muscle memory works. For example `:w<enter>` will save the file.
+Additionally, vim mode contains a number of aliases for popular vim commands to ensure that muscle memory works. For example `:w<enter>` will save the file.
 
-We do not (yet) emulate the full power of vim’s command line, in particular we we do not support arguments to commands yet. Please reach out on [GitHub](https://github.com/zed-industries/zed) as you find things that are missing from the command palette.
+We do not (yet) emulate the full power of vim’s command line, in particular, we do not support arguments to commands yet. Please reach out on [GitHub](https://github.com/zed-industries/zed) as you find things that are missing from the command palette.
 
 As mentioned above, one thing to be aware of is that the regex engine is slightly different from vim's in `:%s/a/b`.
 
