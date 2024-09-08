@@ -291,6 +291,8 @@ pub enum Image {
         source_range: Range<usize>,
         /// The URL of the Image.
         url: String,
+        /// Link URL if exists.
+        link: Option<Link>,
     },
     ///  Image path on the filesystem.
     Path {
@@ -299,6 +301,8 @@ pub enum Image {
         display_path: PathBuf,
         /// The absolute path to the item.
         path: PathBuf,
+        /// Link URL if exists.
+        link: Option<Link>,
     },
 }
 
@@ -307,11 +311,13 @@ impl Image {
         source_range: Range<usize>,
         file_location_directory: Option<PathBuf>,
         text: String,
+        link: Option<Link>,
     ) -> Option<Image> {
         if text.starts_with("http") {
             return Some(Image::Web {
                 source_range,
                 url: text,
+                link,
             });
         }
         let path = PathBuf::from(&text);
@@ -320,6 +326,7 @@ impl Image {
                 source_range,
                 display_path: path.clone(),
                 path,
+                link,
             });
         }
         if let Some(file_location_directory) = file_location_directory {
@@ -330,6 +337,7 @@ impl Image {
                     source_range,
                     display_path,
                     path,
+                    link,
                 });
             }
         }
@@ -343,11 +351,13 @@ impl Display for Image {
             Image::Web {
                 source_range: _,
                 url,
+                link: _,
             } => write!(f, "{}", url),
             Image::Path {
                 source_range: _,
                 display_path,
                 path: _,
+                link: _,
             } => write!(f, "{}", display_path.display()),
         }
     }
@@ -359,6 +369,6 @@ impl RenderOnce for Image {
             Image::Web { url, .. } => ImageSource::Uri(url.into()),
             Image::Path { path, .. } => ImageSource::File(path.into()),
         };
-        div().child(div().flex_row().size_full().child(img(image_src)))
+        div().size_full().child(img(image_src))
     }
 }

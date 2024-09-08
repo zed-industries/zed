@@ -1,5 +1,5 @@
 use crate::markdown_elements::{
-    HeadingLevel, Link, MarkdownParagraph, ParsedMarkdown, ParsedMarkdownBlockQuote,
+    HeadingLevel, Image, Link, MarkdownParagraph, ParsedMarkdown, ParsedMarkdownBlockQuote,
     ParsedMarkdownCodeBlock, ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownListItem,
     ParsedMarkdownListItemType, ParsedMarkdownTable, ParsedMarkdownTableAlignment,
     ParsedMarkdownTableRow,
@@ -344,7 +344,7 @@ fn render_markdown_text(
     cx: &mut RenderContext,
 ) -> Vec<AnyElement> {
     let mut any_element = vec![];
-
+    // No need to clone parsed_new here, just iterate over the reference
     for parsed_region in parsed_new {
         match parsed_region {
             MarkdownParagraph::MarkdownText(parsed) => {
@@ -422,12 +422,57 @@ fn render_markdown_text(
                 any_element.push(x);
             }
             MarkdownParagraph::MarkdownImage(img) => {
-                let element = div().child(img.clone().into_any_element()).into_any();
-                any_element.push(element);
+                let (link, source_range) = match img {
+                    Image::Web {
+                        link, source_range, ..
+                    } => (link, source_range),
+                    Image::Path {
+                        link, source_range, ..
+                    } => (link, source_range),
+                };
+                let element_id = cx.next_id(source_range);
+
+                match link {
+                    None => {
+                        let element = div()
+                            .child(img.clone().into_any_element())
+                            .id(element_id)
+                            .into_any();
+                        any_element.push(element);
+                    }
+                    Some(link) => {
+                        let link_click = link.clone();
+                        let link_tooltip = link.clone();
+                        let element = div()
+                            .child(img.clone().into_any_element())
+                            .id(element_id)
+                            .tooltip(move |cx| LinkPreview::new(&link_tooltip.to_string(), cx))
+                            .on_click({
+                                let workspace = cx.workspace.clone();
+                                move |_event, window_cx| match &link_click {
+                                    Link::Web { url } => window_cx.open_url(url),
+                                    Link::Path {
+                                        display_path: _,
+                                        path,
+                                    } => {
+                                        if let Some(workspace) = &workspace {
+                                            _ = workspace.update(window_cx, |workspace, cx| {
+                                                workspace
+                                                    .open_abs_path(path.clone(), false, cx)
+                                                    .detach();
+                                            });
+                                        }
+                                    }
+                                }
+                            })
+                            .into_any();
+                        any_element.push(element);
+                    }
+                }
             }
         }
     }
-    return any_element;
+    any_element
 }
 
 fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {

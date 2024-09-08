@@ -224,17 +224,18 @@ impl<'a> MarkdownParser<'a> {
                 Event::Text(t) => {
                     text.push_str(t.as_ref());
                     let mut style = MarkdownHighlightStyle::default();
-
                     if let Some(image) = image.clone() {
                         let is_valid_image = match image.clone() {
                             Image::Path {
                                 source_range: _,
                                 display_path,
                                 path: _,
+                                link: _,
                             } => gpui::ImageSource::try_from(display_path).is_ok(),
                             Image::Web {
                                 source_range: _,
                                 url,
+                                link: _,
                             } => match isahc::get(url) {
                                 //replace when ImageSource returns error for URL
                                 Ok(response) => match response.status().as_u16() {
@@ -395,6 +396,7 @@ impl<'a> MarkdownParser<'a> {
                             source_range.clone(),
                             self.file_location_directory.clone(),
                             dest_url.to_string(),
+                            link.clone(),
                         );
                     }
                     _ => {
@@ -919,7 +921,8 @@ mod tests {
             paragraph[0],
             MarkdownParagraph::MarkdownImage(Image::Web {
                 source_range: 0..111,
-                url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string()
+                url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string(),
+                link: None,
             },)
         );
     }
