@@ -1583,6 +1583,7 @@ impl EditorElement {
     fn layout_breakpoints(
         &self,
         line_height: Pixels,
+        range: Range<DisplayRow>,
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
@@ -1600,6 +1601,10 @@ impl EditorElement {
                 .iter()
                 .filter_map(|point| {
                     let row = MultiBufferRow { 0: point.row().0 };
+
+                    if range.start > point.row() || range.end < point.row() {
+                        return None;
+                    }
 
                     if snapshot.is_line_folded(row) {
                         return None;
@@ -5592,6 +5597,7 @@ impl Element for EditorElement {
 
                     let breakpoints = self.layout_breakpoints(
                         line_height,
+                        start_row..end_row,
                         scroll_pixel_position,
                         &gutter_dimensions,
                         &gutter_hitbox,
