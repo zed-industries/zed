@@ -140,7 +140,7 @@ impl Transport {
                 .with_context(|| "reading a message from server")?
                 == 0
             {
-                return Err(anyhow!("reader stream closed"));
+                return Err(anyhow!("debugger reader stream closed"));
             };
 
             if buffer == "\r\n" {
@@ -175,7 +175,7 @@ impl Transport {
     ) -> Result<()> {
         buffer.truncate(0);
         if err.read_line(buffer).await? == 0 {
-            return Err(anyhow!("error stream closed"));
+            return Err(anyhow!("debugger error stream closed"));
         };
 
         Ok(())

@@ -130,15 +130,7 @@ impl DapStore {
         }
     }
 
-    pub fn start_client(
-        &mut self,
-        config: DebugAdapterConfig,
-        command: String,
-        args: Vec<String>,
-        cwd: PathBuf,
-        request_args: Option<serde_json::Value>,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn start_client(&mut self, config: DebugAdapterConfig, cx: &mut ModelContext<Self>) {
         let client_id = self.next_client_id();
 
         let start_client_task = cx.spawn(|this, mut cx| async move {
@@ -146,10 +138,6 @@ impl DapStore {
             let client = DebugAdapterClient::new(
                 client_id,
                 config,
-                &command,
-                &args,
-                &cwd,
-                request_args,
                 move |payload, cx| {
                     dap_store
                         .update(cx, |_, cx| {

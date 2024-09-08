@@ -94,6 +94,7 @@ impl<T: PartialEq + 'static + Sync> TrackedFile<T> {
                             let Some(new_contents) = new_contents.try_into().log_err() else {
                                 continue;
                             };
+
                             let mut contents = parsed_contents.write();
                             if *contents != new_contents {
                                 *contents = new_contents;

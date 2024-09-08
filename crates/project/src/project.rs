@@ -1153,42 +1153,20 @@ impl Project {
         debug_task: task::ResolvedTask,
         cx: &mut ModelContext<Self>,
     ) {
-        let debug_template = debug_task.original_task();
-        let cwd = debug_template
-            .cwd
-            .clone()
-            .expect("Debug tasks need to know what directory to open");
         let adapter_config = debug_task
             .debug_adapter_config()
             .expect("Debug tasks need to specify adapter configuration");
 
-        let debug_template = debug_template.clone();
-        let command = debug_template.command.clone();
-        let args = debug_template.args.clone();
-        let request_args = adapter_config.request_args.as_ref().map(|a| a.args.clone());
-
-        self.start_debug_adapter_client(
-            adapter_config,
-            command,
-            args,
-            cwd.into(),
-            request_args,
-            cx,
-        );
+        self.start_debug_adapter_client(adapter_config, cx);
     }
 
     pub fn start_debug_adapter_client(
         &mut self,
         config: DebugAdapterConfig,
-        command: String,
-        args: Vec<String>,
-        cwd: PathBuf,
-        request_args: Option<serde_json::Value>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.dap_store.update(cx, |store, cx| {
-            store.start_client(config, command, args, cwd, request_args, cx);
-        });
+        self.dap_store
+            .update(cx, |store, cx| store.start_client(config, cx));
     }
 
     /// Get all serialized breakpoints that belong to a buffer

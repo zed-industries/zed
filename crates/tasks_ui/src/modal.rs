@@ -9,7 +9,7 @@ use gpui::{
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Project, TaskSourceKind};
-use task::{ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskType};
+use task::{ResolvedTask, TaskContext, TaskId, TaskModal, TaskTemplate, TaskType};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
     FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
@@ -74,7 +74,7 @@ pub(crate) struct TasksModalDelegate {
     task_context: TaskContext,
     placeholder_text: Arc<str>,
     /// If this delegate is responsible for running a scripting task or a debugger
-    task_type: TaskType,
+    task_modal_type: TaskModal,
 }
 
 impl TasksModalDelegate {
@@ -82,7 +82,7 @@ impl TasksModalDelegate {
         project: Model<Project>,
         task_context: TaskContext,
         workspace: WeakView<Workspace>,
-        task_type: TaskType,
+        task_modal_type: TaskModal,
     ) -> Self {
         Self {
             project,
@@ -95,7 +95,7 @@ impl TasksModalDelegate {
             prompt: String::default(),
             task_context,
             placeholder_text: Arc::from("Find a task, or run a command"),
-            task_type,
+            task_modal_type,
         }
     }
 
@@ -147,11 +147,11 @@ impl TasksModal {
         task_context: TaskContext,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
-        task_type: TaskType,
+        task_modal_type: TaskModal,
     ) -> Self {
         let picker = cx.new_view(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(project, task_context, workspace, task_type),
+                TasksModalDelegate::new(project, task_context, workspace, task_modal_type),
                 cx,
             )
         });
@@ -208,7 +208,7 @@ impl PickerDelegate for TasksModalDelegate {
         query: String,
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Task<()> {
-        let task_type = self.task_type.clone();
+        let task_type = self.task_modal_type.clone();
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates_task) = picker
                 .update(&mut cx, |picker, cx| {
@@ -351,7 +351,7 @@ impl PickerDelegate for TasksModalDelegate {
                     ),
                     // TODO: Should create a schedule_resolved_debug_task function
                     // This would allow users to access to debug history and other issues
-                    TaskType::Debug => workspace.project().update(cx, |project, cx| {
+                    TaskType::Debug(_) => workspace.project().update(cx, |project, cx| {
                         project.start_debug_adapter_client_from_task(task, cx)
                     }),
                 };
@@ -506,7 +506,7 @@ impl PickerDelegate for TasksModalDelegate {
                     ),
                     // TODO: Should create a schedule_resolved_debug_task function
                     // This would allow users to access to debug history and other issues
-                    TaskType::Debug => workspace.project().update(cx, |project, cx| {
+                    TaskType::Debug(_) => workspace.project().update(cx, |project, cx| {
                         project.start_debug_adapter_client_from_task(task, cx)
                     }),
                 };
@@ -616,11 +616,14 @@ impl PickerDelegate for TasksModalDelegate {
 
 fn string_match_candidates<'a>(
     candidates: impl Iterator<Item = &'a (TaskSourceKind, ResolvedTask)> + 'a,
-    task_type: TaskType,
+    task_modal_type: TaskModal,
 ) -> Vec<StringMatchCandidate> {
     candidates
         .enumerate()
-        .filter(|(_, (_, candidate))| candidate.task_type() == task_type)
+        .filter(|(_, (_, candidate))| match candidate.task_type() {
+            TaskType::Script => task_modal_type == TaskModal::ScriptModal,
+            TaskType::Debug(_) => task_modal_type == TaskModal::DebugModal,
+        })
         .map(|(index, (_, candidate))| StringMatchCandidate {
             id: index,
             char_bag: candidate.resolved_label.chars().collect(),

@@ -494,7 +494,8 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        // dbg!
+        // dbg! Remove this comment if i don't figure this out by the end of the month
+        // TODO Debugger:
         // Figure out why the below query didn't work
         // let breakpoints: Result<Vec<(String, Breakpoints)>> = self
         //     .select_bound(sql! {

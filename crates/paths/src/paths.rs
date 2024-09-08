@@ -140,6 +140,12 @@ pub fn tasks_file() -> &'static PathBuf {
     TASKS_FILE.get_or_init(|| config_dir().join("tasks.json"))
 }
 
+/// Returns the path to the `debug.json` file.
+pub fn debug_tasks_file() -> &'static PathBuf {
+    static DEBUG_TASKS_FILE: OnceLock<PathBuf> = OnceLock::new();
+    DEBUG_TASKS_FILE.get_or_init(|| config_dir().join("debug.json"))
+}
+
 /// Returns the path to the extensions directory.
 ///
 /// This is where installed extensions are stored.

@@ -21,7 +21,7 @@ pub fn init(cx: &mut AppContext) {
                     workspace.toggle_panel_focus::<DebugPanel>(cx);
                 })
                 .register_action(|workspace: &mut Workspace, _: &StartDebugger, cx| {
-                    tasks_ui::toggle_modal(workspace, cx, task::TaskType::Debug).detach();
+                    tasks_ui::toggle_modal(workspace, cx, task::TaskModal::DebugModal).detach();
                 })
                 .register_action(DebugPanelItem::workspace_action_handler);
         },

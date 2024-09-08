@@ -1,6 +1,7 @@
 use crate::transport::{Payload, Response, Transport};
 use anyhow::{anyhow, Context, Result};
 
+use crate::adapters::{build_adapter, DebugAdapter};
 use dap_types::{
     requests::{
         Attach, ConfigurationDone, Continue, Disconnect, Initialize, Launch, Next, Pause, Request,
@@ -13,29 +14,24 @@ use dap_types::{
     StepInArguments, StepOutArguments, SteppingGranularity, TerminateArguments,
     TerminateThreadsArguments, Variable, VariablesArguments,
 };
-use futures::{AsyncBufRead, AsyncReadExt, AsyncWrite};
+use futures::{AsyncBufRead, AsyncWrite};
 use gpui::{AppContext, AsyncAppContext};
 use language::{Buffer, BufferSnapshot};
 use parking_lot::{Mutex, MutexGuard};
 use serde_json::Value;
 use smol::{
     channel::{bounded, unbounded, Receiver, Sender},
-    io::BufReader,
-    net::{TcpListener, TcpStream},
-    process::{self, Child},
+    process::Child,
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    net::{Ipv4Addr, SocketAddrV4},
-    path::{Path, PathBuf},
-    process::Stdio,
+    path::Path,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    time::Duration,
 };
-use task::{DebugAdapterConfig, DebugConnectionType, DebugRequestType, TCPHost};
+use task::{DebugAdapterConfig, DebugRequestType};
 use text::Point;
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -75,10 +71,7 @@ pub struct ThreadState {
 
 pub struct DebugAdapterClient {
     id: DebugAdapterClientId,
-    pub args: Vec<String>,
-    pub command: String,
-    pub cwd: PathBuf,
-    pub request_args: Option<Value>,
+    adapter: Arc<Box<dyn DebugAdapter>>,
     _process: Option<Child>,
     server_tx: Sender<Payload>,
     sequence_count: AtomicU64,
@@ -95,6 +88,22 @@ pub struct TransportParams {
     process: Option<Child>,
 }
 
+impl TransportParams {
+    pub fn new(
+        rx: Box<dyn AsyncBufRead + Unpin + Send>,
+        tx: Box<dyn AsyncWrite + Unpin + Send>,
+        err: Option<Box<dyn AsyncBufRead + Unpin + Send>>,
+        process: Option<Child>,
+    ) -> Self {
+        TransportParams {
+            rx,
+            tx,
+            err,
+            process,
+        }
+    }
+}
+
 impl DebugAdapterClient {
     /// Creates & returns a new debug adapter client
     ///
@@ -105,26 +114,17 @@ impl DebugAdapterClient {
     /// - `args`: Arguments of the command that starts the debugger
     /// - `cwd`: The absolute path of the project that is being debugged
     /// - `cx`: The context that the new client belongs too
-    #[allow(clippy::too_many_arguments)]
     pub async fn new<F>(
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
-        command: &String,
-        args: &Vec<String>,
-        cwd: &PathBuf,
-        request_args: Option<Value>,
         event_handler: F,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<Self>>
     where
         F: FnMut(Payload, &mut AppContext) + 'static + Send + Sync + Clone,
     {
-        let transport_params = match config.connection.clone() {
-            DebugConnectionType::TCP(host) => {
-                Self::create_tcp_client(host, command, args, cwd, cx).await?
-            }
-            DebugConnectionType::STDIO => Self::create_stdio_client(command, args, cwd).await?,
-        };
+        let adapter = Arc::new(build_adapter(&config).context("Creating debug adapter")?);
+        let transport_params = adapter.connect(cx).await?;
 
         let server_tx = Self::handle_transport(
             transport_params.rx,
@@ -138,131 +138,12 @@ impl DebugAdapterClient {
             id,
             config,
             server_tx,
-            request_args,
-            cwd: cwd.clone(),
-            args: args.clone(),
-            command: command.clone(),
+            adapter,
             capabilities: Default::default(),
             thread_states: Default::default(),
             sequence_count: AtomicU64::new(1),
             _process: transport_params.process,
         }))
-    }
-
-    /// Creates a debug client that connects to an adapter through tcp
-    ///
-    /// TCP clients don't have an error communication stream with an adapter
-    ///
-    /// # Parameters
-    /// - `command`: The command that starts the debugger
-    /// - `args`: Arguments of the command that starts the debugger
-    /// - `cwd`: The absolute path of the project that is being debugged
-    /// - `cx`: The context that the new client belongs too
-    async fn create_tcp_client(
-        host: TCPHost,
-        command: &String,
-        args: &Vec<String>,
-        cwd: &PathBuf,
-        cx: &mut AsyncAppContext,
-    ) -> Result<TransportParams> {
-        let host_address = host.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1));
-
-        let mut port = host.port;
-        if port.is_none() {
-            port = Self::get_port(host_address).await;
-        }
-
-        let mut command = process::Command::new(command);
-        command
-            .current_dir(cwd)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-
-        let process = command
-            .spawn()
-            .with_context(|| "failed to start debug adapter.")?;
-
-        if let Some(delay) = host.delay {
-            // some debug adapters need some time to start the TCP server
-            // so we have to wait few milliseconds before we can connect to it
-            cx.background_executor()
-                .timer(Duration::from_millis(delay))
-                .await;
-        }
-
-        let address = SocketAddrV4::new(
-            host_address,
-            port.ok_or(anyhow!("Port is required to connect to TCP server"))?,
-        );
-
-        let (rx, tx) = TcpStream::connect(address).await?.split();
-
-        Ok(TransportParams {
-            rx: Box::new(BufReader::new(rx)),
-            tx: Box::new(tx),
-            err: None,
-            process: Some(process),
-        })
-    }
-
-    /// Get an open port to use with the tcp client when not supplied by debug config
-    async fn get_port(host: Ipv4Addr) -> Option<u16> {
-        Some(
-            TcpListener::bind(SocketAddrV4::new(host, 0))
-                .await
-                .ok()?
-                .local_addr()
-                .ok()?
-                .port(),
-        )
-    }
-
-    /// Creates a debug client that connects to an adapter through std input/output
-    ///
-    /// # Parameters
-    /// - `command`: The command that starts the debugger
-    /// - `args`: Arguments of the command that starts the debugger
-    /// - `cwd`: The absolute path of the project that is being debugged
-    async fn create_stdio_client(
-        command: &String,
-        args: &Vec<String>,
-        cwd: &PathBuf,
-    ) -> Result<TransportParams> {
-        let mut command = process::Command::new(command);
-        command
-            .current_dir(cwd)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-
-        let mut process = command
-            .spawn()
-            .with_context(|| "failed to spawn command.")?;
-
-        let stdin = process
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("Failed to open stdin"))?;
-        let stdout = process
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow!("Failed to open stdout"))?;
-        let stderr = process
-            .stderr
-            .take()
-            .ok_or_else(|| anyhow!("Failed to open stderr"))?;
-
-        Ok(TransportParams {
-            rx: Box::new(BufReader::new(stdout)),
-            tx: Box::new(stdin),
-            err: Some(Box::new(BufReader::new(stderr))),
-            process: Some(process),
-        })
     }
 
     pub fn handle_transport<F>(
@@ -403,7 +284,8 @@ impl DebugAdapterClient {
     }
 
     pub fn request_args(&self) -> Option<Value> {
-        self.request_args.clone()
+        // TODO Debugger: Get request args from adapter
+        Some(self.adapter.request_args())
     }
 
     pub fn request_type(&self) -> DebugRequestType {
@@ -443,7 +325,7 @@ impl DebugAdapterClient {
         let args = dap_types::InitializeRequestArguments {
             client_id: Some("zed".to_owned()),
             client_name: Some("Zed".to_owned()),
-            adapter_id: self.config.id.clone(),
+            adapter_id: self.adapter.id(),
             locale: Some("en-us".to_owned()),
             path_format: Some(InitializeRequestArgumentsPathFormat::Path),
             supports_variable_type: Some(true),
@@ -568,12 +450,7 @@ impl DebugAdapterClient {
 
     pub async fn restart(&self) -> Result<()> {
         self.request::<Restart>(RestartArguments {
-            raw: self
-                .config
-                .request_args
-                .as_ref()
-                .map(|v| v.args.clone())
-                .unwrap_or(Value::Null),
+            raw: self.adapter.request_args(),
         })
         .await
     }
@@ -619,8 +496,6 @@ impl DebugAdapterClient {
         absolute_file_path: Arc<Path>,
         breakpoints: Vec<SourceBreakpoint>,
     ) -> Result<SetBreakpointsResponse> {
-        let adapter_data = self.request_args.clone();
-
         self.request::<SetBreakpoints>(SetBreakpointsArguments {
             source: Source {
                 path: Some(String::from(absolute_file_path.to_string_lossy())),
@@ -629,7 +504,7 @@ impl DebugAdapterClient {
                 presentation_hint: None,
                 origin: None,
                 sources: None,
-                adapter_data,
+                adapter_data: None,
                 checksums: None,
             },
             breakpoints: Some(breakpoints),

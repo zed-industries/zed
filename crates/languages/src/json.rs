@@ -87,6 +87,7 @@ impl JsonLspAdapter {
             cx,
         );
         let tasks_schema = task::TaskTemplates::generate_json_schema();
+        let debug_schema = task::DebugTaskFile::generate_json_schema();
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
 
@@ -125,8 +126,14 @@ impl JsonLspAdapter {
                             paths::local_tasks_file_relative_path()
                         ],
                         "schema": tasks_schema,
+                    },
+                    {
+                        "fileMatch": [
+                            schema_file_match(paths::debug_tasks_file()),
+                            paths::local_debug_file_relative_path()
+                        ],
+                        "schema": debug_schema,
                     }
-
                 ]
             }
         })

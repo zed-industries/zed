@@ -1,6 +1,7 @@
 //! Baseline interface of Tasks in Zed: all tasks in Zed are intended to use those for implementing their own logic.
 #![deny(missing_docs)]
 
+mod debug_format;
 pub mod static_source;
 mod task_template;
 mod vscode_format;
@@ -13,9 +14,12 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+pub use debug_format::{
+    DebugAdapterConfig, DebugAdapterKind, DebugConnectionType, DebugRequestType, DebugTaskFile,
+    TCPHost,
+};
 pub use task_template::{
-    DebugAdapterConfig, DebugConnectionType, DebugRequestType, HideStrategy, RevealStrategy,
-    TCPHost, TaskTemplate, TaskTemplates, TaskType,
+    HideStrategy, RevealStrategy, TaskModal, TaskTemplate, TaskTemplates, TaskType,
 };
 pub use vscode_format::VsCodeTaskFile;
 
@@ -90,7 +94,10 @@ impl ResolvedTask {
 
     /// Get the configuration for the debug adapter that should be used for this task.
     pub fn debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
-        self.original_task.debug_adapter.clone()
+        match self.original_task.task_type.clone() {
+            TaskType::Script => None,
+            TaskType::Debug(adapter_config) => Some(adapter_config),
+        }
     }
 
     /// Variables that were substituted during the task template resolution.
