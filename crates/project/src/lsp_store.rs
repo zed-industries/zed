@@ -348,25 +348,6 @@ impl LspStore {
             this.dap_store.update(cx, |store, cx| {
                 store.sync_open_breakpoints_to_closed_breakpoints(&buffer.remote_id(), buffer, cx);
             });
-            // this.breakpoint_store.sync();
-            // Serialize the breakpoints of this buffer and set them
-            // as unopened breakpoints to maintain correct state.
-            // Otherwise, project wouldn't allow breakpoints within
-            // closed files.
-            // TODO: debugger Fix this
-            // if let Some(breakpoints) = this.open_breakpoints.write().remove(&buffer.remote_id()) {
-            //     if let Some(project_path) = buffer.project_path(cx) {
-            //         this.closed_breakpoints
-            //             .write()
-            //             .entry(project_path.clone())
-            //             .or_default()
-            //             .extend(
-            //                 breakpoints
-            //                     .into_iter()
-            //                     .map(|bp| bp.to_serialized(buffer, project_path.path.clone())),
-            //             );
-            //     }
-            // }
 
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
