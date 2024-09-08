@@ -96,6 +96,7 @@ use language::{
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
+use project::dap_store::DapStore;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use dap::client::Breakpoint;
@@ -128,6 +129,7 @@ use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsLocation, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
+use std::sync::Arc;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -138,7 +140,6 @@ use std::{
     ops::{ControlFlow, Deref, DerefMut, Not as _, Range, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
@@ -592,8 +593,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
-    /// All the breakpoints that are contained within open buffers in the editor
-    breakpoints: Option<Arc<RwLock<BTreeMap<BufferId, HashSet<Breakpoint>>>>>,
+    dap_store: Option<Model<DapStore>>,
     /// Allow's a user to create a breakpoint by selecting this indicator
     /// It should be None while a user is not hovering over the gutter
     /// Otherwise it represents the point that the breakpoint will be shown
@@ -1837,11 +1837,7 @@ impl Editor {
             None
         };
 
-        let opened_breakpoints = if let Some(project) = project.as_ref() {
-            project.read_with(cx, |project, _cx| Some(project.open_breakpoints.clone()))
-        } else {
-            None
-        };
+        let dap_store = project.as_ref().map(|project| project.read(cx).dap_store());
 
         let mut this = Self {
             focus_handle,
@@ -1944,7 +1940,7 @@ impl Editor {
             blame_subscription: None,
             file_header_size,
             tasks: Default::default(),
-            breakpoints: opened_breakpoints,
+            dap_store,
             gutter_breakpoint_indicator: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -1995,8 +1991,14 @@ impl Editor {
                 Some((buffer.project_path(cx)?, buffer.remote_id(), snapshot))
             }) {
                 if let Some(project) = this.project.as_ref() {
-                    project.update(cx, |project, _cx| {
-                        project.convert_to_open_breakpoints(&project_path, buffer_id, snapshot)
+                    project.update(cx, |project, cx| {
+                        project.dap_store().update(cx, |store, _| {
+                            store.sync_closed_breakpoint_to_open_breakpoint(
+                                &buffer_id,
+                                &project_path,
+                                snapshot,
+                            );
+                        });
                     });
                 }
             }
@@ -5288,17 +5290,17 @@ impl Editor {
     ///
     /// This function is used to handle overlaps between breakpoints and Code action/runner symbol.
     /// It's also used to set the color of line numbers with breakpoints to the breakpoint color.
-    /// TODO Debugger: Use this function to color toggle symbols that house nested breakpoints
+    /// TODO debugger: Use this function to color toggle symbols that house nested breakpoints
     fn active_breakpoint_points(&mut self, cx: &mut ViewContext<Self>) -> HashSet<DisplayPoint> {
         let mut breakpoint_display_points = HashSet::default();
 
-        let Some(opened_breakpoints) = self.breakpoints.clone() else {
+        let Some(dap_store) = self.dap_store.clone() else {
             return breakpoint_display_points;
         };
 
         let snapshot = self.snapshot(cx);
 
-        let opened_breakpoints = opened_breakpoints.read();
+        let opened_breakpoints = dap_store.read(cx).open_breakpoints();
 
         if let Some(buffer) = self.buffer.read(cx).as_singleton() {
             let buffer = buffer.read(cx);
@@ -5307,7 +5309,7 @@ impl Editor {
                 for breakpoint in breakpoints {
                     breakpoint_display_points
                         .insert(breakpoint.position.to_display_point(&snapshot));
-                    // Breakpoints TODO: Multibuffer bp toggle failing here
+                    // Breakpoints TODO debugger: Multibuffer bp toggle failing here
                     // dued to invalid excerpt id. Multibuffer excerpt id isn't the same as a singular buffer id
                 }
             };
@@ -6255,35 +6257,22 @@ impl Editor {
             return;
         };
 
-        let Some(breakpoints) = &self.breakpoints else {
+        if self.dap_store.is_none() {
             return;
-        };
+        }
 
         let Some(buffer_id) = breakpoint_position.buffer_id else {
             return;
         };
 
-        let breakpoint = Breakpoint {
-            position: breakpoint_position,
-        };
-
-        // Putting the write guard within it's own scope so it's dropped
-        // before project updates it's breakpoints. This is done to prevent
-        // a data race condition where project waits to get a read lock
-        {
-            let mut write_guard = breakpoints.write();
-
-            let breakpoint_set = write_guard.entry(buffer_id).or_default();
-
-            if !breakpoint_set.remove(&breakpoint) {
-                breakpoint_set.insert(breakpoint);
-            }
-        }
-
         project.update(cx, |project, cx| {
-            if project.has_active_debugger() {
-                project.update_file_breakpoints(buffer_id, cx);
-            }
+            project.toggle_breakpoint(
+                buffer_id,
+                Breakpoint {
+                    position: breakpoint_position,
+                },
+                cx,
+            );
         });
 
         cx.notify();

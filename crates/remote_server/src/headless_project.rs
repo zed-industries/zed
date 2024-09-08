@@ -3,8 +3,9 @@ use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task};
 use language::LanguageRegistry;
 use project::{
-    buffer_store::BufferStore, project_settings::SettingsObserver, search::SearchQuery,
-    worktree_store::WorktreeStore, LspStore, ProjectPath, WorktreeId, WorktreeSettings,
+    buffer_store::BufferStore, dap_store::DapStore, project_settings::SettingsObserver,
+    search::SearchQuery, worktree_store::WorktreeStore, LspStore, ProjectPath, WorktreeId,
+    WorktreeSettings,
 };
 use remote::SshSession;
 use rpc::{
@@ -55,11 +56,13 @@ impl HeadlessProject {
             observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             observer
         });
+        let dap_store = cx.new_model(DapStore::new);
         let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let lsp_store = cx.new_model(|cx| {
             LspStore::new(
                 buffer_store.clone(),
                 worktree_store.clone(),
+                dap_store.clone(),
                 Some(environment),
                 languages,
                 None,

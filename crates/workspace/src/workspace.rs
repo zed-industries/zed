@@ -4233,26 +4233,27 @@ impl Workspace {
             // Add unopened breakpoints to project before opening any items
             workspace.update(&mut cx, |workspace, cx| {
                 workspace.project().update(cx, |project, cx| {
-                    let mut write_guard = project.closed_breakpoints.write();
+                    project.dap_store().update(cx, |store, cx| {
+                        for worktree in project.worktrees(cx) {
+                            let (worktree_id, worktree_path) =
+                                worktree.read_with(cx, |tree, _cx| (tree.id(), tree.abs_path()));
 
-                    for worktree in project.worktrees(cx) {
-                        let (worktree_id, worktree_path) =
-                            worktree.read_with(cx, |tree, _cx| (tree.id(), tree.abs_path()));
-
-                        if let Some(serialized_breakpoints) =
-                            serialized_workspace.breakpoints.remove(&worktree_path)
-                        {
-                            for serialized_bp in serialized_breakpoints {
-                                write_guard
-                                    .entry(ProjectPath {
-                                        worktree_id,
-                                        path: serialized_bp.path.clone(),
-                                    })
-                                    .or_default()
-                                    .push(serialized_bp);
+                            if let Some(serialized_breakpoints) =
+                                serialized_workspace.breakpoints.remove(&worktree_path)
+                            {
+                                for serialized_bp in serialized_breakpoints {
+                                    store
+                                        .closed_breakpoints
+                                        .entry(ProjectPath {
+                                            worktree_id,
+                                            path: serialized_bp.path.clone(),
+                                        })
+                                        .or_default()
+                                        .push(serialized_bp);
+                                }
                             }
                         }
-                    }
+                    });
                 })
             })?;
 

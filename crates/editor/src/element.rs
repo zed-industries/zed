@@ -1592,8 +1592,8 @@ impl EditorElement {
         cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
-            if editor.breakpoints.is_none() {
-                return vec![];
+            if editor.dap_store.is_none() {
+                return Vec::new();
             };
 
             breakpoints

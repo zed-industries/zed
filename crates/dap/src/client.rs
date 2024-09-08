@@ -653,6 +653,16 @@ impl DebugAdapterClient {
         }
     }
 
+    pub async fn shutdown(&self, should_terminate: bool) -> Result<()> {
+        if should_terminate {
+            let _ = self.terminate().await;
+        }
+
+        // TODO debugger: close channels & kill process
+
+        anyhow::Ok(())
+    }
+
     pub async fn terminate(&self) -> Result<()> {
         let support_terminate_request = self
             .capabilities()

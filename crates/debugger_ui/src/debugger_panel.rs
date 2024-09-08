@@ -154,7 +154,11 @@ impl DebugPanel {
     ) -> Option<Arc<DebugAdapterClient>> {
         self.workspace
             .update(cx, |this, cx| {
-                this.project().read(cx).debug_adapter_by_id(client_id)
+                this.project()
+                    .read(cx)
+                    .dap_store()
+                    .read(cx)
+                    .client_by_id(client_id)
             })
             .ok()
             .flatten()
@@ -654,7 +658,9 @@ impl DebugPanel {
                 cx.update(|cx| {
                     workspace.update(cx, |workspace, cx| {
                         workspace.project().update(cx, |project, cx| {
-                            project.stop_debug_adapter_client(client.id(), false, cx)
+                            project.dap_store().update(cx, |store, cx| {
+                                store.shutdown_client(client.id(), false, cx)
+                            })
                         })
                     })
                 })?

@@ -1,5 +1,6 @@
 use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
+    dap_store::DapStore,
     environment::ProjectEnvironment,
     lsp_command::{self, *},
     lsp_ext_command,
@@ -92,6 +93,7 @@ pub struct LspStore {
     http_client: Option<Arc<dyn HttpClient>>,
     fs: Arc<dyn Fs>,
     nonce: u128,
+    dap_store: Model<DapStore>,
     buffer_store: Model<BufferStore>,
     worktree_store: Model<WorktreeStore>,
     buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
@@ -213,6 +215,7 @@ impl LspStore {
     pub fn new(
         buffer_store: Model<BufferStore>,
         worktree_store: Model<WorktreeStore>,
+        dap_store: Model<DapStore>,
         environment: Option<Model<ProjectEnvironment>>,
         languages: Arc<LanguageRegistry>,
         http_client: Option<Arc<dyn HttpClient>>,
@@ -236,6 +239,7 @@ impl LspStore {
             project_id: remote_id.unwrap_or(0),
             buffer_store,
             worktree_store,
+            dap_store,
             languages: languages.clone(),
             environment,
             nonce: StdRng::from_entropy().gen(),
@@ -341,6 +345,9 @@ impl LspStore {
         self.detect_language_for_buffer(buffer, cx);
         self.register_buffer_with_language_servers(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
+            this.dap_store.update(cx, |store, cx| {
+                store.sync_open_breakpoints_to_closed_breakpoints(&buffer.remote_id(), buffer, cx);
+            });
             // this.breakpoint_store.sync();
             // Serialize the breakpoints of this buffer and set them
             // as unopened breakpoints to maintain correct state.
