@@ -34,18 +34,36 @@ pub enum DebugRequestType {
 }
 
 /// The Debug adapter to use
-#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum DebugAdapterKind {
     /// Manually setup starting a debug adapter
-    #[default]
-    Custom,
+    /// The argument within is used to start the DAP
+    Custom(CustomArgs),
     /// Use debugpy
     Python,
     /// Use vscode-php-debug
     PHP,
     /// Use lldb
     Lldb,
+}
+
+/// Custom arguments used to setup a custom debugger
+#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+pub struct CustomArgs {
+    /// The connection that a custom debugger should use
+    pub connection: DebugConnectionType,
+    /// The cli command used to start the debug adapter
+    pub start_command: String,
+}
+
+impl Default for DebugAdapterKind {
+    fn default() -> Self {
+        DebugAdapterKind::Custom(CustomArgs {
+            connection: DebugConnectionType::STDIO,
+            start_command: "".into(),
+        })
+    }
 }
 
 /// Represents the configuration for the debug adapter
@@ -65,13 +83,8 @@ pub struct DebugAdapterConfig {
     pub program: String,
     /// The path to the adapter
     pub adapter_path: Option<String>,
-}
-
-/// Represents the configuration for the debug adapter that is send with the launch request
-#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(transparent)]
-pub struct DebugRequestArgs {
-    pub args: serde_json::Value,
+    /// Additional initialization arguments to be sent on DAP initialization
+    pub initialize_args: Option<Vec<String>>,
 }
 
 /// Represents the type of the debugger adapter connection
@@ -96,6 +109,8 @@ pub struct DebugTaskDefinition {
     session_type: DebugRequestType,
     /// The adapter to run
     adapter: DebugAdapterKind,
+    /// Additional initialization arguments to be sent on DAP initialization
+    initialize_args: Option<Vec<String>>,
 }
 
 impl DebugTaskDefinition {
@@ -106,6 +121,7 @@ impl DebugTaskDefinition {
             request: self.session_type,
             program: self.program,
             adapter_path: None,
+            initialize_args: self.initialize_args,
         });
 
         let args: Vec<String> = Vec::new();

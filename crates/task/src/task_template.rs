@@ -96,6 +96,7 @@ mod deserialization_tests {
             request: crate::DebugRequestType::Launch,
             program: "main".to_string(),
             adapter_path: None,
+            initialize_args: None,
         };
         let json = json!({
                 "type": "debug",

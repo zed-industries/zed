@@ -19,11 +19,14 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::{DebugAdapterConfig, DebugAdapterKind, TCPHost};
+use task::{CustomArgs, DebugAdapterConfig, DebugAdapterKind, DebugConnectionType, TCPHost};
 
 pub fn build_adapter(adapter_config: &DebugAdapterConfig) -> Result<Box<dyn DebugAdapter>> {
-    match adapter_config.kind {
-        DebugAdapterKind::Custom => Err(anyhow!("Custom is not implemented")),
+    match &adapter_config.kind {
+        DebugAdapterKind::Custom(start_args) => Ok(Box::new(CustomDebugAdapter::new(
+            adapter_config,
+            start_args.clone(),
+        ))),
         DebugAdapterKind::Python => Ok(Box::new(PythonDebugAdapter::new(adapter_config))),
         DebugAdapterKind::PHP => Ok(Box::new(PhpDebugAdapter::new(adapter_config))),
         DebugAdapterKind::Lldb => Ok(Box::new(LldbDebugAdapter::new(adapter_config))),
@@ -160,6 +163,69 @@ pub trait DebugAdapter: Debug + Send + Sync + 'static {
     fn download_adapter(&self) -> anyhow::Result<DebugAdapterBinary>;
 
     fn request_args(&self) -> Value;
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+struct CustomDebugAdapter {
+    start_command: String,
+    initialize_args: Option<Vec<String>>,
+    program: String,
+    connection: DebugConnectionType,
+}
+
+impl CustomDebugAdapter {
+    const _ADAPTER_NAME: &'static str = "custom_dap";
+
+    fn new(adapter_config: &DebugAdapterConfig, custom_args: CustomArgs) -> Self {
+        CustomDebugAdapter {
+            start_command: custom_args.start_command,
+            program: adapter_config.program.clone(),
+            connection: custom_args.connection,
+            initialize_args: adapter_config.initialize_args.clone(),
+        }
+    }
+}
+
+#[async_trait(?Send)]
+impl DebugAdapter for CustomDebugAdapter {
+    fn name(&self) -> DebugAdapterName {
+        DebugAdapterName(Self::_ADAPTER_NAME.into())
+    }
+
+    async fn connect(&self, cx: &mut AsyncAppContext) -> Result<TransportParams> {
+        match &self.connection {
+            DebugConnectionType::STDIO => create_stdio_client(&self.start_command, &vec![].into()),
+            DebugConnectionType::TCP(tcp_host) => {
+                create_tcp_client(tcp_host.clone(), &self.start_command, &vec![].into(), cx).await
+            }
+        }
+    }
+
+    fn get_debug_adapter_start_command(&self) -> String {
+        "fail".to_string()
+    }
+
+    fn is_installed(&self) -> Option<DebugAdapterBinary> {
+        None
+    }
+
+    fn download_adapter(&self) -> anyhow::Result<DebugAdapterBinary> {
+        Err(anyhow::format_err!("Not implemented"))
+    }
+
+    fn request_args(&self) -> Value {
+        let base_args = json!({
+            "program": format!("{}", &self.program)
+        });
+
+        // TODO Debugger: Figure out a way to combine this with base args
+        // if let Some(args) = &self.initialize_args {
+        //     let args = json!(args.clone()).as_object().into_iter();
+        //     base_args.as_object_mut().unwrap().extend(args);
+        // }
+
+        base_args
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
