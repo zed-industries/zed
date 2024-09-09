@@ -127,7 +127,6 @@ members = [
     "crates/worktree",
     "crates/zed",
     "crates/zed_actions",
-    "fuzz",
 
     #
     # Extensions
