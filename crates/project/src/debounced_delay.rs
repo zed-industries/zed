@@ -8,6 +8,12 @@ pub struct DebouncedDelay<E: 'static> {
     _phantom_data: PhantomData<E>,
 }
 
+impl<E: 'static> Default for DebouncedDelay<E> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<E: 'static> DebouncedDelay<E> {
     pub fn new() -> Self {
         Self {

@@ -60,9 +60,9 @@ pub struct BlockSnapshot {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CustomBlockId(usize);
 
-impl Into<ElementId> for CustomBlockId {
-    fn into(self) -> ElementId {
-        ElementId::Integer(self.0)
+impl From<CustomBlockId> for ElementId {
+    fn from(val: CustomBlockId) -> Self {
+        ElementId::Integer(val.0)
     }
 }
 
@@ -657,7 +657,7 @@ impl BlockMap {
             .flatten()
     }
 
-    pub(crate) fn sort_blocks<B: BlockLike>(blocks: &mut Vec<(u32, B)>) {
+    pub(crate) fn sort_blocks<B: BlockLike>(blocks: &mut [(u32, B)]) {
         // Place excerpt headers and footers above custom blocks on the same row
         blocks.sort_unstable_by(|(row_a, block_a), (row_b, block_b)| {
             row_a.cmp(row_b).then_with(|| {
@@ -783,11 +783,13 @@ impl<'a> BlockMapWriter<'a> {
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
     ) -> Vec<CustomBlockId> {
-        let mut ids = Vec::new();
+        let blocks = blocks.into_iter();
+        let mut ids = Vec::with_capacity(blocks.size_hint().1.unwrap_or(0));
         let mut edits = Patch::default();
         let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
 
+        let mut previous_wrap_row_range: Option<Range<u32>> = None;
         for block in blocks {
             let id = CustomBlockId(self.0.next_block_id.fetch_add(1, SeqCst));
             ids.push(id);
@@ -797,11 +799,18 @@ impl<'a> BlockMapWriter<'a> {
             let wrap_row = wrap_snapshot
                 .make_wrap_point(Point::new(point.row, 0), Bias::Left)
                 .row();
-            let start_row = wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
-            let end_row = wrap_snapshot
-                .next_row_boundary(WrapPoint::new(wrap_row, 0))
-                .unwrap_or(wrap_snapshot.max_point().row() + 1);
 
+            let (start_row, end_row) = {
+                previous_wrap_row_range.take_if(|range| !range.contains(&wrap_row));
+                let range = previous_wrap_row_range.get_or_insert_with(|| {
+                    let start_row = wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
+                    let end_row = wrap_snapshot
+                        .next_row_boundary(WrapPoint::new(wrap_row, 0))
+                        .unwrap_or(wrap_snapshot.max_point().row() + 1);
+                    start_row..end_row
+                });
+                (range.start, range.end)
+            };
             let block_ix = match self
                 .0
                 .custom_blocks
@@ -881,6 +890,7 @@ impl<'a> BlockMapWriter<'a> {
         let buffer = wrap_snapshot.buffer_snapshot();
         let mut edits = Patch::default();
         let mut last_block_buffer_row = None;
+        let mut previous_wrap_row_range: Option<Range<u32>> = None;
         self.0.custom_blocks.retain(|block| {
             if block_ids.contains(&block.id) {
                 let buffer_row = block.position.to_point(buffer).row;
@@ -889,21 +899,32 @@ impl<'a> BlockMapWriter<'a> {
                     let wrap_row = wrap_snapshot
                         .make_wrap_point(Point::new(buffer_row, 0), Bias::Left)
                         .row();
-                    let start_row = wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
-                    let end_row = wrap_snapshot
-                        .next_row_boundary(WrapPoint::new(wrap_row, 0))
-                        .unwrap_or(wrap_snapshot.max_point().row() + 1);
+                    let (start_row, end_row) = {
+                        previous_wrap_row_range.take_if(|range| !range.contains(&wrap_row));
+                        let range = previous_wrap_row_range.get_or_insert_with(|| {
+                            let start_row =
+                                wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
+                            let end_row = wrap_snapshot
+                                .next_row_boundary(WrapPoint::new(wrap_row, 0))
+                                .unwrap_or(wrap_snapshot.max_point().row() + 1);
+                            start_row..end_row
+                        });
+                        (range.start, range.end)
+                    };
+
                     edits.push(Edit {
                         old: start_row..end_row,
                         new: start_row..end_row,
                     })
                 }
-                self.0.custom_blocks_by_id.remove(&block.id);
                 false
             } else {
                 true
             }
         });
+        self.0
+            .custom_blocks_by_id
+            .retain(|id, _| !block_ids.contains(id));
         self.0.sync(wrap_snapshot, edits);
     }
 }
@@ -1457,7 +1478,7 @@ mod tests {
 
     #[gpui::test]
     fn test_basic_blocks(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| init_test(cx));
+        cx.update(init_test);
 
         let text = "aaa\nbbb\nccc\nddd";
 
@@ -1713,7 +1734,7 @@ mod tests {
 
     #[gpui::test]
     fn test_replace_with_heights(cx: &mut gpui::TestAppContext) {
-        let _update = cx.update(|cx| init_test(cx));
+        cx.update(init_test);
 
         let text = "aaa\nbbb\nccc\nddd";
 
@@ -1817,7 +1838,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[gpui::test]
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| init_test(cx));
+        cx.update(init_test);
 
         let _font_id = cx.text_system().font_id(&font("Helvetica")).unwrap();
 
@@ -1864,7 +1885,7 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_blocks(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
-        cx.update(|cx| init_test(cx));
+        cx.update(init_test);
 
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))

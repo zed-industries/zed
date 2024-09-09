@@ -29,6 +29,8 @@
       "shift-g": "vim::EndOfDocument",
       "{": "vim::StartOfParagraph",
       "}": "vim::EndOfParagraph",
+      "(": "vim::SentenceBackward",
+      ")": "vim::SentenceForward",
       "|": "vim::GoToColumn",
       // Word motions
       "w": "vim::NextWordStart",
@@ -92,6 +94,7 @@
       "g y": "editor::GoToTypeDefinition",
       "g shift-i": "editor::GoToImplementation",
       "g x": "editor::OpenUrl",
+      "g f": "editor::OpenFile",
       "g n": "vim::SelectNextMatch",
       "g shift-n": "vim::SelectPreviousMatch",
       "g l": "vim::SelectNext",
@@ -176,19 +179,19 @@
       "ctrl-w ctrl-p": "workspace::ActivatePreviousPane",
       "ctrl-w shift-w": "workspace::ActivatePreviousPane",
       "ctrl-w ctrl-shift-w": "workspace::ActivatePreviousPane",
-      "ctrl-w v": "pane::SplitLeft",
-      "ctrl-w ctrl-v": "pane::SplitLeft",
-      "ctrl-w s": "pane::SplitUp",
-      "ctrl-w shift-s": "pane::SplitUp",
-      "ctrl-w ctrl-s": "pane::SplitUp",
+      "ctrl-w v": "pane::SplitVertical",
+      "ctrl-w ctrl-v": "pane::SplitVertical",
+      "ctrl-w s": "pane::SplitHorizontal",
+      "ctrl-w shift-s": "pane::SplitHorizontal",
+      "ctrl-w ctrl-s": "pane::SplitHorizontal",
       "ctrl-w c": "pane::CloseAllItems",
       "ctrl-w ctrl-c": "pane::CloseAllItems",
       "ctrl-w q": "pane::CloseAllItems",
       "ctrl-w ctrl-q": "pane::CloseAllItems",
       "ctrl-w o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
-      "ctrl-w n": ["workspace::NewFileInDirection", "Up"],
-      "ctrl-w ctrl-n": ["workspace::NewFileInDirection", "Up"],
+      "ctrl-w n": "workspace::NewFileSplitHorizontal",
+      "ctrl-w ctrl-n": "workspace::NewFileSplitHorizontal",
       "ctrl-w d": "editor::GoToDefinitionSplit",
       "ctrl-w g d": "editor::GoToDefinitionSplit",
       "ctrl-w shift-d": "editor::GoToTypeDefinitionSplit",
@@ -211,7 +214,7 @@
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "y": ["vim::PushOperator", "Yank"],
-      "shift-y": "vim::YankToEndOfLine",
+      "shift-y": "vim::YankLine",
       "i": "vim::InsertBefore",
       "shift-i": "vim::InsertFirstNonWhitespace",
       "a": "vim::InsertAfter",
@@ -324,6 +327,13 @@
     }
   },
   {
+    "context": "vim_mode == insert && !(showing_code_actions || showing_completions)",
+    "bindings": {
+      "ctrl-p": "editor::ShowCompletions",
+      "ctrl-n": "editor::ShowCompletions"
+    }
+  },
+  {
     "context": "vim_mode == replace",
     "bindings": {
       "escape": "vim::NormalBefore",
@@ -391,7 +401,9 @@
     "context": "vim_operator == d",
     "bindings": {
       "d": "vim::CurrentLine",
-      "s": ["vim::PushOperator", "DeleteSurrounds"]
+      "s": ["vim::PushOperator", "DeleteSurrounds"],
+      "o": "editor::ToggleHunkDiff", // "d o"
+      "p": "editor::RevertSelectedHunks" // "d p"
     }
   },
   {
@@ -488,7 +500,7 @@
     }
   },
   {
-    "context": "OutlinePanel",
+    "context": "OutlinePanel && not_editing",
     "bindings": {
       "j": "menu::SelectNext",
       "k": "menu::SelectPrev",

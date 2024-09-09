@@ -83,6 +83,7 @@ pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
             pulldown_cmark::Event::TaskListMarker(checked) => {
                 events.push((range, MarkdownEvent::TaskListMarker(checked)))
             }
+            pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
         }
     }
     events
@@ -96,8 +97,8 @@ pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
         start: 0,
         end: text.len(),
     };
-    for link in finder.links(&text[text_range.clone()]) {
-        let link_range = text_range.start + link.start()..text_range.start + link.end();
+    for link in finder.links(text) {
+        let link_range = link.start()..link.end();
 
         if link_range.start > text_range.start {
             events.push((text_range.start..link_range.start, MarkdownEvent::Text));
@@ -118,7 +119,9 @@ pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
         text_range.start = link_range.end;
     }
 
-    events.push((text_range, MarkdownEvent::Text));
+    if text_range.end > text_range.start {
+        events.push((text_range, MarkdownEvent::Text));
+    }
 
     events
 }
@@ -269,7 +272,7 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
                     attrs,
                 }
             }
-            pulldown_cmark::Tag::BlockQuote => MarkdownTag::BlockQuote,
+            pulldown_cmark::Tag::BlockQuote(_kind) => MarkdownTag::BlockQuote,
             pulldown_cmark::Tag::CodeBlock(kind) => match kind {
                 pulldown_cmark::CodeBlockKind::Indented => {
                     MarkdownTag::CodeBlock(CodeBlockKind::Indented)
@@ -314,6 +317,11 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
             },
             pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock,
             pulldown_cmark::Tag::MetadataBlock(kind) => MarkdownTag::MetadataBlock(kind),
+            pulldown_cmark::Tag::DefinitionList
+            | pulldown_cmark::Tag::DefinitionListTitle
+            | pulldown_cmark::Tag::DefinitionListDefinition => {
+                unimplemented!("definition lists are not yet supported")
+            }
         }
     }
 }

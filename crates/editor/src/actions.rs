@@ -141,12 +141,26 @@ pub struct ShowCompletions {
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct HandleInput(pub String);
 
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct DeleteToNextWordEnd {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct DeleteToPreviousWordStart {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+}
+
 impl_actions!(
     editor,
     [
         ConfirmCodeAction,
         ConfirmCompletion,
         ComposeCompletion,
+        DeleteToNextWordEnd,
+        DeleteToPreviousWordStart,
         ExpandExcerpts,
         ExpandExcerptsUp,
         ExpandExcerptsDown,
@@ -199,6 +213,7 @@ gpui::actions!(
         CopyHighlightJson,
         CopyPath,
         CopyPermalinkToLine,
+        CopyFileLocation,
         CopyRelativePath,
         Cut,
         CutToEndOfLine,
@@ -207,9 +222,7 @@ gpui::actions!(
         DeleteToBeginningOfLine,
         DeleteToEndOfLine,
         DeleteToNextSubwordEnd,
-        DeleteToNextWordEnd,
         DeleteToPreviousSubwordStart,
-        DeleteToPreviousWordStart,
         DisplayCursorNames,
         DuplicateLineDown,
         DuplicateLineUp,
@@ -262,6 +275,7 @@ gpui::actions!(
         OpenExcerptsSplit,
         OpenPermalinkToLine,
         OpenUrl,
+        OpenFile,
         Outdent,
         PageDown,
         PageUp,
@@ -306,6 +320,7 @@ gpui::actions!(
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
         SplitSelectionIntoLines,
+        SwitchSourceHeader,
         Tab,
         TabPrev,
         ToggleAutoSignatureHelp,
@@ -314,7 +329,9 @@ gpui::actions!(
         ToggleSelectionMenu,
         ToggleHunkDiff,
         ToggleInlayHints,
+        ToggleInlineCompletions,
         ToggleLineNumbers,
+        ToggleRelativeLineNumbers,
         ToggleIndentGuides,
         ToggleSoftWrap,
         ToggleTabBar,

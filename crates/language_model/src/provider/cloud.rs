@@ -1,4 +1,5 @@
 use super::open_ai::count_open_ai_tokens;
+use crate::provider::anthropic::map_to_language_model_completion_events;
 use crate::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
@@ -31,9 +32,9 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use strum::IntoEnumIterator;
-use ui::prelude::*;
+use ui::{prelude::*, TintColor};
 
-use crate::{LanguageModelAvailability, LanguageModelProvider};
+use crate::{LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider};
 
 use super::anthropic::count_anthropic_tokens;
 
@@ -47,7 +48,7 @@ fn zed_cloud_provider_additional_models() -> &'static [AvailableModel] {
     static ADDITIONAL_MODELS: LazyLock<Vec<AvailableModel>> = LazyLock::new(|| {
         ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON
             .map(|json| serde_json::from_str(json).unwrap())
-            .unwrap_or(Vec::new())
+            .unwrap_or_default()
     });
     ADDITIONAL_MODELS.as_slice()
 }
@@ -254,6 +255,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
                     name: model.name.clone(),
                     max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
                 }),
                 AvailableProvider::Google => CloudModel::Google(google_ai::Model::Custom {
                     name: model.name.clone(),
@@ -444,6 +446,21 @@ impl LanguageModel for CloudLanguageModel {
         self.model.max_token_count()
     }
 
+    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
+        match &self.model {
+            CloudModel::Anthropic(model) => {
+                model
+                    .cache_configuration()
+                    .map(|cache| LanguageModelCacheConfiguration {
+                        max_cache_anchors: cache.max_cache_anchors,
+                        should_speculate: cache.should_speculate,
+                        min_total_token: cache.min_total_token,
+                    })
+            }
+            CloudModel::OpenAi(_) | CloudModel::Google(_) | CloudModel::Zed(_) => None,
+        }
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
@@ -480,7 +497,7 @@ impl LanguageModel for CloudLanguageModel {
         &self,
         request: LanguageModelRequest,
         _cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let request = request.into_anthropic(model.id().into(), model.max_output_tokens());
@@ -499,21 +516,15 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    Ok(anthropic::extract_text_from_events(
+                    Ok(map_to_language_model_completion_events(Box::pin(
                         response_lines(response).map_err(AnthropicError::Other),
-                    ))
+                    )))
                 });
-                async move {
-                    Ok(future
-                        .await?
-                        .map(|result| result.map_err(|err| anyhow!(err)))
-                        .boxed())
-                }
-                .boxed()
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
-                let request = request.into_open_ai(model.id().into());
+                let request = request.into_open_ai(model.id().into(), model.max_output_tokens());
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let response = Self::perform_llm_completion(
@@ -530,7 +541,13 @@ impl LanguageModel for CloudLanguageModel {
                     .await?;
                     Ok(open_ai::extract_text_from_events(response_lines(response)))
                 });
-                async move { Ok(future.await?.boxed()) }.boxed()
+                async move {
+                    Ok(future
+                        .await?
+                        .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                        .boxed())
+                }
+                .boxed()
             }
             CloudModel::Google(model) => {
                 let client = self.client.clone();
@@ -553,11 +570,17 @@ impl LanguageModel for CloudLanguageModel {
                         response,
                     )))
                 });
-                async move { Ok(future.await?.boxed()) }.boxed()
+                async move {
+                    Ok(future
+                        .await?
+                        .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                        .boxed())
+                }
+                .boxed()
             }
             CloudModel::Zed(model) => {
                 let client = self.client.clone();
-                let mut request = request.into_open_ai(model.id().into());
+                let mut request = request.into_open_ai(model.id().into(), None);
                 request.max_tokens = Some(4000);
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
@@ -575,7 +598,13 @@ impl LanguageModel for CloudLanguageModel {
                     .await?;
                     Ok(open_ai::extract_text_from_events(response_lines(response)))
                 });
-                async move { Ok(future.await?.boxed()) }.boxed()
+                async move {
+                    Ok(future
+                        .await?
+                        .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                        .boxed())
+                }
+                .boxed()
             }
         }
     }
@@ -629,7 +658,8 @@ impl LanguageModel for CloudLanguageModel {
                     .boxed()
             }
             CloudModel::OpenAi(model) => {
-                let mut request = request.into_open_ai(model.id().into());
+                let mut request =
+                    request.into_open_ai(model.id().into(), model.max_output_tokens());
                 request.tool_choice = Some(open_ai::ToolChoice::Other(
                     open_ai::ToolDefinition::Function {
                         function: open_ai::FunctionDefinition {
@@ -676,7 +706,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Zed(model) => {
                 // All Zed models are OpenAI-based at the time of writing.
-                let mut request = request.into_open_ai(model.id().into());
+                let mut request = request.into_open_ai(model.id().into(), None);
                 request.tool_choice = Some(open_ai::ToolChoice::Other(
                     open_ai::ToolDefinition::Function {
                         function: open_ai::FunctionDefinition {
@@ -747,12 +777,12 @@ impl LlmApiToken {
         if let Some(token) = lock.as_ref() {
             Ok(token.to_string())
         } else {
-            Self::fetch(RwLockUpgradableReadGuard::upgrade(lock).await, &client).await
+            Self::fetch(RwLockUpgradableReadGuard::upgrade(lock).await, client).await
         }
     }
 
     async fn refresh(&self, client: &Arc<Client>) -> Result<String> {
-        Self::fetch(self.0.write().await, &client).await
+        Self::fetch(self.0.write().await, client).await
     }
 
     async fn fetch<'a>(
@@ -776,6 +806,46 @@ impl ConfigurationView {
         });
         cx.notify();
     }
+
+    fn render_accept_terms(&mut self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        if self.state.read(cx).has_accepted_terms_of_service(cx) {
+            return None;
+        }
+
+        let accept_terms_disabled = self.state.read(cx).accept_terms.is_some();
+
+        let terms_button = Button::new("terms_of_service", "Terms of Service")
+            .style(ButtonStyle::Subtle)
+            .icon(IconName::ExternalLink)
+            .icon_color(Color::Muted)
+            .on_click(move |_, cx| cx.open_url("https://zed.dev/terms-of-service"));
+
+        let text =
+            "In order to use Zed AI, please read and accept our terms and conditions to continue:";
+
+        let form = v_flex()
+            .gap_2()
+            .child(Label::new("Terms and Conditions"))
+            .child(Label::new(text))
+            .child(h_flex().justify_center().child(terms_button))
+            .child(
+                h_flex().justify_center().child(
+                    Button::new("accept_terms", "I've read and accept the terms of service")
+                        .style(ButtonStyle::Tinted(TintColor::Accent))
+                        .disabled(accept_terms_disabled)
+                        .on_click({
+                            let state = self.state.downgrade();
+                            move |_, cx| {
+                                state
+                                    .update(cx, |state, cx| state.accept_terms_of_service(cx))
+                                    .ok();
+                            }
+                        }),
+                ),
+            );
+
+        Some(form.into_any())
+    }
 }
 
 impl Render for ConfigurationView {
@@ -785,55 +855,50 @@ impl Render for ConfigurationView {
 
         let is_connected = !self.state.read(cx).is_signed_out();
         let plan = self.state.read(cx).user_store.read(cx).current_plan();
-        let must_accept_terms = !self.state.read(cx).has_accepted_terms_of_service(cx);
+        let has_accepted_terms = self.state.read(cx).has_accepted_terms_of_service(cx);
 
         let is_pro = plan == Some(proto::Plan::ZedPro);
+        let subscription_text = Label::new(if is_pro {
+            "You have full access to Zed's hosted models from Anthropic, OpenAI, Google with faster speeds and higher limits through Zed Pro."
+        } else {
+            "You have basic access to models from Anthropic through the Zed AI Free plan."
+        });
+        let manage_subscription_button = if is_pro {
+            Some(
+                h_flex().child(
+                    Button::new("manage_settings", "Manage Subscription")
+                        .style(ButtonStyle::Tinted(TintColor::Accent))
+                        .on_click(cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL))),
+                ),
+            )
+        } else if cx.has_flag::<ZedPro>() {
+            Some(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("learn_more", "Learn more")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(|_, _, cx| cx.open_url(ZED_AI_URL))),
+                    )
+                    .child(
+                        Button::new("upgrade", "Upgrade")
+                            .style(ButtonStyle::Subtle)
+                            .color(Color::Accent)
+                            .on_click(cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL))),
+                    ),
+            )
+        } else {
+            None
+        };
 
         if is_connected {
             v_flex()
                 .gap_3()
                 .max_w_4_5()
-                .when(must_accept_terms, |this| {
-                    this.child(Label::new(
-                        "You must accept the terms of service to use this provider.",
-                    ))
-                })
-                .child(Label::new(
-                    if is_pro {
-                        "You have full access to Zed's hosted models from Anthropic, OpenAI, Google with faster speeds and higher limits through Zed Pro."
-                    } else {
-                        "You have basic access to models from Anthropic through the Zed AI Free plan."
-                    }))
-                .children(if is_pro {
-                    Some(
-                        h_flex().child(
-                            Button::new("manage_settings", "Manage Subscription")
-                                .style(ButtonStyle::Filled)
-                                .on_click(
-                                    cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL)),
-                                ),
-                        ),
-                    )
-                } else if cx.has_flag::<ZedPro>() {
-                    Some(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("learn_more", "Learn more")
-                                    .style(ButtonStyle::Subtle)
-                                    .on_click(cx.listener(|_, _, cx| cx.open_url(ZED_AI_URL))),
-                            )
-                            .child(
-                                Button::new("upgrade", "Upgrade")
-                                    .style(ButtonStyle::Subtle)
-                                    .color(Color::Accent)
-                                    .on_click(
-                                        cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL)),
-                                    ),
-                            ),
-                    )
-                } else {
-                    None
+                .children(self.render_accept_terms(cx))
+                .when(has_accepted_terms, |this| {
+                    this.child(subscription_text)
+                        .children(manage_subscription_button)
                 })
         } else {
             v_flex()

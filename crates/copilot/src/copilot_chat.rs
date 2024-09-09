@@ -15,9 +15,8 @@ use settings::watch_config_file;
 use strum::EnumIter;
 use ui::Context;
 
-pub const COPILOT_CHAT_COMPLETION_URL: &'static str =
-    "https://api.githubcopilot.com/chat/completions";
-pub const COPILOT_CHAT_AUTH_URL: &'static str = "https://api.github.com/copilot_internal/v2/token";
+pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
+pub const COPILOT_CHAT_AUTH_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]

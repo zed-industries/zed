@@ -145,7 +145,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                     };
                 }
                 Direction::Next => {
-                    if self.completions.len() == 0 {
+                    if self.completions.is_empty() {
                         self.active_completion_index = 0
                     } else {
                         self.active_completion_index =
@@ -221,15 +221,13 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             })
             .detach_and_log_err(cx);
 
-        if should_report_inline_completion_event {
-            if self.active_completion().is_some() {
-                if let Some(telemetry) = self.telemetry.as_ref() {
-                    telemetry.report_inline_completion_event(
-                        Self::name().to_string(),
-                        false,
-                        self.file_extension.clone(),
-                    );
-                }
+        if should_report_inline_completion_event && self.active_completion().is_some() {
+            if let Some(telemetry) = self.telemetry.as_ref() {
+                telemetry.report_inline_completion_event(
+                    Self::name().to_string(),
+                    false,
+                    self.file_extension.clone(),
+                );
             }
         }
     }
@@ -1060,7 +1058,7 @@ mod tests {
             editor.change_selections(None, cx, |selections| {
                 selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
             });
-            editor.next_inline_completion(&Default::default(), cx);
+            editor.refresh_inline_completion(true, false, cx);
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
@@ -1070,7 +1068,7 @@ mod tests {
             editor.change_selections(None, cx, |s| {
                 s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
             });
-            editor.next_inline_completion(&Default::default(), cx);
+            editor.refresh_inline_completion(true, false, cx);
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
@@ -1148,7 +1146,7 @@ mod tests {
     }
 
     fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
-        _ = cx.update(|cx| {
+        cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);

@@ -584,10 +584,8 @@ impl<'a> Chunks<'a> {
             if self.offset <= self.range.start || self.offset > self.range.end {
                 return false;
             }
-        } else {
-            if self.offset < self.range.start || self.offset >= self.range.end {
-                return false;
-            }
+        } else if self.offset < self.range.start || self.offset >= self.range.end {
+            return false;
         }
 
         true
@@ -1110,10 +1108,10 @@ impl Chunk {
 
                 let mut grapheme_cursor = GraphemeCursor::new(column, bytes.len(), true);
                 loop {
-                    if line.is_char_boundary(column) {
-                        if grapheme_cursor.is_boundary(line, 0).unwrap_or(false) {
-                            break;
-                        }
+                    if line.is_char_boundary(column)
+                        && grapheme_cursor.is_boundary(line, 0).unwrap_or(false)
+                    {
+                        break;
                     }
 
                     match bias {
@@ -1713,7 +1711,7 @@ mod tests {
                                     None
                                 }
                             })
-                            .or_else(|| {
+                            .or({
                                 if offset > 0 && start_ix == 0 {
                                     Some(0)
                                 } else {

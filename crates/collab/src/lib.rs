@@ -9,6 +9,7 @@ pub mod migrations;
 mod rate_limiter;
 pub mod rpc;
 pub mod seed;
+pub mod user_backfiller;
 
 #[cfg(test)]
 mod tests;
@@ -177,6 +178,7 @@ pub struct Config {
     pub stripe_api_key: Option<String>,
     pub stripe_price_id: Option<Arc<str>>,
     pub supermaven_admin_api_key: Option<Arc<str>>,
+    pub user_backfiller_github_access_token: Option<Arc<str>>,
 }
 
 impl Config {
@@ -235,6 +237,7 @@ impl Config {
             supermaven_admin_api_key: None,
             qwen2_7b_api_key: None,
             qwen2_7b_api_url: None,
+            user_backfiller_github_access_token: None,
         }
     }
 }
@@ -301,10 +304,7 @@ impl AppState {
             db: db.clone(),
             live_kit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
-            stripe_client: build_stripe_client(&config)
-                .await
-                .map(|client| Arc::new(client))
-                .log_err(),
+            stripe_client: build_stripe_client(&config).await.map(Arc::new).log_err(),
             rate_limiter: Arc::new(RateLimiter::new(db)),
             executor,
             clickhouse_client: config

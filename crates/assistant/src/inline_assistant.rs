@@ -1,6 +1,7 @@
 use crate::{
-    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
-    CharOperation, LineDiff, LineOperation, ModelSelector, StreamingDiff,
+    assistant_settings::AssistantSettings, humanize_token_count, prompts::PromptBuilder,
+    AssistantPanel, AssistantPanelEvent, CharOperation, LineDiff, LineOperation, ModelSelector,
+    StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{telemetry::Telemetry, ErrorExt};
@@ -35,7 +36,7 @@ use language_model::{
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use rope::Rope;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use smol::future::FutureExt;
 use std::{
     cmp,
@@ -47,6 +48,7 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
+use terminal_view::terminal_panel::TerminalPanel;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
@@ -129,6 +131,21 @@ impl InlineAssistant {
     pub fn register_workspace(&mut self, workspace: &View<Workspace>, cx: &mut WindowContext) {
         cx.subscribe(workspace, |_, event, cx| {
             Self::update_global(cx, |this, cx| this.handle_workspace_event(event, cx));
+        })
+        .detach();
+
+        let workspace = workspace.downgrade();
+        cx.observe_global::<SettingsStore>(move |cx| {
+            let Some(workspace) = workspace.upgrade() else {
+                return;
+            };
+            let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+                return;
+            };
+            let enabled = AssistantSettings::get_global(cx).enabled;
+            terminal_panel.update(cx, |terminal_panel, cx| {
+                terminal_panel.asssistant_enabled(enabled, cx)
+            });
         })
         .detach();
     }
@@ -1122,7 +1139,7 @@ impl InlineAssistant {
                     editor.set_show_gutter(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
                     editor.set_read_only(true);
-                    editor.set_show_inline_completions(false);
+                    editor.set_show_inline_completions(Some(false), cx);
                     editor.highlight_rows::<DeletedLines>(
                         Anchor::min()..=Anchor::max(),
                         Some(cx.theme().status().deleted_background),
@@ -1186,9 +1203,11 @@ impl InlineAssistStatus {
     pub(crate) fn is_pending(&self) -> bool {
         matches!(self, Self::Pending)
     }
+
     pub(crate) fn is_confirmed(&self) -> bool {
         matches!(self, Self::Confirmed)
     }
+
     pub(crate) fn is_done(&self) -> bool {
         matches!(self, Self::Done)
     }
@@ -1778,12 +1797,15 @@ impl PromptEditor {
             CodegenStatus::Pending => {
                 cx.emit(PromptEditorEvent::DismissRequested);
             }
-            CodegenStatus::Done | CodegenStatus::Error(_) => {
+            CodegenStatus::Done => {
                 if self.edited_since_done {
                     cx.emit(PromptEditorEvent::StartRequested);
                 } else {
                     cx.emit(PromptEditorEvent::ConfirmRequested);
                 }
+            }
+            CodegenStatus::Error(_) => {
+                cx.emit(PromptEditorEvent::StartRequested);
             }
         }
     }
@@ -2325,7 +2347,7 @@ impl Codegen {
                 self.build_request(user_prompt, assistant_panel_context, edit_range.clone(), cx)?;
 
             let chunks =
-                cx.spawn(|_, cx| async move { model.stream_completion(request, &cx).await });
+                cx.spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await });
             async move { Ok(chunks.await?.boxed()) }.boxed_local()
         };
         self.handle_stream(telemetry_id, edit_range, chunks, cx);
@@ -2397,6 +2419,7 @@ impl Codegen {
 
         Ok(LanguageModelRequest {
             messages,
+            tools: Vec::new(),
             stop: vec!["|END|>".to_string()],
             temperature,
         })
@@ -3050,7 +3073,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range,
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });
@@ -3122,7 +3145,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range.clone(),
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });
@@ -3197,7 +3220,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range.clone(),
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });
@@ -3271,7 +3294,7 @@ mod tests {
             codegen.handle_stream(
                 String::new(),
                 range.clone(),
-                future::ready(Ok(chunks_rx.map(|chunk| Ok(chunk)).boxed())),
+                future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
         });

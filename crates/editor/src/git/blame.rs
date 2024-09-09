@@ -455,7 +455,7 @@ async fn parse_commit_messages(
         .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
     for (oid, message) in messages {
-        let parsed_message = parse_markdown(&message, &languages).await;
+        let parsed_message = parse_markdown(&message, languages).await;
 
         let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
             Some(provider.build_commit_permalink(

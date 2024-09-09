@@ -8,6 +8,7 @@ mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
 use assistant::PromptBuilder;
+use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, DevServerToken, UserStore};
@@ -22,7 +23,6 @@ use gpui::{
     Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, Task,
     UpdateGlobal as _, VisualContext,
 };
-use image_viewer;
 use language::LanguageRegistry;
 use log::LevelFilter;
 
@@ -44,6 +44,7 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
+use time::UtcOffset;
 use util::{maybe, parse_env_output, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
@@ -266,7 +267,6 @@ fn init_ui(
     welcome::init(cx);
     settings_ui::init(cx);
     extensions_ui::init(cx);
-    performance::init(cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -316,7 +316,6 @@ fn init_ui(
 }
 
 fn main() {
-    let start_time = std::time::Instant::now();
     menu::init();
     zed_actions::init();
 
@@ -328,9 +327,7 @@ fn main() {
     init_logger();
 
     log::info!("========== starting zed ==========");
-    let app = App::new()
-        .with_assets(Assets)
-        .measure_time_to_first_window_draw(start_time);
+    let app = App::new().with_assets(Assets);
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()
@@ -358,9 +355,19 @@ fn main() {
             }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+
+    #[cfg(target_os = "windows")]
     {
-        use zed::only_instance::*;
+        use zed::windows_only_instance::*;
+        if !check_single_instance() {
+            println!("zed is already running");
+            return;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use zed::mac_only_instance::*;
         if ensure_only_instance() != IsOnlyInstance::Yes {
             println!("zed is already running");
             return;
@@ -716,12 +723,12 @@ fn handle_open_request(
 async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
     if stdout_is_a_pty() {
         if *client::ZED_DEVELOPMENT_AUTH {
-            client.authenticate_and_connect(true, &cx).await?;
+            client.authenticate_and_connect(true, cx).await?;
         } else if client::IMPERSONATE_LOGIN.is_some() {
-            client.authenticate_and_connect(false, &cx).await?;
+            client.authenticate_and_connect(false, cx).await?;
         }
-    } else if client.has_credentials(&cx).await {
-        client.authenticate_and_connect(true, &cx).await?;
+    } else if client.has_credentials(cx).await {
+        client.authenticate_and_connect(true, cx).await?;
     }
     Ok::<_, anyhow::Error>(())
 }
@@ -772,7 +779,7 @@ async fn restore_or_create_workspace(
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {
         cx.update(|cx| {
-            workspace::open_new(app_state, cx, |workspace, cx| {
+            workspace::open_new(Default::default(), app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
             })
         })?
@@ -886,7 +893,10 @@ fn init_logger() {
                 let mut config_builder = ConfigBuilder::new();
 
                 config_builder.set_time_format_rfc3339();
-                config_builder.set_time_offset_to_local().log_err();
+                let local_offset = chrono::Local::now().offset().fix().local_minus_utc();
+                if let Ok(offset) = UtcOffset::from_whole_seconds(local_offset) {
+                    config_builder.set_time_offset(offset);
+                }
 
                 #[cfg(target_os = "linux")]
                 {
@@ -1057,14 +1067,16 @@ struct Args {
 
 fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
     match std::fs::canonicalize(Path::new(&arg)) {
-        Ok(path) => Ok(format!("file://{}", path.to_string_lossy())),
+        Ok(path) => Ok(format!(
+            "file://{}",
+            path.to_string_lossy().trim_start_matches(r#"\\?\"#)
+        )),
         Err(error) => {
             if arg.starts_with("file://")
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")
+                || parse_zed_link(arg, cx).is_some()
             {
-                Ok(arg.into())
-            } else if let Some(_) = parse_zed_link(&arg, cx) {
                 Ok(arg.into())
             } else {
                 Err(anyhow!("error parsing path argument: {}", error))
@@ -1123,7 +1135,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
                     }
                 }
                 theme_registry.load_user_themes(themes_dir, fs).await?;
-                cx.update(|cx| ThemeSettings::reload_current_theme(cx))?;
+                cx.update(ThemeSettings::reload_current_theme)?;
             }
             anyhow::Ok(())
         }
@@ -1140,18 +1152,17 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
             .await;
 
         while let Some(paths) = events.next().await {
-            for path in paths {
-                if fs.metadata(&path).await.ok().flatten().is_some() {
+            for event in paths {
+                if fs.metadata(&event.path).await.ok().flatten().is_some() {
                     if let Some(theme_registry) =
                         cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
                     {
                         if let Some(()) = theme_registry
-                            .load_user_theme(&path, fs.clone())
+                            .load_user_theme(&event.path, fs.clone())
                             .await
                             .log_err()
                         {
-                            cx.update(|cx| ThemeSettings::reload_current_theme(cx))
-                                .log_err();
+                            cx.update(ThemeSettings::reload_current_theme).log_err();
                         }
                     }
                 }
@@ -1176,8 +1187,10 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
     cx.spawn(|_| async move {
         let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
         while let Some(event) = events.next().await {
-            let has_language_file = event.iter().any(|path| {
-                path.extension()
+            let has_language_file = event.iter().any(|event| {
+                event
+                    .path
+                    .extension()
                     .map(|ext| ext.to_string_lossy().as_ref() == "scm")
                     .unwrap_or(false)
             });

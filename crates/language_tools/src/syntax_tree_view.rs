@@ -249,24 +249,23 @@ impl SyntaxTreeView {
         }
 
         let node = cursor.node();
-        return row
-            .child(if node.is_named() {
-                Label::new(node.kind()).color(Color::Default)
-            } else {
-                Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
-            })
-            .child(
-                div()
-                    .child(Label::new(format_node_range(node)).color(Color::Muted))
-                    .pl_1(),
-            )
-            .text_bg(if selected {
-                colors.element_selected
-            } else {
-                Hsla::default()
-            })
-            .pl(rems(depth as f32))
-            .hover(|style| style.bg(colors.element_hover));
+        row.child(if node.is_named() {
+            Label::new(node.kind()).color(Color::Default)
+        } else {
+            Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
+        })
+        .child(
+            div()
+                .child(Label::new(format_node_range(node)).color(Color::Muted))
+                .pl_1(),
+        )
+        .text_bg(if selected {
+            colors.element_selected
+        } else {
+            Hsla::default()
+        })
+        .pl(rems(depth as f32))
+        .hover(|style| style.bg(colors.element_hover))
     }
 }
 
@@ -403,6 +402,12 @@ impl Item for SyntaxTreeView {
             }
             clone
         }))
+    }
+}
+
+impl Default for SyntaxTreeToolbarItemView {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

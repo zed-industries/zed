@@ -1,6 +1,7 @@
 use crate::db::{self, ChannelRole, NewUserParams};
 
 use anyhow::Context;
+use chrono::{DateTime, Utc};
 use db::Database;
 use serde::{de::DeserializeOwned, Deserialize};
 use std::{fmt::Write, fs, path::Path};
@@ -8,10 +9,11 @@ use std::{fmt::Write, fs, path::Path};
 use crate::Config;
 
 #[derive(Debug, Deserialize)]
-struct GitHubUser {
+struct GithubUser {
     id: i32,
     login: String,
     email: Option<String>,
+    created_at: DateTime<Utc>,
 }
 
 #[derive(Deserialize)]
@@ -54,7 +56,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
     }
 
     for admin_login in seed_config.admins {
-        let user = fetch_github::<GitHubUser>(
+        let user = fetch_github::<GithubUser>(
             &client,
             &format!("https://api.github.com/users/{admin_login}"),
         )
@@ -119,7 +121,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
             if let Some(last_user_id) = last_user_id {
                 write!(&mut uri, "&since={}", last_user_id).unwrap();
             }
-            let users = fetch_github::<Vec<GitHubUser>>(&client, &uri).await;
+            let users = fetch_github::<Vec<GithubUser>>(&client, &uri).await;
 
             for github_user in users {
                 last_user_id = Some(github_user.id);
@@ -127,9 +129,9 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
                 let user = db
                     .get_or_create_user_by_github_account(
                         &github_user.login,
-                        Some(github_user.id),
+                        github_user.id,
                         github_user.email.as_deref(),
-                        None,
+                        github_user.created_at,
                         None,
                     )
                     .await

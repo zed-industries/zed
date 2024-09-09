@@ -23,6 +23,7 @@ actions!(
         Sessions,
         Interrupt,
         Shutdown,
+        Restart,
         RefreshKernelspecs
     ]
 );
@@ -123,6 +124,19 @@ pub fn init(cx: &mut AppContext) {
                     }
 
                     crate::shutdown(editor_handle.clone(), cx);
+                }
+            })
+            .detach();
+
+        editor
+            .register_action({
+                let editor_handle = editor_handle.clone();
+                move |_: &Restart, cx| {
+                    if !JupyterSettings::enabled(cx) {
+                        return;
+                    }
+
+                    crate::restart(editor_handle.clone(), cx);
                 }
             })
             .detach();
@@ -228,7 +242,7 @@ impl Render for ReplSessionsPage {
         for spec in kernel_specifications {
             kernels_by_language
                 .entry(spec.kernelspec.language.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(spec);
         }
 

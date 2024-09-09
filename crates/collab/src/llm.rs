@@ -9,6 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _};
 use authorization::authorize_access_to_language_model;
+use axum::routing::get;
 use axum::{
     body::Body,
     http::{self, HeaderName, HeaderValue, Request, StatusCode},
@@ -18,9 +19,11 @@ use axum::{
     Extension, Json, Router, TypedHeader,
 };
 use chrono::{DateTime, Duration, Utc};
+use collections::HashMap;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
 use http_client::IsahcHttpClient;
+use rpc::ListModelsResponse;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
 };
@@ -29,6 +32,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use strum::IntoEnumIterator;
 use telemetry::{report_llm_rate_limit, report_llm_usage, LlmRateLimitEventRow, LlmUsageEventRow};
 use tokio::sync::RwLock;
 use util::ResultExt;
@@ -41,7 +45,8 @@ pub struct LlmState {
     pub db: Arc<LlmDatabase>,
     pub http_client: IsahcHttpClient,
     pub clickhouse_client: Option<clickhouse::Client>,
-    active_user_count: RwLock<Option<(DateTime<Utc>, ActiveUserCount)>>,
+    active_user_count_by_model:
+        RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
 }
 
 const ACTIVE_USER_COUNT_CACHE_DURATION: Duration = Duration::seconds(30);
@@ -69,9 +74,6 @@ impl LlmState {
             .build()
             .context("failed to construct http client")?;
 
-        let initial_active_user_count =
-            Some((Utc::now(), db.get_active_user_count(Utc::now()).await?));
-
         let this = Self {
             executor,
             db,
@@ -80,31 +82,41 @@ impl LlmState {
                 .clickhouse_url
                 .as_ref()
                 .and_then(|_| build_clickhouse_client(&config).log_err()),
-            active_user_count: RwLock::new(initial_active_user_count),
+            active_user_count_by_model: RwLock::new(HashMap::default()),
             config,
         };
 
         Ok(Arc::new(this))
     }
 
-    pub async fn get_active_user_count(&self) -> Result<ActiveUserCount> {
+    pub async fn get_active_user_count(
+        &self,
+        provider: LanguageModelProvider,
+        model: &str,
+    ) -> Result<ActiveUserCount> {
         let now = Utc::now();
 
-        if let Some((last_updated, count)) = self.active_user_count.read().await.as_ref() {
-            if now - *last_updated < ACTIVE_USER_COUNT_CACHE_DURATION {
-                return Ok(*count);
+        {
+            let active_user_count_by_model = self.active_user_count_by_model.read().await;
+            if let Some((last_updated, count)) =
+                active_user_count_by_model.get(&(provider, model.to_string()))
+            {
+                if now - *last_updated < ACTIVE_USER_COUNT_CACHE_DURATION {
+                    return Ok(*count);
+                }
             }
         }
 
-        let mut cache = self.active_user_count.write().await;
-        let new_count = self.db.get_active_user_count(now).await?;
-        *cache = Some((now, new_count));
+        let mut cache = self.active_user_count_by_model.write().await;
+        let new_count = self.db.get_active_user_count(provider, model, now).await?;
+        cache.insert((provider, model.to_string()), (now, new_count));
         Ok(new_count)
     }
 }
 
 pub fn routes() -> Router<(), Body> {
     Router::new()
+        .route("/models", get(list_models))
         .route("/completion", post(perform_completion))
         .layer(middleware::from_fn(validate_api_token))
 }
@@ -129,7 +141,7 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
         })?;
 
     let state = req.extensions().get::<Arc<LlmState>>().unwrap();
-    match LlmTokenClaims::validate(&token, &state.config) {
+    match LlmTokenClaims::validate(token, &state.config) {
         Ok(claims) => {
             if state.db.is_access_token_revoked(&claims.jti).await? {
                 return Err(Error::http(
@@ -142,7 +154,7 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
                 .record("user_id", claims.user_id)
                 .record("login", claims.github_user_login.clone())
                 .record("authn.jti", &claims.jti)
-                .record("is_staff", &claims.is_staff);
+                .record("is_staff", claims.is_staff);
 
             req.extensions_mut().insert(claims);
             Ok::<_, Error>(next.run(req).await.into_response())
@@ -164,6 +176,37 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
     }
 }
 
+async fn list_models(
+    Extension(state): Extension<Arc<LlmState>>,
+    Extension(claims): Extension<LlmTokenClaims>,
+    country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
+) -> Result<Json<ListModelsResponse>> {
+    let country_code = country_code_header.map(|header| header.to_string());
+
+    let mut accessible_models = Vec::new();
+
+    for (provider, model) in state.db.all_models() {
+        let authorize_result = authorize_access_to_language_model(
+            &state.config,
+            &claims,
+            country_code.as_deref(),
+            provider,
+            &model.name,
+        );
+
+        if authorize_result.is_ok() {
+            accessible_models.push(rpc::LanguageModel {
+                provider,
+                name: model.name,
+            });
+        }
+    }
+
+    Ok(Json(ListModelsResponse {
+        models: accessible_models,
+    }))
+}
+
 async fn perform_completion(
     Extension(state): Extension<Arc<LlmState>>,
     Extension(claims): Extension<LlmTokenClaims>,
@@ -178,7 +221,9 @@ async fn perform_completion(
     authorize_access_to_language_model(
         &state.config,
         &claims,
-        country_code_header.map(|header| header.to_string()),
+        country_code_header
+            .map(|header| header.to_string())
+            .as_deref(),
         params.provider,
         &model,
     )?;
@@ -202,7 +247,7 @@ async fn perform_completion(
             };
 
             let mut request: anthropic::Request =
-                serde_json::from_str(&params.provider_request.get())?;
+                serde_json::from_str(params.provider_request.get())?;
 
             // Override the model on the request with the latest version of the model that is
             // known to the server.
@@ -228,10 +273,22 @@ async fn perform_completion(
             .await
             .map_err(|err| match err {
                 anthropic::AnthropicError::ApiError(ref api_error) => match api_error.code() {
-                    Some(anthropic::ApiErrorCode::RateLimitError) => Error::http(
-                        StatusCode::TOO_MANY_REQUESTS,
-                        "Upstream Anthropic rate limit exceeded.".to_string(),
-                    ),
+                    Some(anthropic::ApiErrorCode::RateLimitError) => {
+                        tracing::info!(
+                            target: "upstream rate limit exceeded",
+                            user_id = claims.user_id,
+                            login = claims.github_user_login,
+                            authn.jti = claims.jti,
+                            is_staff = claims.is_staff,
+                            provider = params.provider.to_string(),
+                            model = model
+                        );
+
+                        Error::http(
+                            StatusCode::TOO_MANY_REQUESTS,
+                            "Upstream Anthropic rate limit exceeded.".to_string(),
+                        )
+                    }
                     Some(anthropic::ApiErrorCode::InvalidRequestError) => {
                         Error::http(StatusCode::BAD_REQUEST, api_error.message.clone())
                     }
@@ -291,7 +348,7 @@ async fn perform_completion(
                 &state.http_client,
                 open_ai::OPEN_AI_API_URL,
                 api_key,
-                serde_json::from_str(&params.provider_request.get())?,
+                serde_json::from_str(params.provider_request.get())?,
                 None,
             )
             .await?;
@@ -322,7 +379,8 @@ async fn perform_completion(
                 &state.http_client,
                 google_ai::API_URL,
                 api_key,
-                serde_json::from_str(&params.provider_request.get())?,
+                serde_json::from_str(params.provider_request.get())?,
+                None,
             )
             .await?;
 
@@ -354,9 +412,9 @@ async fn perform_completion(
                 .context("no Qwen2-7B URL configured on the server")?;
             let chunks = open_ai::stream_completion(
                 &state.http_client,
-                &api_url,
+                api_url,
                 api_key,
-                serde_json::from_str(&params.provider_request.get())?,
+                serde_json::from_str(params.provider_request.get())?,
                 None,
             )
             .await?;
@@ -402,6 +460,11 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
     }
 }
 
+/// The maximum lifetime spending an individual user can reach before being cut off.
+///
+/// Represented in cents.
+const LIFETIME_SPENDING_LIMIT_IN_CENTS: usize = 1_000 * 100;
+
 async fn check_usage_limit(
     state: &Arc<LlmState>,
     provider: LanguageModelProvider,
@@ -419,7 +482,14 @@ async fn check_usage_limit(
         )
         .await?;
 
-    let active_users = state.get_active_user_count().await?;
+    if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT_IN_CENTS {
+        return Err(Error::http(
+            StatusCode::FORBIDDEN,
+            "Maximum spending limit reached.".to_string(),
+        ));
+    }
+
+    let active_users = state.get_active_user_count(provider, model_name).await?;
 
     let users_in_recent_minutes = active_users.users_in_recent_minutes.max(1);
     let users_in_recent_days = active_users.users_in_recent_days.max(1);
@@ -463,6 +533,24 @@ async fn check_usage_limit(
             };
 
             if let Some(client) = state.clickhouse_client.as_ref() {
+                tracing::info!(
+                    target: "user rate limit",
+                    user_id = claims.user_id,
+                    login = claims.github_user_login,
+                    authn.jti = claims.jti,
+                    is_staff = claims.is_staff,
+                    provider = provider.to_string(),
+                    model = model.name,
+                    requests_this_minute = usage.requests_this_minute,
+                    tokens_this_minute = usage.tokens_this_minute,
+                    tokens_this_day = usage.tokens_this_day,
+                    users_in_recent_minutes = users_in_recent_minutes,
+                    users_in_recent_days = users_in_recent_days,
+                    max_requests_per_minute = per_user_max_requests_per_minute,
+                    max_tokens_per_minute = per_user_max_tokens_per_minute,
+                    max_tokens_per_day = per_user_max_tokens_per_day,
+                );
+
                 report_llm_rate_limit(
                     client,
                     LlmRateLimitEventRow {
@@ -605,23 +693,39 @@ pub fn log_usage_periodically(state: Arc<LlmState>) {
                 .sleep(std::time::Duration::from_secs(30))
                 .await;
 
-            let Some(usages) = state
+            for provider in LanguageModelProvider::iter() {
+                for model in state.db.model_names_for_provider(provider) {
+                    if let Some(active_user_count) = state
+                        .get_active_user_count(provider, &model)
+                        .await
+                        .log_err()
+                    {
+                        tracing::info!(
+                            target: "active user counts",
+                            provider = provider.to_string(),
+                            model = model,
+                            users_in_recent_minutes = active_user_count.users_in_recent_minutes,
+                            users_in_recent_days = active_user_count.users_in_recent_days,
+                        );
+                    }
+                }
+            }
+
+            if let Some(usages) = state
                 .db
                 .get_application_wide_usages_by_model(Utc::now())
                 .await
                 .log_err()
-            else {
-                continue;
-            };
-
-            for usage in usages {
-                tracing::info!(
-                    target: "computed usage",
-                    provider = usage.provider.to_string(),
-                    model = usage.model,
-                    requests_this_minute = usage.requests_this_minute,
-                    tokens_this_minute = usage.tokens_this_minute,
-                );
+            {
+                for usage in usages {
+                    tracing::info!(
+                        target: "computed usage",
+                        provider = usage.provider.to_string(),
+                        model = usage.model,
+                        requests_this_minute = usage.requests_this_minute,
+                        tokens_this_minute = usage.tokens_this_minute,
+                    );
+                }
             }
         }
     })

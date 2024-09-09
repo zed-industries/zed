@@ -19,6 +19,7 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::ResultExt;
 
+use crate::LanguageModelCompletionEvent;
 use crate::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
@@ -40,6 +41,7 @@ pub struct OpenAiSettings {
 pub struct AvailableModel {
     pub name: String,
     pub max_tokens: usize,
+    pub max_output_tokens: Option<u32>,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -53,7 +55,7 @@ pub struct State {
     _subscription: Subscription,
 }
 
-const OPENAI_API_KEY_VAR: &'static str = "OPENAI_API_KEY";
+const OPENAI_API_KEY_VAR: &str = "OPENAI_API_KEY";
 
 impl State {
     fn is_authenticated(&self) -> bool {
@@ -170,6 +172,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                 open_ai::Model::Custom {
                     name: model.name.clone(),
                     max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
                 },
             );
         }
@@ -275,6 +278,10 @@ impl LanguageModel for OpenAiLanguageModel {
         self.model.max_token_count()
     }
 
+    fn max_output_tokens(&self) -> Option<u32> {
+        self.model.max_output_tokens()
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
@@ -287,10 +294,18 @@ impl LanguageModel for OpenAiLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let request = request.into_open_ai(self.model.id().into());
+    ) -> BoxFuture<
+        'static,
+        Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
+    > {
+        let request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
         let completions = self.stream_completion(request, cx);
-        async move { Ok(open_ai::extract_text_from_events(completions.await?).boxed()) }.boxed()
+        async move {
+            Ok(open_ai::extract_text_from_events(completions.await?)
+                .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                .boxed())
+        }
+        .boxed()
     }
 
     fn use_any_tool(
@@ -301,7 +316,7 @@ impl LanguageModel for OpenAiLanguageModel {
         schema: serde_json::Value,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut request = request.into_open_ai(self.model.id().into());
+        let mut request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
         request.tool_choice = Some(ToolChoice::Other(ToolDefinition::Function {
             function: FunctionDefinition {
                 name: tool_name.clone(),
@@ -454,6 +469,7 @@ impl ConfigurationView {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
+            truncate: None,
         };
         EditorElement::new(
             &self.api_key_editor,
@@ -473,9 +489,10 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        const OPENAI_CONSOLE_URL: &str = "https://console.anthropic.com/settings/keys";
         const INSTRUCTIONS: [&str; 6] = [
             "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
-            " - You can create an API key at: platform.openai.com/api-keys",
+            " - You can create an API key at: ",
             " - Make sure your OpenAI account has credits",
             " - Having a subscription for another service like GitHub Copilot won't work.",
             "",
@@ -490,9 +507,19 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .children(
-                    INSTRUCTIONS.map(|instruction| Label::new(instruction)),
+                .child(Label::new(INSTRUCTIONS[0]))
+                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
+                    Button::new("openai_console", OPENAI_CONSOLE_URL)
+                        .style(ButtonStyle::Subtle)
+                        .icon(IconName::ExternalLink)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .on_click(move |_, cx| cx.open_url(OPENAI_CONSOLE_URL))
+                    )
                 )
+                .children(
+                    (2..INSTRUCTIONS.len()).map(|n|
+                        Label::new(INSTRUCTIONS[n])).collect::<Vec<_>>())
                 .child(
                     h_flex()
                         .w_full()

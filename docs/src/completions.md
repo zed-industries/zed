@@ -15,7 +15,7 @@ When there is an appropriate language server available, Zed will by-default prov
 
 You can manually trigger completions with `ctrl-space` or by triggering the `editor::ShowCompletions` action from the command palette.
 
-For more information, see :
+For more information, see:
 
 - [Configuring Supported Languages](./configuring-languages.md)
 - [List of Zed Supported Languages](./languages.md).
@@ -88,4 +88,4 @@ You can also add this as a language-specific setting in your `settings.json` to 
 
 ## See also
 
-You may also use the Assistant Panel or the Inline Assistant to interact with language models, see the [assistant](assistant.md) documentation for more information.
+You may also use the Assistant Panel or the Inline Assistant to interact with language models, see the [assistant](assistant/assistant.md) documentation for more information.

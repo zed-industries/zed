@@ -3,11 +3,11 @@
 # General
 
 - [Getting Started](./getting-started.md)
-  - [System Requirements](./system-requirements.md)
-  - [Linux](./linux.md)
-  - [Windows](./windows.md)
-  - [Telemetry](./telemetry.md)
-  - [Additional Learning Materials](./additional-learning-materials.md)
+- [System Requirements](./system-requirements.md)
+- [Linux](./linux.md)
+- [Windows](./windows.md)
+- [Telemetry](./telemetry.md)
+- [Additional Learning Materials](./additional-learning-materials.md)
 
 # Configuration
 
@@ -22,7 +22,6 @@
 # Using Zed
 
 - [Multibuffers](./multibuffers.md)
-- [Assistant](./assistant.md)
 - [Code Completions](./completions.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
@@ -30,6 +29,16 @@
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
 - [REPL](./repl.md)
+
+# Assistant
+
+- [Overview](./assistant/assistant.md)
+- [Configuration](./assistant/configuration.md)
+- [Assistant Panel](./assistant/assistant-panel.md)
+- [Contexts](./assistant/contexts.md)
+- [Inline Assistant](./assistant/inline-assistant.md)
+- [Commands](./assistant/commands.md)
+- [Prompts](./assistant/prompting.md)
 
 # Extensions
 
@@ -93,7 +102,7 @@
 - [Scheme](./languages/scheme.md)
 - [Svelte](./languages/svelte.md)
 - [Swift](./languages/swift.md)
-- [TailwindCSS](./languages/tailwindcss.md)
+- [Tailwind CSS](./languages/tailwindcss.md)
 - [Terraform](./languages/terraform.md)
 - [TOML](./languages/toml.md)
 - [TypeScript](./languages/typescript.md)

@@ -56,6 +56,23 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
             }
         }
     }
+
+    pub fn is_deployed(&self) -> bool {
+        self.0
+            .borrow()
+            .as_ref()
+            .map_or(false, |state| state.menu.borrow().as_ref().is_some())
+    }
+
+    pub fn is_focused(&self, cx: &mut WindowContext) -> bool {
+        self.0.borrow().as_ref().map_or(false, |state| {
+            state
+                .menu
+                .borrow()
+                .as_ref()
+                .map_or(false, |view| view.focus_handle(cx).is_focused(cx))
+        })
+    }
 }
 
 pub struct PopoverMenu<M: ManagedView> {
@@ -139,7 +156,7 @@ impl<M: ManagedView> PopoverMenu<M> {
     }
 
     fn resolved_attach(&self) -> AnchorCorner {
-        self.attach.unwrap_or_else(|| match self.anchor {
+        self.attach.unwrap_or(match self.anchor {
             AnchorCorner::TopLeft => AnchorCorner::BottomLeft,
             AnchorCorner::TopRight => AnchorCorner::BottomRight,
             AnchorCorner::BottomLeft => AnchorCorner::TopLeft,
@@ -235,7 +252,9 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 let mut menu_layout_id = None;
 
                 let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
-                    let mut anchored = anchored().snap_to_window().anchor(self.anchor);
+                    let mut anchored = anchored()
+                        .snap_to_window_with_margin(px(8.))
+                        .anchor(self.anchor);
                     if let Some(child_bounds) = element_state.child_bounds {
                         anchored = anchored.position(
                             self.resolved_attach().corner(child_bounds) + self.resolved_offset(cx),
@@ -305,7 +324,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             menu.prepaint(cx);
         }
 
-        let hitbox_id = request_layout.child_layout_id.map(|layout_id| {
+        request_layout.child_layout_id.map(|layout_id| {
             let bounds = cx.layout_bounds(layout_id);
             cx.with_element_state(global_id.unwrap(), |element_state, _cx| {
                 let mut element_state: PopoverMenuElementState<M> = element_state.unwrap();
@@ -314,9 +333,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
             });
 
             cx.insert_hitbox(bounds, false).id
-        });
-
-        hitbox_id
+        })
     }
 
     fn paint(
@@ -340,9 +357,12 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 // want a click on the toggle to re-open it.
                 cx.on_mouse_event(move |_: &MouseDownEvent, phase, cx| {
                     if phase == DispatchPhase::Bubble && child_hitbox.is_hovered(cx) {
-                        menu_handle.borrow_mut().take();
+                        if let Some(menu) = menu_handle.borrow().as_ref() {
+                            menu.update(cx, |_, cx| {
+                                cx.emit(DismissEvent);
+                            });
+                        }
                         cx.stop_propagation();
-                        cx.refresh();
                     }
                 })
             }

@@ -234,8 +234,8 @@ impl Eq for PathMatcher {}
 impl PathMatcher {
     pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
         let globs = globs
-            .into_iter()
-            .map(|glob| Glob::new(&glob))
+            .iter()
+            .map(|glob| Glob::new(glob))
             .collect::<Result<Vec<_>, _>>()?;
         let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
         let mut glob_builder = GlobSetBuilder::new();
@@ -263,7 +263,7 @@ impl PathMatcher {
         let path_str = path.to_string_lossy();
         let separator = std::path::MAIN_SEPARATOR_STR;
         if path_str.ends_with(separator) {
-            return false;
+            false
         } else {
             self.glob.is_match(path_str.to_string() + separator)
         }

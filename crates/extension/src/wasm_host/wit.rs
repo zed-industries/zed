@@ -74,14 +74,14 @@ impl Extension {
 
         if version >= latest::MIN_VERSION {
             let (extension, instance) =
-                latest::Extension::instantiate_async(store, &component, latest::linker())
+                latest::Extension::instantiate_async(store, component, latest::linker())
                     .await
                     .context("failed to instantiate wasm extension")?;
             Ok((Self::V010(extension), instance))
         } else if version >= since_v0_0_6::MIN_VERSION {
             let (extension, instance) = since_v0_0_6::Extension::instantiate_async(
                 store,
-                &component,
+                component,
                 since_v0_0_6::linker(),
             )
             .await
@@ -90,7 +90,7 @@ impl Extension {
         } else if version >= since_v0_0_4::MIN_VERSION {
             let (extension, instance) = since_v0_0_4::Extension::instantiate_async(
                 store,
-                &component,
+                component,
                 since_v0_0_4::linker(),
             )
             .await
@@ -99,7 +99,7 @@ impl Extension {
         } else {
             let (extension, instance) = since_v0_0_1::Extension::instantiate_async(
                 store,
-                &component,
+                component,
                 since_v0_0_1::linker(),
             )
             .await

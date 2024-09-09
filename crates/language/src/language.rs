@@ -2,7 +2,7 @@
 //! features (the other big contributors being project and lsp crates that revolve around LSP features).
 //! Namely, this crate:
 //! - Provides [`Language`], [`Grammar`] and [`LanguageRegistry`] types that
-//! use Tree-sitter to provide syntax highlighting to the editor; note though that `language` doesn't perform the highlighting by itself. It only maps ranges in a buffer to colors. Treesitter is also used for buffer outlines (lists of symbols in a buffer)
+//!   use Tree-sitter to provide syntax highlighting to the editor; note though that `language` doesn't perform the highlighting by itself. It only maps ranges in a buffer to colors. Treesitter is also used for buffer outlines (lists of symbols in a buffer)
 //! - Exposes [`LanguageConfig`] that describes how constructs (like brackets or line comments) should be handled by the editor for a source file of a particular language.
 //!
 //! Notably we do *not* assign a single language to a single file; in real world a single file can consist of multiple programming languages - HTML is a good example of that - and `language` crate tends to reflect that status quo in its API.
@@ -17,7 +17,7 @@ mod syntax_map;
 mod task_context;
 
 #[cfg(test)]
-mod buffer_tests;
+pub mod buffer_tests;
 pub mod markdown;
 
 use crate::language_settings::SoftWrap;
@@ -28,7 +28,6 @@ use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
-use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::Mutex;
 use regex::Regex;
@@ -39,6 +38,7 @@ use schemars::{
 };
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
+use settings::WorktreeId;
 use smol::future::FutureExt as _;
 use std::num::NonZeroU32;
 use std::{
@@ -53,7 +53,7 @@ use std::{
     str,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
-        Arc,
+        Arc, LazyLock,
     },
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
@@ -111,23 +111,23 @@ where
     func(cursor.deref_mut())
 }
 
-lazy_static! {
-    static ref NEXT_LANGUAGE_ID: AtomicUsize = Default::default();
-    static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
-    static ref WASM_ENGINE: wasmtime::Engine = {
-        wasmtime::Engine::new(&wasmtime::Config::new()).unwrap()
-    };
+static NEXT_LANGUAGE_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
+static NEXT_GRAMMAR_ID: LazyLock<AtomicUsize> = LazyLock::new(Default::default);
+static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
+    wasmtime::Engine::new(&wasmtime::Config::new()).expect("Failed to create Wasmtime engine")
+});
 
-    /// A shared grammar for plain text, exposed for reuse by downstream crates.
-    pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
+/// A shared grammar for plain text, exposed for reuse by downstream crates.
+pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
+    Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
             soft_wrap: Some(SoftWrap::EditorWidth),
             ..Default::default()
         },
         None,
-    ));
-}
+    ))
+});
 
 /// Types that represent a position in a buffer, and can be converted into
 /// an LSP position, to send to a language server.
@@ -157,6 +157,24 @@ pub struct CachedLspAdapter {
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
+}
+
+impl Debug for CachedLspAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedLspAdapter")
+            .field("name", &self.name)
+            .field(
+                "disk_based_diagnostic_sources",
+                &self.disk_based_diagnostic_sources,
+            )
+            .field(
+                "disk_based_diagnostics_progress_token",
+                &self.disk_based_diagnostics_progress_token,
+            )
+            .field("language_ids", &self.language_ids)
+            .field("reinstall_attempt_count", &self.reinstall_attempt_count)
+            .finish_non_exhaustive()
+    }
 }
 
 impl CachedLspAdapter {
@@ -263,7 +281,7 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
-    fn worktree_id(&self) -> u64;
+    fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
 
@@ -416,7 +434,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
-        for (ix, completion) in completions.into_iter().enumerate() {
+        for (ix, completion) in completions.iter().enumerate() {
             let label = self.label_for_completion(completion, language).await;
             if let Some(label) = label {
                 labels.resize(ix + 1, None);
@@ -440,7 +458,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
-        for (ix, (name, kind)) in symbols.into_iter().enumerate() {
+        for (ix, (name, kind)) in symbols.iter().enumerate() {
             let label = self.label_for_symbol(name, *kind, language).await;
             if let Some(label) = label {
                 labels.resize(ix + 1, None);
@@ -610,6 +628,10 @@ pub struct LanguageConfig {
     /// If there's a parser name in the language settings, that will be used instead.
     #[serde(default)]
     pub prettier_parser_name: Option<String>,
+    /// If true, this language is only for syntax highlighting via an injection into other
+    /// languages, but should not appear to the user as a distinct language.
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -696,6 +718,7 @@ impl Default for LanguageConfig {
             tab_size: None,
             soft_wrap: None,
             prettier_parser_name: None,
+            hidden: false,
         }
     }
 }
@@ -1341,7 +1364,9 @@ impl Language {
                 });
             let highlight_maps = vec![grammar.highlight_map()];
             let mut offset = 0;
-            for chunk in BufferChunks::new(text, range, Some((captures, highlight_maps)), None) {
+            for chunk in
+                BufferChunks::new(text, range, Some((captures, highlight_maps)), false, None)
+            {
                 let end_offset = offset + chunk.text.len();
                 if let Some(highlight_id) = chunk.syntax_highlight_id {
                     if !highlight_id.is_default() {
@@ -1395,6 +1420,10 @@ impl Language {
 }
 
 impl LanguageScope {
+    pub fn language_name(&self) -> Arc<str> {
+        self.language.config.name.clone()
+    }
+
     pub fn collapsed_placeholder(&self) -> &str {
         self.language.config.collapsed_placeholder.as_ref()
     }

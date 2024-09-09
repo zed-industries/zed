@@ -14,6 +14,7 @@ pub enum RequestType {
     LoggingSetLevel,
     PromptsGet,
     PromptsList,
+    CompletionComplete,
 }
 
 impl RequestType {
@@ -28,6 +29,7 @@ impl RequestType {
             RequestType::LoggingSetLevel => "logging/setLevel",
             RequestType::PromptsGet => "prompts/get",
             RequestType::PromptsList => "prompts/list",
+            RequestType::CompletionComplete => "completion/complete",
         }
     }
 }
@@ -78,6 +80,50 @@ pub struct PromptsGetParams {
     pub arguments: Option<HashMap<String, String>>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionCompleteParams {
+    pub r#ref: CompletionReference,
+    pub argument: CompletionArgument,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum CompletionReference {
+    Prompt(PromptReference),
+    Resource(ResourceReference),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptReference {
+    pub r#type: PromptReferenceType,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptReferenceType {
+    #[serde(rename = "ref/prompt")]
+    Prompt,
+    #[serde(rename = "ref/resource")]
+    Resource,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceReference {
+    pub r#type: String,
+    pub uri: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionArgument {
+    pub name: String,
+    pub value: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeResponse {
@@ -102,6 +148,7 @@ pub struct ResourcesListResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsGetResponse {
+    pub description: Option<String>,
     pub prompt: String,
 }
 
@@ -109,6 +156,20 @@ pub struct PromptsGetResponse {
 #[serde(rename_all = "camelCase")]
 pub struct PromptsListResponse {
     pub prompts: Vec<PromptInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionCompleteResponse {
+    pub completion: CompletionResult,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionResult {
+    pub values: Vec<String>,
+    pub total: Option<u32>,
+    pub has_more: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -231,4 +292,27 @@ pub struct ProgressParams {
     pub progress_token: String,
     pub progress: f64,
     pub total: Option<f64>,
+}
+
+// Helper Types that don't map directly to the protocol
+
+pub enum CompletionTotal {
+    Exact(u32),
+    HasMore,
+    Unknown,
+}
+
+impl CompletionTotal {
+    pub fn from_options(has_more: Option<bool>, total: Option<u32>) -> Self {
+        match (has_more, total) {
+            (_, Some(count)) => CompletionTotal::Exact(count),
+            (Some(true), _) => CompletionTotal::HasMore,
+            _ => CompletionTotal::Unknown,
+        }
+    }
+}
+
+pub struct Completion {
+    pub values: Vec<String>,
+    pub total: CompletionTotal,
 }
