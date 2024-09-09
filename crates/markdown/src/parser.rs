@@ -232,6 +232,10 @@ pub enum MarkdownTag {
 
     /// A metadata block.
     MetadataBlock(MetadataBlockKind),
+
+    DefinitionList,
+    DefinitionListTitle,
+    DefinitionListDefinition,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -317,11 +321,9 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
             },
             pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock,
             pulldown_cmark::Tag::MetadataBlock(kind) => MarkdownTag::MetadataBlock(kind),
-            pulldown_cmark::Tag::DefinitionList
-            | pulldown_cmark::Tag::DefinitionListTitle
-            | pulldown_cmark::Tag::DefinitionListDefinition => {
-                unimplemented!("definition lists are not yet supported")
-            }
+            pulldown_cmark::Tag::DefinitionList => MarkdownTag::DefinitionList,
+            pulldown_cmark::Tag::DefinitionListTitle => MarkdownTag::DefinitionListTitle,
+            pulldown_cmark::Tag::DefinitionListDefinition => MarkdownTag::DefinitionListDefinition,
         }
     }
 }
