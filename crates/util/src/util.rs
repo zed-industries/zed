@@ -735,66 +735,62 @@ mod tests {
         let target = "1a";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(1, "a"))
+            NumericPrefixWithSuffix(Some(1), "a")
         );
 
         let target = "12ab";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(12, "ab"))
+            NumericPrefixWithSuffix(Some(12), "ab")
         );
 
         let target = "12_ab";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(12, "_ab"))
+            NumericPrefixWithSuffix(Some(12), "_ab")
         );
 
         let target = "1_2ab";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(1, "_2ab"))
+            NumericPrefixWithSuffix(Some(1), "_2ab")
         );
 
         let target = "1.2";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(1, ".2"))
+            NumericPrefixWithSuffix(Some(1), ".2")
         );
 
         let target = "1.2_a";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(1, ".2_a"))
+            NumericPrefixWithSuffix(Some(1), ".2_a")
         );
 
         let target = "12.2_a";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(12, ".2_a"))
+            NumericPrefixWithSuffix(Some(12), ".2_a")
         );
 
         let target = "12a.2_a";
         assert_eq!(
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
-            Some(NumericPrefixWithSuffix(12, "a.2_a"))
+            NumericPrefixWithSuffix(Some(12), "a.2_a")
         );
     }
 
     #[test]
     fn test_numeric_prefix_with_suffix() {
         let mut sorted = vec!["1-abc", "10", "11def", "2", "21-abc"];
-        sorted.sort_by_key(|s| {
-            NumericPrefixWithSuffix::from_numeric_prefixed_str(s).unwrap_or_else(|| {
-                panic!("Cannot convert string `{s}` into NumericPrefixWithSuffix")
-            })
-        });
+        sorted.sort_by_key(|s| NumericPrefixWithSuffix::from_numeric_prefixed_str(s));
         assert_eq!(sorted, ["1-abc", "2", "10", "11def", "21-abc"]);
 
         for numeric_prefix_less in ["numeric_prefix_less", "aaa", "~™£"] {
             assert_eq!(
                 NumericPrefixWithSuffix::from_numeric_prefixed_str(numeric_prefix_less),
-                None,
+                NumericPrefixWithSuffix(None, numeric_prefix_less),
                 "String without numeric prefix `{numeric_prefix_less}` should not be converted into NumericPrefixWithSuffix"
             )
         }
