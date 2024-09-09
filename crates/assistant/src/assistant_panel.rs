@@ -4228,12 +4228,7 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::split))
             .size_full()
             .children(self.render_notice(cx))
-            .child(
-                div()
-                    .flex_grow()
-                    .bg(cx.theme().colors().editor_background)
-                    .child(self.editor.clone()),
-            )
+            .child(div().flex_grow().child(self.editor.clone()))
             .when_some(accept_terms, |this, element| {
                 this.child(
                     div()
@@ -4298,7 +4293,6 @@ impl Render for ContextEditor {
                         .w_full()
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
-                        .bg(cx.theme().colors().editor_background)
                         .child(
                             h_flex()
                                 .gap_2()
@@ -5076,7 +5070,6 @@ impl Render for ConfigurationView {
         let mut element = v_flex()
             .id("assistant-configuration-view")
             .track_focus(&self.focus_handle)
-            .bg(cx.theme().colors().editor_background)
             .size_full()
             .overflow_y_scroll()
             .child(

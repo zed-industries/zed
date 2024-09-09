@@ -376,7 +376,7 @@ impl TextStyle {
         }
 
         if let Some(color) = style.color {
-            self.color = self.color.blend(color);
+            self.color = color;
         }
 
         if let Some(factor) = style.fade_out {

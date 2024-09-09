@@ -9836,10 +9836,16 @@ impl Editor {
                                                 status: cx.editor_style.status.clone(),
                                                 inlay_hints_style: HighlightStyle {
                                                     color: Some(cx.theme().status().hint),
+                                                    background_color: Some(
+                                                        cx.theme().status().hint_background,
+                                                    ),
                                                     font_weight: Some(FontWeight::BOLD),
                                                     ..HighlightStyle::default()
                                                 },
                                                 suggestions_style: HighlightStyle {
+                                                    background_color: Some(
+                                                        cx.theme().status().predictive_background,
+                                                    ),
                                                     color: Some(cx.theme().status().predictive),
                                                     ..HighlightStyle::default()
                                                 },
@@ -12791,10 +12797,12 @@ impl Render for Editor {
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
                 inlay_hints_style: HighlightStyle {
+                    background_color: Some(cx.theme().status().hint_background),
                     color: Some(cx.theme().status().hint),
                     ..HighlightStyle::default()
                 },
                 suggestions_style: HighlightStyle {
+                    background_color: Some(cx.theme().status().predictive_background),
                     color: Some(cx.theme().status().predictive),
                     ..HighlightStyle::default()
                 },

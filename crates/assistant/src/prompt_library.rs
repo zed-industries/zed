@@ -923,9 +923,17 @@ impl PromptLibrary {
                                                     status: cx.theme().status().clone(),
                                                     inlay_hints_style: HighlightStyle {
                                                         color: Some(cx.theme().status().hint),
+                                                        background_color: Some(
+                                                            cx.theme().status().hint_background,
+                                                        ),
                                                         ..HighlightStyle::default()
                                                     },
                                                     suggestions_style: HighlightStyle {
+                                                        background_color: Some(
+                                                            cx.theme()
+                                                                .status()
+                                                                .predictive_background,
+                                                        ),
                                                         color: Some(cx.theme().status().predictive),
                                                         ..HighlightStyle::default()
                                                     },
