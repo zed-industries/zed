@@ -5,10 +5,9 @@
 (comment) @comment
 
 ; property attribute
-; TODO: we need to break this down in the source repository to distinguish between
-; - directives, eg: foo:bar="baz" and foo="baz"
-; - possibly --props
-(attribute_name) @attribute
+(attribute_directive) @attribute.function
+(attribute_identifier) @attribute
+(modifier) @attribute.special
 
 ; Style component attributes as @property
 (start_tag
@@ -17,7 +16,9 @@
         (#match? @_tag_name "^[A-Z]")
     )
     (attribute
-        (attribute_name) @property
+        (attribute_name
+            (attribute_identifier) @tag.property
+        )
     )
 )
 
@@ -27,7 +28,9 @@
         (#match? @_tag_name "^[A-Z]")
     )
     (attribute
-        (attribute_name) @property
+        (attribute_name
+            (attribute_identifier) @tag.property
+        )
     )
 )
 
@@ -57,6 +60,10 @@
   "{"
   "}"
 ] @punctuation.bracket
+
+[
+    "|"
+] @punctuation.delimiter
 
 
 [
