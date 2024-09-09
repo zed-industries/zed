@@ -2,9 +2,10 @@ mod since_v0_0_1;
 mod since_v0_0_4;
 mod since_v0_0_6;
 mod since_v0_1_0;
+mod since_v0_2_0;
 use indexed_docs::IndexedDocsDatabase;
 use release_channel::ReleaseChannel;
-use since_v0_1_0 as latest;
+use since_v0_2_0 as latest;
 
 use super::{wasm_engine, WasmState};
 use anyhow::{anyhow, Context, Result};
@@ -56,6 +57,7 @@ pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive
 }
 
 pub enum Extension {
+    V020(since_v0_2_0::Extension),
     V010(since_v0_1_0::Extension),
     V006(since_v0_0_6::Extension),
     V004(since_v0_0_4::Extension),
@@ -75,6 +77,12 @@ impl Extension {
         if version >= latest::MIN_VERSION {
             let (extension, instance) =
                 latest::Extension::instantiate_async(store, component, latest::linker())
+                    .await
+                    .context("failed to instantiate wasm extension")?;
+            Ok((Self::V020(extension), instance))
+        } else if version >= since_v0_1_0::MIN_VERSION {
+            let (extension, instance) =
+                since_v0_1_0::Extension::instantiate_async(store, component, latest::linker())
                     .await
                     .context("failed to instantiate wasm extension")?;
             Ok((Self::V010(extension), instance))
