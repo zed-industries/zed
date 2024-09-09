@@ -10,7 +10,7 @@ Svelte support is available through the [Svelte extension](https://github.com/ze
 
 You can modify how certain styles such as directives and modifiers appear in attributes:
 
-```json
+```jsonc
 // Your theme's style.syntax
 "syntax": {
   // styling for directives (eg: class:foo or on:click)
