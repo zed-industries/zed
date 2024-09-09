@@ -11,7 +11,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use text::{Rope, ToOffset, ToPoint};
+use text::{ToOffset, ToPoint};
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -75,7 +75,7 @@ fn completion_state_from_diff(
                     // the range from the current position to item is an inlay.
                     inlays.push(InlayProposal::Suggestion(
                         snapshot.anchor_after(offset),
-                        completion_text.slice(i..i + k),
+                        completion_text[i..i + k].into(),
                     ));
                     offset.add_assign(j);
                 }
@@ -94,13 +94,13 @@ fn completion_state_from_diff(
         // there is leftover completion text, so drop it as an inlay.
         inlays.push(InlayProposal::Suggestion(
             snapshot.anchor_after(offset),
-            completion_text.slice(i..completion_text.len()),
+            completion_text[i..completion_text.len()].into(),
         ));
     }
 
     CompletionProposal {
         inlays,
-        text: completion_text,
+        text: completion_text.into(),
         delete_range: Some(delete_range),
     }
 }
