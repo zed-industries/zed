@@ -33,9 +33,9 @@ pub fn linker() -> &'static Linker<WasmState> {
     LINKER.get_or_init(|| {
         super::new_linker(|linker, f| {
             Extension::add_to_linker(linker, f)?;
-            latest::zed::extension::github::add_to_linker(linker, f)?;
-            latest::zed::extension::nodejs::add_to_linker(linker, f)?;
-            latest::zed::extension::platform::add_to_linker(linker, f)?;
+            // latest::zed::extension::github::add_to_linker(linker, f)?;
+            // latest::zed::extension::nodejs::add_to_linker(linker, f)?;
+            // latest::zed::extension::platform::add_to_linker(linker, f)?;
             Ok(())
         })
     })

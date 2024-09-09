@@ -5329,7 +5329,7 @@ fn rust_lang() -> Arc<Language> {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ))
 }
 
@@ -5343,7 +5343,7 @@ fn typescript_lang() -> Arc<Language> {
             },
             ..Default::default()
         },
-        Some(tree_sitter_typescript::language_typescript()),
+        Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     ))
 }
 
@@ -5357,7 +5357,7 @@ fn tsx_lang() -> Arc<Language> {
             },
             ..Default::default()
         },
-        Some(tree_sitter_typescript::language_tsx()),
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
     ))
 }
 

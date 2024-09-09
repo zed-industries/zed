@@ -14,7 +14,7 @@ use std::{
     process::{Command, Stdio},
     sync::Arc,
 };
-use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
+use wasm_encoder::{ComponentSectionId, Encode as _, RawSection};
 use wasmparser::Parser;
 use wit_component::ComponentEncoder;
 
@@ -458,13 +458,15 @@ impl ExtensionBuilder {
 
         for payload in Parser::new(0).parse_all(input) {
             let payload = payload?;
+            let component_header = wasm_encoder::Component::new().finish();
+            let module_header = wasm_encoder::Component::new().finish();
 
             // Track nesting depth, so that we don't mess with inner producer sections:
             match payload {
                 Version { encoding, .. } => {
                     output.extend_from_slice(match encoding {
-                        wasmparser::Encoding::Component => &wasm_encoder::Component::HEADER,
-                        wasmparser::Encoding::Module => &wasm_encoder::Module::HEADER,
+                        wasmparser::Encoding::Component => &component_header,
+                        wasmparser::Encoding::Module => &module_header,
                     });
                 }
                 ModuleSection { .. } | ComponentSection { .. } => {
@@ -476,7 +478,7 @@ impl ExtensionBuilder {
                         Some(c) => c,
                         None => break,
                     };
-                    if output.starts_with(&wasm_encoder::Component::HEADER) {
+                    if output.starts_with(&wasm_encoder::Component::new().finish()) {
                         parent.push(ComponentSectionId::Component as u8);
                         output.encode(&mut parent);
                     } else {
@@ -499,7 +501,7 @@ impl ExtensionBuilder {
                     id,
                     data: &input[range],
                 }
-                .append_to(&mut output);
+                .encode(&mut output);
             }
         }
 
