@@ -519,7 +519,7 @@ mod custom_path_matcher {
                 .zip(self.sources_with_trailing_slash.iter())
                 .any(|(source, with_slash)| {
                     let as_bytes = other_path.as_os_str().as_encoded_bytes();
-                    let with_slash = if source.ends_with("/") {
+                    let with_slash = if source.ends_with(std::path::MAIN_SEPARATOR_STR) {
                         source.as_bytes()
                     } else {
                         with_slash.as_bytes()
