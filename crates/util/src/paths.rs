@@ -282,40 +282,29 @@ pub fn compare_paths(
                 let a_is_file = components_a.peek().is_none() && a_is_file;
                 let b_is_file = components_b.peek().is_none() && b_is_file;
                 let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                    let maybe_numeric_ordering = {
-                        let path_a = Path::new(component_a.as_os_str());
-                        let num_and_remainder_a =
-                            NumericPrefixWithSuffix::from_numeric_prefixed_str(
-                                if a_is_file {
-                                    path_a.file_stem()
-                                } else {
-                                    path_a.file_name()
-                                }
-                                .and_then(|s| s.to_str())
-                                .unwrap_or_default(),
-                            );
+                    let path_a = Path::new(component_a.as_os_str());
+                    let num_and_remainder_a = NumericPrefixWithSuffix::from_numeric_prefixed_str(
+                        if a_is_file {
+                            path_a.file_stem()
+                        } else {
+                            path_a.file_name()
+                        }
+                        .and_then(|s| s.to_str())
+                        .unwrap_or_default(),
+                    );
 
-                        let path_b = Path::new(component_b.as_os_str());
-                        let num_and_remainder_b =
-                            NumericPrefixWithSuffix::from_numeric_prefixed_str(
-                                if b_is_file {
-                                    path_b.file_stem()
-                                } else {
-                                    path_b.file_name()
-                                }
-                                .and_then(|s| s.to_str())
-                                .unwrap_or_default(),
-                            );
+                    let path_b = Path::new(component_b.as_os_str());
+                    let num_and_remainder_b = NumericPrefixWithSuffix::from_numeric_prefixed_str(
+                        if b_is_file {
+                            path_b.file_stem()
+                        } else {
+                            path_b.file_name()
+                        }
+                        .and_then(|s| s.to_str())
+                        .unwrap_or_default(),
+                    );
 
-                        num_and_remainder_a.partial_cmp(&num_and_remainder_b)
-                    };
-
-                    maybe_numeric_ordering.unwrap_or_else(|| {
-                        let name_a = UniCase::new(component_a.as_os_str().to_string_lossy());
-                        let name_b = UniCase::new(component_b.as_os_str().to_string_lossy());
-
-                        name_a.cmp(&name_b)
-                    })
+                    num_and_remainder_a.cmp(&num_and_remainder_b)
                 });
                 if !ordering.is_eq() {
                     return ordering;
