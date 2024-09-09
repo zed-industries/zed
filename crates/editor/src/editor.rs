@@ -6666,33 +6666,8 @@ impl Editor {
     }
 
     pub fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
-        let (text, clipboard_selections) = self.clipboard_selections(cx);
-        let selections = self.selections.all::<Point>(cx);
-
-        self.transact(cx, |this, cx| {
-            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.select(selections);
-            });
-            this.insert("", cx);
-            cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
-                text,
-                clipboard_selections,
-            ));
-        });
-    }
-
-    pub fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        let (text, clipboard_selections) = self.clipboard_selections(cx);
-
-        cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
-            text,
-            clipboard_selections,
-        ));
-    }
-
-    fn clipboard_selections(&self, cx: &AppContext) -> (String, Vec<ClipboardSelection>) {
         let mut text = String::new();
-        let buffer = self.buffer.read(cx).read(cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
         let mut selections = self.selections.all::<Point>(cx);
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
@@ -6724,7 +6699,58 @@ impl Editor {
                 });
             }
         }
-        (text, clipboard_selections)
+
+        self.transact(cx, |this, cx| {
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select(selections);
+            });
+            this.insert("", cx);
+            cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+                text,
+                clipboard_selections,
+            ));
+        });
+    }
+
+    pub fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
+        let selections = self.selections.all::<Point>(cx);
+        let buffer = self.buffer.read(cx).read(cx);
+        let mut text = String::new();
+
+        let mut clipboard_selections = Vec::with_capacity(selections.len());
+        {
+            let max_point = buffer.max_point();
+            let mut is_first = true;
+            for selection in selections.iter() {
+                let mut start = selection.start;
+                let mut end = selection.end;
+                let is_entire_line = selection.is_empty() || self.selections.line_mode;
+                if is_entire_line {
+                    start = Point::new(start.row, 0);
+                    end = cmp::min(max_point, Point::new(end.row + 1, 0));
+                }
+                if is_first {
+                    is_first = false;
+                } else {
+                    text += "\n";
+                }
+                let mut len = 0;
+                for chunk in buffer.text_for_range(start..end) {
+                    text.push_str(chunk);
+                    len += chunk.len();
+                }
+                clipboard_selections.push(ClipboardSelection {
+                    len,
+                    is_entire_line,
+                    first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
+                });
+            }
+        }
+
+        cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+            text,
+            clipboard_selections,
+        ));
     }
 
     pub fn do_paste(
