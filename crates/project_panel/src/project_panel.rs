@@ -637,7 +637,9 @@ impl ProjectPanel {
     fn collapse_selected_entry(&mut self, _: &CollapseSelectedEntry, cx: &mut ViewContext<Self>) {
         if let Some((worktree, mut entry)) = self.selected_entry(cx) {
             if let Some(folded_ancestors) = self.ancestors.get_mut(&entry.id) {
-                if folded_ancestors.current_ancestor_depth < folded_ancestors.max_ancestor_depth() {
+                if folded_ancestors.current_ancestor_depth + 1
+                    < folded_ancestors.max_ancestor_depth()
+                {
                     folded_ancestors.current_ancestor_depth += 1;
                     cx.notify();
                     return;
