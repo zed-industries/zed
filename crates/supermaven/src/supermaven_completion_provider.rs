@@ -48,7 +48,7 @@ impl SupermavenCompletionProvider {
 // the inlays "moo ", " a", and "cool" which will render as "[moo ]cows[ a]re [cool]pool" in the editor.
 fn completion_state_from_diff(
     snapshot: BufferSnapshot,
-    completion_text: Rope,
+    completion_text: &str,
     position: Anchor,
     delete_range: Range<Anchor>,
 ) -> CompletionProposal {
@@ -223,7 +223,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
             let range = cursor_position..snapshot.anchor_after(point);
             Some(completion_state_from_diff(
                 snapshot,
-                completion_text.into(),
+                completion_text,
                 cursor_position,
                 range,
             ))
