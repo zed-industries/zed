@@ -423,10 +423,10 @@ struct CompletionState {
     // text is the resulting rope that is inserted when the user accepts a completion.
     text: Rope,
     // position is the position of the cursor when the completion was triggered.
-    position: Anchor,
+    position: multi_buffer::Anchor,
     // delete_range is the range of text that this completion state covers.
     // if the completion is accepted, this range should be deleted.
-    delete_range: Option<Range<Anchor>>,
+    delete_range: Option<Range<multi_buffer::Anchor>>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
@@ -5167,8 +5167,9 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Option<CompletionState> {
         let completion = self.active_inline_completion.take()?;
+        let render_inlay_ids = completion.render_inlay_ids.clone();
         self.display_map.update(cx, |map, cx| {
-            map.splice_inlays(completion.clone().render_inlay_ids, Default::default(), cx);
+            map.splice_inlays(render_inlay_ids, Default::default(), cx);
         });
         let buffer = self.buffer.read(cx).read(cx);
 
@@ -5177,76 +5178,6 @@ impl Editor {
         } else {
             None
         }
-    }
-    // Computes the completion state from the difference between the completion text.
-    // this is defined by greedily matching the buffer text against the completion text, with any leftover buffer placed at the end.
-    // for example, given the completion text "moo cows are cool" and the buffer text "cowsre pool", the completion state would be
-    // the inlays "moo ", " a", and "cool" which will render as "[moo ]cows[ a]re [cool]pool" in the editor.
-    fn completion_state_from_diff(
-        &mut self,
-        completion_text: Rope,
-        buffer_text: String,
-        mut position: Anchor,
-        delete_range: Option<Range<Anchor>>,
-    ) -> (Vec<Inlay>, CompletionState) {
-        let mut inlays: Vec<Inlay> = Vec::new();
-
-        let completion = completion_text.chars().collect::<Vec<char>>();
-
-        let mut i = 0;
-        let mut j = 0;
-        while i < completion.len() && j < buffer_text.len() {
-            // find the next instance of the buffer text in the completion text.
-            let target = buffer_text.chars().nth(j).unwrap();
-            let k = completion[i..].iter().position(|c| *c == target);
-            match k {
-                Some(k) => {
-                    if k != 0 {
-                        // the range from the current position to item is an inlay.
-                        inlays.push(Inlay::suggestion(
-                            post_inc(&mut self.next_inlay_id),
-                            position,
-                            completion_text.slice(i..i + k),
-                        ));
-                        position = Anchor {
-                            text_anchor: text::Anchor {
-                                buffer_id: position.text_anchor.buffer_id,
-                                offset: position.text_anchor.offset + j,
-                                timestamp: position.text_anchor.timestamp,
-                                bias: position.text_anchor.bias,
-                            },
-                            ..position
-                        };
-                    }
-                    i += k + 1;
-                    j += 1;
-                }
-                None => {
-                    // there are no more matching completions, so drop the remaining
-                    // completion text as an inlay.
-                    break;
-                }
-            }
-        }
-
-        if j == buffer_text.len() && i < completion.len() {
-            // there is leftover completion text, so drop it as an inlay.
-            inlays.push(Inlay::suggestion(
-                post_inc(&mut self.next_inlay_id),
-                position,
-                completion_text.slice(i..completion_text.len()),
-            ));
-        }
-
-        (
-            inlays.clone(),
-            CompletionState {
-                render_inlay_ids: inlays.clone().iter().map(|inlay| inlay.id).collect(),
-                text: completion_text,
-                position,
-                delete_range,
-            },
-        )
     }
 
     fn update_visible_inline_completion(&mut self, cx: &mut ViewContext<Self>) {
@@ -5263,40 +5194,50 @@ impl Editor {
                 if let Some((buffer, cursor_buffer_position)) =
                     self.buffer.read(cx).text_anchor_for_position(cursor, cx)
                 {
-                    if let Some((text, text_anchor_range)) =
+                    if let Some(proposal) =
                         provider.active_completion_text(&buffer, cursor_buffer_position, cx)
                     {
-                        let text = Rope::from(text);
                         let mut to_remove = Vec::new();
                         if let Some(completion) = self.active_inline_completion.take() {
-                            completion
-                                .render_inlay_ids
-                                .iter()
-                                .for_each(|id| to_remove.push(*id));
+                            to_remove.extend(completion.render_inlay_ids.iter());
                         }
 
-                        let multibuffer_anchor_range = text_anchor_range.and_then(|range| {
-                            let snapshot = self.buffer.read(cx).snapshot(cx);
-                            Some(
-                                snapshot.anchor_in_excerpt(excerpt_id, range.start)?
-                                    ..snapshot.anchor_in_excerpt(excerpt_id, range.end)?,
-                            )
+                        let to_add = proposal
+                            .inlays
+                            .iter()
+                            .filter_map(|inlay| {
+                                let snapshot = self.buffer.read(cx).snapshot(cx);
+                                let id = post_inc(&mut self.next_inlay_id);
+                                match inlay {
+                                    InlayProposal::Hint(position, hint) => {
+                                        let position =
+                                            snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                                        Some(Inlay::hint(id, position, hint))
+                                    }
+                                    InlayProposal::Suggestion(position, text) => {
+                                        let position =
+                                            snapshot.anchor_in_excerpt(excerpt_id, *position)?;
+                                        Some(Inlay::suggestion(id, position, text.clone()))
+                                    }
+                                }
+                            })
+                            .collect_vec();
+
+                        self.active_inline_completion = Some(CompletionState {
+                            position: cursor,
+                            text: proposal.text,
+                            delete_range: proposal.delete_range.and_then(|range| {
+                                let snapshot = self.buffer.read(cx).snapshot(cx);
+                                let start = snapshot.anchor_in_excerpt(excerpt_id, range.start);
+                                let end = snapshot.anchor_in_excerpt(excerpt_id, range.end);
+                                Some(start?..end?)
+                            }),
+                            render_inlay_ids: to_add.iter().map(|i| i.id).collect(),
                         });
 
-                        let (inlays, completion_state) = self.completion_state_from_diff(
-                            text,
-                            self.buffer
-                                .read(cx)
-                                .snapshot(cx)
-                                .text_for_range(multibuffer_anchor_range.clone().unwrap())
-                                .collect::<String>(),
-                            cursor,
-                            multibuffer_anchor_range.clone(),
-                        );
-                        self.active_inline_completion = Some(completion_state);
-
                         self.display_map
-                            .update(cx, move |map, cx| map.splice_inlays(to_remove, inlays, cx));
+                            .update(cx, move |map, cx| map.splice_inlays(to_remove, to_add, cx));
+
                         cx.notify();
                         return;
                     }
