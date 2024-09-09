@@ -939,9 +939,16 @@ impl AssistantPanel {
         cx: &mut ViewContext<Workspace>,
     ) {
         if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-            panel.update(cx, |panel, cx| {
-                panel.new_context(cx);
-            });
+            let did_create_context = panel
+                .update(cx, |panel, cx| {
+                    panel.new_context(cx)?;
+
+                    Some(())
+                })
+                .is_some();
+            if did_create_context {
+                ContextEditor::quote_selection(workspace, &Default::default(), cx);
+            }
         }
     }
 
@@ -3186,87 +3193,93 @@ impl ContextEditor {
             return;
         };
 
-        let selection = editor.update(cx, |editor, cx| editor.selections.newest_adjusted(cx));
-        let editor = editor.read(cx);
-        let buffer = editor.buffer().read(cx).snapshot(cx);
-        let range = editor::ToOffset::to_offset(&selection.start, &buffer)
-            ..editor::ToOffset::to_offset(&selection.end, &buffer);
-        let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
-        if selected_text.is_empty() {
-            return;
-        }
-
-        let start_language = buffer.language_at(range.start);
-        let end_language = buffer.language_at(range.end);
-        let language_name = if start_language == end_language {
-            start_language.map(|language| language.code_fence_block_name())
-        } else {
-            None
-        };
-        let language_name = language_name.as_deref().unwrap_or("");
-
-        let filename = buffer
-            .file_at(selection.start)
-            .map(|file| file.full_path(cx));
-
-        let text = if language_name == "markdown" {
-            selected_text
-                .lines()
-                .map(|line| format!("> {}", line))
-                .collect::<Vec<_>>()
-                .join("\n")
-        } else {
-            let start_symbols = buffer
-                .symbols_containing(selection.start, None)
-                .map(|(_, symbols)| symbols);
-            let end_symbols = buffer
-                .symbols_containing(selection.end, None)
-                .map(|(_, symbols)| symbols);
-
-            let outline_text =
-                if let Some((start_symbols, end_symbols)) = start_symbols.zip(end_symbols) {
-                    Some(
-                        start_symbols
-                            .into_iter()
-                            .zip(end_symbols)
-                            .take_while(|(a, b)| a == b)
-                            .map(|(a, _)| a.text)
-                            .collect::<Vec<_>>()
-                            .join(" > "),
-                    )
+        let mut creases = vec![];
+        editor.update(cx, |editor, cx| {
+            let selections = editor.selections.all_adjusted(cx);
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            for selection in selections {
+                let range = editor::ToOffset::to_offset(&selection.start, &buffer)
+                    ..editor::ToOffset::to_offset(&selection.end, &buffer);
+                let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
+                if selected_text.is_empty() {
+                    continue;
+                }
+                let start_language = buffer.language_at(range.start);
+                let end_language = buffer.language_at(range.end);
+                let language_name = if start_language == end_language {
+                    start_language.map(|language| language.code_fence_block_name())
                 } else {
                     None
                 };
+                let language_name = language_name.as_deref().unwrap_or("");
+                let filename = buffer
+                    .file_at(selection.start)
+                    .map(|file| file.full_path(cx));
+                let text = if language_name == "markdown" {
+                    selected_text
+                        .lines()
+                        .map(|line| format!("> {}", line))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    let start_symbols = buffer
+                        .symbols_containing(selection.start, None)
+                        .map(|(_, symbols)| symbols);
+                    let end_symbols = buffer
+                        .symbols_containing(selection.end, None)
+                        .map(|(_, symbols)| symbols);
 
-            let line_comment_prefix = start_language
-                .and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
+                    let outline_text = if let Some((start_symbols, end_symbols)) =
+                        start_symbols.zip(end_symbols)
+                    {
+                        Some(
+                            start_symbols
+                                .into_iter()
+                                .zip(end_symbols)
+                                .take_while(|(a, b)| a == b)
+                                .map(|(a, _)| a.text)
+                                .collect::<Vec<_>>()
+                                .join(" > "),
+                        )
+                    } else {
+                        None
+                    };
 
-            let fence = codeblock_fence_for_path(
-                filename.as_deref(),
-                Some(selection.start.row..selection.end.row),
-            );
+                    let line_comment_prefix = start_language
+                        .and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
 
-            if let Some((line_comment_prefix, outline_text)) = line_comment_prefix.zip(outline_text)
-            {
-                let breadcrumb = format!("{line_comment_prefix}Excerpt from: {outline_text}\n");
-                format!("{fence}{breadcrumb}{selected_text}\n```")
-            } else {
-                format!("{fence}{selected_text}\n```")
+                    let fence = codeblock_fence_for_path(
+                        filename.as_deref(),
+                        Some(selection.start.row..selection.end.row),
+                    );
+
+                    if let Some((line_comment_prefix, outline_text)) =
+                        line_comment_prefix.zip(outline_text)
+                    {
+                        let breadcrumb =
+                            format!("{line_comment_prefix}Excerpt from: {outline_text}\n");
+                        format!("{fence}{breadcrumb}{selected_text}\n```")
+                    } else {
+                        format!("{fence}{selected_text}\n```")
+                    }
+                };
+                let crease_title = if let Some(path) = filename {
+                    let start_line = selection.start.row + 1;
+                    let end_line = selection.end.row + 1;
+                    if start_line == end_line {
+                        format!("{}, Line {}", path.display(), start_line)
+                    } else {
+                        format!("{}, Lines {} to {}", path.display(), start_line, end_line)
+                    }
+                } else {
+                    "Quoted selection".to_string()
+                };
+                creases.push((text, crease_title));
             }
-        };
-
-        let crease_title = if let Some(path) = filename {
-            let start_line = selection.start.row + 1;
-            let end_line = selection.end.row + 1;
-            if start_line == end_line {
-                format!("{}, Line {}", path.display(), start_line)
-            } else {
-                format!("{}, Lines {} to {}", path.display(), start_line, end_line)
-            }
-        } else {
-            "Quoted selection".to_string()
-        };
-
+        });
+        if creases.is_empty() {
+            return;
+        }
         // Activate the panel
         if !panel.focus_handle(cx).contains_focused(cx) {
             workspace.toggle_panel_focus::<AssistantPanel>(cx);
@@ -3283,39 +3296,40 @@ impl ContextEditor {
                     context.update(cx, |context, cx| {
                         context.editor.update(cx, |editor, cx| {
                             editor.insert("\n", cx);
+                            for (text, crease_title) in creases {
+                                let point = editor.selections.newest::<Point>(cx).head();
+                                let start_row = MultiBufferRow(point.row);
 
-                            let point = editor.selections.newest::<Point>(cx).head();
-                            let start_row = MultiBufferRow(point.row);
+                                editor.insert(&text, cx);
 
-                            editor.insert(&text, cx);
+                                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                                let anchor_before = snapshot.anchor_after(point);
+                                let anchor_after = editor
+                                    .selections
+                                    .newest_anchor()
+                                    .head()
+                                    .bias_left(&snapshot);
 
-                            let snapshot = editor.buffer().read(cx).snapshot(cx);
-                            let anchor_before = snapshot.anchor_after(point);
-                            let anchor_after = editor
-                                .selections
-                                .newest_anchor()
-                                .head()
-                                .bias_left(&snapshot);
+                                editor.insert("\n", cx);
 
-                            editor.insert("\n", cx);
-
-                            let fold_placeholder = quote_selection_fold_placeholder(
-                                crease_title,
-                                cx.view().downgrade(),
-                            );
-                            let crease = Crease::new(
-                                anchor_before..anchor_after,
-                                fold_placeholder,
-                                render_quote_selection_output_toggle,
-                                |_, _, _| Empty.into_any(),
-                            );
-                            editor.insert_creases(vec![crease], cx);
-                            editor.fold_at(
-                                &FoldAt {
-                                    buffer_row: start_row,
-                                },
-                                cx,
-                            );
+                                let fold_placeholder = quote_selection_fold_placeholder(
+                                    crease_title,
+                                    cx.view().downgrade(),
+                                );
+                                let crease = Crease::new(
+                                    anchor_before..anchor_after,
+                                    fold_placeholder,
+                                    render_quote_selection_output_toggle,
+                                    |_, _, _| Empty.into_any(),
+                                );
+                                editor.insert_creases(vec![crease], cx);
+                                editor.fold_at(
+                                    &FoldAt {
+                                        buffer_row: start_row,
+                                    },
+                                    cx,
+                                );
+                            }
                         })
                     });
                 };
