@@ -26,6 +26,7 @@ impl RenderOnce for ApplicationMenu {
                                 .child(Label::new("Buffer Font Size"))
                                 .child(
                                     NumericStepper::new(
+                                        "buffer-font-size",
                                         theme::get_buffer_font_size(cx).to_string(),
                                         |_, cx| {
                                             cx.dispatch_action(Box::new(
@@ -61,6 +62,7 @@ impl RenderOnce for ApplicationMenu {
                                 .child(Label::new("UI Font Size"))
                                 .child(
                                     NumericStepper::new(
+                                        "ui-font-size",
                                         theme::get_ui_font_size(cx).to_string(),
                                         |_, cx| {
                                             cx.dispatch_action(Box::new(

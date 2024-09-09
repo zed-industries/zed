@@ -23,7 +23,7 @@ pub fn text_for_action_in(
 pub fn text_for_key_binding(key_binding: KeyBinding, platform_style: PlatformStyle) -> String {
     key_binding
         .keystrokes()
-        .into_iter()
+        .iter()
         .map(|keystroke| text_for_keystroke(keystroke, platform_style))
         .collect::<Vec<_>>()
         .join(" ")

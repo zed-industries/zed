@@ -4,6 +4,7 @@ use crate::{prelude::*, IconButtonShape};
 
 #[derive(IntoElement)]
 pub struct NumericStepper {
+    id: ElementId,
     value: SharedString,
     on_decrement: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
     on_increment: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
@@ -14,11 +15,13 @@ pub struct NumericStepper {
 
 impl NumericStepper {
     pub fn new(
+        id: impl Into<ElementId>,
         value: impl Into<SharedString>,
         on_decrement: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
         on_increment: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
         Self {
+            id: id.into(),
             value: value.into(),
             on_decrement: Box::new(on_decrement),
             on_increment: Box::new(on_increment),
@@ -47,6 +50,7 @@ impl RenderOnce for NumericStepper {
         let icon_size = IconSize::Small;
 
         h_flex()
+            .id(self.id)
             .gap_1()
             .map(|element| {
                 if let Some(on_reset) = self.on_reset {

@@ -26,6 +26,9 @@
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Plex Mono",
+  // Set the buffer text's font fallbacks, this will be merged with
+  // the platform's default fallbacks.
+  "buffer_font_fallbacks": null,
   // The OpenType features to enable for text in the editor.
   "buffer_font_features": {
     // Disable ligatures:
@@ -47,8 +50,11 @@
   //         },
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
-  // (On macOS) You can set this to ".SystemUIFont" to use the system font
+  // You can set this to ".SystemUIFont" to use the system font
   "ui_font_family": "Zed Plex Sans",
+  // Set the UI's font fallbacks, this will be merged with the platform's
+  // default font fallbacks.
+  "ui_font_fallbacks": null,
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:
@@ -58,9 +64,15 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
+  // How much to fade out unused code.
+  "unnecessary_code_fade": 0.3,
   // The factor to grow the active pane by. Defaults to 1.0
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,
+  // The direction that you want to split panes horizontally. Defaults to "up"
+  "pane_split_direction_horizontal": "up",
+  // The direction that you want to split panes horizontally. Defaults to "left"
+  "pane_split_direction_vertical": "left",
   // Centered layout related settings.
   "centered_layout": {
     // The relative width of the left padding of the central pane from the
@@ -215,6 +227,8 @@
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true
   },
+  // Enable middle-click paste on Linux.
+  "middle_click_paste": true,
   // What to do when multibuffer is double clicked in some of its excerpts
   // (parts of singleton buffers).
   // May take 2 values:
@@ -265,6 +279,13 @@
   "relative_line_numbers": false,
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
+  // Search options to enable by default when opening new project and buffer searches.
+  "search": {
+    "whole_word": false,
+    "case_sensitive": false,
+    "include_ignored": false,
+    "regex": false
+  },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
   //
@@ -275,6 +296,7 @@
   // 3. Never populate the search query
   //    "never"
   "seed_search_query_from_cursor": "always",
+  "use_smartcase_search": false,
   // Inlay hint related settings
   "inlay_hints": {
     // Global switch to toggle hints on and off, switched off by default.
@@ -389,9 +411,22 @@
     // The default model to use when creating new contexts.
     "default_model": {
       // The provider to use.
-      "provider": "openai",
+      "provider": "zed.dev",
       // The model to use.
-      "model": "gpt-4o"
+      "model": "claude-3-5-sonnet"
+    }
+  },
+  // The settings for slash commands.
+  "slash_commands": {
+    // Settings for the `/docs` slash command.
+    "docs": {
+      // Whether `/docs` is enabled.
+      "enabled": false
+    },
+    // Settings for the `/project` slash command.
+    "project": {
+      // Whether `/project` is enabled.
+      "enabled": false
     }
   },
   // Whether the screen sharing icon is shown in the os status bar.
@@ -485,6 +520,8 @@
   //      "soft_wrap": "editor_width",
   // 4. Soft wrap lines at the preferred line length.
   //      "soft_wrap": "preferred_line_length",
+  // 5. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
+  //      "soft_wrap": "bounded",
   "soft_wrap": "prefer_line",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
@@ -574,7 +611,7 @@
     //     "shell": {
     //         "with_arguments": {
     //           "program": "/bin/bash",
-    //           "arguments": ["--login"]
+    //           "args": ["--login"]
     //         }
     //     }
     "shell": "system",
@@ -629,7 +666,7 @@
     //         "option_to_meta": false,
     //  2. Make the option keys behave as a 'meta' key, e.g. for emacs
     //         "option_to_meta": true,
-    "option_as_meta": false,
+    "option_as_meta": true,
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
@@ -675,6 +712,10 @@
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
     // "font_family": "Zed Plex Mono",
+    // Set the terminal's font fallbacks. If this option is not included,
+    // the terminal will default to matching the buffer's font fallbacks.
+    // This will be merged with the platform's default font fallbacks
+    // "font_fallbacks": ["FiraCode Nerd Fonts"],
     // Sets the maximum number of lines in the terminal's scrollback buffer.
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
@@ -699,7 +740,13 @@
   //
   "file_types": {
     "JSON": ["flake.lock"],
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "tsconfig.json"]
+    "JSONC": [
+      "**/.zed/**/*.json",
+      "**/zed/**/*.json",
+      "**/Zed/**/*.json",
+      "tsconfig.json",
+      "pyrightconfig.json"
+    ]
   },
   // The extensions that Zed should automatically install on startup.
   //
@@ -813,6 +860,7 @@
       "language_servers": ["starpls", "!buck2-lsp", "..."]
     },
     "Svelte": {
+      "language_servers": ["svelte-language-server", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["prettier-plugin-svelte"]
@@ -836,6 +884,7 @@
       }
     },
     "Vue.js": {
+      "language_servers": ["vue-language-server", "..."],
       "prettier": {
         "allowed": true
       }
@@ -855,13 +904,19 @@
   // Different settings for specific language models.
   "language_models": {
     "anthropic": {
+      "version": "1",
       "api_url": "https://api.anthropic.com"
     },
-    "openai": {
-      "api_url": "https://api.openai.com/v1"
+    "google": {
+      "api_url": "https://generativelanguage.googleapis.com"
     },
     "ollama": {
-      "api_url": "http://localhost:11434"
+      "api_url": "http://localhost:11434",
+      "low_speed_timeout_in_seconds": 60
+    },
+    "openai": {
+      "version": "1",
+      "api_url": "https://api.openai.com/v1"
     }
   },
   // Zed's Prettier integration settings.
@@ -907,9 +962,11 @@
   },
   // Vim settings
   "vim": {
+    "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_multiline_find": false,
-    "use_smartcase_find": false
+    "use_smartcase_find": false,
+    "custom_digraphs": {}
   },
   // Easy motion settings
   "easy_motion": {
@@ -986,5 +1043,16 @@
   //     ]
   //   }
   // ]
-  "ssh_connections": null
+  "ssh_connections": null,
+  // Configures the Context Server Protocol binaries
+  //
+  // Examples:
+  // {
+  //   "id": "server-1",
+  //   "executable": "/path",
+  //   "args": ['arg1", "args2"]
+  // }
+  "experimental.context_servers": {
+    "servers": []
+  }
 }

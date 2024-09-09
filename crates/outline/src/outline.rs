@@ -29,7 +29,7 @@ pub fn toggle(editor: View<Editor>, _: &ToggleOutline, cx: &mut WindowContext) {
         .buffer()
         .read(cx)
         .snapshot(cx)
-        .outline(Some(&cx.theme().syntax()));
+        .outline(Some(cx.theme().syntax()));
 
     if let Some((workspace, outline)) = editor.read(cx).workspace().zip(outline) {
         workspace.update(cx, |workspace, cx| {
@@ -338,9 +338,9 @@ mod tests {
             .unwrap();
         let ensure_outline_view_contents =
             |outline_view: &View<Picker<OutlineViewDelegate>>, cx: &mut VisualTestContext| {
-                assert_eq!(query(&outline_view, cx), "");
+                assert_eq!(query(outline_view, cx), "");
                 assert_eq!(
-                    outline_names(&outline_view, cx),
+                    outline_names(outline_view, cx),
                     vec![
                         "struct SingleLine",
                         "struct MultiLine",

@@ -7,7 +7,7 @@ use crate::{
     LanguageServerName, LspAdapter, LspAdapterDelegate, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::{hash_map, HashMap};
+use collections::{hash_map, HashMap, HashSet};
 use futures::TryFutureExt;
 use futures::{
     channel::{mpsc, oneshot},
@@ -188,6 +188,22 @@ impl LanguageRegistry {
         self.state.write().reload();
     }
 
+    /// Reorders the list of language servers for the given language.
+    ///
+    /// Uses the provided list of ordered [`CachedLspAdapters`] as the desired order.
+    ///
+    /// Any existing language servers not present in `ordered_lsp_adapters` will be
+    /// appended to the end.
+    pub fn reorder_language_servers(
+        &self,
+        language: &Arc<Language>,
+        ordered_lsp_adapters: Vec<Arc<CachedLspAdapter>>,
+    ) {
+        self.state
+            .write()
+            .reorder_language_servers(language, ordered_lsp_adapters);
+    }
+
     /// Removes the specified languages and grammars from the registry.
     pub fn remove_languages(
         &self,
@@ -235,7 +251,7 @@ impl LanguageRegistry {
             name,
             Arc::new(move || {
                 let lsp_adapter = load();
-                CachedLspAdapter::new(lsp_adapter, true)
+                CachedLspAdapter::new(lsp_adapter)
             }),
         );
     }
@@ -257,20 +273,7 @@ impl LanguageRegistry {
             .lsp_adapters
             .entry(language_name)
             .or_default()
-            .push(CachedLspAdapter::new(adapter, true));
-    }
-
-    pub fn register_secondary_lsp_adapter(
-        &self,
-        language_name: Arc<str>,
-        adapter: Arc<dyn LspAdapter>,
-    ) {
-        self.state
-            .write()
-            .lsp_adapters
-            .entry(language_name)
-            .or_default()
-            .push(CachedLspAdapter::new(adapter, false));
+            .push(CachedLspAdapter::new(adapter));
     }
 
     #[cfg(any(feature = "test-support", test))]
@@ -279,22 +282,12 @@ impl LanguageRegistry {
         language_name: &str,
         adapter: crate::FakeLspAdapter,
     ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
-        self.register_specific_fake_lsp_adapter(language_name, true, adapter)
-    }
-
-    #[cfg(any(feature = "test-support", test))]
-    pub fn register_specific_fake_lsp_adapter(
-        &self,
-        language_name: &str,
-        primary: bool,
-        adapter: crate::FakeLspAdapter,
-    ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
         self.state
             .write()
             .lsp_adapters
             .entry(language_name.into())
             .or_default()
-            .push(CachedLspAdapter::new(Arc::new(adapter), primary));
+            .push(CachedLspAdapter::new(Arc::new(adapter)));
         self.fake_language_servers(language_name)
     }
 
@@ -675,7 +668,7 @@ impl LanguageRegistry {
                                     .ok_or_else(|| anyhow!("invalid grammar filename"))?;
                                 anyhow::Ok(with_parser(|parser| {
                                     let mut store = parser.take_wasm_store().unwrap();
-                                    let grammar = store.load_language(&grammar_name, &wasm_bytes);
+                                    let grammar = store.load_language(grammar_name, &wasm_bytes);
                                     parser.set_wasm_store(store).unwrap();
                                     grammar
                                 })?)
@@ -706,7 +699,7 @@ impl LanguageRegistry {
     }
 
     pub fn to_vec(&self) -> Vec<Arc<Language>> {
-        self.state.read().languages.iter().cloned().collect()
+        self.state.read().languages.to_vec()
     }
 
     pub fn lsp_adapters(&self, language: &Arc<Language>) -> Vec<Arc<CachedLspAdapter>> {
@@ -726,6 +719,7 @@ impl LanguageRegistry {
         self.lsp_binary_status_tx.send(server_name, status);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_pending_language_server(
         self: &Arc<Self>,
         stderr_capture: Arc<Mutex<Option<String>>>,
@@ -733,6 +727,7 @@ impl LanguageRegistry {
         adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
+        cli_environment: Option<HashMap<String, String>>,
         cx: &mut AppContext,
     ) -> Option<PendingLanguageServer> {
         let server_id = self.state.write().next_language_server_id();
@@ -771,7 +766,19 @@ impl LanguageRegistry {
 
                 delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
 
-                let binary = binary_result?;
+                let mut binary = binary_result?;
+
+                // If this Zed project was opened from the CLI and the language server command itself
+                // doesn't have an environment (which it would have, if it was found in $PATH), then
+                // we pass along the CLI environment that we inherited.
+                if binary.env.is_none() && cli_environment.is_some() {
+                    log::info!(
+                        "using CLI environment for language server {:?}, id: {server_id}",
+                        adapter.name.0
+                    );
+                    binary.env = cli_environment.clone();
+                }
+
                 let options = adapter
                     .adapter
                     .clone()
@@ -920,6 +927,36 @@ impl LanguageRegistryState {
         *self.subscription.0.borrow_mut() = ();
     }
 
+    /// Reorders the list of language servers for the given language.
+    ///
+    /// Uses the provided list of ordered [`CachedLspAdapters`] as the desired order.
+    ///
+    /// Any existing language servers not present in `ordered_lsp_adapters` will be
+    /// appended to the end.
+    fn reorder_language_servers(
+        &mut self,
+        language: &Arc<Language>,
+        ordered_lsp_adapters: Vec<Arc<CachedLspAdapter>>,
+    ) {
+        let Some(lsp_adapters) = self.lsp_adapters.get_mut(&language.config.name) else {
+            return;
+        };
+
+        let ordered_lsp_adapter_ids = ordered_lsp_adapters
+            .iter()
+            .map(|lsp_adapter| lsp_adapter.name.clone())
+            .collect::<HashSet<_>>();
+
+        let mut new_lsp_adapters = ordered_lsp_adapters;
+        for adapter in lsp_adapters.iter() {
+            if !ordered_lsp_adapter_ids.contains(&adapter.name) {
+                new_lsp_adapters.push(adapter.clone());
+            }
+        }
+
+        *lsp_adapters = new_lsp_adapters;
+    }
+
     fn remove_languages(
         &mut self,
         languages_to_remove: &[Arc<str>],
@@ -934,7 +971,7 @@ impl LanguageRegistryState {
         self.available_languages
             .retain(|language| !languages_to_remove.contains(&language.name));
         self.grammars
-            .retain(|name, _| !grammars_to_remove.contains(&name));
+            .retain(|name, _| !grammars_to_remove.contains(name));
         self.version += 1;
         self.reload_count += 1;
         *self.subscription.0.borrow_mut() = ();

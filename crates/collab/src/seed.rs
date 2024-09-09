@@ -1,6 +1,7 @@
 use crate::db::{self, ChannelRole, NewUserParams};
 
 use anyhow::Context;
+use chrono::{DateTime, Utc};
 use db::Database;
 use serde::{de::DeserializeOwned, Deserialize};
 use std::{fmt::Write, fs, path::Path};
@@ -8,10 +9,11 @@ use std::{fmt::Write, fs, path::Path};
 use crate::Config;
 
 #[derive(Debug, Deserialize)]
-struct GitHubUser {
+struct GithubUser {
     id: i32,
     login: String,
     email: Option<String>,
+    created_at: DateTime<Utc>,
 }
 
 #[derive(Deserialize)]
@@ -42,8 +44,19 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
     let mut first_user = None;
     let mut others = vec![];
 
+    let flag_names = ["remoting", "language-models"];
+    let mut flags = Vec::new();
+
+    for flag_name in flag_names {
+        let flag = db
+            .create_user_flag(flag_name, false)
+            .await
+            .unwrap_or_else(|_| panic!("failed to create flag: '{flag_name}'"));
+        flags.push(flag);
+    }
+
     for admin_login in seed_config.admins {
-        let user = fetch_github::<GitHubUser>(
+        let user = fetch_github::<GithubUser>(
             &client,
             &format!("https://api.github.com/users/{admin_login}"),
         )
@@ -63,6 +76,15 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
             first_user = Some(user.user_id);
         } else {
             others.push(user.user_id)
+        }
+
+        for flag in &flags {
+            db.add_user_flag(user.user_id, *flag)
+                .await
+                .context(format!(
+                    "Unable to enable flag '{}' for user '{}'",
+                    flag, user.user_id
+                ))?;
         }
     }
 
@@ -84,6 +106,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
         }
     }
 
+    // TODO: Fix this later
     if let Some(number_of_users) = seed_config.number_of_users {
         // Fetch 100 other random users from GitHub and insert them into the database
         // (for testing autocompleters, etc.)
@@ -98,19 +121,28 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
             if let Some(last_user_id) = last_user_id {
                 write!(&mut uri, "&since={}", last_user_id).unwrap();
             }
-            let users = fetch_github::<Vec<GitHubUser>>(&client, &uri).await;
+            let users = fetch_github::<Vec<GithubUser>>(&client, &uri).await;
 
             for github_user in users {
                 last_user_id = Some(github_user.id);
                 user_count += 1;
-                db.get_or_create_user_by_github_account(
-                    &github_user.login,
-                    Some(github_user.id),
-                    github_user.email.as_deref(),
-                    None,
-                )
-                .await
-                .expect("failed to insert user");
+                let user = db
+                    .get_or_create_user_by_github_account(
+                        &github_user.login,
+                        github_user.id,
+                        github_user.email.as_deref(),
+                        github_user.created_at,
+                        None,
+                    )
+                    .await
+                    .expect("failed to insert user");
+
+                for flag in &flags {
+                    db.add_user_flag(user.id, *flag).await.context(format!(
+                        "Unable to enable flag '{}' for user '{}'",
+                        flag, user.id
+                    ))?;
+                }
             }
         }
     }
@@ -129,9 +161,9 @@ async fn fetch_github<T: DeserializeOwned>(client: &reqwest::Client, url: &str) 
         .header("user-agent", "zed")
         .send()
         .await
-        .unwrap_or_else(|_| panic!("failed to fetch '{}'", url));
+        .unwrap_or_else(|error| panic!("failed to fetch '{url}': {error}"));
     response
         .json()
         .await
-        .unwrap_or_else(|_| panic!("failed to deserialize github user from '{}'", url))
+        .unwrap_or_else(|error| panic!("failed to deserialize github user from '{url}': {error}"))
 }

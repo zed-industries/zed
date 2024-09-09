@@ -43,7 +43,7 @@ use std::{
     },
 };
 use text::Point;
-use workspace::Workspace;
+use workspace::{CloseIntent, Workspace};
 
 #[gpui::test(iterations = 10)]
 async fn test_host_disconnect(
@@ -134,7 +134,9 @@ async fn test_host_disconnect(
 
     // Ensure client B is not prompted to save edits when closing window after disconnecting.
     let can_close = workspace_b
-        .update(cx_b, |workspace, cx| workspace.prepare_to_close(true, cx))
+        .update(cx_b, |workspace, cx| {
+            workspace.prepare_to_close(CloseIntent::Quit, cx)
+        })
         .unwrap()
         .await
         .unwrap();
@@ -1019,8 +1021,8 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     });
     executor.run_until_parked();
 
-    project_a.read_with(cx_a, |project, _| {
-        let status = project.language_server_statuses().next().unwrap().1;
+    project_a.read_with(cx_a, |project, cx| {
+        let status = project.language_server_statuses(cx).next().unwrap().1;
         assert_eq!(status.name, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
@@ -1036,8 +1038,8 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     executor.run_until_parked();
     let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
 
-    project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().unwrap().1;
+    project_b.read_with(cx_b, |project, cx| {
+        let status = project.language_server_statuses(cx).next().unwrap().1;
         assert_eq!(status.name, "the-language-server");
     });
 
@@ -1053,8 +1055,8 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     });
     executor.run_until_parked();
 
-    project_a.read_with(cx_a, |project, _| {
-        let status = project.language_server_statuses().next().unwrap().1;
+    project_a.read_with(cx_a, |project, cx| {
+        let status = project.language_server_statuses(cx).next().unwrap().1;
         assert_eq!(status.name, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
@@ -1063,8 +1065,8 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
         );
     });
 
-    project_b.read_with(cx_b, |project, _| {
-        let status = project.language_server_statuses().next().unwrap().1;
+    project_b.read_with(cx_b, |project, cx| {
+        let status = project.language_server_statuses(cx).next().unwrap().1;
         assert_eq!(status.name, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
@@ -2107,7 +2109,7 @@ struct Row10;"#};
     editor_cx_a.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
@@ -2144,7 +2146,7 @@ struct Row10;"#};
     editor_cx_b.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(1)..=DisplayRow(2), DisplayRow(8)..=DisplayRow(8)],
@@ -2192,7 +2194,7 @@ struct Row10;"#};
     editor_cx_a.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
@@ -2207,7 +2209,7 @@ struct Row10;"#};
     editor_cx_b.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(5)..=DisplayRow(5)]

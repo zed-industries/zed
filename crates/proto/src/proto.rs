@@ -2,14 +2,14 @@
 
 pub mod error;
 mod macros;
+mod proto_client;
 mod typed_envelope;
 
 pub use error::*;
+pub use proto_client::*;
 pub use typed_envelope::*;
 
-use anyhow::anyhow;
 use collections::HashMap;
-use futures::{future::BoxFuture, Future};
 pub use prost::{DecodeError, Message};
 use serde::Serialize;
 use std::{
@@ -17,11 +17,13 @@ use std::{
     cmp,
     fmt::{self, Debug},
     iter, mem,
-    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
+
+pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
+pub const SSH_PROJECT_ID: u64 = 0;
 
 pub trait EnvelopedMessage: Clone + Debug + Serialize + Sized + Send + Sync + 'static {
     const NAME: &'static str;
@@ -58,55 +60,6 @@ pub trait AnyTypedEnvelope: 'static + Send + Sync {
 pub enum MessagePriority {
     Foreground,
     Background,
-}
-
-pub trait ProtoClient: Send + Sync {
-    fn request(
-        &self,
-        envelope: Envelope,
-        request_type: &'static str,
-    ) -> BoxFuture<'static, anyhow::Result<Envelope>>;
-
-    fn send(&self, envelope: Envelope) -> anyhow::Result<()>;
-}
-
-#[derive(Clone)]
-pub struct AnyProtoClient(Arc<dyn ProtoClient>);
-
-impl<T> From<Arc<T>> for AnyProtoClient
-where
-    T: ProtoClient + 'static,
-{
-    fn from(client: Arc<T>) -> Self {
-        Self(client)
-    }
-}
-
-impl AnyProtoClient {
-    pub fn new<T: ProtoClient + 'static>(client: Arc<T>) -> Self {
-        Self(client)
-    }
-
-    pub fn request<T: RequestMessage>(
-        &self,
-        request: T,
-    ) -> impl Future<Output = anyhow::Result<T::Response>> {
-        let envelope = request.into_envelope(0, None, None);
-        let response = self.0.request(envelope, T::NAME);
-        async move {
-            T::Response::from_envelope(response.await?)
-                .ok_or_else(|| anyhow!("received response of the wrong type"))
-        }
-    }
-
-    pub fn send<T: EnvelopedMessage>(&self, request: T) -> anyhow::Result<()> {
-        let envelope = request.into_envelope(0, None, None);
-        self.0.send(envelope)
-    }
-
-    pub fn send_dynamic(&self, message: Envelope) -> anyhow::Result<()> {
-        self.0.send(message)
-    }
 }
 
 impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
@@ -187,6 +140,8 @@ impl fmt::Display for PeerId {
 }
 
 messages!(
+    (AcceptTermsOfService, Foreground),
+    (AcceptTermsOfServiceResponse, Foreground),
     (Ack, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
@@ -203,12 +158,9 @@ messages!(
     (CancelCall, Foreground),
     (ChannelMessageSent, Foreground),
     (ChannelMessageUpdate, Foreground),
-    (CompleteWithLanguageModel, Background),
     (ComputeEmbeddings, Background),
     (ComputeEmbeddingsResponse, Background),
     (CopyProjectEntry, Foreground),
-    (CountTokensWithLanguageModel, Background),
-    (CountTokensResponse, Background),
     (CreateBufferForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
@@ -242,6 +194,8 @@ messages!(
     (GetCompletionsResponse, Background),
     (GetDefinition, Background),
     (GetDefinitionResponse, Background),
+    (GetDeclaration, Background),
+    (GetDeclarationResponse, Background),
     (GetDocumentHighlights, Background),
     (GetDocumentHighlightsResponse, Background),
     (GetHover, Background),
@@ -262,6 +216,8 @@ messages!(
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
     (GetImplementationResponse, Background),
+    (GetLlmToken, Background),
+    (GetLlmTokenResponse, Background),
     (GetUsers, Foreground),
     (Hello, Foreground),
     (IncomingCall, Foreground),
@@ -278,7 +234,6 @@ messages!(
     (JoinProjectResponse, Foreground),
     (JoinRoom, Foreground),
     (JoinRoomResponse, Foreground),
-    (LanguageModelResponse, Background),
     (LeaveChannelBuffer, Background),
     (LeaveChannelChat, Foreground),
     (LeaveProject, Foreground),
@@ -298,6 +253,8 @@ messages!(
     (PrepareRename, Background),
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
+    (CountLanguageModelTokens, Background),
+    (CountLanguageModelTokensResponse, Background),
     (RefreshInlayHints, Foreground),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -357,6 +314,7 @@ messages!(
     (UpdateParticipantLocation, Foreground),
     (UpdateProject, Foreground),
     (UpdateProjectCollaborator, Foreground),
+    (UpdateUserPlan, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
     (UsersResponse, Foreground),
@@ -396,14 +354,23 @@ messages!(
     (AdvertiseContexts, Foreground),
     (OpenContext, Foreground),
     (OpenContextResponse, Foreground),
+    (CreateContext, Foreground),
+    (CreateContextResponse, Foreground),
     (UpdateContext, Foreground),
     (SynchronizeContexts, Foreground),
     (SynchronizeContextsResponse, Foreground),
+    (LspExtSwitchSourceHeader, Background),
+    (LspExtSwitchSourceHeaderResponse, Background),
     (AddWorktree, Foreground),
     (AddWorktreeResponse, Foreground),
+    (FindSearchCandidates, Background),
+    (FindSearchCandidatesResponse, Background),
+    (CloseBuffer, Foreground),
+    (UpdateUserSettings, Foreground)
 );
 
 request_messages!(
+    (AcceptTermsOfService, AcceptTermsOfServiceResponse),
     (ApplyCodeAction, ApplyCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
@@ -412,9 +379,7 @@ request_messages!(
     (Call, Ack),
     (CancelCall, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
-    (CompleteWithLanguageModel, LanguageModelResponse),
     (ComputeEmbeddings, ComputeEmbeddingsResponse),
-    (CountTokensWithLanguageModel, CountTokensResponse),
     (CreateChannel, CreateChannelResponse),
     (CreateProjectEntry, ProjectEntryResponse),
     (CreateRoom, CreateRoomResponse),
@@ -432,9 +397,11 @@ request_messages!(
     (GetCodeActions, GetCodeActionsResponse),
     (GetCompletions, GetCompletionsResponse),
     (GetDefinition, GetDefinitionResponse),
+    (GetDeclaration, GetDeclarationResponse),
     (GetImplementation, GetImplementationResponse),
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
     (GetHover, GetHoverResponse),
+    (GetLlmToken, GetLlmTokenResponse),
     (GetNotifications, GetNotificationsResponse),
     (GetPrivateUserInfo, GetPrivateUserInfoResponse),
     (GetProjectSymbols, GetProjectSymbolsResponse),
@@ -467,6 +434,7 @@ request_messages!(
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
     (PrepareRename, PrepareRenameResponse),
+    (CountLanguageModelTokens, CountLanguageModelTokensResponse),
     (RefreshInlayHints, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),
     (RejoinRoom, RejoinRoomResponse),
@@ -487,6 +455,7 @@ request_messages!(
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
     (SearchProject, SearchProjectResponse),
+    (FindSearchCandidates, FindSearchCandidatesResponse),
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
     (SetChannelVisibility, Ack),
@@ -517,27 +486,33 @@ request_messages!(
     (RenameDevServer, Ack),
     (RestartLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
+    (CreateContext, CreateContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
+    (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
 );
 
 entity_messages!(
     {project_id, ShareProject},
     AddProjectCollaborator,
+    AddWorktree,
     ApplyCodeAction,
     ApplyCompletionAdditionalEdits,
     BlameBuffer,
     BufferReloaded,
     BufferSaved,
+    CloseBuffer,
     CopyProjectEntry,
     CreateBufferForPeer,
     CreateProjectEntry,
     DeleteProjectEntry,
     ExpandProjectEntry,
+    FindSearchCandidates,
     FormatBuffers,
     GetCodeActions,
     GetCompletions,
     GetDefinition,
+    GetDeclaration,
     GetImplementation,
     GetDocumentHighlights,
     GetHover,
@@ -583,8 +558,11 @@ entity_messages!(
     LspExtExpandMacro,
     AdvertiseContexts,
     OpenContext,
+    CreateContext,
     UpdateContext,
     SynchronizeContexts,
+    LspExtSwitchSourceHeader,
+    UpdateUserSettings
 );
 
 entity_messages!(

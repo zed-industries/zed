@@ -11,9 +11,12 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
-use futures::{channel::oneshot, future::LocalBoxFuture, Future};
+use futures::{
+    channel::oneshot,
+    future::{LocalBoxFuture, Shared},
+    Future, FutureExt,
+};
 use slotmap::SlotMap;
-use smol::future::FutureExt;
 
 pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, VecDeque};
@@ -25,8 +28,8 @@ pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    current_platform, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
+    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
+    Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
     Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
     Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
     PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
@@ -114,7 +117,7 @@ impl App {
         Self(AppContext::new(
             current_platform(false),
             Arc::new(()),
-            http_client::client(None),
+            http_client::client(None, None),
         ))
     }
 
@@ -125,7 +128,7 @@ impl App {
         Self(AppContext::new(
             current_platform(true),
             Arc::new(()),
-            http_client::client(None),
+            http_client::client(None, None),
         ))
     }
 
@@ -220,7 +223,6 @@ pub struct AppContext {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
-    pub(crate) asset_cache: AssetCache,
     asset_source: Arc<dyn AssetSource>,
     pub(crate) svg_renderer: SvgRenderer,
     http_client: Arc<dyn HttpClient>,
@@ -276,7 +278,6 @@ impl AppContext {
                 background_executor: executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
-                asset_cache: AssetCache::new(),
                 loading_assets: Default::default(),
                 asset_source,
                 http_client,
@@ -469,6 +470,15 @@ impl AppContext {
             .collect()
     }
 
+    /// Returns the window handles ordered by their appearance on screen, front to back.
+    ///
+    /// The first window in the returned list is the active/topmost window of the application.
+    ///
+    /// This method returns None if the platform doesn't implement the method yet.
+    pub fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        self.platform.window_stack()
+    }
+
     /// Returns a handle to the window that is currently focused at the platform level, if one exists.
     pub fn active_window(&self) -> Option<AnyWindowHandle> {
         self.platform.active_window()
@@ -496,7 +506,7 @@ impl AppContext {
                 }
                 Err(e) => {
                     cx.windows.remove(id);
-                    return Err(e);
+                    Err(e)
                 }
             }
         })
@@ -658,7 +668,7 @@ impl AppContext {
     }
 
     /// Updates the http client assigned to GPUI
-    pub fn update_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
+    pub fn set_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
         self.http_client = new_client;
     }
 
@@ -1257,6 +1267,40 @@ impl AppContext {
             + 'static,
     ) {
         self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
+    }
+
+    /// Remove an asset from GPUI's cache
+    pub fn remove_cached_asset<A: Asset + 'static>(&mut self, source: &A::Source) {
+        let asset_id = (TypeId::of::<A>(), hash(source));
+        self.loading_assets.remove(&asset_id);
+    }
+
+    /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
+    ///
+    /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
+    /// time, and the results of this call will be cached
+    ///
+    /// This asset will not be cached by default, see [Self::use_cached_asset]
+    pub fn fetch_asset<A: Asset + 'static>(
+        &mut self,
+        source: &A::Source,
+    ) -> (Shared<Task<A::Output>>, bool) {
+        let asset_id = (TypeId::of::<A>(), hash(source));
+        let mut is_first = false;
+        let task = self
+            .loading_assets
+            .remove(&asset_id)
+            .map(|boxed_task| *boxed_task.downcast::<Shared<Task<A::Output>>>().unwrap())
+            .unwrap_or_else(|| {
+                is_first = true;
+                let future = A::load(source.clone(), self);
+                let task = self.background_executor().spawn(future).shared();
+                task
+            });
+
+        self.loading_assets.insert(asset_id, Box::new(task.clone()));
+
+        (task, is_first)
     }
 }
 

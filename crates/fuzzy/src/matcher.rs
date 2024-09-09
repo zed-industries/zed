@@ -499,6 +499,7 @@ mod tests {
             let lowercase_path = path.to_lowercase().chars().collect::<Vec<_>>();
             let char_bag = CharBag::from(lowercase_path.as_slice());
             path_entries.push(PathMatchCandidate {
+                is_dir: false,
                 char_bag,
                 path: &path_arcs[i],
             });
@@ -522,6 +523,7 @@ mod tests {
                 path: Arc::from(candidate.path),
                 path_prefix: "".into(),
                 distance_to_relative_ancestor: usize::MAX,
+                is_dir: false,
             },
         );
 

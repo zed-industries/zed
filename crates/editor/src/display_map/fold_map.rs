@@ -11,7 +11,7 @@ use std::{
     ops::{Add, AddAssign, Deref, DerefMut, Range, Sub},
     sync::Arc,
 };
-use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
+use sum_tree::{Bias, Cursor, FilterCursor, SumTree, Summary};
 use util::post_inc;
 
 #[derive(Clone)]
@@ -130,7 +130,7 @@ impl<'a> FoldMapWriter<'a> {
         let snapshot = self.0.snapshot.inlay_snapshot.clone();
         for (range, fold_text) in ranges.into_iter() {
             let buffer = &snapshot.buffer;
-            let range = range.start.to_offset(&buffer)..range.end.to_offset(&buffer);
+            let range = range.start.to_offset(buffer)..range.end.to_offset(buffer);
 
             // Ignore any empty ranges.
             if range.start == range.end {
@@ -285,6 +285,17 @@ impl FoldMap {
                 "transform tree does not match inlay snapshot's length"
             );
 
+            let mut prev_transform_isomorphic = false;
+            for transform in self.snapshot.transforms.iter() {
+                if !transform.is_fold() && prev_transform_isomorphic {
+                    panic!(
+                        "found adjacent isomorphic transforms: {:?}",
+                        self.snapshot.transforms.items(&())
+                    );
+                }
+                prev_transform_isomorphic = !transform.is_fold();
+            }
+
             let mut folds = self.snapshot.folds.iter().peekable();
             while let Some(fold) = folds.next() {
                 if let Some(next_fold) = folds.peek() {
@@ -311,11 +322,24 @@ impl FoldMap {
         } else {
             let mut inlay_edits_iter = inlay_edits.iter().cloned().peekable();
 
-            let mut new_transforms = SumTree::new();
+            let mut new_transforms = SumTree::<Transform>::new();
             let mut cursor = self.snapshot.transforms.cursor::<InlayOffset>();
             cursor.seek(&InlayOffset(0), Bias::Right, &());
 
             while let Some(mut edit) = inlay_edits_iter.next() {
+                if let Some(item) = cursor.item() {
+                    if !item.is_fold() {
+                        new_transforms.update_last(
+                            |transform| {
+                                if !transform.is_fold() {
+                                    transform.summary.add_summary(&item.summary, &());
+                                    cursor.next(&());
+                                }
+                            },
+                            &(),
+                        );
+                    }
+                }
                 new_transforms.append(cursor.slice(&edit.old.start, Bias::Left, &()), &());
                 edit.new.start -= edit.old.start - *cursor.start();
                 edit.old.start = *cursor.start();
@@ -400,20 +424,11 @@ impl FoldMap {
                     if fold_range.start.0 > sum.input.len {
                         let text_summary = inlay_snapshot
                             .text_summary_for_range(InlayOffset(sum.input.len)..fold_range.start);
-                        new_transforms.push(
-                            Transform {
-                                summary: TransformSummary {
-                                    output: text_summary.clone(),
-                                    input: text_summary,
-                                },
-                                placeholder: None,
-                            },
-                            &(),
-                        );
+                        push_isomorphic(&mut new_transforms, text_summary);
                     }
 
                     if fold_range.end > fold_range.start {
-                        const ELLIPSIS: &'static str = "⋯";
+                        const ELLIPSIS: &str = "⋯";
 
                         let fold_id = fold.id;
                         new_transforms.push(
@@ -446,32 +461,14 @@ impl FoldMap {
                 if sum.input.len < edit.new.end.0 {
                     let text_summary = inlay_snapshot
                         .text_summary_for_range(InlayOffset(sum.input.len)..edit.new.end);
-                    new_transforms.push(
-                        Transform {
-                            summary: TransformSummary {
-                                output: text_summary.clone(),
-                                input: text_summary,
-                            },
-                            placeholder: None,
-                        },
-                        &(),
-                    );
+                    push_isomorphic(&mut new_transforms, text_summary);
                 }
             }
 
             new_transforms.append(cursor.suffix(&()), &());
             if new_transforms.is_empty() {
                 let text_summary = inlay_snapshot.text_summary();
-                new_transforms.push(
-                    Transform {
-                        summary: TransformSummary {
-                            output: text_summary.clone(),
-                            input: text_summary,
-                        },
-                        placeholder: None,
-                    },
-                    &(),
-                );
+                push_isomorphic(&mut new_transforms, text_summary);
             }
 
             drop(cursor);
@@ -733,17 +730,25 @@ impl FoldSnapshot {
         highlights: Highlights<'a>,
     ) -> FoldChunks<'a> {
         let mut transform_cursor = self.transforms.cursor::<(FoldOffset, InlayOffset)>();
+        transform_cursor.seek(&range.start, Bias::Right, &());
 
-        let inlay_end = {
-            transform_cursor.seek(&range.end, Bias::Right, &());
-            let overshoot = range.end.0 - transform_cursor.start().0 .0;
+        let inlay_start = {
+            let overshoot = range.start.0 - transform_cursor.start().0 .0;
             transform_cursor.start().1 + InlayOffset(overshoot)
         };
 
-        let inlay_start = {
-            transform_cursor.seek(&range.start, Bias::Right, &());
-            let overshoot = range.start.0 - transform_cursor.start().0 .0;
+        let transform_end = transform_cursor.end(&());
+
+        let inlay_end = if transform_cursor
+            .item()
+            .map_or(true, |transform| transform.is_fold())
+        {
+            inlay_start
+        } else if range.end < transform_end.0 {
+            let overshoot = range.end.0 - transform_cursor.start().0 .0;
             transform_cursor.start().1 + InlayOffset(overshoot)
+        } else {
+            transform_end.1
         };
 
         FoldChunks {
@@ -755,8 +760,8 @@ impl FoldSnapshot {
             ),
             inlay_chunk: None,
             inlay_offset: inlay_start,
-            output_offset: range.start.0,
-            max_output_offset: range.end.0,
+            output_offset: range.start,
+            max_output_offset: range.end,
         }
     }
 
@@ -810,6 +815,32 @@ impl FoldSnapshot {
     }
 }
 
+fn push_isomorphic(transforms: &mut SumTree<Transform>, summary: TextSummary) {
+    let mut did_merge = false;
+    transforms.update_last(
+        |last| {
+            if !last.is_fold() {
+                last.summary.input += summary.clone();
+                last.summary.output += summary.clone();
+                did_merge = true;
+            }
+        },
+        &(),
+    );
+    if !did_merge {
+        transforms.push(
+            Transform {
+                summary: TransformSummary {
+                    input: summary.clone(),
+                    output: summary,
+                },
+                placeholder: None,
+            },
+            &(),
+        )
+    }
+}
+
 fn intersecting_folds<'a, T>(
     inlay_snapshot: &'a InlaySnapshot,
     folds: &'a SumTree<Fold>,
@@ -846,7 +877,8 @@ fn consolidate_inlay_edits(mut edits: Vec<InlayEdit>) -> Vec<InlayEdit> {
 
     let _old_alloc_ptr = edits.as_ptr();
     let mut inlay_edits = edits.into_iter();
-    let inlay_edits = if let Some(mut first_edit) = inlay_edits.next() {
+
+    if let Some(mut first_edit) = inlay_edits.next() {
         // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
         #[allow(clippy::filter_map_identity)]
         let mut v: Vec<_> = inlay_edits
@@ -868,9 +900,7 @@ fn consolidate_inlay_edits(mut edits: Vec<InlayEdit>) -> Vec<InlayEdit> {
         v
     } else {
         vec![]
-    };
-
-    inlay_edits
+    }
 }
 
 fn consolidate_fold_edits(mut edits: Vec<FoldEdit>) -> Vec<FoldEdit> {
@@ -882,7 +912,8 @@ fn consolidate_fold_edits(mut edits: Vec<FoldEdit>) -> Vec<FoldEdit> {
     });
     let _old_alloc_ptr = edits.as_ptr();
     let mut fold_edits = edits.into_iter();
-    let fold_edits = if let Some(mut first_edit) = fold_edits.next() {
+
+    if let Some(mut first_edit) = fold_edits.next() {
         // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
         #[allow(clippy::filter_map_identity)]
         let mut v: Vec<_> = fold_edits
@@ -903,9 +934,7 @@ fn consolidate_fold_edits(mut edits: Vec<FoldEdit>) -> Vec<FoldEdit> {
         v
     } else {
         vec![]
-    };
-
-    fold_edits
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -952,9 +981,9 @@ impl sum_tree::Summary for TransformSummary {
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub struct FoldId(usize);
 
-impl Into<ElementId> for FoldId {
-    fn into(self) -> ElementId {
-        ElementId::Integer(self.0)
+impl From<FoldId> for ElementId {
+    fn from(val: FoldId) -> Self {
+        ElementId::Integer(val.0)
     }
 }
 
@@ -1106,8 +1135,8 @@ pub struct FoldChunks<'a> {
     inlay_chunks: InlayChunks<'a>,
     inlay_chunk: Option<(InlayOffset, Chunk<'a>)>,
     inlay_offset: InlayOffset,
-    output_offset: usize,
-    max_output_offset: usize,
+    output_offset: FoldOffset,
+    max_output_offset: FoldOffset,
 }
 
 impl<'a> Iterator for FoldChunks<'a> {
@@ -1125,7 +1154,6 @@ impl<'a> Iterator for FoldChunks<'a> {
         if let Some(placeholder) = transform.placeholder.as_ref() {
             self.inlay_chunk.take();
             self.inlay_offset += InlayOffset(transform.summary.input.len);
-            self.inlay_chunks.seek(self.inlay_offset);
 
             while self.inlay_offset >= self.transform_cursor.end(&()).1
                 && self.transform_cursor.item().is_some()
@@ -1133,12 +1161,29 @@ impl<'a> Iterator for FoldChunks<'a> {
                 self.transform_cursor.next(&());
             }
 
-            self.output_offset += placeholder.text.len();
+            self.output_offset.0 += placeholder.text.len();
             return Some(Chunk {
                 text: placeholder.text,
                 renderer: Some(placeholder.renderer.clone()),
                 ..Default::default()
             });
+        }
+
+        // When we reach a non-fold region, seek the underlying text
+        // chunk iterator to the next unfolded range.
+        if self.inlay_offset == self.transform_cursor.start().1
+            && self.inlay_chunks.offset() != self.inlay_offset
+        {
+            let transform_start = self.transform_cursor.start();
+            let transform_end = self.transform_cursor.end(&());
+            let inlay_end = if self.max_output_offset < transform_end.0 {
+                let overshoot = self.max_output_offset.0 - transform_start.0 .0;
+                transform_start.1 + InlayOffset(overshoot)
+            } else {
+                transform_end.1
+            };
+
+            self.inlay_chunks.seek(self.inlay_offset..inlay_end);
         }
 
         // Retrieve a chunk from the current location in the buffer.
@@ -1163,7 +1208,7 @@ impl<'a> Iterator for FoldChunks<'a> {
             }
 
             self.inlay_offset = chunk_end;
-            self.output_offset += chunk.text.len();
+            self.output_offset.0 += chunk.text.len();
             return Some(chunk);
         }
 

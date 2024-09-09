@@ -55,6 +55,8 @@ struct UpdateRequestBody {
     installation_id: Option<Arc<str>>,
     release_channel: Option<&'static str>,
     telemetry: bool,
+    is_staff: Option<bool>,
+    destination: &'static str,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -84,6 +86,34 @@ pub struct AutoUpdater {
 struct JsonRelease {
     version: String,
     url: String,
+}
+
+struct MacOsUnmounter {
+    mount_path: PathBuf,
+}
+
+impl Drop for MacOsUnmounter {
+    fn drop(&mut self) {
+        let unmount_output = std::process::Command::new("hdiutil")
+            .args(["detach", "-force"])
+            .arg(&self.mount_path)
+            .output();
+
+        match unmount_output {
+            Ok(output) if output.status.success() => {
+                log::info!("Successfully unmounted the disk image");
+            }
+            Ok(output) => {
+                log::error!(
+                    "Failed to unmount disk image: {:?}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            Err(error) => {
+                log::error!("Error while trying to unmount disk image: {:?}", error);
+            }
+        }
+    }
 }
 
 struct AutoUpdateSetting(bool);
@@ -181,7 +211,7 @@ pub fn check(_: &Check, cx: &mut WindowContext) {
         return;
     }
 
-    if let Some(message) = env::var("ZED_UPDATE_EXPLANATION").ok() {
+    if let Ok(message) = env::var("ZED_UPDATE_EXPLANATION") {
         drop(cx.prompt(
             gpui::PromptLevel::Info,
             "Zed was installed via a package manager.",
@@ -224,7 +254,7 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<(
         let url = &auto_updater
             .http_client
             .build_url(&format!("/releases/{release_channel}/{current_version}"));
-        cx.open_url(&url);
+        cx.open_url(url);
     }
 
     None
@@ -575,18 +605,27 @@ async fn download_remote_server_binary(
     cx: &AsyncAppContext,
 ) -> Result<()> {
     let mut target_file = File::create(&target_path).await?;
-    let (installation_id, release_channel, telemetry) = cx.update(|cx| {
-        let installation_id = Client::global(cx).telemetry().installation_id();
+    let (installation_id, release_channel, telemetry_enabled, is_staff) = cx.update(|cx| {
+        let telemetry = Client::global(cx).telemetry().clone();
+        let is_staff = telemetry.is_staff();
+        let installation_id = telemetry.installation_id();
         let release_channel =
             ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
-        let telemetry = TelemetrySettings::get_global(cx).metrics;
+        let telemetry_enabled = TelemetrySettings::get_global(cx).metrics;
 
-        (installation_id, release_channel, telemetry)
+        (
+            installation_id,
+            release_channel,
+            telemetry_enabled,
+            is_staff,
+        )
     })?;
     let request_body = AsyncBody::from(serde_json::to_string(&UpdateRequestBody {
         installation_id,
         release_channel,
-        telemetry,
+        telemetry: telemetry_enabled,
+        is_staff,
+        destination: "remote",
     })?);
 
     let mut response = client.get(&release.url, request_body, true).await?;
@@ -602,19 +641,28 @@ async fn download_release(
 ) -> Result<()> {
     let mut target_file = File::create(&target_path).await?;
 
-    let (installation_id, release_channel, telemetry) = cx.update(|cx| {
-        let installation_id = Client::global(cx).telemetry().installation_id();
+    let (installation_id, release_channel, telemetry_enabled, is_staff) = cx.update(|cx| {
+        let telemetry = Client::global(cx).telemetry().clone();
+        let is_staff = telemetry.is_staff();
+        let installation_id = telemetry.installation_id();
         let release_channel =
             ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
-        let telemetry = TelemetrySettings::get_global(cx).metrics;
+        let telemetry_enabled = TelemetrySettings::get_global(cx).metrics;
 
-        (installation_id, release_channel, telemetry)
+        (
+            installation_id,
+            release_channel,
+            telemetry_enabled,
+            is_staff,
+        )
     })?;
 
     let request_body = AsyncBody::from(serde_json::to_string(&UpdateRequestBody {
         installation_id,
         release_channel,
-        telemetry,
+        telemetry: telemetry_enabled,
+        is_staff,
+        destination: "local",
     })?);
 
     let mut response = client.get(&release.url, request_body, true).await?;
@@ -674,7 +722,7 @@ async fn install_release_linux(
     }
 
     let output = Command::new("rsync")
-        .args(&["-av", "--delete"])
+        .args(["-av", "--delete"])
         .arg(&from)
         .arg(&to)
         .output()
@@ -706,10 +754,10 @@ async fn install_release_macos(
 
     mounted_app_path.push("/");
     let output = Command::new("hdiutil")
-        .args(&["attach", "-nobrowse"])
+        .args(["attach", "-nobrowse"])
         .arg(&downloaded_dmg)
         .arg("-mountroot")
-        .arg(&temp_dir.path())
+        .arg(temp_dir.path())
         .output()
         .await?;
 
@@ -719,8 +767,13 @@ async fn install_release_macos(
         String::from_utf8_lossy(&output.stderr)
     );
 
+    // Create an MacOsUnmounter that will be dropped (and thus unmount the disk) when this function exits
+    let _unmounter = MacOsUnmounter {
+        mount_path: mount_path.clone(),
+    };
+
     let output = Command::new("rsync")
-        .args(&["-av", "--delete"])
+        .args(["-av", "--delete"])
         .arg(&mounted_app_path)
         .arg(&running_app_path)
         .output()
@@ -729,18 +782,6 @@ async fn install_release_macos(
     anyhow::ensure!(
         output.status.success(),
         "failed to copy app: {:?}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let output = Command::new("hdiutil")
-        .args(&["detach"])
-        .arg(&mount_path)
-        .output()
-        .await?;
-
-    anyhow::ensure!(
-        output.status.success(),
-        "failed to unount: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
 

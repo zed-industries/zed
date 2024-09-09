@@ -105,6 +105,7 @@ impl BlinkManager {
     }
 
     pub fn disable(&mut self, _cx: &mut ModelContext<Self>) {
+        self.visible = false;
         self.enabled = false;
     }
 

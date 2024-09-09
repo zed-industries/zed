@@ -191,7 +191,7 @@ pub async fn parse_markdown_block(
                         style.strikethrough = true;
                     }
 
-                    if let Some(link) = link_url.clone().and_then(|u| Link::identify(u)) {
+                    if let Some(link) = link_url.clone().and_then(Link::identify) {
                         region_ranges.push(prev_len..text.len());
                         regions.push(ParsedRegion {
                             code: false,
@@ -222,7 +222,7 @@ pub async fn parse_markdown_block(
                 text.push_str(t.as_ref());
                 region_ranges.push(prev_len..text.len());
 
-                let link = link_url.clone().and_then(|u| Link::identify(u));
+                let link = link_url.clone().and_then(Link::identify);
                 if link.is_some() {
                     highlights.push((
                         prev_len..text.len(),
@@ -336,7 +336,7 @@ pub fn highlight_code(
 }
 
 /// Appends a new paragraph to the provided `text` buffer.
-pub fn new_paragraph(text: &mut String, list_stack: &mut Vec<(Option<u64>, bool)>) {
+pub fn new_paragraph(text: &mut String, list_stack: &mut [(Option<u64>, bool)]) {
     let mut is_subsequent_paragraph_of_list = false;
     if let Some((_, has_content)) = list_stack.last_mut() {
         if *has_content {

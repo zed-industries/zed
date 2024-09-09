@@ -8,6 +8,12 @@ pub struct SettingsContainer {
     children: SmallVec<[AnyElement; 2]>,
 }
 
+impl Default for SettingsContainer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SettingsContainer {
     pub fn new() -> Self {
         Self {
@@ -23,11 +29,7 @@ impl ParentElement for SettingsContainer {
 }
 
 impl RenderOnce for SettingsContainer {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        v_flex()
-            .elevation_2(cx)
-            .px_2()
-            .gap_1()
-            .children(self.children)
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        v_flex().px_2().gap_1().children(self.children)
     }
 }

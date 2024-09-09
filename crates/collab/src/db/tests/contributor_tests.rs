@@ -1,3 +1,5 @@
+use chrono::Utc;
+
 use super::Database;
 use crate::{db::NewUserParams, test_both_dbs};
 use std::sync::Arc;
@@ -22,7 +24,8 @@ async fn test_contributors(db: &Arc<Database>) {
 
     assert_eq!(db.get_contributors().await.unwrap(), Vec::<String>::new());
 
-    db.add_contributor("user1", Some(1), None, None)
+    let user1_created_at = Utc::now();
+    db.add_contributor("user1", 1, None, user1_created_at, None)
         .await
         .unwrap();
     assert_eq!(
@@ -30,7 +33,8 @@ async fn test_contributors(db: &Arc<Database>) {
         vec!["user1".to_string()]
     );
 
-    db.add_contributor("user2", Some(2), None, None)
+    let user2_created_at = Utc::now();
+    db.add_contributor("user2", 2, None, user2_created_at, None)
         .await
         .unwrap();
     assert_eq!(

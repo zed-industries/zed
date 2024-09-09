@@ -146,11 +146,11 @@ impl Database {
     pub async fn update_dev_server_project(
         &self,
         id: DevServerProjectId,
-        paths: &Vec<String>,
+        paths: &[String],
         user_id: UserId,
     ) -> crate::Result<(dev_server_project::Model, proto::DevServerProjectsUpdate)> {
         self.transaction(move |tx| async move {
-            let paths = paths.clone();
+            let paths = paths.to_owned();
             let Some((project, Some(dev_server))) = dev_server_project::Entity::find_by_id(id)
                 .find_also_related(dev_server::Entity)
                 .one(&*tx)

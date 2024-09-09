@@ -46,7 +46,7 @@ impl CreaseSnapshot {
                 Ordering::Greater => break,
             }
         }
-        return None;
+        None
     }
 
     pub fn crease_items_with_offsets(
@@ -183,7 +183,7 @@ impl CreaseMap {
             }
         }
         removals.sort_unstable_by(|(a_id, a_range), (b_id, b_range)| {
-            AnchorRangeExt::cmp(a_range, b_range, snapshot).then(b_id.cmp(&a_id))
+            AnchorRangeExt::cmp(a_range, b_range, snapshot).then(b_id.cmp(a_id))
         });
 
         self.snapshot.creases = {

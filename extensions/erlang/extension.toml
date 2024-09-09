@@ -16,4 +16,4 @@ language = "Erlang"
 
 [grammars.erlang]
 repository = "https://github.com/WhatsApp/tree-sitter-erlang"
-commit = "57e69513efd831f9cc8207d65d96bad917ca4aa4"
+commit = "19ca500fa5a17ab58dc18aa03b50e2db305e7a8a"

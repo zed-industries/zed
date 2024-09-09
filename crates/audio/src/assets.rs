@@ -44,7 +44,7 @@ impl SoundRegistry {
         let bytes = self
             .assets
             .load(&path)?
-            .map(|asset| Ok(asset))
+            .map(Ok)
             .unwrap_or_else(|| Err(anyhow::anyhow!("No such asset available")))?
             .into_owned();
         let cursor = Cursor::new(bytes);

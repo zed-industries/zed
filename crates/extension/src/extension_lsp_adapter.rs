@@ -243,7 +243,7 @@ impl LspAdapter for ExtensionLspAdapter {
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let completions = completions
-            .into_iter()
+            .iter()
             .map(|completion| wit::Completion::from(completion.clone()))
             .collect::<Vec<_>>();
 
@@ -276,7 +276,7 @@ impl LspAdapter for ExtensionLspAdapter {
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let symbols = symbols
-            .into_iter()
+            .iter()
             .cloned()
             .map(|(name, kind)| wit::Symbol {
                 name,
@@ -317,7 +317,7 @@ fn labels_from_wit(
             } else {
                 language.highlight_text(&label.code.as_str().into(), 0..label.code.len())
             };
-            build_code_label(&label, &runs, &language)
+            build_code_label(&label, &runs, language)
         })
         .collect()
 }
@@ -364,7 +364,7 @@ fn build_code_label(
                     .grammar()
                     .zip(span.highlight_name.as_ref())
                     .and_then(|(grammar, highlight_name)| {
-                        grammar.highlight_id_for_name(&highlight_name)
+                        grammar.highlight_id_for_name(highlight_name)
                     })
                     .unwrap_or_default();
                 let ix = text.len();

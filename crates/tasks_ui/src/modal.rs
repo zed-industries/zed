@@ -222,10 +222,10 @@ impl PickerDelegate for TasksModalDelegate {
                             let resolved_task =
                                 picker.delegate.project.update(cx, |project, cx| {
                                     let ssh_connection_string = project.ssh_connection_string(cx);
-                                    if project.is_remote() && ssh_connection_string.is_none() {
+                                    if project.is_via_collab() && ssh_connection_string.is_none() {
                                         Task::ready((Vec::new(), Vec::new()))
                                     } else {
-                                        let remote_templates = if project.is_local() {
+                                        let remote_templates = if project.is_local_or_ssh() {
                                             None
                                         } else {
                                             project
@@ -389,7 +389,7 @@ impl PickerDelegate for TasksModalDelegate {
             TaskSourceKind::Worktree { .. } => Some(Icon::new(IconName::FileTree)),
             TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
                 .get_type_icon(&name.to_lowercase())
-                .map(|icon_path| Icon::from_path(icon_path)),
+                .map(Icon::from_path),
         }
         .map(|icon| icon.color(Color::Muted).size(IconSize::Small));
         let history_run_icon = if Some(ix) <= self.divider_index {
