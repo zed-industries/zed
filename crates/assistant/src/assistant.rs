@@ -27,8 +27,8 @@ use context_servers::ContextServerRegistry;
 pub use context_store::*;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::Context as _;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
+use gpui::{impl_actions, Context as _};
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 use language_model::{
@@ -45,6 +45,7 @@ use slash_command::{
     file_command, now_command, project_command, prompt_command, search_command, symbols_command,
     tab_command, terminal_command, workflow_command,
 };
+use std::path::PathBuf;
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
 use util::ResultExt;
@@ -69,6 +70,14 @@ actions!(
         ToggleModelSelector,
     ]
 );
+
+#[derive(PartialEq, Clone, Deserialize)]
+pub enum InsertDraggedFiles {
+    ProjectPaths(Vec<PathBuf>),
+    ExternalFiles(Vec<PathBuf>),
+}
+
+impl_actions!(assistant, [InsertDraggedFiles]);
 
 const DEFAULT_CONTEXT_LINES: usize = 50;
 

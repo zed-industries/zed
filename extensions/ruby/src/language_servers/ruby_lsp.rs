@@ -88,7 +88,7 @@ impl RubyLsp {
     pub fn label_for_symbol(&self, symbol: Symbol) -> Option<CodeLabel> {
         let name = &symbol.name;
 
-        return match symbol.kind {
+        match symbol.kind {
             SymbolKind::Method => {
                 let code = format!("def {name}; end");
                 let filter_range = 0..name.len();
@@ -123,6 +123,6 @@ impl RubyLsp {
                 })
             }
             _ => None,
-        };
+        }
     }
 }

@@ -2109,7 +2109,7 @@ struct Row10;"#};
     editor_cx_a.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
@@ -2146,7 +2146,7 @@ struct Row10;"#};
     editor_cx_b.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(1)..=DisplayRow(2), DisplayRow(8)..=DisplayRow(8)],
@@ -2194,7 +2194,7 @@ struct Row10;"#};
     editor_cx_a.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(expanded_hunks_background_highlights(editor, cx), Vec::new());
         assert_eq!(
             all_hunks,
@@ -2209,7 +2209,7 @@ struct Row10;"#};
     editor_cx_b.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
-        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         assert_eq!(
             expanded_hunks_background_highlights(editor, cx),
             vec![DisplayRow(5)..=DisplayRow(5)]

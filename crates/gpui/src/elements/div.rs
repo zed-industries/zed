@@ -1314,16 +1314,14 @@ impl Interactivity {
                 // If there's an explicit focus handle we're tracking, use that. Otherwise
                 // create a new handle and store it in the element state, which lives for as
                 // as frames contain an element with this id.
-                if self.focusable {
-                    if self.tracked_focus_handle.is_none() {
-                        if let Some(element_state) = element_state.as_mut() {
-                            self.tracked_focus_handle = Some(
-                                element_state
-                                    .focus_handle
-                                    .get_or_insert_with(|| cx.focus_handle())
-                                    .clone(),
-                            );
-                        }
+                if self.focusable && self.tracked_focus_handle.is_none() {
+                    if let Some(element_state) = element_state.as_mut() {
+                        self.tracked_focus_handle = Some(
+                            element_state
+                                .focus_handle
+                                .get_or_insert_with(|| cx.focus_handle())
+                                .clone(),
+                        );
                     }
                 }
 
@@ -1336,7 +1334,7 @@ impl Interactivity {
                         self.scroll_offset = Some(
                             element_state
                                 .scroll_offset
-                                .get_or_insert_with(|| Rc::default())
+                                .get_or_insert_with(Rc::default)
                                 .clone(),
                         );
                     }
@@ -1360,7 +1358,7 @@ impl Interactivity {
     ) -> R {
         self.content_size = content_size;
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-            cx.set_focus_handle(&focus_handle);
+            cx.set_focus_handle(focus_handle);
         }
         cx.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
@@ -1949,10 +1947,10 @@ impl Interactivity {
                         let tooltip_is_hovered =
                             tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
 
-                        if !tooltip_is_hoverable || !tooltip_is_hovered {
-                            if active_tooltip.borrow_mut().take().is_some() {
-                                cx.refresh();
-                            }
+                        if (!tooltip_is_hoverable || !tooltip_is_hovered)
+                            && active_tooltip.borrow_mut().take().is_some()
+                        {
+                            cx.refresh();
                         }
                     }
                 });
@@ -1963,10 +1961,10 @@ impl Interactivity {
                     move |_: &ScrollWheelEvent, _, cx| {
                         let tooltip_is_hovered =
                             tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
-                        if !tooltip_is_hoverable || !tooltip_is_hovered {
-                            if active_tooltip.borrow_mut().take().is_some() {
-                                cx.refresh();
-                            }
+                        if (!tooltip_is_hoverable || !tooltip_is_hovered)
+                            && active_tooltip.borrow_mut().take().is_some()
+                        {
+                            cx.refresh();
                         }
                     }
                 })

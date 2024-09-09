@@ -383,7 +383,7 @@ impl LspAdapter for EsLintLspAdapter {
                 "workspaceFolder": {
                     "uri": workspace_root,
                     "name": workspace_root.file_name()
-                        .unwrap_or_else(|| workspace_root.as_os_str()),
+                        .unwrap_or(workspace_root.as_os_str()),
                 },
                 "problems": problems,
                 "codeActionOnSave": code_action_on_save,

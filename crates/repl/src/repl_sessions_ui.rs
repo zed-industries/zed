@@ -242,7 +242,7 @@ impl Render for ReplSessionsPage {
         for spec in kernel_specifications {
             kernels_by_language
                 .entry(spec.kernelspec.language.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(spec);
         }
 

@@ -141,7 +141,7 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
         })?;
 
     let state = req.extensions().get::<Arc<LlmState>>().unwrap();
-    match LlmTokenClaims::validate(&token, &state.config) {
+    match LlmTokenClaims::validate(token, &state.config) {
         Ok(claims) => {
             if state.db.is_access_token_revoked(&claims.jti).await? {
                 return Err(Error::http(
@@ -154,7 +154,7 @@ async fn validate_api_token<B>(mut req: Request<B>, next: Next<B>) -> impl IntoR
                 .record("user_id", claims.user_id)
                 .record("login", claims.github_user_login.clone())
                 .record("authn.jti", &claims.jti)
-                .record("is_staff", &claims.is_staff);
+                .record("is_staff", claims.is_staff);
 
             req.extensions_mut().insert(claims);
             Ok::<_, Error>(next.run(req).await.into_response())
@@ -247,7 +247,7 @@ async fn perform_completion(
             };
 
             let mut request: anthropic::Request =
-                serde_json::from_str(&params.provider_request.get())?;
+                serde_json::from_str(params.provider_request.get())?;
 
             // Override the model on the request with the latest version of the model that is
             // known to the server.
@@ -348,7 +348,7 @@ async fn perform_completion(
                 &state.http_client,
                 open_ai::OPEN_AI_API_URL,
                 api_key,
-                serde_json::from_str(&params.provider_request.get())?,
+                serde_json::from_str(params.provider_request.get())?,
                 None,
             )
             .await?;
@@ -379,7 +379,8 @@ async fn perform_completion(
                 &state.http_client,
                 google_ai::API_URL,
                 api_key,
-                serde_json::from_str(&params.provider_request.get())?,
+                serde_json::from_str(params.provider_request.get())?,
+                None,
             )
             .await?;
 
@@ -411,9 +412,9 @@ async fn perform_completion(
                 .context("no Qwen2-7B URL configured on the server")?;
             let chunks = open_ai::stream_completion(
                 &state.http_client,
-                &api_url,
+                api_url,
                 api_key,
-                serde_json::from_str(&params.provider_request.get())?,
+                serde_json::from_str(params.provider_request.get())?,
                 None,
             )
             .await?;

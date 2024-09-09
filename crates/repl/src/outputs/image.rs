@@ -50,12 +50,12 @@ impl ImageView {
             id: gpui_image_data.id.0 as u64,
         });
 
-        return Ok(ImageView {
+        Ok(ImageView {
             clipboard_image,
             height,
             width,
             image: Arc::new(gpui_image_data),
-        });
+        })
     }
 }
 

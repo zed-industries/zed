@@ -302,7 +302,7 @@ impl FeedbackModal {
         let http_client = zed_client.http_client();
         let feedback_endpoint = http_client.build_url("/api/feedback");
         let request = FeedbackRequestBody {
-            feedback_text: &feedback_text,
+            feedback_text,
             email,
             metrics_id,
             installation_id,

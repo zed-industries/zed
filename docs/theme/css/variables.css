@@ -8,15 +8,19 @@
   --content-max-width: 750px;
   --menu-bar-height: 64px;
   --font: "IA Writer Quattro S", sans-serif;
-  --title-font: "Agrandir", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --title-font: "Lora", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --mono-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     Liberation Mono, Courier New, monospace;
   --code-font-size: 0.875em
     /* please adjust the ace font size accordingly in editor.js */;
 
-  --bg: rgb(246, 245, 240);
-  --fg: rgb(75, 83, 97);
-  --title-color: rgb(8, 76, 207);
+  --bg: hsla(50, 25%, 96%);
+  --fg: hsl(220, 13%, 34%);
+  --title-color: hsl(220, 92%, 42%);
+
+  --border: hsl(220, 13%, 80%);
+  --border-light: hsl(220, 13%, 90%);
+  --border-hover: hsl(220, 13%, 70%);
 
   --sidebar-fg: hsl(0, 0%, 0%);
   --sidebar-non-existant: #aaaaaa;
@@ -38,15 +42,15 @@
   --theme-hover: #e6e6e6;
 
   --quote-bg: hsl(197, 37%, 96%);
-  --quote-border: hsl(197, 37%, 88%);
+  --quote-border: hsl(197, 37%, 84%);
 
   --warning-border: hsl(25, 100%, 85%);
   --warning-bg: hsl(42, 100%, 60%, 0.1);
   --warning-icon: hsl(42, 100%, 30%);
 
+  --table-header-bg: hsl(219, 50%, 90%, 0.4);
   --table-border-color: hsl(219, 93%, 42%, 0.15);
-  --table-header-bg: hsl(0, 0%, 80%);
-  --table-alternate-bg: hsl(0, 0%, 97%);
+  --table-alternate-bg: hsl(219, 10%, 90%, 0.4);
 
   --searchbar-border-color: #aaa;
   --searchbar-bg: #fafafa;

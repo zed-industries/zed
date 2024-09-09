@@ -115,16 +115,16 @@ impl Principal {
     fn update_span(&self, span: &tracing::Span) {
         match &self {
             Principal::User(user) => {
-                span.record("user_id", &user.id.0);
+                span.record("user_id", user.id.0);
                 span.record("login", &user.github_login);
             }
             Principal::Impersonated { user, admin } => {
-                span.record("user_id", &user.id.0);
+                span.record("user_id", user.id.0);
                 span.record("login", &user.github_login);
                 span.record("impersonator", &admin.github_login);
             }
             Principal::DevServer(dev_server) => {
-                span.record("dev_server_id", &dev_server.id.0);
+                span.record("dev_server_id", dev_server.id.0);
             }
         }
     }
@@ -964,14 +964,10 @@ impl Server {
                 }
             };
 
-            let supermaven_client = if let Some(supermaven_admin_api_key) = this.app_state.config.supermaven_admin_api_key.clone() {
-                Some(Arc::new(SupermavenAdminApi::new(
+            let supermaven_client = this.app_state.config.supermaven_admin_api_key.clone().map(|supermaven_admin_api_key| Arc::new(SupermavenAdminApi::new(
                     supermaven_admin_api_key.to_string(),
                     http_client.clone(),
-                )))
-            } else {
-                None
-            };
+                )));
 
             let session = Session {
                 principal: principal.clone(),
@@ -1126,7 +1122,7 @@ impl Server {
                     self.peer.send(connection_id, incoming_call)?;
                 }
 
-                update_user_contacts(user.id, &session).await?;
+                update_user_contacts(user.id, session).await?;
             }
             Principal::DevServer(dev_server) => {
                 {
@@ -1159,7 +1155,7 @@ impl Server {
                     .db
                     .dev_server_projects_update(dev_server.user_id)
                     .await?;
-                send_dev_server_projects_update(dev_server.user_id, status, &session).await;
+                send_dev_server_projects_update(dev_server.user_id, status, session).await;
             }
         }
 
@@ -1564,21 +1560,17 @@ async fn join_room(
 
     let live_kit_connection_info =
         if let Some(live_kit) = session.app_state.live_kit_client.as_ref() {
-            if let Some(token) = live_kit
+            live_kit
                 .room_token(
                     &joined_room.room.live_kit_room,
                     &session.user_id().to_string(),
                 )
                 .trace_err()
-            {
-                Some(proto::LiveKitConnectionInfo {
+                .map(|token| proto::LiveKitConnectionInfo {
                     server_url: live_kit.url().into(),
                     token,
                     can_publish: true,
                 })
-            } else {
-                None
-            }
         } else {
             None
         };
@@ -1863,7 +1855,7 @@ async fn call(
                 initial_project_id,
             )
             .await?;
-        room_updated(&room, &session.peer);
+        room_updated(room, &session.peer);
         mem::take(incoming_call)
     };
     update_user_contacts(called_user_id, &session).await?;
@@ -2006,13 +1998,13 @@ async fn share_project(
             &request.worktrees,
             request
                 .dev_server_project_id
-                .map(|id| DevServerProjectId::from_proto(id)),
+                .map(DevServerProjectId::from_proto),
         )
         .await?;
     response.send(proto::ShareProjectResponse {
         project_id: project_id.to_proto(),
     })?;
-    room_updated(&room, &session.peer);
+    room_updated(room, &session.peer);
 
     Ok(())
 }
@@ -2269,9 +2261,9 @@ async fn leave_project(request: proto::LeaveProject, session: UserSession) -> Re
         "leave project"
     );
 
-    project_left(&project, &session);
+    project_left(project, &session);
     if let Some(room) = room {
-        room_updated(&room, &session.peer);
+        room_updated(room, &session.peer);
     }
 
     Ok(())
@@ -2753,7 +2745,7 @@ async fn shutdown_dev_server_internal(
         .await
         .dev_server_projects_update(dev_server.user_id)
         .await?;
-    send_dev_server_projects_update(dev_server.user_id, status, &session).await;
+    send_dev_server_projects_update(dev_server.user_id, status, session).await;
 
     Ok(())
 }
@@ -2795,7 +2787,7 @@ async fn update_project(
         },
     );
     if let Some(room) = room {
-        room_updated(&room, &session.peer);
+        room_updated(room, &session.peer);
     }
     response.send(proto::Ack {})?;
 
@@ -3562,7 +3554,7 @@ async fn create_channel(
 ) -> Result<()> {
     let db = session.db().await;
 
-    let parent_id = request.parent_id.map(|id| ChannelId::from_proto(id));
+    let parent_id = request.parent_id.map(ChannelId::from_proto);
     let (channel, membership) = db
         .create_channel(&request.name, parent_id, session.user_id())
         .await?;
@@ -4284,10 +4276,7 @@ async fn send_channel_message(
             &request.mentions,
             timestamp,
             nonce.clone().into(),
-            match request.reply_to_message_id {
-                Some(reply_to_message_id) => Some(MessageId::from_proto(reply_to_message_id)),
-                None => None,
-            },
+            request.reply_to_message_id.map(MessageId::from_proto),
         )
         .await?;
 
@@ -4540,6 +4529,7 @@ async fn count_language_model_tokens(
                 google_ai::API_URL,
                 api_key,
                 serde_json::from_str(&request.request)?,
+                None,
             )
             .await?
         }
@@ -4847,9 +4837,7 @@ async fn get_notifications(
         .get_notifications(
             session.user_id(),
             NOTIFICATION_COUNT_PER_PAGE,
-            request
-                .before_id
-                .map(|id| db::NotificationId::from_proto(id)),
+            request.before_id.map(db::NotificationId::from_proto),
         )
         .await?;
     response.send(proto::GetNotificationsResponse {
@@ -5103,7 +5091,7 @@ fn build_initial_contacts_update(
     for contact in contacts {
         match contact {
             db::Contact::Accepted { user_id, busy } => {
-                update.contacts.push(contact_for_user(user_id, busy, &pool));
+                update.contacts.push(contact_for_user(user_id, busy, pool));
             }
             db::Contact::Outgoing { user_id } => update.outgoing_requests.push(user_id.to_proto()),
             db::Contact::Incoming { user_id } => {
@@ -5160,7 +5148,8 @@ fn channel_updated(
         None,
         pool.channel_connection_ids(channel.root_id())
             .filter_map(|(channel_id, role)| {
-                role.can_see_channel(channel.visibility).then(|| channel_id)
+                role.can_see_channel(channel.visibility)
+                    .then_some(channel_id)
             }),
         |peer_id| {
             peer.send(
@@ -5238,7 +5227,7 @@ async fn lost_dev_server_connection(session: &DevServerSession) -> Result<()> {
 
     for project_id in project_ids {
         // not unshare re-checks the connection ids match, so we get away with no transaction
-        unshare_project_internal(project_id, session.connection_id, None, &session).await?;
+        unshare_project_internal(project_id, session.connection_id, None, session).await?;
     }
 
     let user_id = session.dev_server().user_id;
@@ -5310,7 +5299,7 @@ async fn leave_room_for_session(session: &UserSession, connection_id: Connection
     }
 
     for contact_user_id in contacts_to_update {
-        update_user_contacts(contact_user_id, &session).await?;
+        update_user_contacts(contact_user_id, session).await?;
     }
 
     if let Some(live_kit) = session.app_state.live_kit_client.as_ref() {

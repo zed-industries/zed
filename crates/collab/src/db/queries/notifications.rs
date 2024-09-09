@@ -86,14 +86,13 @@ impl Database {
         avoid_duplicates: bool,
         tx: &DatabaseTransaction,
     ) -> Result<Option<(UserId, proto::Notification)>> {
-        if avoid_duplicates {
-            if self
+        if avoid_duplicates
+            && self
                 .find_notification(recipient_id, &notification, tx)
                 .await?
                 .is_some()
-            {
-                return Ok(None);
-            }
+        {
+            return Ok(None);
         }
 
         let proto = notification.to_proto();

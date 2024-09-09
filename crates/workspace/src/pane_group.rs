@@ -631,7 +631,7 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, Along, AnyElement, Axis, Bounds, Element, GlobalElementId, IntoElement,
+        px, relative, size, Along, AnyElement, Axis, Bounds, Element, GlobalElementId, IntoElement,
         MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
         WeakView, WindowContext,
     };
@@ -838,12 +838,13 @@ mod element {
             _global_id: Option<&GlobalElementId>,
             cx: &mut ui::prelude::WindowContext,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-            let mut style = Style::default();
-            style.flex_grow = 1.;
-            style.flex_shrink = 1.;
-            style.flex_basis = relative(0.).into();
-            style.size.width = relative(1.).into();
-            style.size.height = relative(1.).into();
+            let style = Style {
+                flex_grow: 1.,
+                flex_shrink: 1.,
+                flex_basis: relative(0.).into(),
+                size: size(relative(1.).into(), relative(1.).into()),
+                ..Style::default()
+            };
             (cx.request_layout(style, None), ())
         }
 
@@ -922,11 +923,9 @@ mod element {
             }
 
             for (ix, child_layout) in layout.children.iter_mut().enumerate() {
-                if active_pane_magnification.is_none() {
-                    if ix < len - 1 {
-                        child_layout.handle =
-                            Some(Self::layout_handle(self.axis, child_layout.bounds, cx));
-                    }
+                if active_pane_magnification.is_none() && ix < len - 1 {
+                    child_layout.handle =
+                        Some(Self::layout_handle(self.axis, child_layout.bounds, cx));
                 }
             }
 
@@ -986,19 +985,17 @@ mod element {
                         let axis = self.axis;
                         move |e: &MouseMoveEvent, phase, cx| {
                             let dragged_handle = dragged_handle.borrow();
-                            if phase.bubble() {
-                                if *dragged_handle == Some(ix) {
-                                    Self::compute_resize(
-                                        &flexes,
-                                        e,
-                                        ix,
-                                        axis,
-                                        child_bounds.origin,
-                                        bounds.size,
-                                        workspace.clone(),
-                                        cx,
-                                    )
-                                }
+                            if phase.bubble() && *dragged_handle == Some(ix) {
+                                Self::compute_resize(
+                                    &flexes,
+                                    e,
+                                    ix,
+                                    axis,
+                                    child_bounds.origin,
+                                    bounds.size,
+                                    workspace.clone(),
+                                    cx,
+                                )
                             }
                         }
                     });

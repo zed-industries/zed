@@ -731,7 +731,7 @@ impl WorkspaceDb {
                 LIMIT 1
             ))?;
         let result = prepared_query()?;
-        Ok(result.into_iter().next().unwrap_or_else(|| (None, None)))
+        Ok(result.into_iter().next().unwrap_or((None, None)))
     }
 
     query! {
@@ -819,7 +819,7 @@ impl WorkspaceDb {
             if location.paths().iter().all(|path| path.exists())
                 && location.paths().iter().any(|path| path.is_dir())
             {
-                workspaces.push((location, window_id.map(|id| WindowId::from(id))));
+                workspaces.push((location, window_id.map(WindowId::from)));
             }
         }
 
@@ -1330,7 +1330,7 @@ mod tests {
         let mut workspace_3 = SerializedWorkspace {
             id: WorkspaceId(3),
             location: SerializedWorkspaceLocation::Local(
-                LocalPaths::new(&["/tmp", "/tmp2"]),
+                LocalPaths::new(["/tmp", "/tmp2"]),
                 LocalPathsOrder::new([1, 0]),
             ),
             center_group: Default::default(),

@@ -119,13 +119,13 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                     done = true;
                     delta = 1.0;
                 } else {
-                    delta = delta % 1.0;
+                    delta %= 1.0;
                 }
             }
             let delta = (self.animation.easing)(delta);
 
             debug_assert!(
-                delta >= 0.0 && delta <= 1.0,
+                (0.0..=1.0).contains(&delta),
                 "delta should always be between 0 and 1"
             );
 

@@ -23,7 +23,6 @@ use gpui::{
     Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, Task,
     UpdateGlobal as _, VisualContext,
 };
-use image_viewer;
 use language::LanguageRegistry;
 use log::LevelFilter;
 
@@ -268,7 +267,6 @@ fn init_ui(
     welcome::init(cx);
     settings_ui::init(cx);
     extensions_ui::init(cx);
-    performance::init(cx);
 
     cx.observe_global::<SettingsStore>({
         let languages = app_state.languages.clone();
@@ -318,7 +316,6 @@ fn init_ui(
 }
 
 fn main() {
-    let start_time = std::time::Instant::now();
     menu::init();
     zed_actions::init();
 
@@ -330,9 +327,7 @@ fn main() {
     init_logger();
 
     log::info!("========== starting zed ==========");
-    let app = App::new()
-        .with_assets(Assets)
-        .measure_time_to_first_window_draw(start_time);
+    let app = App::new().with_assets(Assets);
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()
@@ -728,12 +723,12 @@ fn handle_open_request(
 async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
     if stdout_is_a_pty() {
         if *client::ZED_DEVELOPMENT_AUTH {
-            client.authenticate_and_connect(true, &cx).await?;
+            client.authenticate_and_connect(true, cx).await?;
         } else if client::IMPERSONATE_LOGIN.is_some() {
-            client.authenticate_and_connect(false, &cx).await?;
+            client.authenticate_and_connect(false, cx).await?;
         }
-    } else if client.has_credentials(&cx).await {
-        client.authenticate_and_connect(true, &cx).await?;
+    } else if client.has_credentials(cx).await {
+        client.authenticate_and_connect(true, cx).await?;
     }
     Ok::<_, anyhow::Error>(())
 }
@@ -1080,9 +1075,8 @@ fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
             if arg.starts_with("file://")
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")
+                || parse_zed_link(arg, cx).is_some()
             {
-                Ok(arg.into())
-            } else if let Some(_) = parse_zed_link(&arg, cx) {
                 Ok(arg.into())
             } else {
                 Err(anyhow!("error parsing path argument: {}", error))
@@ -1141,7 +1135,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
                     }
                 }
                 theme_registry.load_user_themes(themes_dir, fs).await?;
-                cx.update(|cx| ThemeSettings::reload_current_theme(cx))?;
+                cx.update(ThemeSettings::reload_current_theme)?;
             }
             anyhow::Ok(())
         }
@@ -1158,18 +1152,17 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
             .await;
 
         while let Some(paths) = events.next().await {
-            for path in paths {
-                if fs.metadata(&path).await.ok().flatten().is_some() {
+            for event in paths {
+                if fs.metadata(&event.path).await.ok().flatten().is_some() {
                     if let Some(theme_registry) =
                         cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
                     {
                         if let Some(()) = theme_registry
-                            .load_user_theme(&path, fs.clone())
+                            .load_user_theme(&event.path, fs.clone())
                             .await
                             .log_err()
                         {
-                            cx.update(|cx| ThemeSettings::reload_current_theme(cx))
-                                .log_err();
+                            cx.update(ThemeSettings::reload_current_theme).log_err();
                         }
                     }
                 }
@@ -1194,8 +1187,10 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
     cx.spawn(|_| async move {
         let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
         while let Some(event) = events.next().await {
-            let has_language_file = event.iter().any(|path| {
-                path.extension()
+            let has_language_file = event.iter().any(|event| {
+                event
+                    .path
+                    .extension()
                     .map(|ext| ext.to_string_lossy().as_ref() == "scm")
                     .unwrap_or(false)
             });

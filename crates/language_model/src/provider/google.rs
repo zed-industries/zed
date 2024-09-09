@@ -51,7 +51,7 @@ pub struct State {
     _subscription: Subscription,
 }
 
-const GOOGLE_AI_API_KEY_VAR: &'static str = "GOOGLE_AI_API_KEY";
+const GOOGLE_AI_API_KEY_VAR: &str = "GOOGLE_AI_API_KEY";
 
 impl State {
     fn is_authenticated(&self) -> bool {
@@ -257,10 +257,10 @@ impl LanguageModel for GoogleLanguageModel {
         let request = request.into_google(self.model.id().to_string());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .google
-            .api_url
-            .clone();
+
+        let settings = &AllLanguageModelSettings::get_global(cx).google;
+        let api_url = settings.api_url.clone();
+        let low_speed_timeout = settings.low_speed_timeout;
 
         async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
@@ -271,6 +271,7 @@ impl LanguageModel for GoogleLanguageModel {
                 google_ai::CountTokensRequest {
                     contents: request.contents,
                 },
+                low_speed_timeout,
             )
             .await?;
             Ok(response.total_tokens)
@@ -289,17 +290,26 @@ impl LanguageModel for GoogleLanguageModel {
         let request = request.into_google(self.model.id().to_string());
 
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
+        let Ok((api_key, api_url, low_speed_timeout)) = cx.read_model(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).google;
-            (state.api_key.clone(), settings.api_url.clone())
+            (
+                state.api_key.clone(),
+                settings.api_url.clone(),
+                settings.low_speed_timeout,
+            )
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         let future = self.rate_limiter.stream(async move {
             let api_key = api_key.ok_or_else(|| anyhow!("missing api key"))?;
-            let response =
-                stream_generate_content(http_client.as_ref(), &api_url, &api_key, request);
+            let response = stream_generate_content(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                low_speed_timeout,
+            );
             let events = response.await?;
             Ok(google_ai::extract_text_from_events(events).boxed())
         });

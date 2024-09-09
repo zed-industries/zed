@@ -16,7 +16,7 @@ use util::ResultExt as _;
 
 pub use supported_countries::*;
 
-pub const ANTHROPIC_API_URL: &'static str = "https://api.anthropic.com";
+pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -339,14 +339,12 @@ pub async fn extract_tool_args_from_events(
     while let Some(event) = events.next().await {
         if let Event::ContentBlockStart {
             index,
-            content_block,
+            content_block: ResponseContent::ToolUse { name, .. },
         } = event?
         {
-            if let ResponseContent::ToolUse { name, .. } = content_block {
-                if name == tool_name {
-                    tool_use_index = Some(index);
-                    break;
-                }
+            if name == tool_name {
+                tool_use_index = Some(index);
+                break;
             }
         }
     }
@@ -610,9 +608,6 @@ impl ApiError {
     }
 
     pub fn is_rate_limit_error(&self) -> bool {
-        match self.error_type.as_str() {
-            "rate_limit_error" => true,
-            _ => false,
-        }
+        matches!(self.error_type.as_str(), "rate_limit_error")
     }
 }

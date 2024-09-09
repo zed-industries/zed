@@ -81,7 +81,7 @@ fn main() {
             {
                 let remote_tracks = room_b.remote_audio_tracks("test-participant-1");
                 assert_eq!(remote_tracks[0].sid(), track_id);
-                assert_eq!(muted, true);
+                assert!(muted);
             } else {
                 panic!("unexpected message");
             }
@@ -93,7 +93,7 @@ fn main() {
             {
                 let remote_tracks = room_b.remote_audio_tracks("test-participant-1");
                 assert_eq!(remote_tracks[0].sid(), track_id);
-                assert_eq!(muted, false);
+                assert!(!muted);
             } else {
                 panic!("unexpected message");
             }

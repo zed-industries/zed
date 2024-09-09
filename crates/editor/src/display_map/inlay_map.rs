@@ -324,7 +324,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     } else {
                         next_inlay_highlight_endpoint = range.end - offset_in_inlay.0;
                         highlight_style
-                            .get_or_insert_with(|| Default::default())
+                            .get_or_insert_with(Default::default)
                             .highlight(*style);
                     }
                 } else {
@@ -451,15 +451,14 @@ impl InlayMap {
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let snapshot = &mut self.snapshot;
 
-        if buffer_edits.is_empty() {
-            if snapshot.buffer.trailing_excerpt_update_count()
+        if buffer_edits.is_empty()
+            && snapshot.buffer.trailing_excerpt_update_count()
                 != buffer_snapshot.trailing_excerpt_update_count()
-            {
-                buffer_edits.push(Edit {
-                    old: snapshot.buffer.len()..snapshot.buffer.len(),
-                    new: buffer_snapshot.len()..buffer_snapshot.len(),
-                });
-            }
+        {
+            buffer_edits.push(Edit {
+                old: snapshot.buffer.len()..snapshot.buffer.len(),
+                new: buffer_snapshot.len()..buffer_snapshot.len(),
+            });
         }
 
         if buffer_edits.is_empty() {

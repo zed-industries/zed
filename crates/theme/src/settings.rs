@@ -70,9 +70,9 @@ impl From<String> for UiDensity {
     }
 }
 
-impl Into<String> for UiDensity {
-    fn into(self) -> String {
-        match self {
+impl From<UiDensity> for String {
+    fn from(val: UiDensity) -> Self {
+        match val {
             UiDensity::Compact => "compact".to_string(),
             UiDensity::Default => "default".to_string(),
             UiDensity::Comfortable => "comfortable".to_string(),

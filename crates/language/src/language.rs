@@ -2,7 +2,7 @@
 //! features (the other big contributors being project and lsp crates that revolve around LSP features).
 //! Namely, this crate:
 //! - Provides [`Language`], [`Grammar`] and [`LanguageRegistry`] types that
-//! use Tree-sitter to provide syntax highlighting to the editor; note though that `language` doesn't perform the highlighting by itself. It only maps ranges in a buffer to colors. Treesitter is also used for buffer outlines (lists of symbols in a buffer)
+//!   use Tree-sitter to provide syntax highlighting to the editor; note though that `language` doesn't perform the highlighting by itself. It only maps ranges in a buffer to colors. Treesitter is also used for buffer outlines (lists of symbols in a buffer)
 //! - Exposes [`LanguageConfig`] that describes how constructs (like brackets or line comments) should be handled by the editor for a source file of a particular language.
 //!
 //! Notably we do *not* assign a single language to a single file; in real world a single file can consist of multiple programming languages - HTML is a good example of that - and `language` crate tends to reflect that status quo in its API.
@@ -38,6 +38,7 @@ use schemars::{
 };
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
+use settings::WorktreeId;
 use smol::future::FutureExt as _;
 use std::num::NonZeroU32;
 use std::{
@@ -280,7 +281,7 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
-    fn worktree_id(&self) -> u64;
+    fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
 
@@ -433,7 +434,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
-        for (ix, completion) in completions.into_iter().enumerate() {
+        for (ix, completion) in completions.iter().enumerate() {
             let label = self.label_for_completion(completion, language).await;
             if let Some(label) = label {
                 labels.resize(ix + 1, None);
@@ -457,7 +458,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
-        for (ix, (name, kind)) in symbols.into_iter().enumerate() {
+        for (ix, (name, kind)) in symbols.iter().enumerate() {
             let label = self.label_for_symbol(name, *kind, language).await;
             if let Some(label) = label {
                 labels.resize(ix + 1, None);

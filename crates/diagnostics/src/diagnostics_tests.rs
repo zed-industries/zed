@@ -773,9 +773,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                             (
                                 path.clone(),
                                 server_id,
-                                current_diagnostics
-                                    .entry((path, server_id))
-                                    .or_insert(vec![]),
+                                current_diagnostics.entry((path, server_id)).or_default(),
                             )
                         }
                     };
@@ -853,8 +851,8 @@ fn get_diagnostics_excerpts(
                 result.push(ExcerptInfo {
                     path: buffer.file().unwrap().path().to_path_buf(),
                     range: ExcerptRange {
-                        context: range.context.to_point(&buffer),
-                        primary: range.primary.map(|range| range.to_point(&buffer)),
+                        context: range.context.to_point(buffer),
+                        primary: range.primary.map(|range| range.to_point(buffer)),
                     },
                     group_id: usize::MAX,
                     primary: false,
@@ -962,9 +960,9 @@ fn random_diagnostic(
     }
 }
 
-const FILE_HEADER: &'static str = "file header";
-const EXCERPT_HEADER: &'static str = "excerpt header";
-const EXCERPT_FOOTER: &'static str = "excerpt footer";
+const FILE_HEADER: &str = "file header";
+const EXCERPT_HEADER: &str = "excerpt header";
+const EXCERPT_FOOTER: &str = "excerpt footer";
 
 fn editor_blocks(
     editor: &View<Editor>,
