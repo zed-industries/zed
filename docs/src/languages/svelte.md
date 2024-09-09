@@ -10,27 +10,27 @@ Svelte support is available through the [Svelte extension](https://github.com/ze
 
 You can modify how certain styles such as directives and modifiers appear in attributes:
 
-```jsonc
+```json
 // Your theme's style.syntax
 "syntax": {
   // styling for directives (eg: class:foo or on:click)
   "attribute.function": {
-    "color": "#ff0000", // red
+    "color": "#ff0000"
   },
   // styling for modifiers at the end of attributes, eg: `on:click|preventDefault|stopPropagation`
   "attribute.special": {
-      "color": "#00ff00", // green
+    "color": "#00ff00"
   }
 }
 ```
 
-<!--
-TBD: Rewrite Svelte docs so it doesn't begin with a json block assuming you know what inlayHints are.
--->
-
 ## Inlay Hints
 
 Zed sets the following initialization options for inlay hints:
+
+<!--
+TBD: Rewrite Svelte docs so it doesn't begin with a json block assuming you know what inlayHints are.
+-->
 
 ```json
 "inlayHints": {
