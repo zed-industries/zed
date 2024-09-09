@@ -9,7 +9,6 @@ use std::{
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use unicase::UniCase;
 
 use crate::NumericPrefixWithSuffix;
 
