@@ -4137,28 +4137,22 @@ impl LspStore {
             .payload
             .binary
             .ok_or_else(|| anyhow!("missing binary"))?;
-        dbg!("got here");
         let binary = LanguageServerBinary {
             path: PathBuf::from(binary.path),
             env: None,
             arguments: binary.arguments.into_iter().map(Into::into).collect(),
         };
-        dbg!("got here");
         let language = envelope
             .payload
             .language
             .ok_or_else(|| anyhow!("missing language"))?;
         let language_name = LanguageName::from_proto(language.name);
-        dbg!("got here");
         let matcher: LanguageMatcher = serde_json::from_str(&language.matcher)?;
-        dbg!("got here");
         let result = this.update(&mut cx, |this, cx| {
-            dbg!("got here");
             this.languages
                 .register_language(language_name.clone(), None, matcher.clone(), {
                     let language_name = language_name.clone();
                     move || {
-                        println!("{} loading", language_name);
                         Ok((
                             LanguageConfig {
                                 name: language_name.clone(),
@@ -4170,12 +4164,9 @@ impl LspStore {
                         ))
                     }
                 });
-            dbg!("got herE");
             cx.background_executor()
                 .spawn(this.languages.language_for_name(language_name.0.as_ref()))
                 .detach();
-
-            dbg!("got here");
 
             let adapter = Arc::new(SshLspAdapter::new(
                 name,
@@ -4191,10 +4182,8 @@ impl LspStore {
                 .read(cx)
                 .worktree_for_id(worktree_id, cx)
             else {
-                dbg!("got here");
                 return Err(anyhow!("worktree not found"));
             };
-            dbg!("got here");
             this.start_language_server(
                 &worktree,
                 CachedLspAdapter::new(adapter),
@@ -4203,11 +4192,7 @@ impl LspStore {
             );
             Ok(())
         });
-        dbg!("hi");
-        let result = result?;
-        dbg!("hi");
-        let result = result?;
-        dbg!("got here");
+        let result = result??;
         Ok(proto::Ack {})
     }
 
@@ -4436,7 +4421,6 @@ impl LspStore {
         language: LanguageName,
         cx: &mut ModelContext<Self>,
     ) {
-        dbg!("got here");
         if self.mode.is_remote() {
             return;
         }
@@ -4455,11 +4439,8 @@ impl LspStore {
         }
 
         if self.mode.is_ssh() {
-            dbg!("on client");
             self.start_language_server_on_ssh_host(worktree_handle, adapter, language, cx);
             return;
-        } else {
-            dbg!("on host");
         }
 
         if adapter.reinstall_attempt_count.load(SeqCst) > MAX_SERVER_REINSTALL_ATTEMPT_COUNT {

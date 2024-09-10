@@ -501,7 +501,6 @@ impl LanguageRegistry {
         name: &str,
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let name = UniCase::new(name);
-        dbg!("hi");
         let rx = self.get_or_load_language(|language_name, _| {
             if UniCase::new(&language_name.0) == name {
                 1
@@ -509,7 +508,6 @@ impl LanguageRegistry {
                 0
             }
         });
-        dbg!("Hi");
         async move { rx.await? }
     }
 
@@ -518,7 +516,6 @@ impl LanguageRegistry {
         string: &str,
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let string = UniCase::new(string);
-        dbg!("language_for_name_or_extension");
         let rx = self.get_or_load_language(|name, config| {
             if UniCase::new(&name.0) == string
                 || config
@@ -623,9 +620,7 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         callback: impl Fn(&LanguageName, &LanguageMatcher) -> usize,
     ) -> Option<AvailableLanguage> {
-        dbg!("asd");
         let state = self.state.read();
-        dbg!("asd");
         let available_language = state
             .available_languages
             .iter()
@@ -641,7 +636,6 @@ impl LanguageRegistry {
             .clone()
             .map(|(available_language, _)| available_language);
         drop(state);
-        dbg!("asd");
         available_language
     }
 
@@ -651,21 +645,16 @@ impl LanguageRegistry {
     ) -> oneshot::Receiver<Result<Arc<Language>>> {
         let (tx, rx) = oneshot::channel();
 
-        dbg!("a");
-
         let mut state = self.state.write();
 
-        dbg!("a");
         // If the language is already loaded, resolve with it immediately.
         for loaded_language in state.languages.iter() {
             if loaded_language.id == language.id {
                 tx.send(Ok(loaded_language.clone())).unwrap();
-                dbg!("a");
                 return rx;
             }
         }
 
-        dbg!("a");
         match state.loading_languages.entry(language.id) {
             // If the language is already being loaded, then add this
             // channel to a list that will be sent to when the load completes.
@@ -675,22 +664,17 @@ impl LanguageRegistry {
             hash_map::Entry::Vacant(entry) => {
                 let this = self.clone();
 
-                dbg!("a");
                 let id = language.id;
                 let name = language.name.clone();
                 let language_load = language.load.clone();
 
-                dbg!("a");
                 self.executor
                     .spawn(async move {
-                        dbg!("a");
                         let language = async {
                             let (config, queries, provider) = (language_load)()?;
 
                             if let Some(grammar) = config.grammar.clone() {
-                                dbg!("await");
                                 let grammar = Some(this.get_or_load_grammar(grammar).await?);
-                                dbg!("await completed");
                                 Language::new_with_id(id, config, grammar)
                                     .with_context_provider(provider)
                                     .with_queries(queries)
@@ -732,12 +716,10 @@ impl LanguageRegistry {
                     })
                     .detach();
 
-                dbg!("a");
                 entry.insert(vec![tx]);
             }
         }
 
-        dbg!("a");
         drop(state);
         rx
     }
@@ -746,19 +728,13 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         callback: impl Fn(&LanguageName, &LanguageMatcher) -> usize,
     ) -> oneshot::Receiver<Result<Arc<Language>>> {
-        dbg!("get_or_load_language");
         let Some(language) = self.find_matching_language(callback) else {
-            dbg!("jhi");
             let (tx, rx) = oneshot::channel();
             let _ = tx.send(Err(anyhow!(LanguageNotFound)));
-            dbg!("jhi");
             return rx;
         };
 
-        dbg!("about_to_load_language");
-        let ret = self.load_language(&language);
-        dbg!("loaded_language");
-        ret
+        self.load_language(&language);
     }
 
     fn get_or_load_grammar(
