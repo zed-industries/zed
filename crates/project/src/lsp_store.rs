@@ -442,6 +442,17 @@ impl LspStore {
         }
     }
 
+    fn worktree_for_id(
+        &self,
+        worktree_id: WorktreeId,
+        cx: &ModelContext<Self>,
+    ) -> Result<Model<Worktree>> {
+        self.worktree_store
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .ok_or_else(|| anyhow!("worktree not found"))
+    }
+
     fn on_buffer_store_event(
         &mut self,
         _: Model<BufferStore>,
@@ -4344,27 +4355,11 @@ impl LspStore {
         let command = PathBuf::from(envelope.payload.command);
         let response = this
             .update(&mut cx, |this, cx| {
-                let Some(worktree) = this
-                    .worktree_store
-                    .read(cx)
-                    .worktree_for_id(worktree_id, cx)
-                else {
-                    return Err(anyhow!("worktree not found"));
-                };
-
-                let fs = this.as_local().unwrap().fs.clone();
-                let http_client = Arc::new(BlockedHttpClient);
-
-                let delegate = ProjectLspAdapterDelegate::new(
-                    this,
-                    &worktree,
-                    http_client,
-                    Some(fs),
-                    None,
-                    cx,
-                ) as Arc<dyn LspAdapterDelegate>;
-
-                Ok(cx.spawn(|_, _| async move { delegate.which(command.as_os_str()).await }))
+                let worktree = this.worktree_for_id(worktree_id, cx)?;
+                let delegate = ProjectLspAdapterDelegate::for_local(this, &worktree, cx);
+                anyhow::Ok(
+                    cx.spawn(|_, _| async move { delegate.which(command.as_os_str()).await }),
+                )
             })??
             .await;
 
@@ -4381,27 +4376,9 @@ impl LspStore {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let response = this
             .update(&mut cx, |this, cx| {
-                let Some(worktree) = this
-                    .worktree_store
-                    .read(cx)
-                    .worktree_for_id(worktree_id, cx)
-                else {
-                    return Err(anyhow!("worktree not found"));
-                };
-
-                let fs = this.as_local().unwrap().fs.clone();
-                let http_client = Arc::new(BlockedHttpClient);
-
-                let delegate = ProjectLspAdapterDelegate::new(
-                    this,
-                    &worktree,
-                    http_client,
-                    Some(fs),
-                    None,
-                    cx,
-                ) as Arc<dyn LspAdapterDelegate>;
-
-                Ok(cx.spawn(|_, _| async move { delegate.shell_env().await }))
+                let worktree = this.worktree_for_id(worktree_id, cx)?;
+                let delegate = ProjectLspAdapterDelegate::for_local(this, &worktree, cx);
+                anyhow::Ok(cx.spawn(|_, _| async move { delegate.shell_env().await }))
             })??
             .await;
 
@@ -4554,30 +4531,11 @@ impl LspStore {
     ) {
         let ssh = self.as_ssh().unwrap();
 
-        let configured_binary = ProjectSettings::get(
-            Some(worktree.update(cx, |worktree, cx| worktree.settings_location(cx))),
-            cx,
-        )
-        .lsp
-        .get(&adapter.name())
-        .and_then(|c| c.binary.as_ref())
-        .and_then(|config| {
-            if let Some(path) = &config.path {
-                Some((
-                    path.clone(),
-                    config.arguments.clone().unwrap_or_default(),
-                    None,
-                ))
-            } else {
-                None
-            }
-        });
-
         let delegate =
             ProjectLspAdapterDelegate::for_ssh(self, worktree, ssh.upstream_client.clone(), cx)
                 as Arc<dyn LspAdapterDelegate>;
 
-        // TODO: We should actually check
+        // TODO: We should use `adapter` here instead of reaching through the `CachedLspAdapter`.
         let lsp_adapter = adapter.adapter.clone();
 
         let project_id = self.project_id;
@@ -4589,24 +4547,16 @@ impl LspStore {
             log::error!("failed to find available language {language}");
             return;
         };
+
         let task = cx.spawn(|_, cx| async move {
-            let delegate = delegate;
             let user_binary_task = lsp_adapter.check_if_user_installed(delegate.as_ref(), &cx);
             let binary = match user_binary_task.await {
-                Some(binary) => Some((
-                    binary.path.to_string_lossy().to_string(),
-                    binary
-                        .arguments
-                        .into_iter()
-                        .map(|arg| arg.to_string_lossy().to_string())
-                        .collect(),
-                    binary.env,
-                )),
-                None => configured_binary,
-            };
-
-            let Some((path, arguments, env)) = binary else {
-                return Err(anyhow!("no binary found for {}", lsp_adapter.name().0));
+                Some(binary) => binary,
+                None => {
+                    return Err(anyhow!(
+                        "Downloading language server for ssh host is not supported yet"
+                    ))
+                }
             };
 
             let name = adapter.name().to_string();
@@ -4621,16 +4571,22 @@ impl LspStore {
                 .map(|options| serde_json::to_string(&options))
                 .transpose()?;
 
+            let language_server_command = proto::LanguageServerCommand {
+                path: binary.path.to_string_lossy().to_string(),
+                arguments: binary
+                    .arguments
+                    .iter()
+                    .map(|args| args.to_string_lossy().to_string())
+                    .collect(),
+                env: binary.env.unwrap_or_default().into_iter().collect(),
+            };
+
             upstream_client
                 .request(proto::CreateLanguageServer {
                     project_id,
                     worktree_id,
                     name,
-                    binary: Some(proto::LanguageServerCommand {
-                        path,
-                        arguments,
-                        env: env.unwrap_or_default().into_iter().collect(),
-                    }),
+                    binary: Some(language_server_command),
                     initialization_options,
                     code_action_kinds,
                     language: Some(proto::AvailableLanguage {
