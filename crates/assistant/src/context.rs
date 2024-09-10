@@ -20,8 +20,8 @@ use futures::{
     FutureExt, StreamExt,
 };
 use gpui::{
-    AppContext, AsyncAppContext, Context as _, EventEmitter, Image, Model, ModelContext,
-    RenderImage, SharedString, Subscription, Task,
+    AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, RenderImage,
+    SharedString, Subscription, Task,
 };
 
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
@@ -38,7 +38,6 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     cmp::{self, max, Ordering},
-    collections::hash_map,
     fmt::Debug,
     iter, mem,
     ops::Range,
@@ -49,7 +48,7 @@ use std::{
 };
 use telemetry_events::AssistantKind;
 use text::BufferSnapshot;
-use util::{post_inc, ResultExt, TryFutureExt};
+use util::{post_inc, TryFutureExt};
 use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -468,7 +467,6 @@ pub struct Context {
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     pending_tool_uses_by_id: HashMap<Arc<str>, PendingToolUse>,
     message_anchors: Vec<MessageAnchor>,
-    images: HashMap<u64, (Arc<RenderImage>, Shared<Task<Option<LanguageModelImage>>>)>,
     contents: Vec<Content>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     summary: Option<ContextSummary>,
@@ -564,7 +562,6 @@ impl Context {
             operations: Vec::new(),
             message_anchors: Default::default(),
             contents: Default::default(),
-            images: Default::default(),
             messages_metadata: Default::default(),
             pending_slash_commands: Vec::new(),
             finished_slash_commands: HashSet::default(),
@@ -2371,36 +2368,6 @@ impl Context {
             Some(anchor)
         } else {
             None
-        }
-    }
-
-    pub fn insert_image(&mut self, image: Image, cx: &mut ModelContext<Self>) -> Option<()> {
-        if let hash_map::Entry::Vacant(entry) = self.images.entry(image.id()) {
-            entry.insert((
-                image.to_image_data(cx).log_err()?,
-                LanguageModelImage::from_image(image, cx).shared(),
-            ));
-        }
-
-        Some(())
-    }
-
-    pub fn insert_image_content(
-        &mut self,
-        image_id: u64,
-        anchor: language::Anchor,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if let Some((render_image, image)) = self.images.get(&image_id) {
-            self.insert_content(
-                Content::Image {
-                    anchor,
-                    image_id,
-                    image: image.clone(),
-                    render_image: render_image.clone(),
-                },
-                cx,
-            );
         }
     }
 

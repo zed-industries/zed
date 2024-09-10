@@ -34,6 +34,7 @@ use editor::{
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
+use futures::FutureExt;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
     AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
@@ -46,11 +47,11 @@ use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
 };
-use language_model::LanguageModelToolUse;
 use language_model::{
     provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelRegistry, Role,
 };
+use language_model::{LanguageModelImage, LanguageModelToolUse};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::ProjectLspAdapterDelegate;
@@ -3551,10 +3552,22 @@ impl ContextEditor {
 
             self.context.update(cx, |context, cx| {
                 for image in images {
+                    let Some(render_image) = image.to_image_data(cx).log_err() else {
+                        continue;
+                    };
                     let image_id = image.id();
-                    context.insert_image(image, cx);
+                    let image_task = LanguageModelImage::from_image(image, cx).shared();
+
                     for image_position in image_positions.iter() {
-                        context.insert_image_content(image_id, image_position.text_anchor, cx);
+                        context.insert_content(
+                            Content::Image {
+                                anchor: image_position.text_anchor,
+                                image_id,
+                                image: image_task.clone(),
+                                render_image: render_image.clone(),
+                            },
+                            cx,
+                        );
                     }
                 }
             });
