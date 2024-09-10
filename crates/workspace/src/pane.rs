@@ -715,6 +715,14 @@ impl Pane {
         }
     }
 
+    pub(crate) fn set_pinned_count(&mut self, count: usize) {
+        self.pinned_tab_count = count;
+    }
+
+    pub(crate) fn pinned_count(&self) -> usize {
+        self.pinned_tab_count
+    }
+
     pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &AppContext) {
         if let Some(preview_item) = self.preview_item() {
             if preview_item.item_id() == item_id && !preview_item.preserve_preview(cx) {

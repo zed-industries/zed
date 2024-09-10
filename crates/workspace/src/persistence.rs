@@ -13,7 +13,7 @@ use sqlez::{
 };
 
 use ui::px;
-use util::ResultExt;
+use util::{maybe, ResultExt};
 use uuid::Uuid;
 
 use crate::WorkspaceId;
@@ -352,6 +352,9 @@ define_connection! {
     sql!(
         ALTER TABLE workspaces ADD COLUMN window_id INTEGER DEFAULT NULL;
     ),
+    sql!(
+        ALTER TABLE panes ADD COLUMN pinned_count INTEGER DEFAULT 0;
+    )
     ];
 }
 
@@ -846,6 +849,7 @@ impl WorkspaceDb {
                 SerializedPaneGroup::Pane(SerializedPane {
                     active: true,
                     children: vec![],
+                    pinned_count: 0,
                 })
             }))
     }
@@ -861,15 +865,17 @@ impl WorkspaceDb {
             Option<SerializedAxis>,
             Option<PaneId>,
             Option<bool>,
+            Option<usize>,
             Option<String>,
         );
         self.select_bound::<GroupKey, GroupOrPane>(sql!(
-            SELECT group_id, axis, pane_id, active, flexes
+            SELECT group_id, axis, pane_id, active, pinned_count, flexes
                 FROM (SELECT
                         group_id,
                         axis,
                         NULL as pane_id,
                         NULL as active,
+                        NULL as pinned_count,
                         position,
                         parent_group_id,
                         workspace_id,
@@ -881,6 +887,7 @@ impl WorkspaceDb {
                         NULL,
                         center_panes.pane_id,
                         panes.active as active,
+                        pinned_count,
                         position,
                         parent_group_id,
                         panes.workspace_id as workspace_id,
@@ -891,7 +898,8 @@ impl WorkspaceDb {
                 ORDER BY position
         ))?((group_id, workspace_id))?
         .into_iter()
-        .map(|(group_id, axis, pane_id, active, flexes)| {
+        .map(|(group_id, axis, pane_id, active, pinned_count, flexes)| {
+            let maybe_pane = maybe!({ Some((pane_id?, active?, pinned_count?)) });
             if let Some((group_id, axis)) = group_id.zip(axis) {
                 let flexes = flexes
                     .map(|flexes: String| serde_json::from_str::<Vec<f32>>(&flexes))
@@ -902,10 +910,11 @@ impl WorkspaceDb {
                     children: self.get_pane_group(workspace_id, Some(group_id))?,
                     flexes,
                 })
-            } else if let Some((pane_id, active)) = pane_id.zip(active) {
+            } else if let Some((pane_id, active, pinned_count)) = maybe_pane {
                 Ok(SerializedPaneGroup::Pane(SerializedPane::new(
                     self.get_items(pane_id)?,
                     active,
+                    pinned_count,
                 )))
             } else {
                 bail!("Pane Group Child was neither a pane group or a pane");
@@ -977,10 +986,10 @@ impl WorkspaceDb {
         parent: Option<(GroupId, usize)>,
     ) -> Result<PaneId> {
         let pane_id = conn.select_row_bound::<_, i64>(sql!(
-            INSERT INTO panes(workspace_id, active)
-            VALUES (?, ?)
+            INSERT INTO panes(workspace_id, active, pinned_count)
+            VALUES (?, ?, ?)
             RETURNING pane_id
-        ))?((workspace_id, pane.active))?
+        ))?((workspace_id, pane.active, pane.pinned_count))?
         .ok_or_else(|| anyhow!("Could not retrieve inserted pane_id"))?;
 
         let (parent_id, order) = parent.unzip();
@@ -1219,6 +1228,7 @@ mod tests {
                                 SerializedItem::new("Terminal", 6, true, false),
                             ],
                             false,
+                            0,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
@@ -1226,6 +1236,7 @@ mod tests {
                                 SerializedItem::new("Terminal", 8, false, false),
                             ],
                             false,
+                            0,
                         )),
                     ],
                 ),
@@ -1235,6 +1246,7 @@ mod tests {
                         SerializedItem::new("Terminal", 10, true, false),
                     ],
                     false,
+                    0,
                 )),
             ],
         );
@@ -1523,6 +1535,7 @@ mod tests {
                                 SerializedItem::new("Terminal", 2, true, false),
                             ],
                             false,
+                            0,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
@@ -1530,6 +1543,7 @@ mod tests {
                                 SerializedItem::new("Terminal", 3, true, false),
                             ],
                             true,
+                            0,
                         )),
                     ],
                 ),
@@ -1539,6 +1553,7 @@ mod tests {
                         SerializedItem::new("Terminal", 6, false, false),
                     ],
                     false,
+                    0,
                 )),
             ],
         );
@@ -1570,6 +1585,7 @@ mod tests {
                                 SerializedItem::new("Terminal", 2, true, false),
                             ],
                             false,
+                            0,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
@@ -1577,6 +1593,7 @@ mod tests {
                                 SerializedItem::new("Terminal", 3, true, false),
                             ],
                             true,
+                            0,
                         )),
                     ],
                 ),
@@ -1586,6 +1603,7 @@ mod tests {
                         SerializedItem::new("Terminal", 6, true, false),
                     ],
                     false,
+                    0,
                 )),
             ],
         );
@@ -1605,6 +1623,7 @@ mod tests {
                         SerializedItem::new("Terminal", 2, true, false),
                     ],
                     false,
+                    0,
                 )),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
@@ -1612,6 +1631,7 @@ mod tests {
                         SerializedItem::new("Terminal", 3, false, false),
                     ],
                     true,
+                    0,
                 )),
             ],
         );
