@@ -388,7 +388,6 @@ pub struct Message {
     pub cache: Option<MessageCacheMetadata>,
 }
 
-// todo!("rename this? attachment, annotation, decoration...")
 #[derive(Debug, Clone)]
 pub enum Content {
     Image {
