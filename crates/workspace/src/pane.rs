@@ -484,10 +484,8 @@ impl Pane {
                 .find_position(|item| item.item_id() == alternative.id());
             if let Some((ix, _)) = existing {
                 self.activate_item(ix, true, true, cx);
-            } else {
-                if let Some(upgraded) = alternative.upgrade() {
-                    self.add_item(upgraded, true, true, None, cx);
-                }
+            } else if let Some(upgraded) = alternative.upgrade() {
+                self.add_item(upgraded, true, true, None, cx);
             }
         }
     }
@@ -781,9 +779,7 @@ impl Pane {
     }
 
     pub fn close_current_preview_item(&mut self, cx: &mut ViewContext<Self>) -> Option<usize> {
-        let Some(item_idx) = self.preview_item_idx() else {
-            return None;
-        };
+        let item_idx = self.preview_item_idx()?;
 
         let prev_active_item_index = self.active_item_index;
         self.remove_item(item_idx, false, false, cx);
@@ -805,7 +801,7 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) {
         if item.is_singleton(cx) {
-            if let Some(&entry_id) = item.project_entry_ids(cx).get(0) {
+            if let Some(&entry_id) = item.project_entry_ids(cx).first() {
                 let project = self.project.read(cx);
                 if let Some(project_path) = project.path_for_entry(entry_id, cx) {
                     let abs_path = project.absolute_path(&project_path, cx);
@@ -831,7 +827,7 @@ impl Pane {
 
         // Does the item already exist?
         let project_entry_id = if item.is_singleton(cx) {
-            item.project_entry_ids(cx).get(0).copied()
+            item.project_entry_ids(cx).first().copied()
         } else {
             None
         };
@@ -842,7 +838,7 @@ impl Pane {
             } else if existing_item.is_singleton(cx) {
                 existing_item
                     .project_entry_ids(cx)
-                    .get(0)
+                    .first()
                     .map_or(false, |existing_entry_id| {
                         Some(existing_entry_id) == project_entry_id.as_ref()
                     })
@@ -1600,12 +1596,10 @@ impl Pane {
         project: Model<Project>,
         cx: &mut WindowContext,
     ) -> Task<Result<()>> {
-        let format =
-            if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
-                false
-            } else {
-                true
-            };
+        let format = !matches!(
+            item.workspace_settings(cx).autosave,
+            AutosaveSetting::AfterDelay { .. }
+        );
         if Self::can_autosave_item(item, cx) {
             item.save(format, project, cx)
         } else {
@@ -1795,6 +1789,7 @@ impl Pane {
         ix: usize,
         item: &dyn ItemHandle,
         detail: usize,
+        focus_handle: &FocusHandle,
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
         let project_path = item.project_path(cx);
@@ -1817,7 +1812,7 @@ impl Pane {
         let icon_color = if ItemSettings::get_global(cx).git_status {
             project_path
                 .as_ref()
-                .and_then(|path| self.project.read(cx).entry_for_path(&path, cx))
+                .and_then(|path| self.project.read(cx).entry_for_path(path, cx))
                 .map(|entry| {
                     Self::git_aware_icon_color(entry.git_status, entry.is_ignored, is_active)
                 })
@@ -1905,7 +1900,11 @@ impl Pane {
             })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
+                let end_slot_action: &'static dyn Action;
+                let end_slot_tooltip_text: &'static str;
                 let end_slot = if is_pinned {
+                    end_slot_action = &TogglePinTab;
+                    end_slot_tooltip_text = "Unpin Tab";
                     IconButton::new("unpin tab", IconName::Pin)
                         .shape(IconButtonShape::Square)
                         .icon_color(Color::Muted)
@@ -1914,8 +1913,9 @@ impl Pane {
                         .on_click(cx.listener(move |pane, _, cx| {
                             pane.unpin_tab_at(ix, cx);
                         }))
-                        .tooltip(|cx| Tooltip::text("Unpin Tab", cx))
                 } else {
+                    end_slot_action = &CloseActiveItem { save_intent: None };
+                    end_slot_tooltip_text = "Close Tab";
                     IconButton::new("close tab", IconName::Close)
                         .visible_on_hover("")
                         .shape(IconButtonShape::Square)
@@ -1926,7 +1926,22 @@ impl Pane {
                             pane.close_item_by_id(item_id, SaveIntent::Close, cx)
                                 .detach_and_log_err(cx);
                         }))
-                };
+                }
+                .map(|this| {
+                    if is_active {
+                        let focus_handle = focus_handle.clone();
+                        this.tooltip(move |cx| {
+                            Tooltip::for_action_in(
+                                end_slot_tooltip_text,
+                                end_slot_action,
+                                &focus_handle,
+                                cx,
+                            )
+                        })
+                    } else {
+                        this.tooltip(move |cx| Tooltip::text(end_slot_tooltip_text, cx))
+                    }
+                });
                 this.end_slot(end_slot)
             })
             .child(
@@ -2127,7 +2142,7 @@ impl Pane {
             .iter()
             .enumerate()
             .zip(tab_details(&self.items, cx))
-            .map(|((ix, item), detail)| self.render_tab(ix, &**item, detail, cx))
+            .map(|((ix, item), detail)| self.render_tab(ix, &**item, detail, &focus_handle, cx))
             .collect::<Vec<_>>();
 
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
@@ -2458,20 +2473,17 @@ impl Pane {
                         split_direction = None;
                     }
 
-                    if let Some(open_task) = workspace
-                        .update(&mut cx, |workspace, cx| {
-                            if let Some(split_direction) = split_direction {
-                                to_pane = workspace.split_pane(to_pane, split_direction, cx);
-                            }
-                            workspace.open_paths(
-                                paths,
-                                OpenVisible::OnlyDirectories,
-                                Some(to_pane.downgrade()),
-                                cx,
-                            )
-                        })
-                        .ok()
-                    {
+                    if let Ok(open_task) = workspace.update(&mut cx, |workspace, cx| {
+                        if let Some(split_direction) = split_direction {
+                            to_pane = workspace.split_pane(to_pane, split_direction, cx);
+                        }
+                        workspace.open_paths(
+                            paths,
+                            OpenVisible::OnlyDirectories,
+                            Some(to_pane.downgrade()),
+                            cx,
+                        )
+                    }) {
                         let opened_items: Vec<_> = open_task.await;
                         _ = workspace.update(&mut cx, |workspace, cx| {
                             for item in opened_items.into_iter().flatten() {
@@ -2887,14 +2899,14 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
         .and_then(|p| {
             p.path
                 .to_str()
-                .and_then(|s| if s == "" { None } else { Some(s) })
+                .and_then(|s| if s.is_empty() { None } else { Some(s) })
         })
         .unwrap_or("This buffer");
     let path = truncate_and_remove_front(path, 80);
     format!("{path} contains unsaved edits. Do you want to save it?")
 }
 
-pub fn tab_details(items: &Vec<Box<dyn ItemHandle>>, cx: &AppContext) -> Vec<usize> {
+pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &AppContext) -> Vec<usize> {
     let mut tab_details = items.iter().map(|_| 0).collect::<Vec<_>>();
     let mut tab_descriptions = HashMap::default();
     let mut done = false;
@@ -2940,6 +2952,25 @@ pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &WindowContext) -> O
 
         Some(Indicator::dot().color(indicator_color))
     })
+}
+
+impl Render for DraggedTab {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
+        let label = self.item.tab_content(
+            TabContentParams {
+                detail: Some(self.detail),
+                selected: false,
+                preview: false,
+            },
+            cx,
+        );
+        Tab::new("")
+            .selected(self.is_active)
+            .child(label)
+            .render(cx)
+            .font(ui_font)
+    }
 }
 
 #[cfg(test)]
@@ -3482,24 +3513,5 @@ mod tests {
                 "pane items do not match expectation"
             );
         })
-    }
-}
-
-impl Render for DraggedTab {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
-        let label = self.item.tab_content(
-            TabContentParams {
-                detail: Some(self.detail),
-                selected: false,
-                preview: false,
-            },
-            cx,
-        );
-        Tab::new("")
-            .selected(self.is_active)
-            .child(label)
-            .render(cx)
-            .font(ui_font)
     }
 }

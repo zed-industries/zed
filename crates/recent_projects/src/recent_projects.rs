@@ -136,8 +136,8 @@ impl RecentProjects {
         let weak = cx.view().downgrade();
         workspace.toggle_modal(cx, |cx| {
             let delegate = RecentProjectsDelegate::new(weak, create_new_window, true);
-            let modal = Self::new(delegate, 34., cx);
-            modal
+
+            Self::new(delegate, 34., cx)
         })
     }
 }
@@ -388,9 +388,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let Some(hit) = self.matches.get(ix) else {
-            return None;
-        };
+        let hit = self.matches.get(ix)?;
 
         let (_, location) = self.workspaces.get(hit.candidate_id)?;
 

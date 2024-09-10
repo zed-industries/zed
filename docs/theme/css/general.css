@@ -49,7 +49,7 @@ h4,
 h5,
 h6 {
   font-family: var(--title-font);
-  font-weight: normal;
+  font-weight: 480;
   color: var(--title-color);
 }
 
@@ -81,7 +81,7 @@ h6 code {
 
 h2,
 h3 {
-  margin-block-start: 2em;
+  margin-block-start: 1.5em;
   margin-block-end: 0;
 }
 h4,
@@ -152,14 +152,25 @@ h6:target::before {
   line-height: 1.625em;
 }
 .content div.video {
-  margin-top: 0.5rem;
-  margin-bottom: 3rem;
+  margin-top: 1rem;
+  border: 1px solid;
+  border-color: var(--border);
+  border-radius: 8px;
+  overflow: clip;
+}
+.content div.video iframe {
+  margin: 0;
 }
 .content ol {
-  line-height: 1.625em;
+  line-height: 1.8;
+  padding-left: 1.8em;
 }
 .content ul {
-  line-height: 1.625em;
+  line-height: 1.8;
+  padding-left: 1.8em;
+}
+.content li {
+  padding-left: 0.5em;
 }
 .content a {
   text-decoration: underline;
@@ -171,6 +182,10 @@ h6:target::before {
 .content img,
 .content video {
   max-width: 100%;
+  border: 1px solid;
+  border-color: var(--border);
+  border-radius: 8px;
+  overflow: clip;
 }
 .content .header:link,
 .content .header:visited {
@@ -187,11 +202,12 @@ iframe {
 }
 
 table {
-  margin: 0 auto;
+  width: 100%;
   border-collapse: collapse;
+  font-size: 1.4rem;
 }
 table td {
-  padding: 3px 20px;
+  padding: 4px 12px;
   border: 1px var(--table-border-color) solid;
 }
 table thead {
@@ -202,10 +218,13 @@ table thead td {
   border: none;
 }
 table thead th {
-  padding: 3px 20px;
+  padding: 6px 12px;
+  color: #000;
+  text-align: left;
+  border: 1px var(--table-border-color) solid;
 }
 table thead tr {
-  border: 1px var(--table-header-bg) solid;
+  border: 1px var(--table-border-color) solid;
 }
 /* Alternate background colors for rows */
 table tbody tr:nth-child(2n) {
@@ -216,7 +235,7 @@ blockquote {
   margin: auto;
   margin-top: 1rem;
   padding: 1rem 1.25rem;
-  color: var(--fg);
+  color: #000;
   background-color: var(--quote-bg);
   border: 1px solid var(--quote-border);
 }
@@ -249,6 +268,7 @@ blockquote .warning:before {
 .warning {
   margin: auto;
   padding: 1rem 1.25rem;
+  color: #000;
   background-color: var(--warning-bg);
   border: 1px solid var(--warning-border);
 }
@@ -292,8 +312,10 @@ kbd {
   margin-block-start: 2em;
 }
 .footnote-definition {
-  font-size: 0.9em;
+  font-size: 1.4rem;
   margin: 0.5em 0;
+  border-bottom: 1px solid;
+  border-color: var(--border-light);
 }
 .footnote-definition p {
   display: inline;
@@ -323,6 +345,7 @@ kbd {
 .chapter li.part-title {
   font-size: 18px;
   font-family: var(--title-font);
+  font-weight: 520;
   color: var(--title-color);
   margin: 5px 0;
   margin-top: 2rem;
@@ -333,6 +356,6 @@ kbd {
 }
 
 code.hljs {
-  color: rgb(75, 83, 97) !important;
-  background-color: rgba(8, 76, 207, 0.1);
+  color: hsl(221, 13%, 10%) !important;
+  background-color: hsla(221, 93%, 42%, 0.1);
 }

@@ -60,9 +60,9 @@ pub struct BlockSnapshot {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CustomBlockId(usize);
 
-impl Into<ElementId> for CustomBlockId {
-    fn into(self) -> ElementId {
-        ElementId::Integer(self.0)
+impl From<CustomBlockId> for ElementId {
+    fn from(val: CustomBlockId) -> Self {
+        ElementId::Integer(val.0)
     }
 }
 
@@ -657,7 +657,7 @@ impl BlockMap {
             .flatten()
     }
 
-    pub(crate) fn sort_blocks<B: BlockLike>(blocks: &mut Vec<(u32, B)>) {
+    pub(crate) fn sort_blocks<B: BlockLike>(blocks: &mut [(u32, B)]) {
         // Place excerpt headers and footers above custom blocks on the same row
         blocks.sort_unstable_by(|(row_a, block_a), (row_b, block_b)| {
             row_a.cmp(row_b).then_with(|| {
@@ -1478,7 +1478,7 @@ mod tests {
 
     #[gpui::test]
     fn test_basic_blocks(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| init_test(cx));
+        cx.update(init_test);
 
         let text = "aaa\nbbb\nccc\nddd";
 
@@ -1734,7 +1734,7 @@ mod tests {
 
     #[gpui::test]
     fn test_replace_with_heights(cx: &mut gpui::TestAppContext) {
-        let _update = cx.update(|cx| init_test(cx));
+        cx.update(init_test);
 
         let text = "aaa\nbbb\nccc\nddd";
 
@@ -1838,7 +1838,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[gpui::test]
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| init_test(cx));
+        cx.update(init_test);
 
         let _font_id = cx.text_system().font_id(&font("Helvetica")).unwrap();
 
@@ -1885,7 +1885,7 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_blocks(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
-        cx.update(|cx| init_test(cx));
+        cx.update(init_test);
 
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))

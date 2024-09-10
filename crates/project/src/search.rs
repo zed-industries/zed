@@ -89,7 +89,7 @@ impl SearchQuery {
         let query = query.to_string();
         let search = AhoCorasickBuilder::new()
             .ascii_case_insensitive(!case_sensitive)
-            .build(&[&query])?;
+            .build([&query])?;
         let inner = SearchInputs {
             query: query.into(),
             files_to_exclude,
@@ -481,7 +481,8 @@ pub fn deserialize_path_matches(glob_set: &str) -> anyhow::Result<PathMatcher> {
     let globs = glob_set
         .split(',')
         .map(str::trim)
-        .filter_map(|glob_str| (!glob_str.is_empty()).then(|| glob_str.to_owned()))
+        .filter(|&glob_str| (!glob_str.is_empty()))
+        .map(|glob_str| glob_str.to_owned())
         .collect::<Vec<_>>();
     Ok(PathMatcher::new(&globs)?)
 }

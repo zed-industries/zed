@@ -63,7 +63,7 @@ impl Vim {
                             object.range(&display_map, selection.clone(), false)
                         }
                         SurroundsType::Motion(motion) => {
-                            let range = motion
+                            motion
                                 .range(
                                     &display_map,
                                     selection.clone(),
@@ -89,8 +89,7 @@ impl Vim {
                                         );
                                     }
                                     range
-                                });
-                            range
+                                })
                         }
                         SurroundsType::Selection => Some(selection.range()),
                     };
@@ -270,17 +269,14 @@ impl Vim {
                                     let mut open_str = pair.start.clone();
                                     let start = offset;
                                     let mut end = start + 1;
-                                    match chars_and_offset.peek() {
-                                        Some((next_ch, _)) => {
-                                            // If the next position is already a space or line break,
-                                            // we don't need to splice another space even under around
-                                            if surround && !next_ch.is_whitespace() {
-                                                open_str.push_str(" ");
-                                            } else if !surround && next_ch.to_string() == " " {
-                                                end += 1;
-                                            }
+                                    if let Some((next_ch, _)) = chars_and_offset.peek() {
+                                        // If the next position is already a space or line break,
+                                        // we don't need to splice another space even under around
+                                        if surround && !next_ch.is_whitespace() {
+                                            open_str.push(' ');
+                                        } else if !surround && next_ch.to_string() == " " {
+                                            end += 1;
                                         }
-                                        None => {}
                                     }
                                     edits.push((start..end, open_str));
                                     anchors.push(start..start);
@@ -300,7 +296,7 @@ impl Vim {
                                     let end = start + 1;
                                     if let Some((next_ch, _)) = reverse_chars_and_offsets.peek() {
                                         if surround && !next_ch.is_whitespace() {
-                                            close_str.insert_str(0, " ")
+                                            close_str.insert(0, ' ')
                                         } else if !surround && next_ch.to_string() == " " {
                                             start -= 1;
                                         }
@@ -317,7 +313,7 @@ impl Vim {
                     let stable_anchors = editor
                         .selections
                         .disjoint_anchors()
-                        .into_iter()
+                        .iter()
                         .map(|selection| {
                             let start = selection.start.bias_left(&display_map.buffer_snapshot);
                             start..start
@@ -367,12 +363,12 @@ impl Vim {
                                     && selection.end.row() == range.end.row())
                             {
                                 valid = true;
-                                let mut chars_and_offset = display_map
+                                let chars_and_offset = display_map
                                     .buffer_chars_at(
                                         range.start.to_offset(&display_map, Bias::Left),
                                     )
                                     .peekable();
-                                while let Some((ch, offset)) = chars_and_offset.next() {
+                                for (ch, offset) in chars_and_offset {
                                     if ch.to_string() == pair.start {
                                         anchors.push(offset..offset);
                                         break;
@@ -392,7 +388,7 @@ impl Vim {
                 });
             });
         }
-        return valid;
+        valid
     }
 }
 
@@ -401,7 +397,7 @@ fn find_surround_pair<'a>(pairs: &'a [BracketPair], ch: &str) -> Option<&'a Brac
 }
 
 fn all_support_surround_pair() -> Vec<BracketPair> {
-    return vec![
+    vec![
         BracketPair {
             start: "{".into(),
             end: "}".into(),
@@ -465,7 +461,7 @@ fn all_support_surround_pair() -> Vec<BracketPair> {
             surround: true,
             newline: false,
         },
-    ];
+    ]
 }
 
 fn pair_to_object(pair: &BracketPair) -> Option<Object> {

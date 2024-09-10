@@ -51,7 +51,7 @@ pub struct State {
     _subscription: Subscription,
 }
 
-const GOOGLE_AI_API_KEY_VAR: &'static str = "GOOGLE_AI_API_KEY";
+const GOOGLE_AI_API_KEY_VAR: &str = "GOOGLE_AI_API_KEY";
 
 impl State {
     fn is_authenticated(&self) -> bool {

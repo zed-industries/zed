@@ -58,11 +58,16 @@ impl LabelCommon for HighlightedLabel {
         self.base = self.base.alpha(alpha);
         self
     }
+
+    fn underline(mut self, underline: bool) -> Self {
+        self.base = self.base.underline(underline);
+        self
+    }
 }
 
 pub fn highlight_ranges(
     text: &str,
-    indices: &Vec<usize>,
+    indices: &[usize],
     style: HighlightStyle,
 ) -> Vec<(Range<usize>, HighlightStyle)> {
     let mut highlight_indices = indices.iter().copied().peekable();

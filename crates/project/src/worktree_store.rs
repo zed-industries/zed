@@ -168,11 +168,10 @@ impl WorktreeStore {
         }
         let task = self.loading_worktrees.get(&path).unwrap().clone();
         cx.background_executor().spawn(async move {
-            let result = match task.await {
+            match task.await {
                 Ok(worktree) => Ok(worktree),
                 Err(err) => Err(anyhow!("{}", err)),
-            };
-            result
+            }
         })
     }
 
@@ -549,7 +548,7 @@ impl WorktreeStore {
                 drop(filters);
             })
             .detach();
-        return matching_paths_rx;
+        matching_paths_rx
     }
 
     fn scan_ignored_dir<'a>(
@@ -562,7 +561,7 @@ impl WorktreeStore {
         output_tx: &'a Sender<oneshot::Receiver<ProjectPath>>,
     ) -> BoxFuture<'a, Result<()>> {
         async move {
-            let abs_path = snapshot.abs_path().join(&path);
+            let abs_path = snapshot.abs_path().join(path);
             let Some(mut files) = fs
                 .read_dir(&abs_path)
                 .await

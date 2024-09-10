@@ -260,7 +260,7 @@ impl ParsedMarkdown {
     }
 
     pub fn events(&self) -> &Arc<[(Range<usize>, MarkdownEvent)]> {
-        return &self.events;
+        &self.events
     }
 }
 
@@ -473,17 +473,15 @@ impl MarkdownElement {
                             cx.open_url(&pressed_link.destination_url);
                         }
                     }
-                } else {
-                    if markdown.selection.pending {
-                        markdown.selection.pending = false;
-                        #[cfg(target_os = "linux")]
-                        {
-                            let text = rendered_text
-                                .text_for_range(markdown.selection.start..markdown.selection.end);
-                            cx.write_to_primary(ClipboardItem::new_string(text))
-                        }
-                        cx.notify();
+                } else if markdown.selection.pending {
+                    markdown.selection.pending = false;
+                    #[cfg(target_os = "linux")]
+                    {
+                        let text = rendered_text
+                            .text_for_range(markdown.selection.start..markdown.selection.end);
+                        cx.write_to_primary(ClipboardItem::new_string(text))
                     }
+                    cx.notify();
                 }
             }
         });

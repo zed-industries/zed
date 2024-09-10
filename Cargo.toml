@@ -72,7 +72,6 @@ members = [
     "crates/outline",
     "crates/outline_panel",
     "crates/paths",
-    "crates/performance",
     "crates/picker",
     "crates/prettier",
     "crates/project",
@@ -167,7 +166,7 @@ members = [
     # Tooling
     #
 
-    "tooling/xtask"
+    "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 
@@ -246,7 +245,6 @@ open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 paths = { path = "crates/paths" }
-performance = { path = "crates/performance" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
@@ -324,9 +322,9 @@ async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "fee06c42f658b36dd9ac85444a9ee2a481383695" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
 cargo_metadata = "0.18"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
@@ -574,8 +572,17 @@ single_range_in_vec_init = "allow"
 # allow all of those, for now.
 style = { level = "allow", priority = -1 }
 
+# Temporary list of style lints that we've fixed so far.
+module_inception = { level = "deny" }
+question_mark = { level = "deny" }
+redundant_closure = { level = "deny" }
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"
+# We often return trait objects from `new` functions.
+new_ret_no_self = { level = "allow" }
+# We have a few `next` functions that differ in lifetimes
+# compared to Iterator::next. Yet, clippy complains about those.
+should_implement_trait = { level = "allow" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]

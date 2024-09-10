@@ -27,6 +27,7 @@ use gpui::{
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use serde_json::Value;
+use settings::WorktreeId;
 use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
@@ -68,7 +69,7 @@ pub use lsp::DiagnosticSeverity;
 
 /// A label for the background task spawned by the buffer to compute
 /// a diff against the contents of its file.
-pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(|| TaskLabel::new());
+pub static BUFFER_DIFF_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
 /// Indicate whether a [Buffer] has permissions to edit.
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -361,7 +362,7 @@ pub trait File: Send + Sync {
     /// Returns the id of the worktree to which this file belongs.
     ///
     /// This is needed for looking up project-specific settings.
-    fn worktree_id(&self) -> usize;
+    fn worktree_id(&self, cx: &AppContext) -> WorktreeId;
 
     /// Returns whether the file has been deleted.
     fn is_deleted(&self) -> bool;
@@ -1105,7 +1106,6 @@ impl Buffer {
         {
             Ok(new_syntax_snapshot) => {
                 self.did_finish_parsing(new_syntax_snapshot, cx);
-                return;
             }
             Err(parse_task) => {
                 self.parsing_in_background = true;
@@ -1938,25 +1938,23 @@ impl Buffer {
             );
         }
 
-        if space_above {
-            if position.row > 0 && !self.is_line_blank(position.row - 1) {
-                self.edit(
-                    [(position..position, "\n")],
-                    Some(AutoindentMode::EachLine),
-                    cx,
-                );
-                position.row += 1;
-            }
+        if space_above && position.row > 0 && !self.is_line_blank(position.row - 1) {
+            self.edit(
+                [(position..position, "\n")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            position.row += 1;
         }
 
-        if space_below {
-            if position.row == self.max_point().row || !self.is_line_blank(position.row + 1) {
-                self.edit(
-                    [(position..position, "\n")],
-                    Some(AutoindentMode::EachLine),
-                    cx,
-                );
-            }
+        if space_below
+            && (position.row == self.max_point().row || !self.is_line_blank(position.row + 1))
+        {
+            self.edit(
+                [(position..position, "\n")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
         }
 
         self.end_transaction(cx);
@@ -2094,7 +2092,7 @@ impl Buffer {
     ) {
         if lamport_timestamp > self.diagnostics_timestamp {
             let ix = self.diagnostics.binary_search_by_key(&server_id, |e| e.0);
-            if diagnostics.len() == 0 {
+            if diagnostics.is_empty() {
                 if let Ok(ix) = ix {
                     self.diagnostics.remove(ix);
                 }
@@ -2582,7 +2580,7 @@ impl BufferSnapshot {
         });
         let highlight_maps = captures
             .grammars()
-            .into_iter()
+            .iter()
             .map(|grammar| grammar.highlight_map())
             .collect();
         (captures, highlight_maps)
@@ -3422,31 +3420,35 @@ impl BufferSnapshot {
                 current_depth
             };
 
-            if depth < current_depth {
-                for _ in 0..(current_depth - depth) {
-                    let mut indent = indent_stack.pop().unwrap();
-                    if last_row != first_row {
-                        // In this case, we landed on an empty row, had to seek forward,
-                        // and discovered that the indent we where on is ending.
-                        // This means that the last display row must
-                        // be on line that ends this indent range, so we
-                        // should display the range up to the first non-empty line
-                        indent.end_row = first_row.saturating_sub(1);
-                    }
+            match depth.cmp(&current_depth) {
+                Ordering::Less => {
+                    for _ in 0..(current_depth - depth) {
+                        let mut indent = indent_stack.pop().unwrap();
+                        if last_row != first_row {
+                            // In this case, we landed on an empty row, had to seek forward,
+                            // and discovered that the indent we where on is ending.
+                            // This means that the last display row must
+                            // be on line that ends this indent range, so we
+                            // should display the range up to the first non-empty line
+                            indent.end_row = first_row.saturating_sub(1);
+                        }
 
-                    result_vec.push(indent)
+                        result_vec.push(indent)
+                    }
                 }
-            } else if depth > current_depth {
-                for next_depth in current_depth..depth {
-                    indent_stack.push(IndentGuide {
-                        buffer_id: self.remote_id(),
-                        start_row: first_row,
-                        end_row: last_row,
-                        depth: next_depth,
-                        tab_size,
-                        settings,
-                    });
+                Ordering::Greater => {
+                    for next_depth in current_depth..depth {
+                        indent_stack.push(IndentGuide {
+                            buffer_id: self.remote_id(),
+                            start_row: first_row,
+                            end_row: last_row,
+                            depth: next_depth,
+                            tab_size,
+                            settings,
+                        });
+                    }
                 }
+                _ => {}
             }
 
             for indent in indent_stack.iter_mut() {
@@ -4171,8 +4173,8 @@ impl File for TestFile {
         self.path().file_name().unwrap_or(self.root_name.as_ref())
     }
 
-    fn worktree_id(&self) -> usize {
-        0
+    fn worktree_id(&self, _: &AppContext) -> WorktreeId {
+        WorktreeId::from_usize(0)
     }
 
     fn is_deleted(&self) -> bool {
@@ -4300,7 +4302,7 @@ pub fn trailing_whitespace_ranges(rope: &Rope) -> Vec<Range<usize>> {
         let mut prev_line_trailing_whitespace_range = 0..0;
         for (i, line) in chunk.split('\n').enumerate() {
             let line_end_offset = offset + line.len();
-            let trimmed_line_len = line.trim_end_matches(|c| matches!(c, ' ' | '\t')).len();
+            let trimmed_line_len = line.trim_end_matches([' ', '\t']).len();
             let mut trailing_whitespace_range = (offset + trimmed_line_len)..line_end_offset;
 
             if i == 0 && trimmed_line_len == 0 {

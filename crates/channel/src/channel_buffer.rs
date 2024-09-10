@@ -177,13 +177,10 @@ impl ChannelBuffer {
         match event {
             language::Event::Operation(operation) => {
                 if *ZED_ALWAYS_ACTIVE {
-                    match operation {
-                        language::Operation::UpdateSelections { selections, .. } => {
-                            if selections.is_empty() {
-                                return;
-                            }
+                    if let language::Operation::UpdateSelections { selections, .. } = operation {
+                        if selections.is_empty() {
+                            return;
                         }
-                        _ => {}
                     }
                 }
                 let operation = language::proto::serialize_operation(operation);

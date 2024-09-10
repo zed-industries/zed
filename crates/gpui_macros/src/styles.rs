@@ -541,7 +541,7 @@ fn generate_box_style_methods(
                 quote! { DefiniteLength }
             },
             &box_style_prefix.fields,
-            &box_style_prefix.doc_string_prefix,
+            box_style_prefix.doc_string_prefix,
         ));
 
         for box_style_suffix in &suffixes {

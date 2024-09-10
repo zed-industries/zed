@@ -69,7 +69,7 @@ impl TaffyLayoutEngine {
                 .expect(EXPECT_MESSAGE)
                 .into();
             self.children_to_parents
-                .extend(children.into_iter().map(|child_id| (*child_id, parent_id)));
+                .extend(children.iter().map(|child_id| (*child_id, parent_id)));
             parent_id
         };
         self.styles.insert(layout_id, style);

@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
                 .route("/healthz", get(handle_liveness_probe))
                 .layer(Extension(mode));
 
-            let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
+            let listener = TcpListener::bind(format!("0.0.0.0:{}", config.http_port))
                 .expect("failed to bind TCP listener");
 
             let mut on_shutdown = None;
@@ -257,7 +257,7 @@ async fn setup_app_database(config: &Config) -> Result<()> {
     db.initialize_notification_kinds().await?;
 
     if config.seed_path.is_some() {
-        collab::seed::seed(&config, &db, false).await?;
+        collab::seed::seed(config, &db, false).await?;
     }
 
     Ok(())

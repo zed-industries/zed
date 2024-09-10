@@ -41,7 +41,7 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
             OllamaEmbeddingModel::MxbaiEmbedLarge => "mxbai-embed-large",
         };
 
-        futures::future::try_join_all(texts.into_iter().map(|to_embed| {
+        futures::future::try_join_all(texts.iter().map(|to_embed| {
             let request = OllamaEmbeddingRequest {
                 model: model.to_string(),
                 prompt: to_embed.text.to_string(),
