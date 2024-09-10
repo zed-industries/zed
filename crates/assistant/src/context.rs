@@ -2138,7 +2138,6 @@ impl Context {
                     if let Ok(stop_reason) = result {
                         match stop_reason {
                             StopReason::ToolUse => {
-                                // TODO: Emitting this event causes the tool uses to end up in the user message?
                                 cx.emit(ContextEvent::UsePendingTools);
                             }
                             StopReason::EndTurn => {}
