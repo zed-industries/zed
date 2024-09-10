@@ -465,7 +465,8 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
 impl Render for PromptEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let buttons = match &self.codegen.read(cx).status {
+        let status = &self.codegen.read(cx).status;
+        let buttons = match status {
             CodegenStatus::Idle => {
                 vec![
                     IconButton::new("cancel", IconName::Close)
@@ -516,7 +517,8 @@ impl Render for PromptEditor {
                     .tooltip(|cx| Tooltip::for_action("Cancel Assist", &menu::Cancel, cx))
                     .on_click(cx.listener(|_, _, cx| cx.emit(PromptEditorEvent::CancelRequested)));
 
-                if self.edited_since_done {
+                let has_error = matches!(status, CodegenStatus::Error(_));
+                if has_error || self.edited_since_done {
                     vec![
                         cancel,
                         IconButton::new("restart", IconName::RotateCw)
